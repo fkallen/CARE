@@ -481,17 +481,14 @@ struct DataArrays {
 
         h_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_indices_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
-        h_indices_per_subject_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
         h_num_indices = std::move(SimpleAllocationPinnedHost<int>{});
 
         d_indices = std::move(SimpleAllocationDevice<int>{});
         d_indices_per_subject = std::move(SimpleAllocationDevice<int>{});
-        d_indices_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
         d_num_indices = std::move(SimpleAllocationDevice<int>{});
 
         d_indices_tmp = std::move(SimpleAllocationDevice<int>{});
         d_indices_per_subject_tmp = std::move(SimpleAllocationDevice<int>{});
-        d_indices_per_subject_prefixsum_tmp = std::move(SimpleAllocationDevice<int>{});
         d_num_indices_tmp = std::move(SimpleAllocationDevice<int>{});
 
         d_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
@@ -579,7 +576,6 @@ struct DataArrays {
 
         bytes += f(h_indices);
         bytes += f(h_indices_per_subject);
-        bytes += f(h_indices_per_subject_prefixsum);
         bytes += f(h_num_indices);
 
         bytes += f(h_editsPerCorrectedSubject);
@@ -644,11 +640,9 @@ struct DataArrays {
 
         bytes += f(d_indices);
         bytes += f(d_indices_per_subject);
-        bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
         bytes += f(d_indices_tmp);
         bytes += f(d_indices_per_subject_tmp);
-        bytes += f(d_indices_per_subject_prefixsum_tmp);
         bytes += f(d_num_indices_tmp);
 
         bytes += f(d_indices_of_corrected_subjects);
@@ -717,7 +711,6 @@ struct DataArrays {
 
         bytes += f(h_indices);
         bytes += f(h_indices_per_subject);
-        bytes += f(h_indices_per_subject_prefixsum);
         bytes += f(h_num_indices);
 
         bytes += f(h_editsPerCorrectedSubject);
@@ -782,12 +775,10 @@ struct DataArrays {
         bytes += f(d_uncorrected_positions_per_subject);
 
         bytes += f(d_indices);
-        bytes += f(d_indices_per_subject);
-        bytes += f(d_indices_per_subject_prefixsum);        
+        bytes += f(d_indices_per_subject);       
         bytes += f(d_num_indices);
         bytes += f(d_indices_tmp);
         bytes += f(d_indices_per_subject_tmp);
-        bytes += f(d_indices_per_subject_prefixsum_tmp);
         bytes += f(d_num_indices_tmp);
 
         bytes += f(d_indices_of_corrected_subjects);
@@ -868,16 +859,13 @@ struct DataArrays {
 
     SimpleAllocationPinnedHost<int> h_indices;
     SimpleAllocationPinnedHost<int> h_indices_per_subject;
-    SimpleAllocationPinnedHost<int> h_indices_per_subject_prefixsum;
     SimpleAllocationPinnedHost<int> h_num_indices;
 
     SimpleAllocationDevice<int> d_indices;
     SimpleAllocationDevice<int> d_indices_per_subject;
-    SimpleAllocationDevice<int> d_indices_per_subject_prefixsum;
     SimpleAllocationDevice<int> d_num_indices;
     SimpleAllocationDevice<int> d_indices_tmp;
     SimpleAllocationDevice<int> d_indices_per_subject_tmp;
-    SimpleAllocationDevice<int> d_indices_per_subject_prefixsum_tmp;
     SimpleAllocationDevice<int> d_num_indices_tmp;
 
     SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;
@@ -1118,7 +1106,6 @@ struct DataArrays {
         handlearray(candidate_read_ids);
         handlearray(indices);
         handlearray(indices_per_subject);
-        handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
         handlearray(anchorIndicesOfCandidates);
 
@@ -1185,7 +1172,6 @@ struct DataArrays {
         handlearray(candidate_read_ids);
         handlearray(indices);
         handlearray(indices_per_subject);
-        handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
 
         handlearray(anchorIndicesOfCandidates);
@@ -1252,7 +1238,6 @@ struct DataArrays {
         handlearray(candidate_read_ids);
         handlearray(indices);
         handlearray(indices_per_subject);
-        handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
 
         handlearray(anchorIndicesOfCandidates);

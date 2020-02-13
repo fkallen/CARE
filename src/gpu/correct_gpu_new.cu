@@ -897,16 +897,13 @@ namespace test{
 
         dataArrays.h_indices.resize(batchData.n_queries);
         dataArrays.h_indices_per_subject.resize(batchData.n_subjects);
-        dataArrays.h_indices_per_subject_prefixsum.resize((batchData.n_subjects + 1));
         dataArrays.h_num_indices.resize(1);
 
         dataArrays.d_indices.resize(batchData.n_queries);
         dataArrays.d_indices_per_subject.resize(batchData.n_subjects);
-        dataArrays.d_indices_per_subject_prefixsum.resize((batchData.n_subjects + 1));
         dataArrays.d_num_indices.resize(1);
         dataArrays.d_indices_tmp.resize(batchData.n_queries);
         dataArrays.d_indices_per_subject_tmp.resize(batchData.n_subjects);
-        dataArrays.d_indices_per_subject_prefixsum_tmp.resize((batchData.n_subjects + 1));
         dataArrays.d_num_indices_tmp.resize(1);
 
         dataArrays.h_indices_of_corrected_subjects.resize(batchData.n_subjects);
@@ -1045,13 +1042,6 @@ namespace test{
             dataArrays.d_canExecute.get(),
             1,
             true,
-            streams[primary_stream_index]
-        );
-
-        call_set_kernel_async(
-            dataArrays.d_indices_per_subject_prefixsum.get(),
-            0,
-            0,
             streams[primary_stream_index]
         );
     }
@@ -1240,16 +1230,6 @@ namespace test{
 			batch.kernelLaunchHandle
         );
 
-        //calculate indices_per_subject_prefixsum
-        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-        
-        cub::DeviceScan::InclusiveSum(dataArrays.d_cub_temp_storage.get(),
-                    cubTempSize,
-                    dataArrays.d_indices_per_subject.get(),
-                    dataArrays.d_indices_per_subject_prefixsum.get()+1,
-                    batch.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
@@ -1268,12 +1248,6 @@ namespace test{
         cudaMemcpyAsync(dataArrays.h_indices_per_subject,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
@@ -1487,15 +1461,6 @@ namespace test{
             );  CUERR;
 
 
-            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-            cub::DeviceScan::InclusiveSum(dataArrays.d_cub_temp_storage.get(),
-                        cubTempSize,
-                        dataArrays.d_indices_per_subject.get(),
-                        dataArrays.d_indices_per_subject_prefixsum.get()+1,
-                        batch.n_subjects,
-                        streams[primary_stream_index]); CUERR;
-
             {
 
                 /*
@@ -1608,12 +1573,6 @@ namespace test{
                             D2H,
                             streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
-                            dataArrays.d_indices_per_subject_prefixsum,
-                            dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
-
                         //update host qscores accordingly
                         /*cudaMemcpyAsync(dataArrays.h_candidate_qualities,
                                         dataArrays.d_candidate_qualities,
@@ -1670,11 +1629,6 @@ namespace test{
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_msa_column_properties,
                         dataArrays.d_msa_column_properties,
                         dataArrays.d_msa_column_properties.sizeInBytes(),
@@ -1785,7 +1739,6 @@ namespace test{
                     dataArrays.getDeviceCorrectionResultPointers(),
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
                     batch.n_subjects,
                     batch.encodedSequencePitchInInts,
                     batch.decodedSequencePitchInBytes,
@@ -1979,7 +1932,7 @@ namespace test{
                 dataArrays.getDeviceCorrectionResultPointers(),
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject,
-                dataArrays.d_indices_per_subject_prefixsum,
+                dataArrays.d_candidates_per_subject_prefixsum,
                 batch.n_subjects,
                 batch.n_queries,
                 dataArrays.d_num_indices,
@@ -2130,22 +2083,22 @@ namespace test{
                 transFuncData.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
             }
 
-            if(readId == 13158000){
-                std::cerr << "readid = 13158000, stats\n";
-                std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
-                auto& dataArrays = batch.dataArrays;
-                std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
-                    << "num good candidates " << dataArrays.h_indices_per_subject[subject_index] << "\n";
-                std::cerr << "good candidate ids:\n";
+            // if(readId == 13158000){
+            //     std::cerr << "readid = 13158000, stats\n";
+            //     std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
+            //     auto& dataArrays = batch.dataArrays;
+            //     std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
+            //         << "num good candidates " << dataArrays.h_indices_per_subject[subject_index] << "\n";
+            //     std::cerr << "good candidate ids:\n";
 
-                const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
+            //     const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
 
-                for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
-                    const int index = dataArrays.h_indices[globalOffset + i];
-                    const read_number candidateId = rawResults.h_candidate_read_ids[globalOffset + index];
-                    std::cerr << candidateId << "\n";
-                }
-            }
+            //     for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
+            //         const int index = dataArrays.h_indices[globalOffset + i];
+            //         const read_number candidateId = rawResults.h_candidate_read_ids[globalOffset + index];
+            //         std::cerr << candidateId << "\n";
+            //     }
+            // }
         }
 
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
@@ -2311,14 +2264,14 @@ namespace test{
 #endif
                 tmpencoded = tmp.encode();
 
-                if(readId == 13158000){
-                    std::cerr << "readid = 13158000, anchor\n";
-                    std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << "\n";
-                    std::cerr << "\nedits: ";
-                    for(int i = 0; i < int(tmp.edits.size()); i++){
-                        std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
-                    }
-                }
+                // if(readId == 13158000){
+                //     std::cerr << "readid = 13158000, anchor\n";
+                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << "\n";
+                //     std::cerr << "\nedits: ";
+                //     for(int i = 0; i < int(tmp.edits.size()); i++){
+                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                //     }
+                // }
             }
 
             nvtx::pop_range();
@@ -2440,14 +2393,14 @@ namespace test{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                if(candidate_read_id == 13158000){
-                    std::cerr << "readid = 13158000, as candidate of anchor with id " << subjectReadId << "\n";
-                    std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
-                    std::cerr << "\nedits: ";
-                    for(int i = 0; i < int(tmp.edits.size()); i++){
-                        std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
-                    }
-                }
+                // if(candidate_read_id == 13158000){
+                //     std::cerr << "readid = 13158000, as candidate of anchor with id " << subjectReadId << "\n";
+                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
+                //     std::cerr << "\nedits: ";
+                //     for(int i = 0; i < int(tmp.edits.size()); i++){
+                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                //     }
+                // }
             }
 
             nvtx::pop_range();
