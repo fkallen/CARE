@@ -1218,6 +1218,7 @@ namespace gpu{
                             }
                             if(threadIdx.x == 0){
                                 *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                                totalIndices += myNumIndices;
                             }
                         }
 
@@ -1231,6 +1232,7 @@ namespace gpu{
                         }
                         if(threadIdx.x == 0){
                             *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                            totalIndices += myNumIndices;
                         }
                     }
                 }else{
