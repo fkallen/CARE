@@ -2140,20 +2140,22 @@ namespace test{
                 transFuncData.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
             }
 
-            // if(readId == 4537685){
-            //     std::cerr << "readid = 4537685, stats\n";
-            //     std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
-            //     auto& dataArrays = batch.dataArrays;
-            //     std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
-            //         << "num good candidates " << dataArrays.h_indices_per_subject[subject_index] << "\n";
-            //     std::cerr << "good candidate ids:\n";
-            //     for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
-            //         const int offset = rawResults.h_indices_per_subject_prefixsum[subject_index] + i;
-            //         const int index = dataArrays.h_indices[offset];
-            //         const read_number candidateId = rawResults.h_candidate_read_ids[index];
-            //         std::cerr << candidateId << "\n";
-            //     }
-            // }
+            if(readId == 13158000){
+                std::cerr << "readid = 13158000, stats\n";
+                std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
+                auto& dataArrays = batch.dataArrays;
+                std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
+                    << "num good candidates " << dataArrays.h_indices_per_subject[subject_index] << "\n";
+                std::cerr << "good candidate ids:\n";
+
+                const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
+
+                for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
+                    const int index = dataArrays.h_indices[globalOffset + i];
+                    const read_number candidateId = rawResults.h_candidate_read_ids[globalOffset + index];
+                    std::cerr << candidateId << "\n";
+                }
+            }
         }
 
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
@@ -2319,14 +2321,14 @@ namespace test{
 #endif
                 tmpencoded = tmp.encode();
 
-                // if(readId == 4537685){
-                //     std::cerr << "readid = 4537685, anchor\n";
-                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << ",\nnumUncorrectedPositions " << numUncorrectedPositions;
-                //     std::cerr << "\nedits: ";
-                //     for(int i = 0; i < int(tmp.edits.size()); i++){
-                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
-                //     }
-                // }
+                if(readId == 13158000){
+                    std::cerr << "readid = 13158000, anchor\n";
+                    std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << "\n";
+                    std::cerr << "\nedits: ";
+                    for(int i = 0; i < int(tmp.edits.size()); i++){
+                        std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                    }
+                }
             }
 
             nvtx::pop_range();
@@ -2448,14 +2450,14 @@ namespace test{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                // if(candidate_read_id == 4537685){
-                //     std::cerr << "readid = 4537685, as candidate of anchor with id " << subjectReadId << "\n";
-                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
-                //     std::cerr << "\nedits: ";
-                //     for(int i = 0; i < int(tmp.edits.size()); i++){
-                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
-                //     }
-                // }
+                if(candidate_read_id == 13158000){
+                    std::cerr << "readid = 13158000, as candidate of anchor with id " << subjectReadId << "\n";
+                    std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
+                    std::cerr << "\nedits: ";
+                    for(int i = 0; i < int(tmp.edits.size()); i++){
+                        std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                    }
+                }
             }
 
             nvtx::pop_range();
