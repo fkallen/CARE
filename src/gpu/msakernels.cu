@@ -182,7 +182,6 @@ namespace gpu{
     			const int* __restrict__ d_candidates_per_subject_prefixsum,
     			const int* __restrict__ d_indices,
     			const int* __restrict__ d_indices_per_subject,
-    			const int* __restrict__ d_indices_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* __restrict__ d_num_indices,
@@ -265,7 +264,7 @@ namespace gpu{
             }
             //printf("\n");
 
-            //add candidates
+            //add candidates //FIXME
             for(unsigned index = blockIdx.x; index < n_indices; index += gridDim.x) {
                 const int queryIndex = d_indices[index];
 
@@ -799,34 +798,41 @@ namespace gpu{
         This kernel inspects a msa and identifies candidates which could originate
         from a different genome region than the subject.
 
-        the output element shouldBeRemoved[i] indicates whether
-        the candidate referred to by d_indices[i] should be removed from the msa
+        the output element d_shouldBeKept[i] indicates whether
+        the candidate referred to by d_indices[i] should remain in the msa
     */
 
 
     template<int BLOCKSIZE>
     __global__
     void msa_findCandidatesOfDifferentRegion_kernel(
-                        MSAPointers d_msapointers,
-                        AlignmentResultPointers d_alignmentresultpointers,
-                        ReadSequencesPointers d_sequencePointers,
-                        bool* __restrict__ d_shouldBeKept,
-                        const int* __restrict__ d_candidates_per_subject_prefixsum,
-                        int n_subjects,
-                        int n_candidates,
-                        int encodedSequencePitchInInts,
-                        size_t msa_pitch,
-                        size_t msa_weights_pitch,
-                        const int* __restrict__ d_indices,
-                        const int* __restrict__ d_indices_per_subject,
-                        const int* __restrict__ d_indices_per_subject_prefixsum,
-                        float desiredAlignmentMaxErrorRate,
-                        int dataset_coverage,
-                        const bool* __restrict__ canExecute,
-                        const unsigned int* d_readids,
-                        bool debug = false){
+            int* __restrict__ d_newIndices,
+            int* __restrict__ d_newNumIndicesPerSubject,
+            int* __restrict__ d_newNumIndices,
+
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
+            bool* __restrict__ d_shouldBeKept,
+            const int* __restrict__ d_candidates_per_subject_prefixsum,
+            int n_subjects,
+            int n_candidates,
+            int encodedSequencePitchInInts,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            const int* __restrict__ d_indices,
+            const int* __restrict__ d_indices_per_subject,
+            float desiredAlignmentMaxErrorRate,
+            int dataset_coverage,
+            const bool* __restrict__ canExecute,
+            const unsigned int* d_readids,
+            bool debug = false){
 
         if(*canExecute){
+
+            // if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+            //     printf("msa_findCandidatesOfDifferentRegion_kernel\n");
+            // }
 
             auto getNumBytes = [] (int sequencelength){
                 return sizeof(unsigned int) * getEncodedNumInts2Bit(sequencelength);
@@ -895,13 +901,25 @@ namespace gpu{
 
             __shared__ bool broadcastbufferbool;
             __shared__ int broadcastbufferint4[4];
+            __shared__ int totalIndices;
+            __shared__ int counts[1];
 
             extern __shared__ unsigned int sharedmemory[];
 
+            if(threadIdx.x == 0){
+                totalIndices = 0;
+            }
+            __syncthreads();
+
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
 
-                const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+
+                const int* myIndices = d_indices + globalOffset;
                 const int myNumIndices = d_indices_per_subject[subjectIndex];
+
+                int* const myNewIndicesPtr = d_newIndices + globalOffset;
+                int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
 
                 if(debug && threadIdx.x == 0){
                     //printf("myNumIndices %d\n", myNumIndices);
@@ -1079,14 +1097,13 @@ namespace gpu{
 
                             auto discard_rows = [&](bool keepMatching){
 
-                                const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
-
                                 for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                                    const int candidateIndex = myIndices[k];
-                                    const unsigned int* const candidateptr = getCandidatePtr(candidateIndex);
-                                    const int candidateLength = getCandidateLength(candidateIndex);
-                                    const int shift = d_alignmentresultpointers.shifts[candidateIndex];
-                                    const BestAlignment_t alignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[candidateIndex];
+                                    const int localCandidateIndex = myIndices[k];
+                                    const int globalCandidateIndex = globalOffset + localCandidateIndex;
+                                    const unsigned int* const candidateptr = getCandidatePtr(globalCandidateIndex);
+                                    const int candidateLength = getCandidateLength(globalCandidateIndex);
+                                    const int shift = d_alignmentresultpointers.shifts[globalCandidateIndex];
+                                    const BestAlignment_t alignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[globalCandidateIndex];
 
                                     //check if row is affected by column col
                                     const int row_begin_incl = subjectColumnsBegin_incl + shift;
@@ -1104,9 +1121,9 @@ namespace gpu{
                                     }
 
                                     if(notAffected || (!(keepMatching ^ (base == foundBase)))){
-                                        d_shouldBeKept[indexoffset + k] = true; //same region
+                                        d_shouldBeKept[globalOffset + k] = true; //same region
                                     }else{
-                                        d_shouldBeKept[indexoffset + k] = false; //different region
+                                        d_shouldBeKept[globalOffset + k] = false; //different region
                                     }
                                 }
     #if 1
@@ -1114,10 +1131,11 @@ namespace gpu{
                                 //if there is such a candidate, none of the candidates will be removed.
                                 bool veryGoodAlignment = false;
                                 for(int k = threadIdx.x; k < myNumIndices && !veryGoodAlignment; k += blockDim.x){
-                                    if(!d_shouldBeKept[indexoffset + k]){
-                                        const int candidateIndex = myIndices[k];
-                                        const int nOps = d_alignmentresultpointers.nOps[candidateIndex];
-                                        const int overlapsize = d_alignmentresultpointers.overlaps[candidateIndex];
+                                    if(!d_shouldBeKept[globalOffset + k]){
+                                        const int localCandidateIndex = myIndices[k];
+                                        const int globalCandidateIndex = globalOffset + localCandidateIndex;
+                                        const int nOps = d_alignmentresultpointers.nOps[globalCandidateIndex];
+                                        const int overlapsize = d_alignmentresultpointers.overlaps[globalCandidateIndex];
                                         const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
                                         assert(overlapweight <= 1.0f);
                                         assert(overlapweight >= 0.0f);
@@ -1139,10 +1157,43 @@ namespace gpu{
 
                                 if(veryGoodAlignment){
                                     for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                                        d_shouldBeKept[indexoffset + k] = true;
+                                        d_shouldBeKept[globalOffset + k] = true;
                                     }
                                 }
     #endif
+
+                                //select indices of candidates to keep and write them to new indices
+                                if(threadIdx.x == 0){
+                                    counts[0] = 0;
+                                }
+                                __syncthreads();
+
+                                const int limit = SDIV(myNumIndices, BLOCKSIZE) * BLOCKSIZE;
+                                for(int k = threadIdx.x; k < limit; k += BLOCKSIZE){
+                                    bool keep = false;
+                                    if(k < myNumIndices){
+                                        keep = d_shouldBeKept[globalOffset + k];
+                                    }                               
+                        
+                                    if(keep){
+                                        cg::coalesced_group g = cg::coalesced_threads();
+                                        int outputPos;
+                                        if (g.thread_rank() == 0) {
+                                            outputPos = atomicAdd(&counts[0], g.size());
+                                            atomicAdd(&totalIndices, g.size());
+                                        }
+                                        outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                                        myNewIndicesPtr[outputPos] = myIndices[k];
+                                    }                        
+                                }
+
+                                __syncthreads();
+
+                                if(threadIdx.x == 0){
+                                    *myNewNumIndicesPerSubjectPtr = counts[0];
+                                }
+
+                                __syncthreads();
 
 
                             };
@@ -1161,10 +1212,12 @@ namespace gpu{
                             //did not find a significant columns
 
                             //remove no candidate
-                            const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
-
                             for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                                d_shouldBeKept[indexoffset + k] = true;
+                                d_shouldBeKept[globalOffset + k] = true;
+                                myNewIndicesPtr[k] = myIndices[k];
+                            }
+                            if(threadIdx.x == 0){
+                                *myNewNumIndicesPerSubjectPtr = myNumIndices;
                             }
                         }
 
@@ -1172,15 +1225,23 @@ namespace gpu{
                         //no mismatch between consensus and subject
 
                         //remove no candidate
-                        const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
-
                         for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                            d_shouldBeKept[indexoffset + k] = true;
+                            d_shouldBeKept[globalOffset + k] = true;
+                            myNewIndicesPtr[k] = myIndices[k];
+                        }
+                        if(threadIdx.x == 0){
+                            *myNewNumIndicesPerSubjectPtr = myNumIndices;
                         }
                     }
                 }else{
                     ; //nothing to do if there are no candidates in msa
                 }
+            }
+
+            __syncthreads();
+
+            if(threadIdx.x == 0){
+                atomicAdd(d_newNumIndices, totalIndices);
             }
         }
     }
@@ -1356,7 +1417,6 @@ namespace gpu{
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -1456,7 +1516,6 @@ namespace gpu{
                                         d_candidates_per_subject_prefixsum,
                                         d_indices,
                                         d_indices_per_subject,
-                                        d_indices_per_subject_prefixsum,
                                         n_subjects,
                                         n_queries,
                                         d_num_indices,
@@ -1485,8 +1544,6 @@ namespace gpu{
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
-                //const int* d_blocks_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -1696,7 +1753,6 @@ namespace gpu{
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -1723,7 +1779,6 @@ namespace gpu{
                                                             d_candidates_per_subject_prefixsum,
                                                             d_indices,
                                                             d_indices_per_subject,
-                                                            d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
                                                             d_num_indices,
@@ -1748,7 +1803,6 @@ namespace gpu{
                                                             d_candidates_per_subject_prefixsum,
                                                             d_indices,
                                                             d_indices_per_subject,
-                                                            d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
                                                             d_num_indices,
@@ -1876,6 +1930,9 @@ namespace gpu{
 
 
     void call_msa_findCandidatesOfDifferentRegion_kernel_async(
+                int* d_newIndices,
+                int* d_newIndicesPerSubject,
+                int* d_newNumIndices,
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
@@ -1888,7 +1945,6 @@ namespace gpu{
                 size_t msa_weights_pitch,
                 const int* d_indices,
                 const int* d_indices_per_subject,
-                const int* d_indices_per_subject_prefixsum,
                 float desiredAlignmentMaxErrorRate,
                 int dataset_coverage,
                 const bool* d_canExecute,
@@ -1896,6 +1952,9 @@ namespace gpu{
     			KernelLaunchHandle& handle,
                 const unsigned int* d_readids,
                 bool debug){
+
+        cudaMemsetAsync(d_newNumIndices, 0, sizeof(int), stream); CUERR;
+        cudaMemsetAsync(d_newIndicesPerSubject, 0, sizeof(int) * n_subjects, stream); CUERR;
 
 
     	constexpr int max_block_size = 256;
@@ -1950,7 +2009,10 @@ namespace gpu{
     	dim3 grid(std::min(max_blocks_per_device, n_subjects));
 
     		#define mycall(blocksize) msa_findCandidatesOfDifferentRegion_kernel<(blocksize)> \
-    	        <<<grid, block, 0, stream>>>( \
+                <<<grid, block, 0, stream>>>( \
+                    d_newIndices, \
+                    d_newIndicesPerSubject, \
+                    d_newNumIndices, \
                     d_msapointers, \
                     d_alignmentresultpointers, \
                     d_sequencePointers, \
@@ -1963,7 +2025,6 @@ namespace gpu{
                     msa_weights_pitch, \
                     d_indices, \
                     d_indices_per_subject, \
-                    d_indices_per_subject_prefixsum, \
                     desiredAlignmentMaxErrorRate, \
                     dataset_coverage, \
                     d_canExecute, \

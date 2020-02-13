@@ -3339,6 +3339,7 @@ namespace gpu{
         }
 
         cudaMemsetAsync(d_numIndicesPerAnchor, 0, numAnchors * sizeof(int), stream); CUERR;
+        cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(SDIV(numCandidates, blocksize), max_blocks_per_device));

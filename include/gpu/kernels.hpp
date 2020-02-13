@@ -225,8 +225,6 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
             const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
-            //const int* d_blocks_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
             const int* d_num_indices,
@@ -252,7 +250,6 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
             const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
             const int* d_num_indices,
@@ -277,7 +274,6 @@ void call_msa_add_sequences_kernel_implicit_async(
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
             const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
             const int* d_num_indices,
@@ -309,6 +305,9 @@ void call_msa_find_consensus_implicit_kernel_async(
 
 
 void call_msa_findCandidatesOfDifferentRegion_kernel_async(
+            int* d_newIndices,
+            int* d_newIndicesPerSubject,
+            int* d_newNumIndices,
             MSAPointers d_msapointers,
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
@@ -321,7 +320,6 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             size_t msa_weights_pitch,
             const int* d_indices,
             const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
             float desiredAlignmentMaxErrorRate,
             int dataset_coverage,
             const bool* d_canExecute,
