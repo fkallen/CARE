@@ -1794,6 +1794,47 @@ namespace test{
                         batch.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
+            cudaDeviceSynchronize(); CUERR;
+
+            // auto shouldbekept = std::make_unique<bool[]>(batch.n_queries);
+            // cudaMemcpy(shouldbekept.get(), d_shouldBeKept, sizeof(bool) * batch.n_queries, D2H); CUERR;
+
+            // cudaDeviceSynchronize(); CUERR;
+
+            std::vector<int> updatedindices(batch.n_queries);
+            std::vector<int> updatedindicespersubject(batch.n_subjects);
+            std::vector<int> updatednumindices(1);
+            
+            cudaMemcpy(updatedindices.data(), d_newIndices, sizeof(int) * batch.n_queries, D2H); CUERR;            
+            cudaMemcpy(updatedindicespersubject.data(), dataArrays.d_indices_per_subject.get(), sizeof(int) * batch.n_subjects, D2H); CUERR;            
+            cudaMemcpy(updatednumindices.data(), dataArrays.d_num_indices_tmp.get(), sizeof(int), D2H); CUERR;
+
+            cudaDeviceSynchronize(); CUERR;
+
+            
+
+            std::cerr << "old indices per subject: ";
+            for(int i = 0; i < 10; i++){
+                std::cerr << dataArrays.h_indices_per_subject[i] << " ";
+            }
+            std::cerr << "\n";
+
+            std::cerr << "old num indices: ";
+            std::cerr << *dataArrays.h_num_indices;
+            std::cerr << "\n";
+
+            std::cerr << "upd indices per subject: ";
+            for(int i = 0; i < 10; i++){
+                std::cerr << updatedindicespersubject[i] << " ";
+            }
+            std::cerr << "\n";
+
+            std::cerr << "upd num indices: ";
+            std::cerr << updatednumindices[0];
+            std::cerr << "\n";
+
+            std::exit(0);
+
             {
                 /*
                     compare old indices_per_subject , which are stored in indices_per_subject_tmp
