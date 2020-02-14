@@ -102,16 +102,17 @@ enum class KernelId {
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
     MSAUpdateProperties,
-	MSAAddSequences,
 	MSAFindConsensus,
 	MSACorrectSubject,
 	MSACorrectCandidates,
-    MSAAddSequencesImplicitGlobal,
-    MSAAddSequencesImplicitShared,
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
     MSAFindCandidatesOfDifferentRegion,
-    ConstructAnchorResults
+    ConstructAnchorResults,
+    MSAAddSequencesGlobalSingleBlock,
+    MSAAddSequencesGlobalMultiBlock,
+    MSAAddSequencesSharedSingleBlock,
+    MSAAddSequencesSharedMultiBlock,
 };
 
 struct KernelLaunchConfig {
@@ -215,55 +216,6 @@ void call_msa_update_properties_kernel_async(
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
-
-
-void call_msa_add_sequences_kernel_implicit_shared_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            ReadQualitiesPointers d_qualityPointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            int n_subjects,
-            int n_queries,
-            const int* d_num_indices,
-            float expectedAffectedIndicesFraction,
-            bool canUseQualityScores,
-            float desiredAlignmentMaxErrorRate,
-            int maximum_sequence_length,
-            int encodedSequencePitchInInts,
-            size_t quality_pitch,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch,
-            const bool* d_canExecute,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            bool debug);
-
-
-void call_msa_add_sequences_kernel_implicit_global_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            ReadQualitiesPointers d_qualityPointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            int n_subjects,
-            int n_queries,
-            const int* d_num_indices,
-            float expectedAffectedIndicesFraction,
-            bool canUseQualityScores,
-            float desiredAlignmentMaxErrorRate,
-            int encodedSequencePitchInInts,
-            size_t quality_pitch,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch,
-            const bool* d_canExecute,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            bool debug = false);
 
 
 void call_msa_add_sequences_kernel_implicit_async(
