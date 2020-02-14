@@ -280,7 +280,7 @@ namespace gpu{
                 const bool* __restrict__ canExecute,
                 bool debug){
 
-        constexpr bool candidatesAreTransposed = false;
+        constexpr bool candidatesAreTransposed = true;
 
         auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
             return ((data >> (30 - 2*pos)) & 0x00000003);
@@ -329,8 +329,11 @@ namespace gpu{
 
                     const BestAlignment_t* const myAlignmentFlags = d_alignmentresultpointers.bestAlignmentFlags + globalCandidateOffset;
                     const int* const myCandidateLengths = d_sequencePointers.candidateSequencesLength + globalCandidateOffset;
-                    const unsigned int* const myCandidateSequencesData = d_sequencePointers.candidateSequencesData 
-                                                                        + size_t(globalCandidateOffset) * encodedSequencePitchInInts;
+                    // const unsigned int* const myCandidateSequencesData = d_sequencePointers.candidateSequencesData d_sequencePointers.transposedCandidateSequencesData
+                    //                                                     + size_t(globalCandidateOffset) * encodedSequencePitchInInts;
+
+                    const unsigned int* const myCandidateSequencesData = d_sequencePointers.transposedCandidateSequencesData
+                                                                        + size_t(globalCandidateOffset);
                     const char* const myCandidateQualities = d_qualityPointers.candidateQualities 
                                                                         + size_t(globalCandidateOffset) * qualityPitchInBytes; 
                                                                         
@@ -375,97 +378,6 @@ namespace gpu{
                             canUseQualityScores,
                             (candidatesAreTransposed ? n_queries : 1)
                         );
-
-                        // constexpr int nucleotidesPerInt2Bit = 16;
-                        // const int fullInts = queryLength / nucleotidesPerInt2Bit;
-
-                        // for(int intIndex = 0; intIndex < fullInts; intIndex++){
-                        //     const unsigned int currentDataInt = ((unsigned int*)query)[intIndex * (candidatesAreTransposed ? n_queries : 1)];
-
-                        //     for(int k = 0; k < 4; k++){
-                        //         alignas(4) char currentFourQualities[4];
-
-                        //         assert(size_t(&currentFourQualities[0]) % 4 == 0);
-
-                        //         if(canUseQualityScores){
-                        //             *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
-                        //         }
-
-                        //         for(int l = 0; l < 4; l++){
-                        //             const int posInInt = k * 4 + l;
-
-                        //             unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                        //             if(!isForward){
-                        //                 //reverse complement
-                        //                 encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                        //             }
-                        //             const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
-
-                        //             assert(weight != 0);
-                        //             const int rowOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
-                        //             const int columnIndex = defaultcolumnoffset 
-                        //                     + (isForward ? (intIndex * 16 + posInInt) : queryLength - 1 - (intIndex * 16 + posInInt));
-                                    
-                        //             atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                        //             atomicAdd(myweights + rowOffset + columnIndex, weight);
-                        //             atomicAdd(my_coverage + columnIndex, 1);
-                        //         }
-                        //     }
-                        // }
-
-                        // //add remaining positions
-                        // if(queryLength % nucleotidesPerInt2Bit != 0){
-                        //     const unsigned int currentDataInt = ((unsigned int*)query)[fullInts * (candidatesAreTransposed ? n_queries : 1)];
-                        //     const int maxPos = queryLength - fullInts * 16;
-                        //     for(int posInInt = 0; posInInt < maxPos; posInInt++){
-                        //         unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                        //         if(!isForward){
-                        //             //reverse complement
-                        //             encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                        //         }
-                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
-
-                        //         assert(weight != 0);
-                        //         const int rowOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
-                        //         const int columnIndex = defaultcolumnoffset 
-                        //             + (isForward ? (fullInts * 16 + posInInt) : queryLength - 1 - (fullInts * 16 + posInInt));
-                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
-                        //         atomicAdd(my_coverage + columnIndex, 1);
-                        //     } 
-                        // }
-
-                        // if(flag == BestAlignment_t::Forward) {
-                        //     for(int i = threadIdx.x; i < queryLength; i += blockDim.x){
-                        //         const int columnIndex = defaultcolumnoffset + i;
-                        //         const char base = get((const char*)query, queryLength, i);
-                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
-                        //         const int rowOffset = int(base) * msa_weights_row_pitch_floats;
-
-                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
-                        //         atomicAdd(my_coverage + columnIndex, 1);
-                        //     }
-                        // }else{
-                        //     auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-                        //         constexpr std::uint8_t mask = 0x03;
-                        //         return (~in & mask);
-                        //     };
-    
-                        //     for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
-                        //         const int reversePosIndex = queryLength - 1 - i;
-                        //         const int columnIndex = defaultcolumnoffset + i;
-                        //         const char base = get((const char*)query, queryLength, reversePosIndex);
-                        //         const char revCompl = make_reverse_complement_byte(base);
-
-                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reversePosIndex]) * overlapweight : overlapweight;
-                        //         const int rowOffset = int(revCompl) * msa_weights_row_pitch_floats;
-
-                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
-                        //         atomicAdd(my_coverage + columnIndex, 1);
-                        //     }
-                        // }
                     }
                 }                
             }
