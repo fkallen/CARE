@@ -173,6 +173,92 @@ namespace gpu{
     }
 
 
+
+#if 1
+
+    template<bool isTransposedSequence>
+    __device__ 
+    void addASequence2BitToMSA(
+            int* __restrict__ counts,
+            float* __restrict__ weights,
+            int* __restrict__ coverages,
+            int rowPitchInElements,
+            const unsigned int* sequence, 
+            int sequenceLength, 
+            bool isForward,
+            int columnStart,
+            float overlapweight,
+            const char* quality,
+            bool canUseQualityScores,
+            int sequenceelementoffset){
+
+        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+            return ((data >> (30 - 2*pos)) & 0x00000003);
+        };
+
+        constexpr int nucleotidesPerInt2Bit = 16;
+        const int fullInts = sequenceLength / nucleotidesPerInt2Bit;
+
+        for(int intIndex = 0; intIndex < fullInts; intIndex++){
+            const unsigned int currentDataInt = sequence[intIndex * sequenceelementoffset];
+
+            for(int k = 0; k < 4; k++){
+                alignas(4) char currentFourQualities[4];
+
+                assert(size_t(&currentFourQualities[0]) % 4 == 0);
+
+                if(canUseQualityScores){
+                    *((int*)&currentFourQualities[0]) = ((const int*)quality)[intIndex * 4 + k];
+                }
+
+                for(int l = 0; l < 4; l++){
+                    const int posInInt = k * 4 + l;
+
+                    unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                    if(!isForward){
+                        //reverse complement
+                        encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                    }
+                    const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
+
+                    assert(weight != 0);
+                    const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                    const int columnIndex = columnStart 
+                            + (isForward ? (intIndex * 16 + posInInt) : sequenceLength - 1 - (intIndex * 16 + posInInt));
+                    
+                    atomicAdd(counts + rowOffset + columnIndex, 1);
+                    atomicAdd(weights + rowOffset + columnIndex, weight);
+                    atomicAdd(coverages + columnIndex, 1);
+                }
+            }
+        }
+
+        //add remaining positions
+        if(sequenceLength % nucleotidesPerInt2Bit != 0){
+            const unsigned int currentDataInt = sequence[fullInts * sequenceelementoffset];
+            const int maxPos = sequenceLength - fullInts * 16;
+            for(int posInInt = 0; posInInt < maxPos; posInInt++){
+                unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                if(!isForward){
+                    //reverse complement
+                    encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                }
+                const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
+
+                assert(weight != 0);
+                const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                const int columnIndex = columnStart 
+                    + (isForward ? (fullInts * 16 + posInInt) : sequenceLength - 1 - (fullInts * 16 + posInInt));
+                atomicAdd(counts + rowOffset + columnIndex, 1);
+                atomicAdd(weights + rowOffset + columnIndex, weight);
+                atomicAdd(coverages + columnIndex, 1);
+            } 
+        }
+    }
+
+#endif
+
+
     __global__
     void msa_add_sequences_kernel_implicit_global(
                 MSAPointers d_msapointers,
@@ -194,14 +280,16 @@ namespace gpu{
                 const bool* __restrict__ canExecute,
                 bool debug){
 
+        constexpr bool candidatesAreTransposed = false;
+
+        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+            return ((data >> (30 - 2*pos)) & 0x00000003);
+        };
+
         if(*canExecute){
 
             auto get = [] (const char* data, int length, int index){
                 return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
-            };
-
-            auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-                return reverseComplementStringInplace((char*)sequence, sequencelength);
             };
 
             const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
@@ -248,13 +336,16 @@ namespace gpu{
                                                                         
                     const int* const myIndices = d_indices + globalCandidateOffset;
 
-                    for(int indexInList = 0; indexInList < numGoodCandidates; indexInList++){
+                    for(int indexInList = threadIdx.x; indexInList < numGoodCandidates; indexInList += blockDim.x){
+
                         const int localCandidateIndex = myIndices[indexInList];
                         const int shift = myShifts[localCandidateIndex];
                         const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
 
                         const int queryLength = myCandidateLengths[localCandidateIndex];
-                        const unsigned int* const query = myCandidateSequencesData + size_t(localCandidateIndex) * encodedSequencePitchInInts;
+                        const unsigned int* const query = myCandidateSequencesData 
+                                + (candidatesAreTransposed ? localCandidateIndex : localCandidateIndex * encodedSequencePitchInInts);
+                        //const unsigned int* const query = myCandidateSequencesData + size_t(localCandidateIndex) * encodedSequencePitchInInts;
                         const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
 
                         const int query_alignment_overlap = myOverlaps[localCandidateIndex];
@@ -268,37 +359,113 @@ namespace gpu{
 
                         const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-                        if(flag == BestAlignment_t::Forward) {
-                            for(int i = threadIdx.x; i < queryLength; i += blockDim.x){
-                                const int columnIndex = defaultcolumnoffset + i;
-                                const char base = get((const char*)query, queryLength, i);
-                                const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
-                                const int rowOffset = int(base) * msa_weights_row_pitch_floats;
+                        const bool isForward = flag == BestAlignment_t::Forward;
 
-                                atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                                atomicAdd(myweights + rowOffset + columnIndex, weight);
-                                atomicAdd(my_coverage + columnIndex, 1);
-                            }
-                        }else{
-                            auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-                                constexpr std::uint8_t mask = 0x03;
-                                return (~in & mask);
-                            };
+                        addASequence2BitToMSA<candidatesAreTransposed>(
+                            mycounts,
+                            myweights,
+                            my_coverage,
+                            msa_weights_row_pitch_floats,
+                            query, 
+                            queryLength, 
+                            isForward,
+                            defaultcolumnoffset,
+                            overlapweight,
+                            queryQualityScore,
+                            canUseQualityScores,
+                            (candidatesAreTransposed ? n_queries : 1)
+                        );
+
+                        // constexpr int nucleotidesPerInt2Bit = 16;
+                        // const int fullInts = queryLength / nucleotidesPerInt2Bit;
+
+                        // for(int intIndex = 0; intIndex < fullInts; intIndex++){
+                        //     const unsigned int currentDataInt = ((unsigned int*)query)[intIndex * (candidatesAreTransposed ? n_queries : 1)];
+
+                        //     for(int k = 0; k < 4; k++){
+                        //         alignas(4) char currentFourQualities[4];
+
+                        //         assert(size_t(&currentFourQualities[0]) % 4 == 0);
+
+                        //         if(canUseQualityScores){
+                        //             *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
+                        //         }
+
+                        //         for(int l = 0; l < 4; l++){
+                        //             const int posInInt = k * 4 + l;
+
+                        //             unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                        //             if(!isForward){
+                        //                 //reverse complement
+                        //                 encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                        //             }
+                        //             const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
+
+                        //             assert(weight != 0);
+                        //             const int rowOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
+                        //             const int columnIndex = defaultcolumnoffset 
+                        //                     + (isForward ? (intIndex * 16 + posInInt) : queryLength - 1 - (intIndex * 16 + posInInt));
+                                    
+                        //             atomicAdd(mycounts + rowOffset + columnIndex, 1);
+                        //             atomicAdd(myweights + rowOffset + columnIndex, weight);
+                        //             atomicAdd(my_coverage + columnIndex, 1);
+                        //         }
+                        //     }
+                        // }
+
+                        // //add remaining positions
+                        // if(queryLength % nucleotidesPerInt2Bit != 0){
+                        //     const unsigned int currentDataInt = ((unsigned int*)query)[fullInts * (candidatesAreTransposed ? n_queries : 1)];
+                        //     const int maxPos = queryLength - fullInts * 16;
+                        //     for(int posInInt = 0; posInInt < maxPos; posInInt++){
+                        //         unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                        //         if(!isForward){
+                        //             //reverse complement
+                        //             encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                        //         }
+                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
+
+                        //         assert(weight != 0);
+                        //         const int rowOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
+                        //         const int columnIndex = defaultcolumnoffset 
+                        //             + (isForward ? (fullInts * 16 + posInInt) : queryLength - 1 - (fullInts * 16 + posInInt));
+                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
+                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
+                        //         atomicAdd(my_coverage + columnIndex, 1);
+                        //     } 
+                        // }
+
+                        // if(flag == BestAlignment_t::Forward) {
+                        //     for(int i = threadIdx.x; i < queryLength; i += blockDim.x){
+                        //         const int columnIndex = defaultcolumnoffset + i;
+                        //         const char base = get((const char*)query, queryLength, i);
+                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
+                        //         const int rowOffset = int(base) * msa_weights_row_pitch_floats;
+
+                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
+                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
+                        //         atomicAdd(my_coverage + columnIndex, 1);
+                        //     }
+                        // }else{
+                        //     auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                        //         constexpr std::uint8_t mask = 0x03;
+                        //         return (~in & mask);
+                        //     };
     
-                            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
-                                const int reversePosIndex = queryLength - 1 - i;
-                                const int columnIndex = defaultcolumnoffset + i;
-                                const char base = get((const char*)query, queryLength, reversePosIndex);
-                                const char revCompl = make_reverse_complement_byte(base);
+                        //     for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                        //         const int reversePosIndex = queryLength - 1 - i;
+                        //         const int columnIndex = defaultcolumnoffset + i;
+                        //         const char base = get((const char*)query, queryLength, reversePosIndex);
+                        //         const char revCompl = make_reverse_complement_byte(base);
 
-                                const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reversePosIndex]) * overlapweight : overlapweight;
-                                const int rowOffset = int(revCompl) * msa_weights_row_pitch_floats;
+                        //         const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reversePosIndex]) * overlapweight : overlapweight;
+                        //         const int rowOffset = int(revCompl) * msa_weights_row_pitch_floats;
 
-                                atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                                atomicAdd(myweights + rowOffset + columnIndex, weight);
-                                atomicAdd(my_coverage + columnIndex, 1);
-                            }
-                        }
+                        //         atomicAdd(mycounts + rowOffset + columnIndex, 1);
+                        //         atomicAdd(myweights + rowOffset + columnIndex, weight);
+                        //         atomicAdd(my_coverage + columnIndex, 1);
+                        //     }
+                        // }
                     }
                 }                
             }
@@ -439,62 +606,20 @@ namespace gpu{
 
                         const bool isForward = (flag == BestAlignment_t::Forward);
 
-                        constexpr int nucleotidesPerInt2Bit = 16;
-
-                        const int fullInts = queryLength / nucleotidesPerInt2Bit;
-                        for(int intIndex = 0; intIndex < fullInts; intIndex++){
-                            const unsigned int currentDataInt = ((unsigned int*)query)[intIndex * (candidatesAreTransposed ? n_queries : 1)];
-
-                            for(int k = 0; k < 4; k++){
-                                alignas(4) char currentFourQualities[4];
-
-                                assert(size_t(&currentFourQualities[0]) % 4 == 0);
-
-                                if(canUseQualityScores){
-                                    *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
-                                }
-
-                                for(int l = 0; l < 4; l++){
-                                    const int posInInt = k * 4 + l;
-
-                                    unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                                    if(!isForward){
-                                        //reverse complement
-                                        encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                                    }
-                                    const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
-
-                                    assert(weight != 0);
-                                    const int ptrOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
-                                    const int globalIndex = defaultcolumnoffset + (isForward ? (intIndex * 16 + posInInt) : queryLength - 1 - (intIndex * 16 + posInInt));
-                                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-                                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-                                    atomicAdd(my_coverage + globalIndex, 1);
-
-                                }
-                            }
-                        }
-
-                        //add remaining positions
-                        if(queryLength % nucleotidesPerInt2Bit != 0){
-                            const unsigned int currentDataInt = ((unsigned int*)query)[fullInts * (candidatesAreTransposed ? n_queries : 1)];
-                            const int maxPos = queryLength - fullInts * 16;
-                            for(int posInInt = 0; posInInt < maxPos; posInInt++){
-                                unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                                if(!isForward){
-                                    //reverse complement
-                                    encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                                }
-                                const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
-
-                                assert(weight != 0);
-                                const int ptrOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
-                                const int globalIndex = defaultcolumnoffset + (isForward ? (fullInts * 16 + posInInt) : queryLength - 1 - (fullInts * 16 + posInInt));
-                                atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-                                atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-                                atomicAdd(my_coverage + globalIndex, 1);
-                            } 
-                        }
+                        addASequence2BitToMSA<candidatesAreTransposed>(
+                            shared_counts,
+                            shared_weights,
+                            my_coverage,
+                            msa_weights_row_pitch_floats,
+                            query, 
+                            queryLength, 
+                            isForward,
+                            defaultcolumnoffset,
+                            overlapweight,
+                            queryQualityScore,
+                            canUseQualityScores,
+                            (candidatesAreTransposed ? n_queries : 1)
+                        );
                     }
 
                     __syncthreads();
@@ -1467,7 +1592,7 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+        dim3 grid(std::min(n_subjects, max_blocks_per_device), 1, 1);
         //dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
 
     	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
@@ -1733,7 +1858,7 @@ namespace gpu{
 
         //std::cout << n_subjects << " " << *h_num_indices << " " << n_queries << std::endl;
 
-    #if 0
+    #if 1
         call_msa_add_sequences_kernel_implicit_global_async(d_msapointers,
                                                             d_alignmentresultpointers,
                                                             d_sequencePointers,
