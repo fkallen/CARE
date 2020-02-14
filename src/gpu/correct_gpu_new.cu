@@ -2464,9 +2464,15 @@ namespace test{
 #if 0
             unpackcandidates(0, numCorrectedCandidates);
 #else            
-            batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedCandidates, [=](auto begin, auto end, auto /*threadId*/){
-                unpackcandidates(begin, end);
-            });
+            batch.threadPool->parallelFor(
+                batch.pforHandle, 
+                0, 
+                numCorrectedCandidates, 
+                [=](auto begin, auto end, auto /*threadId*/){
+                    unpackcandidates(begin, end);
+                },
+                batch.threadPool->getConcurrency() * 4
+            );
 #endif            
         }
 
