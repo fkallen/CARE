@@ -1,3 +1,5 @@
+#include <gpu/minhashkernels.hpp>
+
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 
@@ -19,57 +21,7 @@ namespace care{
 
 
 
-    template<class T>
-struct MergeRangesGpuHandle{
-    T* d_data = nullptr;
-    T* h_data = nullptr;
-    size_t datacapacity = 0;
-    
-    int* h_rangesPerSequence = nullptr;
-    int* d_rangesPerSequence = nullptr;
-    size_t rangesPerSequenceBeginscapacity = 0;
 
-    T* d_results = nullptr;
-    T* h_results = nullptr;
-    size_t resultscapacity = 0;
-
-    int* h_numresults = nullptr;
-    size_t numresultscapacity = 0;
-
-    int* h_num_runs = nullptr;
-    int* d_num_runs = nullptr;
-    size_t num_runscapacity = 0;
-
-    int* h_uniqueRangeLengths = nullptr;
-    int* d_uniqueRangeLengths = nullptr;
-    size_t uniqueRangeLengthscapacity = 0;
-
-    int* d_uniqueRangeLengthsPrefixsum = nullptr;
-    size_t uniqueRangeLengthsPrefixsumcapacity = 0;
-
-    void* cubTempStorage = nullptr;
-    size_t tempStorageCapacity = 0;
-
-    int initialDataSize = 0;
-
-    std::array<cudaStream_t, 1> streams{};
-    std::array<cudaEvent_t, 2> events{};
-    
-};
-
-template<class T>
-MergeRangesGpuHandle<T> makeMergeRangesGpuHandle(){
-    MergeRangesGpuHandle<T> handle;
-    for(auto& pipelinestream : handle.streams){
-        cudaStreamCreate(&pipelinestream); CUERR;
-    }
-
-    for(auto& event : handle.events){
-        cudaEventCreateWithFlags(&event, cudaEventDisableTiming); CUERR;
-    }  
-
-    return handle;
-}
 
 
 template<int blocksize>
@@ -617,21 +569,6 @@ void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
 
 
 
-
-
-
-enum class KernelType{
-    devicewide,
-    allcub,
-    popcmultiwarp,
-    popcsinglewarp,
-    popcsinglewarpchunked,
-};
-
-struct OperationResult{
-    std::vector<read_number> candidateIds;
-    std::vector<int> candidateIdsPerSequence;
-};
 
 void makeCompactUniqueRangesGmem(
         MergeRangesGpuHandle<read_number>& handle, 
