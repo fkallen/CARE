@@ -559,8 +559,8 @@ void makeCompactUniqueRangesGmem(
             handle.d_results,
             totalNumElements, 
             numSequences, 
-            handle.d_rangesPerSequence, 
-            handle.d_rangesPerSequence + 1,
+            handle.d_rangesBeginPerSequence, 
+            handle.d_rangesBeginPerSequence + 1,
             0,
             sizeof(read_number) * 8,
             stream
@@ -587,8 +587,8 @@ void makeCompactUniqueRangesGmem(
             head_flags, 
             handle.d_uniqueRangeLengths,
             numSequences, 
-            handle.d_rangesPerSequence, 
-            handle.d_rangesPerSequence + 1,
+            handle.d_rangesBeginPerSequence, 
+            handle.d_rangesBeginPerSequence + 1,
             stream
         );
 
@@ -630,8 +630,8 @@ void makeCompactUniqueRangesGmem(
     }
 
     cudaMemcpyAsync(
-        handle.d_rangesPerSequence, 
-        handle.h_rangesPerSequence,
+        handle.d_rangesBeginPerSequence, 
+        handle.h_rangesBeginPerSequence,
         sizeof(int) * (numSequences+1),
         H2D,
         stream
@@ -667,8 +667,8 @@ void makeCompactUniqueRangesGmem(
         handle.d_results,
         totalNumElements, 
         numSequences, 
-        handle.d_rangesPerSequence, 
-        handle.d_rangesPerSequence + 1,
+        handle.d_rangesBeginPerSequence, 
+        handle.d_rangesBeginPerSequence + 1,
         0,
         sizeof(read_number) * 8,
         stream
@@ -699,8 +699,8 @@ void makeCompactUniqueRangesGmem(
         head_flags, 
         handle.d_uniqueRangeLengths,
         numSequences, 
-        handle.d_rangesPerSequence, 
-        handle.d_rangesPerSequence + 1,
+        handle.d_rangesBeginPerSequence, 
+        handle.d_rangesBeginPerSequence + 1,
         stream
     );
 
@@ -771,8 +771,8 @@ void makeCompactUniqueRangesSmem(
     }
 
     cudaMemcpyAsync(
-        handle.d_rangesPerSequence, 
-        handle.h_rangesPerSequence,
+        handle.d_rangesBeginPerSequence, 
+        handle.h_rangesBeginPerSequence,
         sizeof(int) * (numSequences+1),
         H2D,
         stream
@@ -846,7 +846,7 @@ void makeCompactUniqueRangesSmem(
                         handle.d_data + elementOffset,  \
                         handle.d_uniqueRangeLengths + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
@@ -855,7 +855,7 @@ void makeCompactUniqueRangesSmem(
                         handle.d_data + elementOffset,  \
                         handle.d_uniqueRangeLengths + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
@@ -864,7 +864,7 @@ void makeCompactUniqueRangesSmem(
                         handle.d_data + elementOffset,  \
                         handle.d_uniqueRangeLengths + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
@@ -873,7 +873,7 @@ void makeCompactUniqueRangesSmem(
                         handle.d_data + elementOffset,  \
                         handle.d_uniqueRangeLengths + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
@@ -966,7 +966,7 @@ void makeCompactUniqueRangesSmem(
         handle.d_results,
         handle.d_data,
         handle.d_uniqueRangeLengthsPrefixsum,
-        handle.d_rangesPerSequence,
+        handle.d_rangesBeginPerSequence,
         numSequences
     ); CUERR;
 
@@ -995,16 +995,16 @@ OperationResult mergeRangesGpu(
     OperationResult result;
 
     if(handle.rangesPerSequenceBeginscapacity < sizeof(int) * (numSequences+1)){
-        cudaFree(handle.d_rangesPerSequence); CUERR;
-        cudaFreeHost(handle.h_rangesPerSequence); CUERR;
+        cudaFree(handle.d_rangesBeginPerSequence); CUERR;
+        cudaFreeHost(handle.h_rangesBeginPerSequence); CUERR;
 
-        cudaMalloc(&handle.d_rangesPerSequence, sizeof(int) * (numSequences+1)); CUERR;
-        cudaMallocHost(&handle.h_rangesPerSequence, sizeof(int) * (numSequences + 1)); CUERR;
+        cudaMalloc(&handle.d_rangesBeginPerSequence, sizeof(int) * (numSequences+1)); CUERR;
+        cudaMallocHost(&handle.h_rangesBeginPerSequence, sizeof(int) * (numSequences + 1)); CUERR;
 
         handle.rangesPerSequenceBeginscapacity = sizeof(int) * (numSequences+1);
     }
 
-    handle.h_rangesPerSequence[0] = 0;
+    handle.h_rangesBeginPerSequence[0] = 0;
 
     int longestRange = 0;
 
@@ -1017,7 +1017,7 @@ OperationResult mergeRangesGpu(
             rangeOfSequence += std::distance(ranges[rangeIndex].first, ranges[rangeIndex].second);
         }
         longestRange = std::max(longestRange, rangeOfSequence);
-        handle.h_rangesPerSequence[i+1] = maxNumResults;
+        handle.h_rangesBeginPerSequence[i+1] = maxNumResults;
     }
 
     //std::cerr << "longestRange = " << longestRange << "\n";

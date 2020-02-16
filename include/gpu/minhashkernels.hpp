@@ -16,8 +16,8 @@ struct MergeRangesGpuHandle{
     T* h_data = nullptr;
     size_t datacapacity = 0;
     
-    int* h_rangesPerSequence = nullptr;
-    int* d_rangesPerSequence = nullptr;
+    int* h_rangesBeginPerSequence = nullptr;
+    int* d_rangesBeginPerSequence = nullptr;
     size_t rangesPerSequenceBeginscapacity = 0;
 
     T* d_results = nullptr;
@@ -67,8 +67,8 @@ void destroyMergeRangesGpuHandle(MergeRangesGpuHandle<T>& handle){
 
     cudaFree(handle.d_data); CUERR;
     cudaFreeHost(handle.h_data); CUERR;
-    cudaFree(handle.d_rangesPerSequence); CUERR;
-    cudaFreeHost(handle.h_rangesPerSequence); CUERR;
+    cudaFree(handle.d_rangesBeginPerSequence); CUERR;
+    cudaFreeHost(handle.h_rangesBeginPerSequence); CUERR;
     cudaFree(handle.d_results); CUERR;
     cudaFreeHost(handle.h_results); CUERR;
     cudaFreeHost(handle.h_numresults); CUERR;
