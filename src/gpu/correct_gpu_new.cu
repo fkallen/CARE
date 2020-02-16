@@ -665,6 +665,20 @@ namespace test{
 
             nvtx::push_range("remove self", 3);
 
+            {
+                //assert that gpu results are identical to cpu results
+                const int total = minhashHandle.numResultsPerSequencePrefixSum.back();
+
+                for(int i = 0; i < total; i++){
+                    const auto a = minhashHandle.multiallUniqueResults[i];
+                    const auto b = gpumergeresults.candidateIds[i];
+                    if(a != b){
+                        std::cerr << "error pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+                    }
+                    assert(a == b);
+                }
+            }
+
             int initialNumberOfCandidates = 0;  
 
             auto multiresultbegin = minhashHandle.multiresults().begin();
