@@ -63,7 +63,7 @@ MergeRangesGpuHandle<T> makeMergeRangesGpuHandle(){
 
 
 template<class T>
-void destoryMergeRangesGpuHandle(MergeRangesGpuHandle<T>& handle){
+void destroyMergeRangesGpuHandle(MergeRangesGpuHandle<T>& handle){
 
     cudaFree(handle.d_data); CUERR;
     cudaFreeHost(handle.h_data); CUERR;
@@ -85,7 +85,7 @@ void destoryMergeRangesGpuHandle(MergeRangesGpuHandle<T>& handle){
     }
 
     for(auto& event : handle.events){
-        cudaEventDestroy(event, cudaEventDisableTiming); CUERR;
+        cudaEventDestroy(event); CUERR;
     }  
 }
 
@@ -97,7 +97,7 @@ struct OperationResult{
     std::vector<int> candidateIdsPerSequence;
 };
 
-enum class KernelType{
+enum class MergeRangesKernelType{
     devicewide,
     allcub,
     popcmultiwarp,
@@ -112,7 +112,7 @@ OperationResult mergeRangesGpu(
         int numRanges, 
         int rangesPerSequence, 
         cudaStream_t stream,
-        KernelType kernelType);
+        MergeRangesKernelType kernelType);
 
 
 

@@ -775,7 +775,7 @@ void makeCompactUniqueRangesSmem(
         int rangesPerSequence, 
         int totalNumElements, 
         bool onlyAlloc,
-        KernelType kernelType,
+        MergeRangesKernelType kernelType,
         cudaStream_t stream){
 
     const int numSequences = numRanges / rangesPerSequence;
@@ -865,7 +865,7 @@ void makeCompactUniqueRangesSmem(
             constexpr int numtempregs = 16;
 
             switch(kernelType){
-            case KernelType::allcub:
+            case MergeRangesKernelType::allcub:
                 makeUniqueRangesKernel<blocksize, numtempregs><<<mynumSequences, blocksize, 0, handle.streams[i]>>>(
                     handle.d_data + elementOffset, 
                     handle.d_uniqueRangeLengths + sequenceOffset, 
@@ -874,7 +874,7 @@ void makeCompactUniqueRangesSmem(
                     elementOffset
                 ); CUERR;
                 break;
-            case KernelType::popcmultiwarp:
+            case MergeRangesKernelType::popcmultiwarp:
                 makeUniqueRangesKernelWithIntrinsicsMultiWarp<blocksize, numtempregs><<<mynumSequences, blocksize, 0, handle.streams[i]>>>(
                     handle.d_data + elementOffset, 
                     handle.d_uniqueRangeLengths + sequenceOffset, 
@@ -883,7 +883,7 @@ void makeCompactUniqueRangesSmem(
                     elementOffset
                 ); CUERR;
                 break;
-            case KernelType::popcsinglewarp:
+            case MergeRangesKernelType::popcsinglewarp:
                 makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>(
                     handle.d_data + elementOffset, 
                     handle.d_uniqueRangeLengths + sequenceOffset, 
@@ -892,7 +892,7 @@ void makeCompactUniqueRangesSmem(
                     elementOffset
                 ); CUERR;
                 break;
-            case KernelType::popcsinglewarpchunked:
+            case MergeRangesKernelType::popcsinglewarpchunked:
                 makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>(
                     handle.d_data + elementOffset, 
                     handle.d_uniqueRangeLengths + sequenceOffset, 
@@ -946,7 +946,7 @@ OperationResult mergeRangesGpu(
         int numRanges, 
         int rangesPerSequence, 
         cudaStream_t stream,
-        KernelType kernelType){
+        MergeRangesKernelType kernelType){
     
     const int numSequences = numRanges / rangesPerSequence;
     if(numSequences == 0){
@@ -1031,9 +1031,9 @@ OperationResult mergeRangesGpu(
     }
 
 
-    TIMERSTARTCPU(makeCompactUniqueRanges);
+    //TIMERSTARTCPU(makeCompactUniqueRanges);
 
-    if(kernelType == KernelType::devicewide){
+    if(kernelType == MergeRangesKernelType::devicewide){
         makeCompactUniqueRangesGmem(
             handle, 
             ranges,
@@ -1060,7 +1060,7 @@ OperationResult mergeRangesGpu(
 
     cudaStreamSynchronize(stream); CUERR;
 
-    TIMERSTOPCPU(makeCompactUniqueRanges);
+    //TIMERSTOPCPU(makeCompactUniqueRanges);
 
     result.candidateIds.clear();
     result.candidateIds.resize(*handle.h_numresults);

@@ -6,6 +6,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/dataarrays.hpp>
 #include <gpu/cubcachingallocator.cuh>
+#include <gpu/minhashkernels.hpp>
 
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
@@ -157,6 +158,8 @@ namespace test{
         int deviceId;
 
         ThreadPool::ParallelForHandle pforHandle;
+
+        MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
 
         SyncFlag syncFlag;
     };
@@ -485,6 +488,8 @@ namespace test{
         cudaSetDevice(deviceId); CUERR;
         cudaStreamCreate(&nextData.stream); CUERR;
         cudaEventCreate(&nextData.event); CUERR;
+
+        nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
     }
 
     void destroyNextIterationData(NextIterationData& nextData){
@@ -505,6 +510,8 @@ namespace test{
         nextData.d_candidate_read_ids = std::move(SimpleAllocationDevice<read_number>{});
         nextData.d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
         nextData.d_candidates_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
+
+        destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
 
     void getSubjectDataOfNextIteration(Batch& batchData, int batchsize, const DistributedReadStorage& readStorage){
@@ -645,6 +652,17 @@ namespace test{
             );
             nvtx::pop_range();
 
+            nvtx::push_range("gpumakeUniqueQueryResults", 2);
+            OperationResult gpumergeresults = mergeRangesGpu(
+                nextDataPtr->mergeRangesGpuHandle, 
+                minhashHandle.multiranges.data(), 
+                minhashHandle.multiranges.size(), 
+                minhasherPtr->minparams.maps, 
+                nextData.stream,
+                MergeRangesKernelType::devicewide
+            );
+            nvtx::pop_range();
+
             nvtx::push_range("remove self", 3);
 
             int initialNumberOfCandidates = 0;  
@@ -676,6 +694,7 @@ namespace test{
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
 
+#if 0        
         batchData.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
@@ -684,7 +703,11 @@ namespace test{
                 calculateMinhash(begin, end, threadId);
             }
         );
+#else 
 
+        calculateMinhash(0, nextData.n_subjects, 0);
+
+#endif
 
 
         nextData.decodedSubjectStrings.clear();
