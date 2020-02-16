@@ -231,7 +231,7 @@ private:
             loop(i)
     */
     template<bool waitForCompletion, class Index_t, class Func>
-    void parallelFor_impl(ParallelForHandle& handle, 
+    int parallelFor_impl(ParallelForHandle& handle, 
                         Index_t firstIndex, 
                         Index_t lastIndex, 
                         Func&& loop, 

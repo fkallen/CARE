@@ -652,6 +652,294 @@ namespace test{
             );
             nvtx::pop_range();
 
+            // nvtx::push_range("gpumakeUniqueQueryResults", 2);
+            // OperationResult gpumergeresults = mergeRangesGpu(
+            //     nextDataPtr->mergeRangesGpuHandle, 
+            //     minhashHandle.multiranges.data(), 
+            //     minhashHandle.multiranges.size(), 
+            //     minhasherPtr->minparams.maps, 
+            //     nextData.stream,
+            //     MergeRangesKernelType::allcub
+            // );
+            // nvtx::pop_range();            
+
+            // {
+            //     //assert that gpu results are identical to cpu results
+            //     const int total = minhashHandle.numResultsPerSequencePrefixSum.back();
+
+            //     for(int i = 0; i < total; i++){
+            //         const auto a = minhashHandle.multiallUniqueResults[i];
+            //         const auto b = gpumergeresults.candidateIds[i];
+            //         if(a != b){
+            //             std::cerr << "error pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+            //         }
+            //         assert(a == b);
+            //     }
+
+            //     for(int i = begin; i < end; i++){
+            //         const auto a = minhashHandle.numResultsPerSequence[i-begin];
+            //         const auto b = gpumergeresults.candidateIdsPerSequence[i-begin];
+
+            //         if(a != b){
+            //             std::cerr << "error2 pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+            //         }
+            //         assert(a == b);
+            //     }
+                
+            // }
+
+            nvtx::push_range("remove self", 3);
+
+            int initialNumberOfCandidates = 0;  
+
+            auto multiresultbegin = minhashHandle.multiresults().begin();
+            
+            for(int i = begin; i < end; i++){
+                const read_number readId = nextDataPtr->h_subject_read_ids[i];
+
+                auto multiresultend = multiresultbegin + minhashHandle.numResultsPerSequence[i-begin];   
+                auto readIdPos = std::lower_bound(multiresultbegin, multiresultend, readId);
+                
+                if(readIdPos != multiresultend && *readIdPos == readId) {
+                    std::copy(readIdPos+1, multiresultend, readIdPos); //remove readId from range
+
+                    minhashHandle.numResultsPerSequence[i-begin] -= 1;
+                }
+
+                multiresultbegin = multiresultend;
+
+                initialNumberOfCandidates += minhashHandle.numResultsPerSequence[i-begin];
+            }
+            nvtx::pop_range();
+
+            nextDataPtr->n_queries += initialNumberOfCandidates;
+
+            decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
+        };
+
+        cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
+
+        int numChunksRequired = batchData.threadsInThreadPool;
+
+#if 1       
+        numChunksRequired = batchData.threadPool->parallelFor(
+            nextData.pforHandle,
+            0, 
+            nextData.n_subjects, 
+            [=](auto begin, auto end, auto threadId){
+                calculateMinhash(begin, end, threadId);
+            }
+        );
+#else 
+
+        calculateMinhash(0, nextData.n_subjects, 0);
+
+#endif
+
+
+        nextData.decodedSubjectStrings.clear();
+        for(int i = 0; i < numChunksRequired; i++){
+            nextData.decodedSubjectStrings.insert(
+                nextData.decodedSubjectStrings.end(),
+                decodedSubjectStringsPerThread[i].begin(),
+                decodedSubjectStringsPerThread[i].end()
+            );
+        }
+
+        nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        nextData.d_candidate_read_ids.resize(nextData.n_queries);
+        nextData.h_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.d_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);  
+        nextData.h_candidateContainsN.resize(nextData.n_queries);
+        nextData.d_candidateContainsN.resize(nextData.n_queries);
+
+        //copy candidate ids to pinned buffer, then to gpu
+        auto destbegin = nextData.h_candidate_read_ids.get();
+        for(int i = 0; i < numChunksRequired; i++){
+            auto& minhashHandle = batchData.minhashHandles[i];
+
+            for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
+                const int numCandidateIds = minhashHandle.numResultsPerSequence[k];               
+
+                auto srcbegin = minhashHandle.multiresults().begin() + minhashHandle.numResultsPerSequencePrefixSum[k];
+                auto srcend = srcbegin + numCandidateIds;
+                auto destend = destbegin + numCandidateIds;
+
+                destbegin = std::copy(srcbegin, srcend, destbegin);
+            }            
+        }
+
+        // std::cerr << "candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidate_read_ids[i] << "\n";
+        // }
+
+        cudaMemcpyAsync(
+            nextData.d_candidate_read_ids.get(),
+            nextData.h_candidate_read_ids.get(),
+            nextData.h_candidate_read_ids.sizeInBytes(),
+            H2D,
+            nextData.stream
+        ); CUERR;
+
+        nextData.h_candidates_per_subject_prefixsum[0] = 0;
+
+        //make candidates per subject prefix sum
+        int subject_index = 0;
+        for(int i = 0; i < numChunksRequired; i++){
+            auto& minhashHandle = batchData.minhashHandles[i];
+
+            for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
+                const int numCandidateIds = minhashHandle.numResultsPerSequence[k];               
+
+                nextData.h_candidates_per_subject[subject_index] = numCandidateIds;
+                nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
+                    = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
+
+                subject_index++;
+            }            
+        }
+
+        // std::cerr << "num candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     std::cerr << nextData.h_candidates_per_subject[i] << "\n";
+        // }
+
+        cudaMemcpyAsync(
+            nextData.d_candidates_per_subject.get(),
+            nextData.h_candidates_per_subject.get(),
+            nextData.h_candidates_per_subject.sizeInBytes(),
+            H2D,
+            nextData.stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            nextData.d_candidates_per_subject_prefixsum.get(),
+            nextData.h_candidates_per_subject_prefixsum.get(),
+            nextData.h_candidates_per_subject_prefixsum.sizeInBytes(),
+            H2D,
+            nextData.stream
+        ); CUERR;
+
+        for(int i = 0; i < nextData.n_queries; i++){
+            const read_number candidateReadId = nextData.h_candidate_read_ids[i];
+            const bool containsN = readStorage.readContainsN(candidateReadId);
+            nextData.h_candidateContainsN[i] = containsN;
+        }
+
+        // std::cerr << "contains \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidateContainsN[i] << "\n";
+        // }
+
+        // std::exit(0);
+
+        cudaMemcpyAsync(
+            nextData.d_candidateContainsN,
+            nextData.h_candidateContainsN,
+            nextData.h_candidateContainsN.sizeInBytes(),
+            H2D,
+            nextData.stream
+        ); CUERR;    
+    }
+
+    void determineCandidateReadIdsOfNextIterationGpu(
+            Batch& batchData, 
+            const Minhasher& minhasher, 
+            const DistributedReadStorage& readStorage){
+
+        NextIterationData& nextData = batchData.nextIterationData;
+
+        //minhash the retrieved anchors to find candidate ids
+
+        Batch* batchptr = &batchData;
+        NextIterationData* nextDataPtr = &nextData;
+        const Minhasher* minhasherPtr = &minhasher;
+
+        nextData.n_queries = 0;
+
+        std::vector<std::vector<std::string>> decodedSubjectStringsPerThread(batchData.threadsInThreadPool);
+
+        auto makeSignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+
+            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+
+            std::vector<std::string> decodedSubjectStrings(end-begin);
+
+            nvtx::push_range("decode sequences", 1);
+            for(int i = begin; i < end; i++){
+                const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
+                const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+
+                decodedSubjectStrings[i - begin] = get2BitString(sequenceptr, sequencelength);
+            }
+            nvtx::pop_range();
+
+
+            nvtx::push_range("calculateMinhashSignatures", 5);
+            minhasherPtr->calculateMinhashSignatures(
+                minhashHandle,
+                decodedSubjectStrings
+            );
+            nvtx::pop_range();
+
+            decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
+        };
+
+        auto querySignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+
+            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            minhasherPtr->queryPrecalculatedSignatures(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+        };
+
+
+
+        auto calculateMinhash = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+
+            auto& transFuncData = *(batchptr->transFuncData);
+            const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
+
+            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+
+            std::vector<std::string> decodedSubjectStrings(end-begin);
+
+            nvtx::push_range("decode sequences", 1);
+            for(int i = begin; i < end; i++){
+                const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
+                const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+
+                decodedSubjectStrings[i - begin] = get2BitString(sequenceptr, sequencelength);
+            }
+            nvtx::pop_range();
+
+
+            nvtx::push_range("calculateMinhashSignatures", 5);
+            minhasherPtr->calculateMinhashSignatures(
+                minhashHandle,
+                decodedSubjectStrings
+            );
+            nvtx::pop_range();
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            minhasherPtr->queryPrecalculatedSignatures(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+            nvtx::push_range("makeUniqueQueryResults", 7);
+            minhasherPtr->makeUniqueQueryResults(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+
             nvtx::push_range("gpumakeUniqueQueryResults", 2);
             OperationResult gpumergeresults = mergeRangesGpu(
                 nextDataPtr->mergeRangesGpuHandle, 
@@ -659,7 +947,7 @@ namespace test{
                 minhashHandle.multiranges.size(), 
                 minhasherPtr->minparams.maps, 
                 nextData.stream,
-                MergeRangesKernelType::devicewide
+                MergeRangesKernelType::allcub
             );
             nvtx::pop_range();
 
@@ -677,6 +965,17 @@ namespace test{
                     }
                     assert(a == b);
                 }
+
+                for(int i = begin; i < end; i++){
+                    const auto a = minhashHandle.numResultsPerSequence[i-begin];
+                    const auto b = gpumergeresults.candidateIdsPerSequence[i-begin];
+
+                    if(a != b){
+                        std::cerr << "error2 pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+                    }
+                    assert(a == b);
+                }
+                
             }
 
             int initialNumberOfCandidates = 0;  
@@ -708,24 +1007,72 @@ namespace test{
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
 
-#if 0        
+        int numChunksRequired = batchData.threadPool->parallelFor(
+            nextData.pforHandle,
+            0, 
+            nextData.n_subjects, 
+            [=](auto begin, auto end, auto threadId){
+                makeSignatures(begin, end, threadId);
+            }
+        );
         batchData.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
             nextData.n_subjects, 
             [=](auto begin, auto end, auto threadId){
-                calculateMinhash(begin, end, threadId);
+                querySignatures(begin, end, threadId);
             }
         );
-#else 
 
-        calculateMinhash(0, nextData.n_subjects, 0);
+        std::vector<std::pair<const read_number*, const read_number*>> allRanges;
 
-#endif
+        for(int i = 0; i < numChunksRequired; i++){
+            allRanges.insert(
+                allRanges.end(), 
+                batchptr->minhashHandles[i].multiranges.begin(),
+                batchptr->minhashHandles[i].multiranges.end()
+            );
+        }
+
+        nvtx::push_range("gpumakeUniqueQueryResults", 2);
+        OperationResult gpumergeresults = mergeRangesGpu(
+            nextDataPtr->mergeRangesGpuHandle, 
+            allRanges.data(), 
+            allRanges.size(), 
+            minhasherPtr->minparams.maps, 
+            nextData.stream,
+            MergeRangesKernelType::allcub
+        );
+        nvtx::pop_range();
+
+        int initialNumberOfCandidates = 0;  
+
+        auto multiresultbegin = gpumergeresults.candidateIds.data();
+        auto end = gpumergeresults.candidateIds.data();
+        for(int i = 0; i < nextData.n_subjects; i++){
+            const read_number readId = nextDataPtr->h_subject_read_ids[i];
+
+            auto multiresultend = multiresultbegin + gpumergeresults.candidateIdsPerSequence[i];   
+            auto readIdPos = std::lower_bound(multiresultbegin, multiresultend, readId);
+            
+            if(readIdPos != multiresultend && *readIdPos == readId) {
+                //remove readId at readIdPos from range
+                end = std::copy(multiresultbegin, readIdPos, end); 
+                end = std::copy(readIdPos+1, multiresultend, end); 
+
+                gpumergeresults.candidateIdsPerSequence[i] -= 1;
+            }
+
+            multiresultbegin = multiresultend;
+
+            initialNumberOfCandidates += gpumergeresults.candidateIdsPerSequence[i];
+        }
+
+        nextDataPtr->n_queries += initialNumberOfCandidates;
 
 
         nextData.decodedSubjectStrings.clear();
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
+        for(int i = 0; i < numChunksRequired; i++){
             nextData.decodedSubjectStrings.insert(
                 nextData.decodedSubjectStrings.end(),
                 decodedSubjectStringsPerThread[i].begin(),
@@ -744,19 +1091,11 @@ namespace test{
 
         //copy candidate ids to pinned buffer, then to gpu
         auto destbegin = nextData.h_candidate_read_ids.get();
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
-            auto& minhashHandle = batchData.minhashHandles[i];
-
-            for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
-                const int numCandidateIds = minhashHandle.numResultsPerSequence[k];               
-
-                auto srcbegin = minhashHandle.multiresults().begin() + minhashHandle.numResultsPerSequencePrefixSum[k];
-                auto srcend = srcbegin + numCandidateIds;
-                auto destend = destbegin + numCandidateIds;
-
-                destbegin = std::copy(srcbegin, srcend, destbegin);
-            }            
-        }
+        std::copy_n(
+            gpumergeresults.candidateIds.data(),
+            gpumergeresults.candidateIds.size(),
+            destbegin
+        );
 
         cudaMemcpyAsync(
             nextData.d_candidate_read_ids.get(),
@@ -766,23 +1105,28 @@ namespace test{
             nextData.stream
         ); CUERR;
 
+        // std::cerr << "candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidate_read_ids[i] << "\n";
+        // }
+
         nextData.h_candidates_per_subject_prefixsum[0] = 0;
 
         //make candidates per subject prefix sum
-        int subject_index = 0;
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
-            auto& minhashHandle = batchData.minhashHandles[i];
+        assert(nextData.n_subjects == int(gpumergeresults.candidateIdsPerSequence.size()));
 
-            for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
-                const int numCandidateIds = minhashHandle.numResultsPerSequence[k];               
+        for(int subject_index = 0; subject_index < nextData.n_subjects; subject_index++){
+            const int numCandidateIds = gpumergeresults.candidateIdsPerSequence[subject_index];               
 
-                nextData.h_candidates_per_subject[subject_index] = numCandidateIds;
-                nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
-                    = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
-
-                subject_index++;
-            }            
-        }
+            nextData.h_candidates_per_subject[subject_index] = numCandidateIds;
+            nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
+                = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
+        }    
+        
+        // std::cerr << "num candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     std::cerr << nextData.h_candidates_per_subject[i] << "\n";
+        // }
 
         cudaMemcpyAsync(
             nextData.d_candidates_per_subject.get(),
@@ -805,6 +1149,13 @@ namespace test{
             const bool containsN = readStorage.readContainsN(candidateReadId);
             nextData.h_candidateContainsN[i] = containsN;
         }
+
+        // std::cerr << "contains \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidateContainsN[i] << "\n";
+        // }
+
+        // std::exit(0);
 
         cudaMemcpyAsync(
             nextData.d_candidateContainsN,
@@ -832,7 +1183,7 @@ namespace test{
             nvtx::push_range("determineCandidateReadIdsOfNextIteration",2);
 
             if(batchptr->nextIterationData.n_subjects > 0){
-                determineCandidateReadIdsOfNextIteration(
+                determineCandidateReadIdsOfNextIterationGpu(
                     *batchptr, 
                     *batchptr->transFuncData->minhasher,
                     *batchptr->transFuncData->readStorage
