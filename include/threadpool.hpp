@@ -182,29 +182,31 @@ struct ThreadPool{
         for(Index_t i = begin; i < end; i++){
             doStuff(threadId)
         }
+
+        returns number of chunks used
     */
     template<class Index_t, class Func>
-    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
-        parallelFor(handle, begin, end, std::forward<Func>(loop), getConcurrency());
+    int parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        return parallelFor(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    int parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = true;
 
-        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, true);
+        return parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, true);
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
-        parallelForNoWait(handle, begin, end, std::forward<Func>(loop), getConcurrency());
+    int parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        return parallelForNoWait(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    int parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = false;
 
-        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, false);
+        return parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, false);
     }
 
     void wait(){
@@ -235,6 +237,8 @@ private:
                         Func&& loop, 
                         std::size_t numThreads, 
                         bool selfCanParticipate){
+
+        selfCanParticipate = false;
 
         //2 debug variables
         // volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
@@ -269,6 +273,8 @@ private:
             std::vector<std::function<void()>> chunkFunctions;
             chunkFunctions.reserve(threadpoolChunks);
 
+            int usedChunks = 0;
+
             for(Index_t c = 0; c < threadpoolChunks; c++){
                 if(c < leftover){
                     end++;
@@ -288,13 +294,16 @@ private:
 
                     begin = end;
                     end += chunksize;
+
+                    usedChunks++;
                 }                
             }
 
             pq->enqueue(chunkFunctions.begin(), chunkFunctions.end());
 
             if(selfCanParticipate && end-begin > 0){
-                loop(begin, end, chunks-1);                
+                loop(begin, end, chunks-1);
+                usedChunks++;
             }
 
             auto waitUntilThreadPoolChunksAreDoneThenSignal = [pforData](){
@@ -312,6 +321,10 @@ private:
             }else{
                 pq->enqueue(std::move(waitUntilThreadPoolChunksAreDoneThenSignal));
             }
+
+            return usedChunks;
+        }else{
+            return 0;
         }
 
         // if(waitForCompletion){
