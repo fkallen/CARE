@@ -163,10 +163,7 @@ namespace detail{
         }
 
         ~SimpleAllocation(){
-            if(data_ != nullptr){
-                Allocator alloc;
-                alloc.deallocate(data_);
-            } 
+            destroy();
         }
 
         friend void swap(SimpleAllocation& l, SimpleAllocation& r) noexcept{
@@ -175,7 +172,15 @@ namespace detail{
     		swap(l.data_, r.data_);
     		swap(l.size_, r.size_);
     		swap(l.capacity_, r.capacity_);
-    	}
+        }
+        
+        void destroy(){
+            if(data_ != nullptr){
+                Allocator alloc;
+                alloc.deallocate(data_);
+                data_ = nullptr;
+            }
+        }
 
         T& operator[](size_t i){
             return Accessor::access(get(), i);

@@ -1,4 +1,5 @@
 #include <gpu/minhashkernels.hpp>
+#include <gpu/nvtxtimelinemarkers.hpp>
 
 #include <hpc_helpers.cuh>
 #include <config.hpp>
@@ -53,6 +54,7 @@ void makeUniqueRangesKernel(
         read_number* __restrict__ inoutData, 
         int* __restrict__ sizesOfUniqueRanges, 
         int numSequences,
+        const read_number* __restrict__ anchorIds,
         const int* __restrict__ rangesPerSequenceBegins,
         int globalOffset){
 
@@ -67,6 +69,8 @@ void makeUniqueRangesKernel(
         typename BlockDiscontinuity::TempStorage discontinuity;
         typename BlockScan::TempStorage scan;
     } temp_storage;
+
+    __shared__ read_number anchorId;
 
     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
@@ -94,6 +98,10 @@ void makeUniqueRangesKernel(
                 sizeOfRange
             );
 
+            if(threadIdx.x == 0){
+                anchorId = anchorIds[sequenceIndex];
+            }
+
             __syncthreads();
 
             BlockRadixSort(temp_storage.sort).Sort(tempregs);
@@ -114,6 +122,10 @@ void makeUniqueRangesKernel(
             for(int i = 0; i < numtempregs; i++){
                 if(threadIdx.x * numtempregs + i >= sizeOfRange){
                     head_flags[i] = 0;
+                }else{
+                    if(tempregs[i] == anchorId){
+                        head_flags[i] = 0;
+                    }
                 }
             }
 
@@ -537,10 +549,13 @@ void makeCompactUniqueRangesGmem(
         MergeRangesGpuHandle<read_number>& handle, 
         const std::pair<const read_number*, const read_number*>* ranges,
         int numRanges, 
+        const read_number* d_anchorIds, 
         int rangesPerSequence, 
         int totalNumElements, 
         bool onlyAlloc,
         cudaStream_t stream){
+
+    assert(false && "cannot use gmem merge currently");
 
     const int numSequences = numRanges / rangesPerSequence;
     if(numSequences == 0){
@@ -749,6 +764,7 @@ void makeCompactUniqueRangesSmem(
         MergeRangesGpuHandle<read_number>& handle, 
         const std::pair<const read_number*, const read_number*>* ranges,
         int numRanges, 
+        const read_number* d_anchorIds, 
         int rangesPerSequence, 
         int totalNumElements, 
         bool onlyAlloc,
@@ -855,6 +871,7 @@ void makeCompactUniqueRangesSmem(
                         handle.d_data.get() + elementOffset,  \
                         handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
                         mynumSequences, \
+                        d_anchorIds, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
@@ -1008,20 +1025,21 @@ void makeCompactUniqueRangesSmem(
 }
 
 
-OperationResult mergeRangesGpu(
+
+void mergeRangesGpuAsync(
         MergeRangesGpuHandle<read_number>& handle, 
-        const std::pair<const read_number*, const read_number*>* ranges, 
+        const std::pair<const read_number*, const read_number*>* h_ranges, 
         int numRanges, 
+        const read_number* d_anchorIds, 
         int rangesPerSequence, 
         cudaStream_t stream,
         MergeRangesKernelType kernelType){
     
     const int numSequences = numRanges / rangesPerSequence;
     if(numSequences == 0){
-        return OperationResult{};
+        return;
     }
 
-    OperationResult result;
     handle.d_rangesBeginPerSequence.resize(numSequences+1);
     handle.h_rangesBeginPerSequence.resize(numSequences+1);
 
@@ -1029,17 +1047,19 @@ OperationResult mergeRangesGpu(
 
     int longestRange = 0;
 
+    nvtx::push_range("longestrange", 4);
     int maxNumResults = 0;
     for(int i = 0; i < numSequences; i++){   
         int rangeOfSequence = 0;     
         for(int k = 0; k < rangesPerSequence; k++){
             const int rangeIndex = i * rangesPerSequence + k;
-            maxNumResults += std::distance(ranges[rangeIndex].first, ranges[rangeIndex].second);
-            rangeOfSequence += std::distance(ranges[rangeIndex].first, ranges[rangeIndex].second);
+            maxNumResults += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
+            rangeOfSequence += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
         }
         longestRange = std::max(longestRange, rangeOfSequence);
         handle.h_rangesBeginPerSequence[i+1] = maxNumResults;
     }
+    nvtx::pop_range();
 
     //std::cerr << "longestRange = " << longestRange << "\n";
     handle.d_data.resize(maxNumResults);
@@ -1062,8 +1082,9 @@ OperationResult mergeRangesGpu(
     if(kernelType == MergeRangesKernelType::devicewide){
         makeCompactUniqueRangesGmem(
             handle, 
-            ranges,
+            h_ranges,
             numRanges, 
+            d_anchorIds,
             rangesPerSequence, 
             maxNumResults, 
             false,
@@ -1073,8 +1094,9 @@ OperationResult mergeRangesGpu(
     }else{
         makeCompactUniqueRangesSmem(
             handle, 
-            ranges,
+            h_ranges,
             numRanges, 
+            d_anchorIds,
             rangesPerSequence, 
             maxNumResults, 
             false,
@@ -1083,10 +1105,40 @@ OperationResult mergeRangesGpu(
         );
     }
 
+}
+
+
+
+OperationResult mergeRangesGpu(
+        MergeRangesGpuHandle<read_number>& handle, 
+        const std::pair<const read_number*, const read_number*>* h_ranges, 
+        int numRanges, 
+        const read_number* d_anchorIds, 
+        int rangesPerSequence, 
+        cudaStream_t stream,
+        MergeRangesKernelType kernelType){
+    
+    const int numSequences = numRanges / rangesPerSequence;
+    if(numSequences == 0){
+        return OperationResult{};
+    }
+
+    mergeRangesGpuAsync(
+        handle, 
+        h_ranges, 
+        numRanges, 
+        d_anchorIds, 
+        rangesPerSequence, 
+        stream,
+        kernelType
+    );
+
 
     cudaStreamSynchronize(stream); CUERR;
 
     //TIMERSTOPCPU(makeCompactUniqueRanges);
+
+    OperationResult result;
 
     result.candidateIds.clear();
     result.candidateIds.resize(*handle.h_numresults.get());

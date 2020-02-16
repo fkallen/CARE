@@ -97,11 +97,21 @@ enum class MergeRangesKernelType{
     popcsinglewarpchunked,
 };
 
+void mergeRangesGpuAsync(
+        MergeRangesGpuHandle<read_number>& handle, 
+        const std::pair<const read_number*, const read_number*>* h_ranges, 
+        int numRanges, 
+        const read_number* d_anchorIds,
+        int rangesPerSequence, 
+        cudaStream_t stream,
+        MergeRangesKernelType kernelType);
+
 
 OperationResult mergeRangesGpu(
         MergeRangesGpuHandle<read_number>& handle, 
-        const std::pair<const read_number*, const read_number*>* ranges, 
+        const std::pair<const read_number*, const read_number*>* h_ranges, 
         int numRanges, 
+        const read_number* d_anchorIds, 
         int rangesPerSequence, 
         cudaStream_t stream,
         MergeRangesKernelType kernelType);

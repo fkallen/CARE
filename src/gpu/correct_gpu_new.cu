@@ -945,6 +945,7 @@ namespace test{
                 nextDataPtr->mergeRangesGpuHandle, 
                 minhashHandle.multiranges.data(), 
                 minhashHandle.multiranges.size(), 
+                nextDataPtr->d_subject_read_ids.get(),
                 minhasherPtr->minparams.maps, 
                 nextData.stream,
                 MergeRangesKernelType::allcub
@@ -1035,40 +1036,71 @@ namespace test{
         }
 
         nvtx::push_range("gpumakeUniqueQueryResults", 2);
-        OperationResult gpumergeresults = mergeRangesGpu(
+        mergeRangesGpuAsync(
             nextDataPtr->mergeRangesGpuHandle, 
             allRanges.data(), 
             allRanges.size(), 
+            nextData.d_subject_read_ids.get(),
             minhasherPtr->minparams.maps, 
             nextData.stream,
             MergeRangesKernelType::allcub
         );
+
+        cudaStreamSynchronize(nextData.stream); CUERR;
         nvtx::pop_range();
 
-        int initialNumberOfCandidates = 0;  
 
-        auto multiresultbegin = gpumergeresults.candidateIds.data();
-        auto end = gpumergeresults.candidateIds.data();
-        for(int i = 0; i < nextData.n_subjects; i++){
-            const read_number readId = nextDataPtr->h_subject_read_ids[i];
+        std::swap(nextData.h_candidate_read_ids, nextData.mergeRangesGpuHandle.h_results);
+        std::swap(nextData.d_candidate_read_ids, nextData.mergeRangesGpuHandle.d_results);
+        std::swap(nextData.h_candidates_per_subject, nextData.mergeRangesGpuHandle.h_uniqueRangeLengths);
+        std::swap(nextData.d_candidates_per_subject, nextData.mergeRangesGpuHandle.d_uniqueRangeLengths);
+        //std::swap(nextData.h_candidates_per_subject_prefixsum, nextData.mergeRangesGpuHandle.h_uniqueRangeLengthsPrefixsum);
+        std::swap(nextData.d_candidates_per_subject_prefixsum, nextData.mergeRangesGpuHandle.d_uniqueRangeLengthsPrefixsum);
+        nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
 
-            auto multiresultend = multiresultbegin + gpumergeresults.candidateIdsPerSequence[i];   
-            auto readIdPos = std::lower_bound(multiresultbegin, multiresultend, readId);
+        cudaMemcpyAsync(
+            nextData.h_candidates_per_subject_prefixsum.get(),
+            nextData.d_candidates_per_subject_prefixsum.get(),
+            sizeof(int) * (nextData.n_subjects + 1),
+            H2D,
+            nextData.stream
+        ); CUERR;
+
+        nextData.h_candidate_read_ids.resize(*nextData.mergeRangesGpuHandle.h_numresults.get());
+        nextData.d_candidate_read_ids.resize(*nextData.mergeRangesGpuHandle.h_numresults.get());
+
+        nextData.n_queries = nextData.h_candidate_read_ids.size();
+
+        //nextData.mergeRangesGpuHandle.h_results // candidateIds
+        //nextData.mergeRangesGpuHandle.h_uniqueRangeLengths // candidateIdsPerSequence
+
+        // int initialNumberOfCandidates = 0;  
+
+        // auto multiresultbegin = nextData.h_candidate_read_ids.get();
+        // auto end = nextData.h_candidate_read_ids.get();
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     const read_number readId = nextDataPtr->h_subject_read_ids[i];
+
+        //     auto multiresultend = multiresultbegin + nextData.h_candidates_per_subject[i];   
+        //     auto readIdPos = std::lower_bound(multiresultbegin, multiresultend, readId);
             
-            if(readIdPos != multiresultend && *readIdPos == readId) {
-                //remove readId at readIdPos from range
-                end = std::copy(multiresultbegin, readIdPos, end); 
-                end = std::copy(readIdPos+1, multiresultend, end); 
+        //     if(readIdPos != multiresultend && *readIdPos == readId) {
+        //         //remove readId at readIdPos from range
+        //         end = std::copy(multiresultbegin, readIdPos, end); 
+        //         end = std::copy(readIdPos+1, multiresultend, end); 
 
-                gpumergeresults.candidateIdsPerSequence[i] -= 1;
-            }
+        //         nextData.h_candidates_per_subject[i] -= 1;
+        //     }
 
-            multiresultbegin = multiresultend;
+        //     multiresultbegin = multiresultend;
 
-            initialNumberOfCandidates += gpumergeresults.candidateIdsPerSequence[i];
-        }
+        //     initialNumberOfCandidates += nextData.h_candidates_per_subject[i];
+        // }
 
-        nextDataPtr->n_queries += initialNumberOfCandidates;
+        // nextData.n_queries += initialNumberOfCandidates;
+
+        // nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        // nextData.d_candidate_read_ids.resize(nextData.n_queries);
 
 
         nextData.decodedSubjectStrings.clear();
@@ -1080,69 +1112,53 @@ namespace test{
             );
         }
 
-        nextData.h_candidate_read_ids.resize(nextData.n_queries);
-        nextData.d_candidate_read_ids.resize(nextData.n_queries);
-        nextData.h_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.d_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);  
         nextData.h_candidateContainsN.resize(nextData.n_queries);
         nextData.d_candidateContainsN.resize(nextData.n_queries);
 
-        //copy candidate ids to pinned buffer, then to gpu
-        auto destbegin = nextData.h_candidate_read_ids.get();
-        std::copy_n(
-            gpumergeresults.candidateIds.data(),
-            gpumergeresults.candidateIds.size(),
-            destbegin
-        );
-
-        cudaMemcpyAsync(
-            nextData.d_candidate_read_ids.get(),
-            nextData.h_candidate_read_ids.get(),
-            nextData.h_candidate_read_ids.sizeInBytes(),
-            H2D,
-            nextData.stream
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     nextData.d_candidate_read_ids.get(),
+        //     nextData.h_candidate_read_ids.get(),
+        //     nextData.h_candidate_read_ids.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;
 
         // std::cerr << "candidate ids \n\n";
         // for(int i = 0; i < nextData.n_queries; i++){
         //     std::cerr << nextData.h_candidate_read_ids[i] << "\n";
         // }
 
-        nextData.h_candidates_per_subject_prefixsum[0] = 0;
+        //nextData.h_candidates_per_subject_prefixsum[0] = 0;
 
         //make candidates per subject prefix sum
-        assert(nextData.n_subjects == int(gpumergeresults.candidateIdsPerSequence.size()));
 
-        for(int subject_index = 0; subject_index < nextData.n_subjects; subject_index++){
-            const int numCandidateIds = gpumergeresults.candidateIdsPerSequence[subject_index];               
+        // for(int subject_index = 0; subject_index < nextData.n_subjects; subject_index++){
+        //     const int numCandidateIds = nextData.h_candidates_per_subject[subject_index];               
 
-            nextData.h_candidates_per_subject[subject_index] = numCandidateIds;
-            nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
-                = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
-        }    
+        //     nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
+        //         = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
+        // }    
         
         // std::cerr << "num candidate ids \n\n";
         // for(int i = 0; i < nextData.n_subjects; i++){
         //     std::cerr << nextData.h_candidates_per_subject[i] << "\n";
         // }
 
-        cudaMemcpyAsync(
-            nextData.d_candidates_per_subject.get(),
-            nextData.h_candidates_per_subject.get(),
-            nextData.h_candidates_per_subject.sizeInBytes(),
-            H2D,
-            nextData.stream
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     nextData.d_candidates_per_subject.get(),
+        //     nextData.h_candidates_per_subject.get(),
+        //     nextData.h_candidates_per_subject.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;
 
-        cudaMemcpyAsync(
-            nextData.d_candidates_per_subject_prefixsum.get(),
-            nextData.h_candidates_per_subject_prefixsum.get(),
-            nextData.h_candidates_per_subject_prefixsum.sizeInBytes(),
-            H2D,
-            nextData.stream
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     nextData.d_candidates_per_subject_prefixsum.get(),
+        //     nextData.h_candidates_per_subject_prefixsum.get(),
+        //     nextData.h_candidates_per_subject_prefixsum.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;
 
         for(int i = 0; i < nextData.n_queries; i++){
             const read_number candidateReadId = nextData.h_candidate_read_ids[i];
