@@ -555,19 +555,19 @@ void makeCompactUniqueRangesGmem(
         cub::DeviceSegmentedRadixSort::SortKeys(
             nullptr, 
             temp_storage_bytes, 
-            handle.d_data, 
-            handle.d_results,
+            handle.d_data.get(), 
+            handle.d_results.get(),
             totalNumElements, 
             numSequences, 
-            handle.d_rangesBeginPerSequence, 
-            handle.d_rangesBeginPerSequence + 1,
+            handle.d_rangesBeginPerSequence.get(), 
+            handle.d_rangesBeginPerSequence.get() + 1,
             0,
             sizeof(read_number) * 8,
             stream
         );
 
         using CountIter = cub::CountingInputIterator<int>;
-        read_number* d_data = handle.d_data;
+        read_number* d_data = handle.d_data.get();
         auto toHeadFlag = [=] __device__ (int index){
             if(index == 0 || d_data[index-1] != d_data[index]){
                 return 1;
@@ -585,10 +585,10 @@ void makeCompactUniqueRangesGmem(
             nullptr, 
             temp_storage_bytes2, 
             head_flags, 
-            handle.d_uniqueRangeLengths,
+            handle.d_uniqueRangeLengths.get(),
             numSequences, 
-            handle.d_rangesBeginPerSequence, 
-            handle.d_rangesBeginPerSequence + 1,
+            handle.d_rangesBeginPerSequence.get(), 
+            handle.d_rangesBeginPerSequence.get() + 1,
             stream
         );
 
@@ -597,8 +597,8 @@ void makeCompactUniqueRangesGmem(
         cub::DeviceScan::InclusiveSum(
             nullptr, 
             temp_storage_bytes2, 
-            handle.d_uniqueRangeLengths, 
-            handle.d_uniqueRangeLengthsPrefixsum + 1, 
+            handle.d_uniqueRangeLengths.get(), 
+            handle.d_uniqueRangeLengthsPrefixsum.get() + 1, 
             numSequences,
             stream
         );
@@ -608,21 +608,16 @@ void makeCompactUniqueRangesGmem(
         cub::DeviceSelect::Flagged(
             nullptr, 
             temp_storage_bytes2,
-            handle.d_data, 
+            handle.d_data.get(), 
             head_flags, 
-            handle.d_results, 
+            handle.d_results.get(), 
             cub::DiscardOutputIterator<int>{}, //d_num_selected_out
             totalNumElements,
             stream
         );
 
         temp_storage_bytes = std::max(temp_storage_bytes, temp_storage_bytes2);
-
-        if(temp_storage_bytes > handle.tempStorageCapacity){
-            cudaFree(handle.cubTempStorage); CUERR;
-            cudaMalloc(&handle.cubTempStorage, temp_storage_bytes); CUERR;
-            handle.tempStorageCapacity = temp_storage_bytes;
-        }
+        handle.cubTempStorage.resize(temp_storage_bytes);
     }
 
     if(onlyAlloc){
@@ -630,8 +625,8 @@ void makeCompactUniqueRangesGmem(
     }
 
     cudaMemcpyAsync(
-        handle.d_rangesBeginPerSequence, 
-        handle.h_rangesBeginPerSequence,
+        handle.d_rangesBeginPerSequence.get(), 
+        handle.h_rangesBeginPerSequence.get(),
         sizeof(int) * (numSequences+1),
         H2D,
         stream
@@ -639,8 +634,8 @@ void makeCompactUniqueRangesGmem(
 
     //copy data of ranges into contiguous pinned memory, then to device async
     {
-        auto begin = handle.h_data;
-        auto end = handle.h_data;
+        auto begin = handle.h_data.get();
+        auto end = handle.h_data.get();
         for(int rangeIndex = 0; rangeIndex < numRanges; rangeIndex++){
             end = std::copy(
                 ranges[rangeIndex].first, 
@@ -653,32 +648,33 @@ void makeCompactUniqueRangesGmem(
     }
 
     cudaMemcpyAsync(
-        handle.d_data, 
-        handle.h_data,
+        handle.d_data.get(), 
+        handle.h_data.get(),
         sizeof(read_number) * totalNumElements,
         H2D,
         stream
     ); CUERR;
 
+    size_t cubTempStorageSize = handle.cubTempStorage.sizeInBytes();
+
     cub::DeviceSegmentedRadixSort::SortKeys(
-        handle.cubTempStorage, 
-        handle.tempStorageCapacity, 
-        handle.d_data, 
-        handle.d_results,
+        handle.cubTempStorage.get(), 
+        cubTempStorageSize, 
+        handle.d_data.get(), 
+        handle.d_results.get(),
         totalNumElements, 
         numSequences, 
-        handle.d_rangesBeginPerSequence, 
-        handle.d_rangesBeginPerSequence + 1,
+        handle.d_rangesBeginPerSequence.get(), 
+        handle.d_rangesBeginPerSequence.get() + 1,
         0,
         sizeof(read_number) * 8,
         stream
     );
 
     std::swap(handle.d_data, handle.d_results);
-    std::swap(handle.datacapacity, handle.resultscapacity);
 
     using CountIter = cub::CountingInputIterator<int>;
-    read_number* d_data = handle.d_data;
+    read_number* d_data = handle.d_data.get();
     auto toHeadFlag = [=] __device__ (int index){
         if(index == 0 || d_data[index-1] != d_data[index]){
             return 1;
@@ -694,39 +690,57 @@ void makeCompactUniqueRangesGmem(
     HeadFlagsIter head_flags(CountIter{0}, toHeadFlag);
 
     cub::DeviceSegmentedReduce::Sum(
-        handle.cubTempStorage, 
-        handle.tempStorageCapacity, 
+        handle.cubTempStorage.get(), 
+        cubTempStorageSize, 
         head_flags, 
-        handle.d_uniqueRangeLengths,
+        handle.d_uniqueRangeLengths.get(),
         numSequences, 
-        handle.d_rangesBeginPerSequence, 
-        handle.d_rangesBeginPerSequence + 1,
+        handle.d_rangesBeginPerSequence.get(), 
+        handle.d_rangesBeginPerSequence.get() + 1,
         stream
     );
 
     cub::DeviceScan::InclusiveSum(
-        handle.cubTempStorage, 
-        handle.tempStorageCapacity, 
-        handle.d_uniqueRangeLengths, 
-        handle.d_uniqueRangeLengthsPrefixsum + 1, 
+        handle.cubTempStorage.get(), 
+        cubTempStorageSize, 
+        handle.d_uniqueRangeLengths.get(), 
+        handle.d_uniqueRangeLengthsPrefixsum.get() + 1, 
         numSequences,
         stream
     );
 
     cub::DeviceSelect::Flagged(
-        handle.cubTempStorage, 
-        handle.tempStorageCapacity,
-        handle.d_data, 
+        handle.cubTempStorage.get(), 
+        cubTempStorageSize,
+        handle.d_data.get(), 
         head_flags, 
-        handle.d_results, 
+        handle.d_results.get(), 
         cub::DiscardOutputIterator<int>{}, //d_num_selected_out == uniqueRangelengthsPrefixSum[numSequences]
         totalNumElements,
         stream
     );
 
-    cudaMemcpyAsync(handle.h_uniqueRangeLengths, handle.d_uniqueRangeLengths, sizeof(int) * numSequences, D2H, stream); CUERR;
-    cudaMemcpyAsync(handle.h_numresults, handle.d_uniqueRangeLengthsPrefixsum + numSequences, sizeof(int), D2H, stream); CUERR;
-    cudaMemcpyAsync(handle.h_results, handle.d_results, sizeof(read_number) * totalNumElements, D2H, stream); CUERR;        
+    cudaMemcpyAsync(
+        handle.h_uniqueRangeLengths.get(), 
+        handle.d_uniqueRangeLengths.get(), 
+        sizeof(int) * numSequences, 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_numresults.get(), 
+        handle.d_uniqueRangeLengthsPrefixsum.get() + numSequences, 
+        sizeof(int), 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_results.get(), 
+        handle.d_results.get(), 
+        sizeof(read_number) * totalNumElements, 
+        D2H, 
+        stream
+    ); CUERR;        
 }
 
 
@@ -752,18 +766,13 @@ void makeCompactUniqueRangesSmem(
         cub::DeviceScan::InclusiveSum(
             nullptr, 
             temp_storage_bytes,
-            handle.d_uniqueRangeLengths,
-            handle.d_uniqueRangeLengthsPrefixsum + 1,
+            handle.d_uniqueRangeLengths.get(),
+            handle.d_uniqueRangeLengthsPrefixsum.get() + 1,
             numSequences,
             stream
         ); CUERR;
     
-        if(handle.tempStorageCapacity < temp_storage_bytes){
-            cudaFree(handle.cubTempStorage); CUERR;
-            cudaMalloc(&handle.cubTempStorage, temp_storage_bytes); CUERR;    
-            
-            handle.tempStorageCapacity = temp_storage_bytes;
-        }
+        handle.cubTempStorage.resize(temp_storage_bytes);
     }
 
     if(onlyAlloc){
@@ -771,8 +780,8 @@ void makeCompactUniqueRangesSmem(
     }
 
     cudaMemcpyAsync(
-        handle.d_rangesBeginPerSequence, 
-        handle.h_rangesBeginPerSequence,
+        handle.d_rangesBeginPerSequence.get(), 
+        handle.h_rangesBeginPerSequence.get(),
         sizeof(int) * (numSequences+1),
         H2D,
         stream
@@ -786,8 +795,8 @@ void makeCompactUniqueRangesSmem(
 
     //copy data of ranges into contiguous pinned memory, then to device async
     {
-        auto begin = handle.h_data;
-        auto end = handle.h_data;
+        auto begin = handle.h_data.get();
+        auto end = handle.h_data.get();
         const int numstreams = handle.streams.size();
 
         int elementOffset = 0;
@@ -829,8 +838,8 @@ void makeCompactUniqueRangesSmem(
             // std::cerr << "elementOffset = " << elementOffset << ", sequenceOffset = " << sequenceOffset << "\n";
 
             cudaMemcpyAsync(
-                handle.d_data + elementOffset, 
-                handle.h_data + elementOffset,
+                handle.d_data.get() + elementOffset, 
+                handle.h_data.get() + elementOffset,
                 sizeof(read_number) * mynumElements,
                 H2D,
                 handle.streams[i]
@@ -843,37 +852,37 @@ void makeCompactUniqueRangesSmem(
                 switch(kernelType){ \
                 case MergeRangesKernelType::allcub: \
                     makeUniqueRangesKernel<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
-                        handle.d_data + elementOffset,  \
-                        handle.d_uniqueRangeLengths + sequenceOffset,  \
+                        handle.d_data.get() + elementOffset,  \
+                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesBeginPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcmultiwarp: \
                     makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
-                        handle.d_data + elementOffset,  \
-                        handle.d_uniqueRangeLengths + sequenceOffset,  \
+                        handle.d_data.get() + elementOffset,  \
+                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesBeginPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcsinglewarp: \
                     makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
-                        handle.d_data + elementOffset,  \
-                        handle.d_uniqueRangeLengths + sequenceOffset,  \
+                        handle.d_data.get() + elementOffset,  \
+                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesBeginPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcsinglewarpchunked: \
                     makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
-                        handle.d_data + elementOffset,  \
-                        handle.d_uniqueRangeLengths + sequenceOffset,  \
+                        handle.d_data.get() + elementOffset,  \
+                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
                         mynumSequences, \
-                        handle.d_rangesBeginPerSequence + sequenceOffset, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
@@ -953,28 +962,48 @@ void makeCompactUniqueRangesSmem(
         
     }    
 
+    size_t tmpsize = handle.cubTempStorage.sizeInBytes();
+
     cub::DeviceScan::InclusiveSum(
-        handle.cubTempStorage, 
-        handle.tempStorageCapacity,
-        handle.d_uniqueRangeLengths,
-        handle.d_uniqueRangeLengthsPrefixsum + 1,
+        handle.cubTempStorage.get(), 
+        tmpsize,
+        handle.d_uniqueRangeLengths.get(),
+        handle.d_uniqueRangeLengthsPrefixsum.get() + 1,
         numSequences,
         stream
     ); CUERR;
 
     compactDataOfUniqueRanges<256><<<numSequences, 256, 0, stream>>>(
-        handle.d_results,
-        handle.d_data,
-        handle.d_uniqueRangeLengthsPrefixsum,
-        handle.d_rangesBeginPerSequence,
+        handle.d_results.get(),
+        handle.d_data.get(),
+        handle.d_uniqueRangeLengthsPrefixsum.get(),
+        handle.d_rangesBeginPerSequence.get(),
         numSequences
     ); CUERR;
 
     //cudaEventRecord(handle.events.back(), stream); CUERR;
 
-    cudaMemcpyAsync(handle.h_uniqueRangeLengths, handle.d_uniqueRangeLengths, sizeof(int) * numSequences, D2H, stream); CUERR;
-    cudaMemcpyAsync(handle.h_numresults, handle.d_uniqueRangeLengthsPrefixsum + numSequences, sizeof(int), D2H, stream); CUERR;
-    cudaMemcpyAsync(handle.h_results, handle.d_results, sizeof(read_number) * totalNumElements, D2H, stream); CUERR;     
+    cudaMemcpyAsync(
+        handle.h_uniqueRangeLengths.get(), 
+        handle.d_uniqueRangeLengths.get(), 
+        sizeof(int) * numSequences, 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_numresults.get(), 
+        handle.d_uniqueRangeLengthsPrefixsum.get() + numSequences, 
+        sizeof(int), 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_results.get(), 
+        handle.d_results.get(), 
+        sizeof(read_number) * totalNumElements, 
+        D2H, 
+        stream
+    ); CUERR;     
 
 }
 
@@ -993,16 +1022,8 @@ OperationResult mergeRangesGpu(
     }
 
     OperationResult result;
-
-    if(handle.rangesPerSequenceBeginscapacity < sizeof(int) * (numSequences+1)){
-        cudaFree(handle.d_rangesBeginPerSequence); CUERR;
-        cudaFreeHost(handle.h_rangesBeginPerSequence); CUERR;
-
-        cudaMalloc(&handle.d_rangesBeginPerSequence, sizeof(int) * (numSequences+1)); CUERR;
-        cudaMallocHost(&handle.h_rangesBeginPerSequence, sizeof(int) * (numSequences + 1)); CUERR;
-
-        handle.rangesPerSequenceBeginscapacity = sizeof(int) * (numSequences+1);
-    }
+    handle.d_rangesBeginPerSequence.resize(numSequences+1);
+    handle.h_rangesBeginPerSequence.resize(numSequences+1);
 
     handle.h_rangesBeginPerSequence[0] = 0;
 
@@ -1021,53 +1042,19 @@ OperationResult mergeRangesGpu(
     }
 
     //std::cerr << "longestRange = " << longestRange << "\n";
+    handle.d_data.resize(maxNumResults);
+    handle.h_data.resize(maxNumResults);
 
-    if(handle.datacapacity < sizeof(read_number) * maxNumResults){
-        cudaFree(handle.d_data); CUERR;
-        cudaFreeHost(handle.h_data); CUERR;
+    handle.d_results.resize(maxNumResults);
+    handle.h_results.resize(maxNumResults);
 
-        cudaMalloc(&handle.d_data, sizeof(read_number) * maxNumResults); CUERR;    
-        cudaMallocHost(&handle.h_data, sizeof(read_number) * maxNumResults); CUERR;
-        
-        handle.datacapacity = sizeof(read_number) * maxNumResults;
-    }
+    handle.h_numresults.resize(1);
 
-    if(handle.resultscapacity < sizeof(read_number) * maxNumResults){
-        cudaFree(handle.d_results); CUERR;
-        cudaFreeHost(handle.h_results); CUERR;
+    handle.d_uniqueRangeLengths.resize(numSequences);
+    handle.h_uniqueRangeLengths.resize(numSequences);
 
-        cudaMalloc(&handle.d_results, sizeof(read_number) * maxNumResults); CUERR;    
-        cudaMallocHost(&handle.h_results, sizeof(read_number) * maxNumResults); CUERR;
-        
-        handle.resultscapacity = sizeof(read_number) * maxNumResults;
-    }
-
-    if(handle.numresultscapacity < sizeof(int)){
-        cudaFreeHost(handle.h_numresults); CUERR; 
-        cudaMallocHost(&handle.h_numresults, sizeof(int)); CUERR;
-        
-        handle.numresultscapacity = sizeof(int);
-    }
-
-    if(handle.uniqueRangeLengthscapacity < sizeof(int) * (numSequences)){
-        cudaFree(handle.d_uniqueRangeLengths); CUERR;
-        cudaFreeHost(handle.h_uniqueRangeLengths); CUERR;
-
-        cudaMalloc(&handle.d_uniqueRangeLengths, sizeof(int) * (numSequences)); CUERR;    
-        cudaMallocHost(&handle.h_uniqueRangeLengths, sizeof(int) * (numSequences)); CUERR;  
-        
-        handle.uniqueRangeLengthscapacity = sizeof(int) * (numSequences);
-    }
-
-    if(handle.uniqueRangeLengthsPrefixsumcapacity < sizeof(int) * (numSequences+1)){
-        cudaFree(handle.d_uniqueRangeLengthsPrefixsum); CUERR;
-
-        cudaMalloc(&handle.d_uniqueRangeLengthsPrefixsum, sizeof(int) * (numSequences+1)); CUERR;
-
-        cudaMemsetAsync(handle.d_uniqueRangeLengthsPrefixsum, 0, sizeof(int), stream); CUERR;
-        
-        handle.uniqueRangeLengthsPrefixsumcapacity = sizeof(int) * (numSequences+1);
-    }
+    handle.d_uniqueRangeLengthsPrefixsum.resize(numSequences + 1);
+    cudaMemsetAsync(handle.d_uniqueRangeLengthsPrefixsum, 0, sizeof(int), stream); CUERR;
 
 
     //TIMERSTARTCPU(makeCompactUniqueRanges);
@@ -1102,19 +1089,19 @@ OperationResult mergeRangesGpu(
     //TIMERSTOPCPU(makeCompactUniqueRanges);
 
     result.candidateIds.clear();
-    result.candidateIds.resize(*handle.h_numresults);
+    result.candidateIds.resize(*handle.h_numresults.get());
 
     result.candidateIdsPerSequence.clear();
     result.candidateIdsPerSequence.resize(numSequences, 0);
 
     std::copy_n(
-        handle.h_results, 
-        *handle.h_numresults, 
+        handle.h_results.get(), 
+        *handle.h_numresults.get(), 
         result.candidateIds.begin()
     );
 
     std::copy_n(
-        handle.h_uniqueRangeLengths, 
+        handle.h_uniqueRangeLengths.get(), 
         numSequences, 
         result.candidateIdsPerSequence.begin()
     );

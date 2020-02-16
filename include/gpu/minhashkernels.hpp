@@ -3,6 +3,7 @@
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
+#include <gpu/simpleallocation.cuh>
 
 #include <array>
 #include <vector>
@@ -12,34 +13,26 @@ namespace care{
 
 template<class T>
 struct MergeRangesGpuHandle{
-    T* d_data = nullptr;
-    T* h_data = nullptr;
-    size_t datacapacity = 0;
+    SimpleAllocationDevice<T> d_data;
+    SimpleAllocationPinnedHost<T> h_data;
     
-    int* h_rangesBeginPerSequence = nullptr;
-    int* d_rangesBeginPerSequence = nullptr;
-    size_t rangesPerSequenceBeginscapacity = 0;
+    SimpleAllocationPinnedHost<int> h_rangesBeginPerSequence;
+    SimpleAllocationDevice<int> d_rangesBeginPerSequence;
 
-    T* d_results = nullptr;
-    T* h_results = nullptr;
-    size_t resultscapacity = 0;
+    SimpleAllocationDevice<T> d_results;
+    SimpleAllocationPinnedHost<T> h_results;
 
-    int* h_numresults = nullptr;
-    size_t numresultscapacity = 0;
+    SimpleAllocationPinnedHost<int> h_numresults;
 
-    int* h_num_runs = nullptr;
-    int* d_num_runs = nullptr;
-    size_t num_runscapacity = 0;
+    SimpleAllocationPinnedHost<int> h_num_runs;
+    SimpleAllocationDevice<int> d_num_runs;
 
-    int* h_uniqueRangeLengths = nullptr;
-    int* d_uniqueRangeLengths = nullptr;
-    size_t uniqueRangeLengthscapacity = 0;
+    SimpleAllocationPinnedHost<int> h_uniqueRangeLengths;
+    SimpleAllocationDevice<int> d_uniqueRangeLengths;
 
-    int* d_uniqueRangeLengthsPrefixsum = nullptr;
-    size_t uniqueRangeLengthsPrefixsumcapacity = 0;
+    SimpleAllocationDevice<int> d_uniqueRangeLengthsPrefixsum;
 
-    void* cubTempStorage = nullptr;
-    size_t tempStorageCapacity = 0;
+    SimpleAllocationDevice<char> cubTempStorage;
 
     int initialDataSize = 0;
 
@@ -65,20 +58,19 @@ MergeRangesGpuHandle<T> makeMergeRangesGpuHandle(){
 template<class T>
 void destroyMergeRangesGpuHandle(MergeRangesGpuHandle<T>& handle){
 
-    cudaFree(handle.d_data); CUERR;
-    cudaFreeHost(handle.h_data); CUERR;
-    cudaFree(handle.d_rangesBeginPerSequence); CUERR;
-    cudaFreeHost(handle.h_rangesBeginPerSequence); CUERR;
-    cudaFree(handle.d_results); CUERR;
-    cudaFreeHost(handle.h_results); CUERR;
-    cudaFreeHost(handle.h_numresults); CUERR;
-    cudaFree(handle.d_num_runs); CUERR;
-    cudaFreeHost(handle.h_num_runs); CUERR;
-    cudaFree(handle.d_uniqueRangeLengths); CUERR;
-    cudaFreeHost(handle.h_uniqueRangeLengths); CUERR;
-    cudaFree(handle.d_uniqueRangeLengthsPrefixsum); CUERR;
-    cudaFree(handle.cubTempStorage); CUERR;
-
+    handle.d_data.destroy();
+    handle.h_data.destroy();
+    handle.d_rangesBeginPerSequence.destroy();
+    handle.h_rangesBeginPerSequence.destroy();
+    handle.d_results.destroy();
+    handle.h_results.destroy();
+    handle.h_numresults.destroy();
+    handle.d_num_runs.destroy();
+    handle.h_num_runs.destroy();
+    handle.d_uniqueRangeLengths.destroy();
+    handle.h_uniqueRangeLengths.destroy();
+    handle.d_uniqueRangeLengthsPrefixsum.destroy();
+    handle.cubTempStorage.destroy();
 
     for(auto& pipelinestream : handle.streams){
         cudaStreamDestroy(pipelinestream); CUERR;
