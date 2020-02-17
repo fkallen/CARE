@@ -989,7 +989,7 @@ void mergeRangesGpuAsync(
     //nvtx::push_range("longestrange", 4);
     int maxNumResults = 0;
     for(int i = 0; i < numSequences; i++){   
-        int rangeOfSequence = 0;     
+        //int rangeOfSequence = 0;     
         for(int k = 0; k < rangesPerSequence; k++){
             const int rangeIndex = i * rangesPerSequence + k;
             maxNumResults += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
