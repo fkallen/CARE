@@ -864,7 +864,7 @@ namespace test{
 
         nextData.n_queries = 0;
 
-        std::vector<std::vector<std::string>> decodedSubjectStringsPerThread(batchData.threadsInThreadPool);
+        //std::vector<std::vector<std::string>> decodedSubjectStringsPerThread(batchData.threadsInThreadPool);
 
         auto makeSignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
 
@@ -889,7 +889,7 @@ namespace test{
             );
             nvtx::pop_range();
 
-            decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
+            //decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
         };
 
         auto querySignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
@@ -951,7 +951,7 @@ namespace test{
         nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
-            
+            nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
             for(int chunkId = begin; chunkId < end; chunkId++){
                 const auto hostdatabegin = nextData.h_candidate_read_ids.get() + idsPerChunkPrefixSum[chunkId];
                 const auto devicedatabegin = nextData.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
@@ -980,6 +980,7 @@ namespace test{
                     nextData.stream
                 ); CUERR;
             }
+            nvtx::pop_range();
         };
 
         batchData.threadPool->parallelFor(
@@ -1113,14 +1114,14 @@ namespace test{
         // nextData.d_candidate_read_ids.resize(nextData.n_queries);
 
 
-        nextData.decodedSubjectStrings.clear();
-        for(int i = 0; i < numChunksRequired; i++){
-            nextData.decodedSubjectStrings.insert(
-                nextData.decodedSubjectStrings.end(),
-                decodedSubjectStringsPerThread[i].begin(),
-                decodedSubjectStringsPerThread[i].end()
-            );
-        }
+        // nextData.decodedSubjectStrings.clear();
+        // for(int i = 0; i < numChunksRequired; i++){
+        //     nextData.decodedSubjectStrings.insert(
+        //         nextData.decodedSubjectStrings.end(),
+        //         decodedSubjectStringsPerThread[i].begin(),
+        //         decodedSubjectStringsPerThread[i].end()
+        //     );
+        // }
 
         nextData.h_candidateContainsN.resize(nextData.n_queries);
         nextData.d_candidateContainsN.resize(nextData.n_queries);
@@ -2477,39 +2478,6 @@ namespace test{
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
 
-#if 0
-    SimpleAllocationPinnedHost<bool> candidateAlreadyHQAnchorCorrected
-    for(int i = 0; i < n_queries; i++){
-        const read_number readId = rawResults.h_candidate_read_ids[i];
-        const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[readId];
-        if(!(mask & readCorrectedAsHQAnchor)) {
-            candidateAlreadyHQAnchorCorrected[i] = false;
-        }else{
-            candidateAlreadyHQAnchorCorrected[i] = true;
-        }
-    }
-
-    //Writes indices of candidates with alignmentflag != None to d_indices
-    size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-    cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                                cubTempSize,
-                                cub::CountingInputIterator<int>(0),
-                                rawResults.d_subject_is_corrected[subject_index].get(),
-                                dataArrays.d_indices_of_corrected_subjects.get(),
-                                dataArrays.d_num_indices_of_corrected_subjects.get(),
-                                batch.n_subjects,
-                                streams[primary_stream_index]); CUERR;
-
-    SimpleAllocationPinnedHost<bool> anchorIsAlreadyHQCorrected(n_subjects);
-    TransformIterator anchorIsHQCorrected; return anchorIsAlreadyHQCorrected[i] || h_is_high_quality_subject[i]
-
-    PrefixSum of h_subject_is_corrected to get indices of corrected subjects
-
-    
-
-
-#endif
 
     void constructResults(Batch& batch){
 
@@ -3341,7 +3309,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 bool isFirstIteration = true;
 
                 int batchIndex = 0;
-#if 1
+#if 0
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
