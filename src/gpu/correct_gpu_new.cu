@@ -1549,28 +1549,28 @@ namespace test{
 			batch.kernelLaunchHandle
         );
 
-        cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+        // cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+        // cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_num_indices,
-                        dataArrays.d_num_indices,
-                        sizeof(int),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_num_indices,
+        //                 dataArrays.d_num_indices,
+        //                 sizeof(int),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_indices,
+        //                 dataArrays.d_indices,
+        //                 dataArrays.d_indices.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+        //                 dataArrays.d_indices_per_subject,
+        //                 dataArrays.d_indices_per_subject.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+        // cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
        
 
         
@@ -1909,39 +1909,39 @@ namespace test{
 
         cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
         
-        {
-            //std::cerr << "minimization finished\n";
+        // {
+        //     //std::cerr << "minimization finished\n";
 
-            cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+        //     cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+        //     cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_num_indices,
-                            dataArrays.d_num_indices,
-                            dataArrays.d_num_indices.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_num_indices,
+        //                     dataArrays.d_num_indices,
+        //                     dataArrays.d_num_indices.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_indices,
-                            dataArrays.d_indices,
-                            dataArrays.d_indices.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_indices,
+        //                     dataArrays.d_indices,
+        //                     dataArrays.d_indices.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+        //                     dataArrays.d_indices_per_subject,
+        //                     dataArrays.d_indices_per_subject.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-                        //update host qscores accordingly
-                        /*cudaMemcpyAsync(dataArrays.h_candidate_qualities,
-                                        dataArrays.d_candidate_qualities,
-                                        dataArrays.d_candidate_qualities.sizeInBytes(),
-                                        D2H,
-                                        streams[secondary_stream_index]);*/
+        //                 //update host qscores accordingly
+        //                 /*cudaMemcpyAsync(dataArrays.h_candidate_qualities,
+        //                                 dataArrays.d_candidate_qualities,
+        //                                 dataArrays.d_candidate_qualities.sizeInBytes(),
+        //                                 D2H,
+        //                                 streams[secondary_stream_index]);*/
 
-            cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-        }
+        //     cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+        // }
 
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
@@ -2518,9 +2518,7 @@ namespace test{
 
                 
                 tmp.edits.clear();
-
-#if 1                
-                
+       
 
                 const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
                 if(numEdits != doNotUseEditsValue){
@@ -2531,64 +2529,7 @@ namespace test{
                 }else{
                     tmp.useEdits = false;
                 }
-                
-#else              
 
-                TempCorrectedSequence debugresult;
-
-                const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                if(numEdits != doNotUseEditsValue){
-                    debugresult.edits.resize(numEdits);
-                    const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
-                    std::copy_n(gpuedits, numEdits, debugresult.edits.begin());
-                    debugresult.useEdits = true;
-                }else{
-                    debugresult.useEdits = false;
-                }
-
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
-                if(!originalReadContainsN){
-                    const std::string originalSubjectString = rawResults.decodedSubjectStrings[subject_index];
-
-                    const int maxEdits = subject_length / 7;
-                    int edits = 0;
-                    
-                    for(int i = 0; i < subject_length && edits <= maxEdits; i++){
-                        if(tmp.sequence[i] != originalSubjectString[i]){
-                            tmp.edits.emplace_back(i, tmp.sequence[i]);
-                            edits++;
-                        }
-                    }
-                    tmp.useEdits = edits <= maxEdits;
-                }else{
-                    tmp.useEdits = false;
-                }
-
-                assert(tmp.useEdits == debugresult.useEdits && debugresult.edits == tmp.edits);
-
-#endif                
-#if 0 // validity check of gpu data
-                if(tmp.useEdits){
-                    const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                    const int cpures = tmp.edits.size();
-                    if(gpures != cpures){
-                        std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
-                    }else{
-                        const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
-                        for(int k = 0; k < cpures; k++){
-                            if(tmp.edits[k] != gpuedits[k]){
-                                std::cerr << "error " << positionInVector << " " << k << "\n";
-                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << gpuedits[k].pos << " " << gpuedits[k].base << "\n";
-                            }
-                        }
-                    }
-                }else{
-                    const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                    if(gpures != doNotUseEditsValue){
-                        std::cerr << "!useEdits, but gpures = " << gpures << "\n";
-                    }
-                }
-#endif
                 tmpencoded = tmp.encode();
 
                 // if(readId == 13158000){
@@ -2637,24 +2578,21 @@ namespace test{
 
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
-                const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
                 const int candidate_shift = rawResults.h_alignment_shifts[global_candidate_index];
-
-                const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
+                
                 //TIMERSTOPCPU(setup);
                 if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
                     std::cerr << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
-                            << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                 }
                 assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
-
+                
                 //TIMERSTARTCPU(tmp);
                 tmp.type = TempCorrectedSequence::Type::Candidate;
                 tmp.shift = candidate_shift;
                 tmp.readId = candidate_read_id;
-                tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
                 //TIMERSTOPCPU(tmp);
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+                //const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
                 
                 tmp.edits.clear();
                 const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
@@ -2664,57 +2602,11 @@ namespace test{
                     std::copy_n(gpuedits, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
+                    const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
+                    const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
+                    tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
                     tmp.useEdits = false;
                 }
-
-                // TempCorrectedSequence old;
-                // if(!originalReadContainsN){
-                //     //TIMERSTARTCPU(edits);
-                //     const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
-                //     const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
-
-                //     const int maxEdits = candidate_length / 7;
-                //     int edits = 0;
-                //     for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
-                //         if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                //             old.edits.emplace_back(pos, tmp.sequence[pos]);
-                //             edits++;
-                //         }
-                //     }
-
-                //     old.useEdits = edits <= maxEdits;
-                //     //TIMERSTOPCPU(edits);
-                // }else{
-                //     old.useEdits = false;
-                // }
-#if 0 // validity check of gpu data
-                std::cerr  << global_candidate_index << " " << tmp.sequence << "\n";
-
-
-                if(old.useEdits){
-                    const int gpures = tmp.edits.size();
-                    const int cpures = old.edits.size();
-                    if(gpures != cpures || global_candidate_index == 749){
-                        std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
-                        std::cerr << "subject_index " << subject_index << ", candidateIndex " << candidateIndex << ", subjectReadId = " << subjectReadId << ", \ncorrected candidate sequence = " << tmp.sequence << "\n";
-                        assert(0);
-                    }else{
-                        for(int k = 0; k < cpures; k++){
-                            if(tmp.edits[k] != old.edits[k]){
-                                std::cerr << "error " << positionInVector << " " << k << "\n";
-                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << old.edits[k].pos << " " << old.edits[k].base << "\n";
-                                assert(0);
-                            }
-                        }
-                    }
-                }else{
-                    const int gpures = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
-                    if(gpures != doNotUseEditsValue){
-                        std::cerr << "!useEdits, but gpures = " << gpures << "\n";
-                        assert(0);
-                    }
-                }
-#endif
 
                 //TIMERSTARTCPU(encode);
                 tmpencoded = tmp.encode();
@@ -2919,12 +2811,19 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.featurestream = &featurestream;
 
       //std::mutex outputstreammutex;
+      std::map<bool, int> useEditsCountMap;
+      std::map<bool, int> useEditsSavedCountMap;
+      std::map<int, int> numEditsHistogram;
 
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence encoded){
+          //useEditsCountMap[tmp.useEdits]++;
+
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
               //outputstream << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
+              //useEditsSavedCountMap[tmp.useEdits]++;
+              //numEditsHistogram[tmp.edits.size()]++;
           }
       };
 
@@ -3320,6 +3219,23 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       minhasher.destroy();
       readStorage.destroy();
+
+      std::cerr << "useEditsCountMap\n";
+      for(const auto& pair : useEditsCountMap){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      std::cerr << "useEditsSavedCountMap\n";
+      for(const auto& pair : useEditsSavedCountMap){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      std::cerr << "numEditsHistogram\n";
+      for(const auto& pair : numEditsHistogram){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      
 
       #ifndef DO_PROFILE
 
