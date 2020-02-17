@@ -238,7 +238,7 @@ private:
                         std::size_t numThreads, 
                         bool selfCanParticipate){
 
-        selfCanParticipate = false;
+        //selfCanParticipate = false;
 
         //2 debug variables
         // volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;

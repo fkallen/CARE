@@ -99,6 +99,10 @@ enum class MergeRangesKernelType{
 
 void mergeRangesGpuAsync(
         MergeRangesGpuHandle<read_number>& handle, 
+        read_number* d_compactUniqueCandidateIds,
+        int* d_candidatesPerAnchor,
+        int* d_candidatesPerAnchorPrefixSum,
+        read_number* d_candidateIds,
         const std::pair<const read_number*, const read_number*>* h_ranges, 
         int numRanges, 
         const read_number* d_anchorIds,

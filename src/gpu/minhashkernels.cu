@@ -735,33 +735,17 @@ void makeCompactUniqueRangesGmem(
         stream
     );
 
-    cudaMemcpyAsync(
-        handle.h_uniqueRangeLengths.get(), 
-        handle.d_uniqueRangeLengths.get(), 
-        sizeof(int) * numSequences, 
-        D2H, 
-        stream
-    ); CUERR;
-    cudaMemcpyAsync(
-        handle.h_numresults.get(), 
-        handle.d_uniqueRangeLengthsPrefixsum.get() + numSequences, 
-        sizeof(int), 
-        D2H, 
-        stream
-    ); CUERR;
-    cudaMemcpyAsync(
-        handle.h_results.get(), 
-        handle.d_results.get(), 
-        sizeof(read_number) * totalNumElements, 
-        D2H, 
-        stream
-    ); CUERR;        
+       
 }
 
 
 
 void makeCompactUniqueRangesSmem(
         MergeRangesGpuHandle<read_number>& handle, 
+        read_number* d_compactUniqueCandidateIds,
+        int* d_candidatesPerAnchor,
+        int* d_candidatesPerAnchorPrefixSum,
+        read_number* d_candidateIds,
         const std::pair<const read_number*, const read_number*>* ranges,
         int numRanges, 
         const read_number* d_anchorIds, 
@@ -782,8 +766,8 @@ void makeCompactUniqueRangesSmem(
         cub::DeviceScan::InclusiveSum(
             nullptr, 
             temp_storage_bytes,
-            handle.d_uniqueRangeLengths.get(),
-            handle.d_uniqueRangeLengthsPrefixsum.get() + 1,
+            d_candidatesPerAnchor,
+            d_candidatesPerAnchorPrefixSum + 1,
             numSequences,
             stream
         ); CUERR;
@@ -809,10 +793,7 @@ void makeCompactUniqueRangesSmem(
         cudaStreamWaitEvent(pipelinestream, handle.events.back(), 0); CUERR;
     }
 
-    //copy data of ranges into contiguous pinned memory, then to device async
     {
-        auto begin = handle.h_data.get();
-        auto end = handle.h_data.get();
         const int numstreams = handle.streams.size();
 
         int elementOffset = 0;
@@ -831,45 +812,21 @@ void makeCompactUniqueRangesSmem(
                 int numElementsForSequence = 0;
 
                 for(int k = 0; k < rangesPerSequence; k++){
-                    const int rangeIndex = sequenceIndex * rangesPerSequence + k;
-
-                    end = std::copy(
-                        ranges[rangeIndex].first, 
-                        ranges[rangeIndex].second,
-                        begin
-                    );
-    
-                    const int sizeOfRange = std::distance(begin, end);
+                    const int rangeIndex = sequenceIndex * rangesPerSequence + k;    
+                    const int sizeOfRange = std::distance(ranges[rangeIndex].first, ranges[rangeIndex].second);
                     numElementsForSequence += sizeOfRange;
-                    mynumElements += sizeOfRange;
-                    
-                    begin = end;
                 }
 
-                largestNumElementsPerSequence = std::max(largestNumElementsPerSequence, numElementsForSequence);
-                
-            }            
-
-            // std::cerr << "mynumElements = " << mynumElements << ", mynumSequences = " << mynumSequences << "\n";
-            // std::cerr << "elementOffset = " << elementOffset << ", sequenceOffset = " << sequenceOffset << "\n";
-
-            cudaMemcpyAsync(
-                handle.d_data.get() + elementOffset, 
-                handle.h_data.get() + elementOffset,
-                sizeof(read_number) * mynumElements,
-                H2D,
-                handle.streams[i]
-            ); CUERR;
-            // constexpr int blocksize = 128;
-            // constexpr int numtempregs = 16;
+                largestNumElementsPerSequence = std::max(largestNumElementsPerSequence, numElementsForSequence);                
+            } 
 
             #define processData(blocksize, numtempregs) \
             { \
                 switch(kernelType){ \
                 case MergeRangesKernelType::allcub: \
                     makeUniqueRangesKernel<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
-                        handle.d_data.get() + elementOffset,  \
-                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
+                        d_candidateIds + elementOffset,  \
+                        d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
                         d_anchorIds, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
@@ -878,8 +835,8 @@ void makeCompactUniqueRangesSmem(
                     break; \
                 case MergeRangesKernelType::popcmultiwarp: \
                     makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
-                        handle.d_data.get() + elementOffset,  \
-                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
+                        d_candidateIds + elementOffset,  \
+                        d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
@@ -887,8 +844,8 @@ void makeCompactUniqueRangesSmem(
                     break; \
                 case MergeRangesKernelType::popcsinglewarp: \
                     makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
-                        handle.d_data.get() + elementOffset,  \
-                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
+                        d_candidateIds + elementOffset,  \
+                        d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
@@ -896,8 +853,8 @@ void makeCompactUniqueRangesSmem(
                     break; \
                 case MergeRangesKernelType::popcsinglewarpchunked: \
                     makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
-                        handle.d_data.get() + elementOffset,  \
-                        handle.d_uniqueRangeLengths.get() + sequenceOffset,  \
+                        d_candidateIds + elementOffset,  \
+                        d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
@@ -984,43 +941,21 @@ void makeCompactUniqueRangesSmem(
     cub::DeviceScan::InclusiveSum(
         handle.cubTempStorage.get(), 
         tmpsize,
-        handle.d_uniqueRangeLengths.get(),
-        handle.d_uniqueRangeLengthsPrefixsum.get() + 1,
+        d_candidatesPerAnchor,
+        d_candidatesPerAnchorPrefixSum + 1,
         numSequences,
         stream
     ); CUERR;
 
     compactDataOfUniqueRanges<256><<<numSequences, 256, 0, stream>>>(
-        handle.d_results.get(),
-        handle.d_data.get(),
-        handle.d_uniqueRangeLengthsPrefixsum.get(),
+        d_compactUniqueCandidateIds,
+        d_candidateIds,
+        d_candidatesPerAnchorPrefixSum,
         handle.d_rangesBeginPerSequence.get(),
         numSequences
     ); CUERR;
 
-    //cudaEventRecord(handle.events.back(), stream); CUERR;
-
-    cudaMemcpyAsync(
-        handle.h_uniqueRangeLengths.get(), 
-        handle.d_uniqueRangeLengths.get(), 
-        sizeof(int) * numSequences, 
-        D2H, 
-        stream
-    ); CUERR;
-    cudaMemcpyAsync(
-        handle.h_numresults.get(), 
-        handle.d_uniqueRangeLengthsPrefixsum.get() + numSequences, 
-        sizeof(int), 
-        D2H, 
-        stream
-    ); CUERR;
-    cudaMemcpyAsync(
-        handle.h_results.get(), 
-        handle.d_results.get(), 
-        sizeof(read_number) * totalNumElements, 
-        D2H, 
-        stream
-    ); CUERR;     
+    //cudaEventRecord(handle.events.back(), stream); CUERR;   
 
 }
 
@@ -1028,6 +963,10 @@ void makeCompactUniqueRangesSmem(
 
 void mergeRangesGpuAsync(
         MergeRangesGpuHandle<read_number>& handle, 
+        read_number* d_compactUniqueCandidateIds,
+        int* d_candidatesPerAnchor,
+        int* d_candidatesPerAnchorPrefixSum,
+        read_number* d_candidateIds,
         const std::pair<const read_number*, const read_number*>* h_ranges, 
         int numRanges, 
         const read_number* d_anchorIds, 
@@ -1045,21 +984,21 @@ void mergeRangesGpuAsync(
 
     handle.h_rangesBeginPerSequence[0] = 0;
 
-    int longestRange = 0;
+    //int longestRange = 0;
 
-    nvtx::push_range("longestrange", 4);
+    //nvtx::push_range("longestrange", 4);
     int maxNumResults = 0;
     for(int i = 0; i < numSequences; i++){   
         int rangeOfSequence = 0;     
         for(int k = 0; k < rangesPerSequence; k++){
             const int rangeIndex = i * rangesPerSequence + k;
             maxNumResults += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
-            rangeOfSequence += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
+            //rangeOfSequence += std::distance(h_ranges[rangeIndex].first, h_ranges[rangeIndex].second);
         }
-        longestRange = std::max(longestRange, rangeOfSequence);
+        //longestRange = std::max(longestRange, rangeOfSequence);
         handle.h_rangesBeginPerSequence[i+1] = maxNumResults;
     }
-    nvtx::pop_range();
+    //nvtx::pop_range();
 
     //std::cerr << "longestRange = " << longestRange << "\n";
     handle.d_data.resize(maxNumResults);
@@ -1094,6 +1033,10 @@ void mergeRangesGpuAsync(
     }else{
         makeCompactUniqueRangesSmem(
             handle, 
+            d_compactUniqueCandidateIds,
+            d_candidatesPerAnchor,
+            d_candidatesPerAnchorPrefixSum,
+            d_candidateIds,
             h_ranges,
             numRanges, 
             d_anchorIds,
@@ -1123,15 +1066,37 @@ OperationResult mergeRangesGpu(
         return OperationResult{};
     }
 
-    mergeRangesGpuAsync(
-        handle, 
-        h_ranges, 
-        numRanges, 
-        d_anchorIds, 
-        rangesPerSequence, 
-        stream,
-        kernelType
-    );
+    // mergeRangesGpuAsync(
+    //     handle, 
+    //     h_ranges, 
+    //     numRanges, 
+    //     d_anchorIds, 
+    //     rangesPerSequence, 
+    //     stream,
+    //     kernelType
+    // );
+
+    cudaMemcpyAsync(
+        handle.h_uniqueRangeLengths.get(), 
+        handle.d_uniqueRangeLengths.get(), 
+        sizeof(int) * numSequences, 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_numresults.get(), 
+        handle.d_uniqueRangeLengthsPrefixsum.get() + numSequences, 
+        sizeof(int), 
+        D2H, 
+        stream
+    ); CUERR;
+    cudaMemcpyAsync(
+        handle.h_results.get(), 
+        handle.d_results.get(), 
+        sizeof(read_number) * handle.d_results.size(), 
+        D2H, 
+        stream
+    ); CUERR; 
 
 
     cudaStreamSynchronize(stream); CUERR;
