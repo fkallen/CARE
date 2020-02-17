@@ -18,6 +18,20 @@ struct BitArrayBase{
     Data_t* data = nullptr;
     size_t numBits = 0;
 
+    BitArrayBase() = default;
+    BitArrayBase(const BitArrayBase&) = default;
+    
+    BitArrayBase(BitArrayBase&& rhs) noexcept{
+        *this = std::move(rhs);
+    }
+
+    BitArrayBase& operator=(const BitArrayBase&) = delete;
+    BitArrayBase& operator=(BitArrayBase&& rhs){
+        data = std::exchange(rhs.data, nullptr);
+        numBits = std::exchange(rhs.numBits, 0);
+        return *this;
+    }
+
     HOSTDEVICEQUALIFIER
     bool isSetNonatomic(Index_t position) const{
         assert(position < numBits);
@@ -126,7 +140,7 @@ void destroyGpuBitArray(GpuBitArray<Index_t>& array){
 
 template<class Index_t>
 __global__
-void readBitarray(bool* result, GpuBitArray<Index_t> bitarray, const Index_t* positions, int nPositions){
+void readBitarray(bool* __restrict__ result, GpuBitArray<Index_t> bitarray, const Index_t* __restrict__ positions, int nPositions){
     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
     const int stride = blockDim.x * gridDim.x;
 
@@ -140,7 +154,22 @@ void readBitarray(bool* result, GpuBitArray<Index_t> bitarray, const Index_t* po
 
 template<class Index_t>
 __global__
-void setBitarray(GpuBitArray<Index_t> bitarray, bool* values, const Index_t* positions, int nPositions){
+void readBitarray(bool* __restrict__ result, GpuBitArray<Index_t> bitarray, const Index_t* __restrict__ positions, const int* __restrict__ nPositionsPtr){
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    const int stride = blockDim.x * gridDim.x;
+    const int nPositions = *nPositionsPtr;
+
+    for(int index = tid; index < nPositions; index += stride){
+
+        const Index_t position = positions[index];
+
+        result[index] = bitarray.isSetNonatomic(position);
+    }
+}
+
+template<class Index_t>
+__global__
+void setBitarray(GpuBitArray<Index_t> bitarray, bool* __restrict__ values, const Index_t* __restrict__ positions, int nPositions){
     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
     const int stride = blockDim.x * gridDim.x;
 

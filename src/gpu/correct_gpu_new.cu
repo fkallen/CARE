@@ -528,7 +528,7 @@ namespace test{
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
         nextData.d_subject_read_ids.resize(batchsize);
-        nextData.h_anchorContainsN.resize(batchsize);
+        //nextData.h_anchorContainsN.resize(batchsize);
         nextData.d_anchorContainsN.resize(batchsize);        
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
@@ -585,19 +585,26 @@ namespace test{
             nextData.stream
         ); CUERR;
 
-        for(int i = 0; i < nextData.n_subjects; i++){
-            const read_number anchorReadId = nextData.h_subject_read_ids[i];
-            const bool containsN = readStorage.readContainsN(anchorReadId);
-            nextData.h_anchorContainsN[i] = containsN;
-        }
-
-        cudaMemcpyAsync(
-            nextData.d_anchorContainsN,
-            nextData.h_anchorContainsN,
-            nextData.h_anchorContainsN.sizeInBytes(),
-            H2D,
+        readStorage.readsContainN_async(
+            nextData.d_anchorContainsN.get(), 
+            nextData.d_subject_read_ids.get(),
+            nextData.n_subjects, 
             nextData.stream
-        ); CUERR;
+        );
+
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     const read_number anchorReadId = nextData.h_subject_read_ids[i];
+        //     const bool containsN = readStorage.readContainsN(anchorReadId);
+        //     nextData.h_anchorContainsN[i] = containsN;
+        // }
+
+        // cudaMemcpyAsync(
+        //     nextData.d_anchorContainsN,
+        //     nextData.h_anchorContainsN,
+        //     nextData.h_anchorContainsN.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;
         
     }
 
@@ -949,6 +956,8 @@ namespace test{
         nextData.d_candidates_per_subject.resize(nextData.n_subjects);
         nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
         nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        //nextData.h_candidateContainsN.resize(totalNumIds);
+        nextData.d_candidateContainsN.resize(totalNumIds);
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
             nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
@@ -992,37 +1001,6 @@ namespace test{
             }
         );
 
-        // std::vector<read_number> cont(totalNumIds);
-
-        // nvtx::push_range("contiguousmem", 3);
-
-        // {
-        //     auto begin = cont.begin(); //nextData.h_candidate_read_ids.get();
-        //     for(int i = 0; i < numChunksRequired; i++){
-        //         const int lmax = batchptr->minhashHandles[i].multiranges.size();
-        //         for(int k = 0; k < lmax; k++){
-        //             constexpr int nextprefetch = 2;
-        //             if(k+nextprefetch < lmax){
-        //                 __builtin_prefetch(batchptr->minhashHandles[i].multiranges[k+nextprefetch].first, 0, 0);
-        //             }
-        //             const auto& range = batchptr->minhashHandles[i].multiranges[k];
-        //         //for(const auto& range : batchptr->minhashHandles[i].multiranges){
-        //             begin = std::copy(range.first, range.second, begin);
-        //         }
-        //     }
-
-        // }
-        
-        // nvtx::pop_range();
-        // std::copy(cont.begin(), cont.end(), nextData.h_candidate_read_ids.get()); 
-
-        // cudaMemcpyAsync(
-        //     nextData.d_candidate_read_ids_tmp.get(),
-        //     nextData.h_candidate_read_ids.get(),
-        //     sizeof(read_number) * totalNumIds,
-        //     H2D,
-        //     nextData.stream
-        // );
 
         nvtx::push_range("gpumakeUniqueQueryResults", 2);
         mergeRangesGpuAsync(
@@ -1063,119 +1041,41 @@ namespace test{
             nextData.stream
         ); CUERR;
 
+        readStorage.readsContainN_async(
+            nextData.d_candidateContainsN.get(), 
+            nextData.d_candidate_read_ids.get(), 
+            nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,
+            totalNumIds, 
+            nextData.stream
+        );
+
         cudaStreamSynchronize(nextData.stream); CUERR;
         nvtx::pop_range();
 
+        nextData.n_queries = nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects];
 
-        // std::swap(nextData.h_candidate_read_ids, nextData.mergeRangesGpuHandle.h_results);
-        // std::swap(nextData.d_candidate_read_ids, nextData.mergeRangesGpuHandle.d_results);
-        //std::swap(nextData.h_candidates_per_subject, nextData.mergeRangesGpuHandle.h_uniqueRangeLengths);
-        //std::swap(nextData.d_candidates_per_subject, nextData.mergeRangesGpuHandle.d_uniqueRangeLengths);
-        //std::swap(nextData.h_candidates_per_subject_prefixsum, nextData.mergeRangesGpuHandle.h_uniqueRangeLengthsPrefixsum);
-        //std::swap(nextData.d_candidates_per_subject_prefixsum, nextData.mergeRangesGpuHandle.d_uniqueRangeLengthsPrefixsum);
-        //nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        nextData.d_candidate_read_ids.resize(nextData.n_queries);
 
-        
-
-        nextData.h_candidate_read_ids.resize(nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects]);
-        nextData.d_candidate_read_ids.resize(nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects]);
-
-        nextData.n_queries = nextData.h_candidate_read_ids.size();
-
-        //nextData.mergeRangesGpuHandle.h_results // candidateIds
-        //nextData.mergeRangesGpuHandle.h_uniqueRangeLengths // candidateIdsPerSequence
-
-        // int initialNumberOfCandidates = 0;  
-
-        // auto multiresultbegin = nextData.h_candidate_read_ids.get();
-        // auto end = nextData.h_candidate_read_ids.get();
-        // for(int i = 0; i < nextData.n_subjects; i++){
-        //     const read_number readId = nextDataPtr->h_subject_read_ids[i];
-
-        //     auto multiresultend = multiresultbegin + nextData.h_candidates_per_subject[i];   
-        //     auto readIdPos = std::lower_bound(multiresultbegin, multiresultend, readId);
-            
-        //     if(readIdPos != multiresultend && *readIdPos == readId) {
-        //         //remove readId at readIdPos from range
-        //         end = std::copy(multiresultbegin, readIdPos, end); 
-        //         end = std::copy(readIdPos+1, multiresultend, end); 
-
-        //         nextData.h_candidates_per_subject[i] -= 1;
-        //     }
-
-        //     multiresultbegin = multiresultend;
-
-        //     initialNumberOfCandidates += nextData.h_candidates_per_subject[i];
-        // }
-
-        // nextData.n_queries += initialNumberOfCandidates;
-
-        // nextData.h_candidate_read_ids.resize(nextData.n_queries);
-        // nextData.d_candidate_read_ids.resize(nextData.n_queries);
-
-
-        // nextData.decodedSubjectStrings.clear();
-        // for(int i = 0; i < numChunksRequired; i++){
-        //     nextData.decodedSubjectStrings.insert(
-        //         nextData.decodedSubjectStrings.end(),
-        //         decodedSubjectStringsPerThread[i].begin(),
-        //         decodedSubjectStringsPerThread[i].end()
-        //     );
-        // }
-
-        nextData.h_candidateContainsN.resize(nextData.n_queries);
         nextData.d_candidateContainsN.resize(nextData.n_queries);
 
+        //nextData.h_candidateContainsN.resize(nextData.n_queries);
+
         // cudaMemcpyAsync(
-        //     nextData.d_candidate_read_ids.get(),
-        //     nextData.h_candidate_read_ids.get(),
-        //     nextData.h_candidate_read_ids.sizeInBytes(),
+        //     nextData.h_candidateContainsN,
+        //     nextData.d_candidateContainsN,
+        //     nextData.n_queries * sizeof(bool),
         //     H2D,
         //     nextData.stream
-        // ); CUERR;
+        // ); CUERR;  
 
-        // std::cerr << "candidate ids \n\n";
+        // cudaDeviceSynchronize(); CUERR;
+
         // for(int i = 0; i < nextData.n_queries; i++){
-        //     std::cerr << nextData.h_candidate_read_ids[i] << "\n";
+        //     const read_number candidateReadId = nextData.h_candidate_read_ids[i];
+        //     const bool containsN = readStorage.readContainsN(candidateReadId);
+        //     assert(containsN == nextData.h_candidateContainsN[i]);
         // }
-
-        //nextData.h_candidates_per_subject_prefixsum[0] = 0;
-
-        //make candidates per subject prefix sum
-
-        // for(int subject_index = 0; subject_index < nextData.n_subjects; subject_index++){
-        //     const int numCandidateIds = nextData.h_candidates_per_subject[subject_index];               
-
-        //     nextData.h_candidates_per_subject_prefixsum[subject_index+1] 
-        //         = nextData.h_candidates_per_subject_prefixsum[subject_index] + numCandidateIds;
-        // }    
-        
-        // std::cerr << "num candidate ids \n\n";
-        // for(int i = 0; i < nextData.n_subjects; i++){
-        //     std::cerr << nextData.h_candidates_per_subject[i] << "\n";
-        // }
-
-        // cudaMemcpyAsync(
-        //     nextData.d_candidates_per_subject.get(),
-        //     nextData.h_candidates_per_subject.get(),
-        //     nextData.h_candidates_per_subject.sizeInBytes(),
-        //     H2D,
-        //     nextData.stream
-        // ); CUERR;
-
-        // cudaMemcpyAsync(
-        //     nextData.d_candidates_per_subject_prefixsum.get(),
-        //     nextData.h_candidates_per_subject_prefixsum.get(),
-        //     nextData.h_candidates_per_subject_prefixsum.sizeInBytes(),
-        //     H2D,
-        //     nextData.stream
-        // ); CUERR;
-
-        for(int i = 0; i < nextData.n_queries; i++){
-            const read_number candidateReadId = nextData.h_candidate_read_ids[i];
-            const bool containsN = readStorage.readContainsN(candidateReadId);
-            nextData.h_candidateContainsN[i] = containsN;
-        }
 
         // std::cerr << "contains \n\n";
         // for(int i = 0; i < nextData.n_queries; i++){
@@ -1184,13 +1084,13 @@ namespace test{
 
         // std::exit(0);
 
-        cudaMemcpyAsync(
-            nextData.d_candidateContainsN,
-            nextData.h_candidateContainsN,
-            nextData.h_candidateContainsN.sizeInBytes(),
-            H2D,
-            nextData.stream
-        ); CUERR;    
+        // cudaMemcpyAsync(
+        //     nextData.d_candidateContainsN,
+        //     nextData.h_candidateContainsN,
+        //     nextData.h_candidateContainsN.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;    
     }
 
 

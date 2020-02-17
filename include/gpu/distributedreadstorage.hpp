@@ -157,6 +157,13 @@ public:
         int nPositions, 
         cudaStream_t stream) const;
 
+    void readsContainN_async(
+        bool* d_result, 
+        const read_number* d_positions, 
+        const int* d_nPositions,
+        int nPositionsUpperBound, 
+        cudaStream_t stream) const;
+
     void setReadsContainN_async(
         bool* d_values, 
         const read_number* d_positions, 

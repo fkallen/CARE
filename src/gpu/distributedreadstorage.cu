@@ -120,6 +120,7 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     sequenceLengthUpperBound = std::move(rhs.sequenceLengthUpperBound);
     useQualityScores = std::move(rhs.useQualityScores);
     readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
+    bitArrayUndeterminedBase = std::move(rhs.bitArrayUndeterminedBase);
     lengthStorage = std::move(rhs.lengthStorage);
     gpulengthStorage = std::move(rhs.gpulengthStorage);
     distributedSequenceData = std::move(rhs.distributedSequenceData);
@@ -167,6 +168,7 @@ void DistributedReadStorage::destroy(){
     sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
     lengthStorage = std::move(LengthStore_t{});
+    destroyGpuBitArray(bitArrayUndeterminedBase);
     gpulengthStorage = std::move(GPULengthStore_t{});
     distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
     distributedQualities = std::move(DistributedArray<char, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
@@ -362,6 +364,24 @@ void DistributedReadStorage::readsContainN_async(
         bitArrayUndeterminedBase, 
         d_positions, 
         nPositions
+    );
+}
+
+void DistributedReadStorage::readsContainN_async(
+        bool* d_result, 
+        const read_number* d_positions, 
+        const int* d_nPositions,
+        int nPositionsUpperBound, 
+        cudaStream_t stream) const{
+
+    dim3 block = 256;
+    dim3 grid = SDIV(nPositionsUpperBound, block.x);
+
+    readBitarray<<<grid, block, 0, stream>>>(
+        d_result, 
+        bitArrayUndeterminedBase, 
+        d_positions, 
+        d_nPositions
     );
 }
 
