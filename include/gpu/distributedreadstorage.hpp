@@ -6,6 +6,8 @@
 
 #include <gpu/distributedarray.hpp>
 #include <gpu/gpulengthstorage.hpp>
+#include <gpu/gpubitarray.cuh>
+
 #include <config.hpp>
 #include <sequencefileio.hpp>
 
@@ -79,6 +81,8 @@ public:
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
     mutable DistributedArray<char, read_number> distributedQualities;
 
+    GpuBitArray<read_number> bitArrayUndeterminedBase;
+
 
 
     Statistics statistics;
@@ -146,6 +150,20 @@ public:
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
+
+    void readsContainN_async(
+        bool* d_result, 
+        const read_number* d_positions, 
+        int nPositions, 
+        cudaStream_t stream) const;
+
+    void setReadsContainN_async(
+        bool* d_values, 
+        const read_number* d_positions, 
+        int nPositions,
+        cudaStream_t stream) const;
+    
+    void setGpuBitArrayFromVector();
 
     void constructionIsComplete();
     void allowModifications();
