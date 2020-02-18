@@ -1423,17 +1423,17 @@ namespace test{
 
         cudaStreamWaitEvent(streams[secondary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0) ;
 
-        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+        //                 dataArrays.d_subject_sequences_data,
+        //                 dataArrays.d_subject_sequences_data.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
+        //                 dataArrays.d_candidate_sequences_data,
+        //                 dataArrays.d_candidate_sequences_data.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
                         dataArrays.d_subject_sequences_lengths,
