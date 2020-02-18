@@ -1018,9 +1018,26 @@ namespace test{
         );
 
         cudaMemcpyAsync(
+            nextData.h_candidates_per_subject_prefixsum.get(),
+            nextData.d_candidates_per_subject_prefixsum.get(),
+            sizeof(int) * (nextData.n_subjects + 1),
+            D2H,
+            nextData.stream
+        ); CUERR;
+
+        cudaStreamSynchronize(nextData.stream); CUERR;
+
+        nextData.n_queries = nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects];
+
+        nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        nextData.d_candidate_read_ids.resize(nextData.n_queries);
+
+        nextData.d_candidateContainsN.resize(nextData.n_queries);
+
+        cudaMemcpyAsync(
             nextData.h_candidate_read_ids.get(),
             nextData.d_candidate_read_ids.get(),
-            sizeof(read_number) * totalNumIds,
+            sizeof(read_number) * nextData.n_queries,
             D2H,
             nextData.stream
         ); CUERR;
@@ -1031,33 +1048,20 @@ namespace test{
             sizeof(int) * (nextData.n_subjects),
             D2H,
             nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_candidates_per_subject_prefixsum.get(),
-            nextData.d_candidates_per_subject_prefixsum.get(),
-            sizeof(int) * (nextData.n_subjects + 1),
-            D2H,
-            nextData.stream
-        ); CUERR;
+        ); CUERR;        
 
         readStorage.readsContainN_async(
             nextData.d_candidateContainsN.get(), 
             nextData.d_candidate_read_ids.get(), 
-            nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,
-            totalNumIds, 
+            //nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,
+            nextData.n_queries, 
             nextData.stream
         );
 
         cudaStreamSynchronize(nextData.stream); CUERR;
         nvtx::pop_range();
 
-        nextData.n_queries = nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects];
-
-        nextData.h_candidate_read_ids.resize(nextData.n_queries);
-        nextData.d_candidate_read_ids.resize(nextData.n_queries);
-
-        nextData.d_candidateContainsN.resize(nextData.n_queries);
+        
 
         //nextData.h_candidateContainsN.resize(nextData.n_queries);
 
@@ -2824,6 +2828,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               partialResults.storeElement(std::move(encoded));
               //useEditsSavedCountMap[tmp.useEdits]++;
               //numEditsHistogram[tmp.edits.size()]++;
+
+             // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
           }
       };
 
