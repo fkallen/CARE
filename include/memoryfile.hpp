@@ -24,6 +24,27 @@ struct MemoryFile{
 
     struct Twrapper{
 
+        Twrapper() = default;
+        Twrapper(const Twrapper&) = default;
+        Twrapper(Twrapper&&) = default;
+        Twrapper& operator=(const Twrapper&) = default;
+        Twrapper& operator=(Twrapper&&) = default;
+
+        Twrapper(const T& rhs){
+            data = rhs;
+        }
+        Twrapper(T&& rhs){
+            data = std::move(rhs);
+        }
+        Twrapper& operator=(const T& rhs){
+            data = rhs;
+            return *this;
+        }
+        Twrapper& operator=(T&& rhs){
+            data = std::move(rhs);
+            return *this;
+        }
+
         T data;
 
         friend std::ostream& operator<<(std::ostream& s, const Twrapper& i){
@@ -43,35 +64,34 @@ struct MemoryFile{
                 : 
                 memoryiterator(vec.begin()),
                 memoryend(vec.end()),
-                fileinputstream(std::ifstream(filename, std::ios::binary)){
-
-            fileiterator = std::istream_iterator<Twrapper>(fileinputstream);
-            fileend = std::istream_iterator<Twrapper>();
+                fileinputstream(std::ifstream(filename, std::ios::binary)),
+                fileiterator(std::istream_iterator<Twrapper>(fileinputstream)),
+                fileend(std::istream_iterator<Twrapper>()){
         }
 
         bool hasNext() const{
             return (memoryiterator != memoryend) || (fileiterator != fileend);
         }
 
-        T next() const{
+        const T* next() const{
             assert(hasNext());
 
             if(memoryiterator != memoryend){
-                T data = *memoryiterator;
+                const T* data = &(*memoryiterator);
                 ++memoryiterator;
                 return data;
             }else{
-                Twrapper wrapper = *fileiterator;
+                const Twrapper* wrapper = &(*fileiterator);
                 ++fileiterator;
-                return wrapper.data;
+                return &(wrapper->data);
             }
         }
 
         mutable typename std::vector<T>::const_iterator memoryiterator;
         typename std::vector<T>::const_iterator memoryend;
+        std::ifstream fileinputstream;
         mutable std::istream_iterator<Twrapper> fileiterator;
         std::istream_iterator<Twrapper> fileend;
-        std::ifstream fileinputstream;
     };
 
     MemoryFile() = default;
@@ -209,7 +229,7 @@ private:
     }
 
     bool storeInFile(T&& element){
-        outputstream << Twrapper{element};
+        outputstream << Twrapper{std::move(element)};
         numStoredElements++;
 
         return bool(outputstream);
@@ -219,7 +239,7 @@ private:
     std::int64_t numStoredElements = 0; // number of stored elements
     std::size_t usedHeapMemory = 0;
     std::size_t maxMemoryOfVectorAndHeap = 0; // usedMemoryOfVector <= maxMemoryOfVector must always hold
-    std::function<std::size_t(T)> getHeapUsageOfElement;
+    std::function<std::size_t(const T&)> getHeapUsageOfElement;
     std::vector<T> vector; //elements stored in memory
     std::ofstream outputstream;
     std::string filename = "";    

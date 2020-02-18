@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <algorithm>
 #include <chrono>
 #include <cassert>
@@ -921,6 +922,7 @@ void mergeResultFiles(
 
     auto combineMultipleCorrectionResults2 = [](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
+        assert(false && "uncorrectedpositions cannot be used");
 
         constexpr bool outputHQ = true;
         constexpr bool outputLQAnchorDifferentCand = false;
@@ -1253,14 +1255,14 @@ void mergeResultFiles(
     auto filereader = partialResults.makeReader();
 
     while(filereader.hasNext()){
-        TempCorrectedSequence tcs = filereader.next();
+        TempCorrectedSequence tcs = *(filereader.next());
 
         if(firstiter || tcs.readId == currentReadId){
             currentReadId = tcs.readId ;
             correctionVector.emplace_back(std::move(tcs));
 
             while(filereader.hasNext()){
-                TempCorrectedSequence tcs2 = filereader.next();
+                TempCorrectedSequence tcs2 = *(filereader.next());
                 if(tcs2.readId == currentReadId){
                     correctionVector.emplace_back(std::move(tcs2));
                 }else{
@@ -1411,17 +1413,26 @@ void mergeResultFiles(
 
     TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
         decode(encoded);
+        return *this;
     }
 
     bool EncodedTempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
         os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
-        os << data << '\n';
+        os.write(reinterpret_cast<const char*>(&encodedflags), sizeof(std::uint32_t));
+        const int numBytes = getNumBytes();
+        os.write(reinterpret_cast<const char*>(data.get()), sizeof(std::uint8_t) * numBytes);
         return bool(os);
     }
 
     bool EncodedTempCorrectedSequence::readFromBinaryStream(std::istream& is){
         is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
-        std::getline(is, data);
+        is.read(reinterpret_cast<char*>(&encodedflags), sizeof(std::uint32_t));
+        const int numBytes = getNumBytes();
+
+        data = std::make_unique<std::uint8_t[]>(numBytes);
+
+        is.read(reinterpret_cast<char*>(data.get()), sizeof(std::uint8_t) * numBytes);
+
         return bool(is);
     }
 
@@ -1429,41 +1440,68 @@ void mergeResultFiles(
         EncodedTempCorrectedSequence encoded;
         encoded.readId = readId;
 
-        std::stringstream sstream;
+        encoded.encodedflags = (std::uint32_t(hq) << 31);
+        encoded.encodedflags |= (std::uint32_t(useEdits) << 30);
+        encoded.encodedflags |= (std::uint32_t(int(type)) << 29);
 
-        std::uint8_t data = bool(hq);
-        data = (data << 1) | bool(useEdits);
-        data = (data << 6) | std::uint8_t(int(type));
-        
-        sstream.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
+        constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
 
+        std::uint32_t numBytes = 0;
         if(useEdits){
-            sstream << edits.size() << ' ';
-            for(const auto& edit : edits){
-                sstream << edit.pos << ' ';
-            }
-            for(const auto& edit : edits){
-                sstream << edit.base;
-            }
-            if(edits.size() > 0){
-                sstream << ' ';
-            }
+            const int numEdits = edits.size();
+            numBytes += sizeof(int);
+            numBytes += numEdits * (sizeof(int) + sizeof(char));
         }else{
-            sstream << sequence << ' ';
+            numBytes += sizeof(int);
+            numBytes += sequence.length();
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            const auto& vec = uncorrectedPositionsNoConsensus;
-            sstream << vec.size();
-            if(!vec.empty()){
-                sstream << ' ';
-                std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(sstream, " "));
-            }
+            ; //nothing
         }else{
-            sstream << shift;
+            numBytes += sizeof(int);
         }
 
-        encoded.data = sstream.str();
+        assert(numBytes <= maxNumBytes);
+        encoded.encodedflags |= numBytes;
+
+        encoded.data = std::make_unique<std::uint8_t[]>(numBytes);
+
+        //fill buffer
+
+        std::uint8_t* ptr = encoded.data.get();
+
+        if(useEdits){
+            const int numEdits = edits.size();
+            std::memcpy(ptr, &numEdits, sizeof(int));
+            ptr += sizeof(int);
+            for(const auto& edit : edits){
+                std::memcpy(ptr, &edit.pos, sizeof(int));
+                ptr += sizeof(int);
+            }
+            for(const auto& edit : edits){
+                std::memcpy(ptr, &edit.base, sizeof(char));
+                ptr += sizeof(char);
+            }
+        }else{
+            const int length = sequence.length();
+            std::memcpy(ptr, &length, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(ptr, sequence.c_str(), sizeof(char) * length);
+            ptr += sizeof(char) * length;
+        }
+
+        if(type == TempCorrectedSequence::Type::Anchor){
+            // const auto& vec = uncorrectedPositionsNoConsensus;
+            // sstream << vec.size();
+            // if(!vec.empty()){
+            //     sstream << ' ';
+            //     std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(sstream, " "));
+            // }
+        }else{
+            std::memcpy(ptr, &shift, sizeof(int));
+            ptr += sizeof(int);
+        }
 
         return encoded;
     }
@@ -1472,42 +1510,52 @@ void mergeResultFiles(
 
         readId = encoded.readId;
 
-        std::istringstream sstream(encoded.data);
+        hq = (encoded.encodedflags >> 31) & std::uint32_t(1);
+        useEdits = (encoded.encodedflags >> 30) & std::uint32_t(1);
+        type = TempCorrectedSequence::Type((encoded.encodedflags >> 29) & std::uint32_t(1));
 
-        std::uint8_t flags = 0;
-        sstream.read(reinterpret_cast<char*>(&flags), sizeof(std::uint8_t));
-
-        hq = (flags >> 7) & 1;
-        useEdits = (flags >> 6) & 1;
-        type = TempCorrectedSequence::Type(int(flags & 0x3F));        
+        const std::uint8_t* ptr = encoded.data.get();
+    
 
         if(useEdits){
-            size_t size;
-            sstream >> size;
-            int numEdits = size;
+            int size;
+            std::memcpy(&size, ptr, sizeof(int));
+            ptr += sizeof(int);
+
             edits.resize(size);
-            for(int i = 0; i < numEdits; i++){
-                sstream >> edits[i].pos;
+
+            for(auto& edit : edits){
+                std::memcpy(&edit.pos, ptr, sizeof(int));
+                ptr += sizeof(int);
             }
-            for(int i = 0; i < numEdits; i++){
-                sstream >> edits[i].base;
+            for(auto& edit : edits){
+                std::memcpy(&edit.base, ptr, sizeof(char));
+                ptr += sizeof(char);
             }
         }else{
-            sstream >> sequence;
+            int length;
+            std::memcpy(&length, ptr, sizeof(int));
+            ptr += sizeof(int);
+
+            sequence.resize(length);
+            sequence.replace(0, length, (const char*)ptr, length);
+
+            ptr += sizeof(char) * length;
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            size_t vecsize;
-            sstream >> vecsize;
-            if(vecsize > 0){
-                auto& vec = uncorrectedPositionsNoConsensus;
-                vec.resize(vecsize);
-                for(size_t i = 0; i < vecsize; i++){
-                    sstream >> vec[i];
-                }
-            }
+            // size_t vecsize;
+            // sstream >> vecsize;
+            // if(vecsize > 0){
+            //     auto& vec = uncorrectedPositionsNoConsensus;
+            //     vec.resize(vecsize);
+            //     for(size_t i = 0; i < vecsize; i++){
+            //         sstream >> vec[i];
+            //     }
+            // }
         }else{
-            sstream >> shift;
+            std::memcpy(&shift, ptr, sizeof(int));
+            ptr += sizeof(int);
             shift = std::abs(shift);
         }
     }

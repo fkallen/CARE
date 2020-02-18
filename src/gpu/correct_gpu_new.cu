@@ -2680,15 +2680,15 @@ namespace test{
 
             for(int i = 0; i < numA; i++){
                 transFuncData->saveCorrectedSequence(
-                    outputData.anchorCorrections[i], 
-                    outputData.encodedAnchorCorrections[i]
+                    std::move(outputData.anchorCorrections[i]), 
+                    std::move(outputData.encodedAnchorCorrections[i])
                 );
             }
 
             for(int i = 0; i < numC; i++){
                 transFuncData->saveCorrectedSequence(
-                    outputData.candidateCorrections[i], 
-                    outputData.encodedCandidateCorrections[i]
+                    std::move(outputData.candidateCorrections[i]), 
+                    std::move(outputData.encodedCandidateCorrections[i])
                 );
             }
 
@@ -2747,7 +2747,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
 
     auto heapusageOfTCS = [](const auto& x){
-        return x.data.capacity();
+        return x.getNumBytes();
     };
 
     MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
@@ -2819,7 +2819,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::map<bool, int> useEditsSavedCountMap;
       std::map<int, int> numEditsHistogram;
 
-      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence encoded){
+      transFuncData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //useEditsCountMap[tmp.useEdits]++;
 
           //std::unique_lock<std::mutex> l(outputstreammutex);
