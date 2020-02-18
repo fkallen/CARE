@@ -73,7 +73,7 @@ struct MemoryFile{
             return (memoryiterator != memoryend) || (fileiterator != fileend);
         }
 
-        const T* next() const{
+        const T* next(){
             assert(hasNext());
 
             if(memoryiterator != memoryend){
@@ -81,16 +81,18 @@ struct MemoryFile{
                 ++memoryiterator;
                 return data;
             }else{
-                const Twrapper* wrapper = &(*fileiterator);
+                currentFileElement = std::move(*fileiterator);
                 ++fileiterator;
-                return &(wrapper->data);
+
+                return &(currentFileElement.data);
             }
         }
 
-        mutable typename std::vector<T>::const_iterator memoryiterator;
+        Twrapper currentFileElement;
+        typename std::vector<T>::const_iterator memoryiterator;
         typename std::vector<T>::const_iterator memoryend;
         std::ifstream fileinputstream;
-        mutable std::istream_iterator<Twrapper> fileiterator;
+        std::istream_iterator<Twrapper> fileiterator;
         std::istream_iterator<Twrapper> fileend;
     };
 
