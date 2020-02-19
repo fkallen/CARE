@@ -137,7 +137,35 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                             Tcomparator&& comparator,
                             Theapsizefunc&& getHeapUsage){
 
-    const std::size_t availableMemory = buffersizeInBytes;
+    //const std::size_t availableMemory = buffersizeInBytes;
+
+    std::size_t availableMemory = 0;
+
+    auto getAvailableMemoryInBytes = [](){
+        const std::size_t availableMemoryInKB = getAvailableMemoryInKB();
+        return availableMemoryInKB << 10;
+    };
+
+    auto updateAvailableMemory = [&](){
+        availableMemory = getAvailableMemoryInBytes();
+
+        constexpr std::size_t oneGB = std::size_t(1) << 30; 
+        constexpr std::size_t safetybuffer = oneGB;
+
+        if(availableMemory > safetybuffer){
+            availableMemory -= safetybuffer;
+        }else{
+            availableMemory = 0;
+        }
+        if(availableMemory > oneGB){
+            //round down to next multiple of 1GB
+            availableMemory = (availableMemory / oneGB) * oneGB;
+        }
+    };
+
+    updateAvailableMemory();
+
+    std::size_t initialAvailableMemory = availableMemory;
    
     T item;
     bool itemProcessed = true;
@@ -147,6 +175,13 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
     std::size_t usedHeapMemory = 0;
 
     auto couldAddElementToBuffer = [&](const T& element){
+        if(buffer.size() < 2 || buffer.size() % 65536 == 0){
+            updateAvailableMemory();
+            //std::cerr << buffer.size() << " " << availableMemory << '\n';
+
+            usedHeapMemory = initialAvailableMemory - availableMemory;
+        }
+
         if(buffer.capacity() * sizeof(T) + usedHeapMemory + getHeapUsage(element) <= availableMemory){
             if(buffer.size() < buffer.capacity()){
                 return true;
@@ -220,8 +255,10 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             //TIMERSTOPCPU(writingsortedbatch); 
 
             //TIMERSTARTCPU(clear);
-            buffer.clear();
+            //buffer.clear();
+            buffer = std::vector<T>{};
             usedHeapMemory = 0;
+            updateAvailableMemory();
             tempfilenames.emplace_back(std::move(tempfilename));
             numtempfiles++;
             //TIMERSTOPCPU(clear);

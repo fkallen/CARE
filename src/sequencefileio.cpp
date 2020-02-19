@@ -1122,7 +1122,7 @@ void mergeResultFiles(
                 tmpresults.erase(std::remove_if(tmpresults.begin(),
                                                 tmpresults.end(),
                                                 [](const auto& tcs){
-                                                    return tcs.shift > 5;
+                                                    return std::abs(tcs.shift) > 5;
                                                 }),
                                   tmpresults.end());
 
@@ -1179,7 +1179,7 @@ void mergeResultFiles(
                 // tmpresults.erase(std::remove_if(tmpresults.begin(),
                 //                                 tmpresults.end(),
                 //                                 [](const auto& tcs){
-                //                                     return tcs.shift > 5;
+                //                                     return std::abs(tcs.shift) > 5;
                 //                                 }),
                 //                   tmpresults.end());
 
@@ -1212,7 +1212,7 @@ void mergeResultFiles(
             // tmpresults.erase(std::remove_if(tmpresults.begin(),
             //                                 tmpresults.end(),
             //                                 [](const auto& tcs){
-            //                                     return tcs.shift > 0;
+            //                                     return std::abs(tcs.shift) > 0;
             //                                 }),
             //                   tmpresults.end());
             //
@@ -1556,7 +1556,6 @@ void mergeResultFiles(
         }else{
             std::memcpy(&shift, ptr, sizeof(int));
             ptr += sizeof(int);
-            shift = std::abs(shift);
         }
     }
 
@@ -1666,7 +1665,15 @@ void mergeResultFiles(
 
 
     std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-        tmp.writeToBinaryStream(os);
+        //tmp.writeToBinaryStream(os);
+        os << "readid = " << tmp.readId << ", type = " << int(tmp.type) << ", hq = " << tmp.hq 
+            << ", useEdits = " << tmp.useEdits << ", numEdits = " << tmp.edits.size();
+        if(tmp.edits.size() > 0){
+            for(const auto& edit : tmp.edits){
+                os << " , (" << edit.pos << "," << edit.base << ")";
+            }
+        }
+
         return os;
     }
 

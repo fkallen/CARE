@@ -182,6 +182,36 @@ private:
 
     bool store(T&& element){
         if(!isUsingFile){
+            auto getAvailableMemoryInBytes = [](){
+                const std::size_t availableMemoryInKB = getAvailableMemoryInKB();
+                return availableMemoryInKB << 10;
+            };
+            
+            auto getMemLimit = [&](){
+                size_t availableMemory = getAvailableMemoryInBytes();
+
+                constexpr std::size_t oneGB = std::size_t(1) << 30; 
+                constexpr std::size_t safetybuffer = oneGB;
+
+                if(availableMemory > safetybuffer){
+                    availableMemory -= safetybuffer;
+                }else{
+                    availableMemory = 0;
+                }
+                if(availableMemory > oneGB){
+                    //round down to next multiple of 1GB
+                    availableMemory = (availableMemory / oneGB) * oneGB;
+                }
+                return availableMemory;
+            };
+
+            //size_t memLimit = getMemLimit();
+
+            if(numStoredElements < 2 || numStoredElements % 65536 == 0){
+                maxMemoryOfVectorAndHeap = getMemLimit();
+            }
+            
+
             //check if element could be saved in memory, disregaring vector growth
             if(vector.capacity() * sizeof(T) + usedHeapMemory + getHeapUsageOfElement(element) <= maxMemoryOfVectorAndHeap){
                 if(vector.size() < vector.capacity()){
@@ -190,6 +220,7 @@ private:
                     try{
                         retval = storeInMemory(std::move(element));
                     }catch(std::bad_alloc& e){
+                        std::cerr << "switch to file storage after " << numStoredElements << " insertions.\n";
                         isUsingFile = true;
                         retval = storeInFile(std::move(element));
                     }
@@ -203,17 +234,20 @@ private:
                         try{
                             retval = storeInMemory(std::move(element));
                         }catch(std::bad_alloc& e){
+                            std::cerr << "switch to file storage after " << numStoredElements << " insertions.\n";
                             isUsingFile = true;
                             retval = storeInFile(std::move(element));
                         }
 
                         return retval;
                     }else{
+                        std::cerr << "switch to file storage after " << numStoredElements << " insertions.\n";
                         isUsingFile = true;
                         return storeInFile(std::move(element));
                     }
                 }
             }else{
+                std::cerr << "switch to file storage after " << numStoredElements << " insertions.\n";
                 isUsingFile = true;
                 return storeInFile(std::move(element));
             }
