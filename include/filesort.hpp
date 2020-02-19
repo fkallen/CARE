@@ -502,7 +502,7 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
 
     std::size_t offsetsMemoryLimit = 1024 * (std::size_t(1) << 20);
     assert(offsetsMemoryLimit < memoryLimit);
-    
+
     std::size_t dataMemoryLimit = memoryLimit - offsetsMemoryLimit;
 
     std::cerr << "binKeySplitIntoSortedChunks : " << offsetsMemoryLimit << " " << dataMemoryLimit << "\n";
@@ -510,7 +510,9 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
     assert(dataMemoryLimit > 0);
 
     auto rawData = std::make_unique<std::uint8_t[]>(dataMemoryLimit);
-    auto offsets = std::make_unique<std::size_t[]>(offsetsMemoryLimit / sizeof(std::size_t));
+
+    const std::size_t maxNumElements = offsetsMemoryLimit / sizeof(std::size_t);
+    auto offsets = std::make_unique<std::size_t[]>(maxNumElements);
 
     std::uint8_t* currentDataPtr = rawData.get();
     std::uint8_t* const rawDataEnd = rawData.get() + dataMemoryLimit;
@@ -528,6 +530,9 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
     bool itemProcessed = true;
 
     auto tryAddElementToBuffer = [&](const T& element){
+        if(numStoredElementsInMemory >= maxNumElements){
+            return false;
+        }
         std::uint8_t* const newDataPtr = element.copyToContiguousMemory(currentDataPtr, rawDataEnd);
         if(newDataPtr != nullptr){
             *currentOffsetPtr = std::distance(rawData.get(), currentDataPtr);
