@@ -511,7 +511,7 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
 
     auto rawData = std::make_unique<std::uint8_t[]>(dataMemoryLimit);
 
-    const std::size_t maxNumElements = offsetsMemoryLimit / sizeof(std::size_t);
+    const std::int64_t maxNumElements = offsetsMemoryLimit / sizeof(std::size_t);
     auto offsets = std::make_unique<std::size_t[]>(maxNumElements);
 
     std::uint8_t* currentDataPtr = rawData.get();
