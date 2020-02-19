@@ -2743,14 +2743,19 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
-    const std::size_t availableMemory = getAvailableMemoryInKB();
-    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
+    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
+
+    if(availableMemoryInBytes > (std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - (std::size_t(1) << 30);
+    }
 
     auto heapusageOfTCS = [](const auto& x){
         return x.getNumBytes();
     };
 
-    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+    //MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, sequenceFileProperties.nReads, tmpfiles[0]);
 
     //   std::ofstream outputstream;
     //   std::unique_ptr<SequenceFileWriter> writer;
@@ -2793,7 +2798,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 #ifndef DO_PROFILE
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-        //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+        //cpu::RangeGenerator<read_number> readIdGenerator(10000);
 #else
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif

@@ -867,12 +867,16 @@ struct SequenceWriterThread{
 };
 
 
-void mergeResultFiles(
+
+
+
+template<class MemoryFile_t>
+void mergeResultFiles_impl(
                     const std::string& tempdir,
                     std::uint32_t expectedNumReads, 
                     const std::string& originalReadFile,
                     FileFormat originalFormat,
-                    MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
+                    MemoryFile_t& partialResults, 
                     const std::string& outputfile,
                     bool isSorted){
 
@@ -885,12 +889,20 @@ void mergeResultFiles(
     //original file by the corresponding reads in the tempfile.
 
     if(!isSorted){
-        auto comparator = [](const auto& l, const auto& r){
+        auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
+            read_number id1, id2;
+            std::memcpy(&id1, ptr1, sizeof(read_number));
+            std::memcpy(&id2, ptr2, sizeof(read_number));
+            
+            return id1 < id2;
+        };
+
+        auto elementcomparator = [](const auto& l, const auto& r){
             return l.readId < r.readId;
         };
 
         TIMERSTARTCPU(sort_during_merge);
-        partialResults.sort(tempdir, comparator);
+        partialResults.sort(tempdir, ptrcomparator, elementcomparator);
         TIMERSTOPCPU(sort_during_merge);
     }
 
@@ -1407,6 +1419,32 @@ void mergeResultFiles(
 
 
 
+// void mergeResultFiles(
+//                     const std::string& tempdir,
+//                     std::uint32_t expectedNumReads, 
+//                     const std::string& originalReadFile,
+//                     FileFormat originalFormat,
+//                     MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
+//                     const std::string& outputfile,
+//                     bool isSorted){
+
+//     mergeResultFiles_impl(tempdir, expectedNumReads, originalReadFile, originalFormat, partialResults, outputfile, isSorted);
+// }
+
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
+                    const std::string& outputfile,
+                    bool isSorted){
+                        
+    mergeResultFiles_impl(tempdir, expectedNumReads, originalReadFile, originalFormat, partialResults, outputfile, isSorted);
+}
+
+
+
     TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
         decode(encoded);
     }
@@ -1417,10 +1455,14 @@ void mergeResultFiles(
     }
 
     bool EncodedTempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
+        assert(bool(os));
         os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
+        assert(bool(os));
         os.write(reinterpret_cast<const char*>(&encodedflags), sizeof(std::uint32_t));
+        assert(bool(os));
         const int numBytes = getNumBytes();
         os.write(reinterpret_cast<const char*>(data.get()), sizeof(std::uint8_t) * numBytes);
+        assert(bool(os));
         return bool(os);
     }
 
@@ -1434,6 +1476,37 @@ void mergeResultFiles(
         is.read(reinterpret_cast<char*>(data.get()), sizeof(std::uint8_t) * numBytes);
 
         return bool(is);
+    }
+
+    std::uint8_t* EncodedTempCorrectedSequence::copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
+        const int dataBytes = getNumBytes();
+
+        const std::size_t availableBytes = std::distance(ptr, endPtr);
+        const std::size_t requiredBytes = sizeof(read_number) + sizeof(std::uint32_t) + dataBytes;
+        if(requiredBytes <= availableBytes){
+            std::memcpy(ptr, &readId, sizeof(read_number));
+            ptr += sizeof(read_number);
+            std::memcpy(ptr, &encodedflags, sizeof(std::uint32_t));
+            ptr += sizeof(std::uint32_t);
+            std::memcpy(ptr, data.get(), dataBytes);
+            ptr += dataBytes;
+            return ptr;
+        }else{
+            return nullptr;
+        }        
+    }
+
+    void EncodedTempCorrectedSequence::copyFromContiguousMemory(const std::uint8_t* ptr){
+        std::memcpy(&readId, ptr, sizeof(read_number));
+        ptr += sizeof(read_number);
+        std::memcpy(&encodedflags, ptr, sizeof(std::uint32_t));
+        ptr += sizeof(read_number);
+
+        const int numBytes = getNumBytes();
+        data = std::make_unique<std::uint8_t[]>(numBytes);
+
+        std::memcpy(data.get(), ptr, numBytes);
+        //ptr += numBytes;
     }
 
     EncodedTempCorrectedSequence TempCorrectedSequence::encode() const{
@@ -1661,6 +1734,8 @@ void mergeResultFiles(
 
         return bool(is);
     }
+
+    
 
 
 

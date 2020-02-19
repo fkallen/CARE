@@ -290,6 +290,9 @@ struct EncodedTempCorrectedSequence{
     bool writeToBinaryStream(std::ostream& s) const;
     bool readFromBinaryStream(std::istream& s);
 
+    std::uint8_t* copyToContiguousMemory(std::uint8_t*, std::uint8_t*) const;
+    void copyFromContiguousMemory(const std::uint8_t*);
+
     bool operator==(const EncodedTempCorrectedSequence& rhs) const{
         std::uint32_t numBytes = 123;
         return encodedflags == rhs.encodedflags && readId == rhs.readId 
@@ -379,6 +382,15 @@ void mergeResultFiles(
                     const std::string& originalReadFile,
                     FileFormat originalFormat,
                     MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
+                    const std::string& outputfile,
+                    bool isSorted);
+
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
                     const std::string& outputfile,
                     bool isSorted);
 
