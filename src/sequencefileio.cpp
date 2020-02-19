@@ -1455,14 +1455,14 @@ void mergeResultFiles(
     }
 
     bool EncodedTempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
-        assert(bool(os));
+        //assert(bool(os)); 
         os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
-        assert(bool(os));
+        //assert(bool(os));
         os.write(reinterpret_cast<const char*>(&encodedflags), sizeof(std::uint32_t));
-        assert(bool(os));
+        //assert(bool(os));
         const int numBytes = getNumBytes();
         os.write(reinterpret_cast<const char*>(data.get()), sizeof(std::uint8_t) * numBytes);
-        assert(bool(os));
+        //assert(bool(os));
         return bool(os);
     }
 
