@@ -32,19 +32,8 @@ struct SequenceFileProperties{
         int maxSequenceLength{};
 };
 
-class SkipException : public std::exception {
-public:
-	SkipException() : std::exception()
-	{
-	}
-
-	virtual const char* what() const noexcept{
-		return std::exception::what();
-	}
-};
 
 struct Read {
-    read_number readNumber;
 	std::string name = "";
     std::string comment = "";
 	std::string sequence = "";
@@ -52,7 +41,7 @@ struct Read {
 
 	bool operator==(const Read& other) const
 	{
-		return (readNumber == other.readNumber && name == other.name 
+		return (name == other.name 
                 && comment == other.comment && sequence == other.sequence 
                 && quality == other.quality);
 	}
@@ -146,100 +135,20 @@ private:
     gzFile fp;
 };
 
-struct SequenceFileReader {
-
-public:
-	SequenceFileReader(const std::string& filename_) : filename(filename_), readnum(0)
-	{
-	};
-	virtual ~SequenceFileReader()
-	{
-	}
-
-    //return false if EOF or if error occured. true otherwise
-    bool getNextRead(Read* read);
-    bool getNextReadUnsafe(Read* read);
-
-    std::uint64_t getReadnum() const{
-        return readnum;
-    }
-
-    void skipBytes(std::uint64_t nBytes){
-		skipBytes_impl(nBytes);
-	}
-
-	void skipReads(std::uint64_t nReads){
-		skipReads_impl(nReads);
-	}
 
 
-    //return false if EOF or if error occured while reading file. true otherwise
-    virtual bool getNextRead_impl(Read* read) = 0;
-    virtual bool getNextReadUnsafe_impl(Read* read) = 0;
-	virtual void skipBytes_impl(std::uint64_t nBytes) = 0;
-	virtual void skipReads_impl(std::uint64_t nReads) = 0;
-	std::string filename;
-
-
-
-
-    std::uint64_t readnum; // 1 bases read id of read returned by previous successful call to getNextRead
-};
-
-
-struct KseqReader : public SequenceFileReader {
-public:
-	KseqReader(const std::string& filename);
-
-	~KseqReader() override;
-
-
-	bool getNextRead_impl(Read* read) override;
-    bool getNextReadUnsafe_impl(Read* read) override;
-	void skipBytes_impl(std::uint64_t nBytes) override;
-	void skipReads_impl(std::uint64_t nBytes) override;
-
-    int fp;
-    void* seq; //pointer to kseq_t
-};
-
-struct KseqGzReader : public SequenceFileReader {
-public:
-	KseqGzReader(const std::string& filename);
-
-	~KseqGzReader() override;
-
-
-	bool getNextRead_impl(Read* read) override;
-    bool getNextReadUnsafe_impl(Read* read) override;
-	void skipBytes_impl(std::uint64_t nBytes) override;
-	void skipReads_impl(std::uint64_t nBytes) override;
-
-    gzFile fp;
-    void* seq; //pointer to kseq_t
-};
-
-std::unique_ptr<SequenceFileReader> makeSequenceReader(const std::string& filename, FileFormat fileFormat);
 std::unique_ptr<SequenceFileWriter> makeSequenceWriter(const std::string& filename, FileFormat fileFormat);
 
 bool hasGzipHeader(const std::string& filename);
-bool hasQualityScores(const std::unique_ptr<SequenceFileReader>& reader);
+bool hasQualityScores(const std::string& filename);
 FileFormat getFileFormat(const std::string& filename);
 
 
 SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
-std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format);
 std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
 
 template<class Func>
 void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
-    // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
-
-    // Read read;
-    // while (reader->getNextRead(&read)) {
-    //     std::uint64_t readnum = reader->getReadnum()-1;
-    //     f(readnum, read);
-    // }
 
     kseqpp::KseqPP reader(filename);
 
@@ -251,11 +160,10 @@ void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
         const int status = reader.next();
         //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
         if(status >= 0){
-            read.readNumber = readNumber;
-            read.name = reader.name;
-            read.comment = reader.comment;
-            read.sequence = reader.seq;
-            read.quality = reader.qual;
+            read.name = reader.getCurrentName();
+            read.comment = reader.getCurrentComment();
+            read.sequence = reader.getCurrentSequence();
+            read.quality = reader.getCurrentQuality();
         }else if(status < -1){
             std::cerr << "parser error status " << status << " in file " << filename << '\n';
         }
@@ -271,7 +179,7 @@ void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
 
     while(success){
 
-        f(read.readNumber, read);
+        f(readNumber, read);
 
         success = getNextRead();
     }

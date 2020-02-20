@@ -31,125 +31,6 @@ namespace filesys = std::experimental::filesystem;
 
 namespace care{
 
-//###### BEGIN READER IMPLEMENTATION
-
-    bool SequenceFileReader::getNextRead(Read* read){
-        if(read == nullptr) return false;
-
-        bool b = getNextRead_impl(read);
-        if(b)
-            readnum++;
-        return b;
-    }
-
-    bool SequenceFileReader::getNextReadUnsafe(Read* read){
-        bool b = getNextReadUnsafe_impl(read);
-        if(b)
-            readnum++;
-        return b;
-    }
-
-    template<class KSEQ>
-    void setReadFromKseqPtr(Read* read, const KSEQ* kseq){
-        read->reset();
-
-        read->name = kseq->name.s;
-        if(kseq->comment.l > 0){
-            read->comment = kseq->comment.s;
-        }
-        read->sequence = kseq->seq.s;
-        if(kseq->qual.l > 0){
-            read->quality = kseq->qual.s;
-        }
-    }
-
-    namespace ksequncompressed{
-        KSEQ_INIT(int, read)
-    }
-
-    namespace kseqgz{
-        KSEQ_INIT(gzFile, gzread)
-    }
-
-    KseqReader::KseqReader(const std::string& filename_) : SequenceFileReader(filename_){
-        fp = open(filename_.c_str(), O_RDONLY);
-        if(fp == -1){
-            throw std::runtime_error("could not open file " + filename_);
-        }
-        seq = (void*)ksequncompressed::kseq_init(fp);
-    }
-
-    KseqReader::~KseqReader(){
-        kseq_destroy((ksequncompressed::kseq_t*)seq);
-        close(fp);
-    }
-
-    bool KseqReader::getNextRead_impl(Read* read){
-        ksequncompressed::kseq_t* typedseq = (ksequncompressed::kseq_t*)seq;
-
-        int len = ksequncompressed::kseq_read(typedseq);
-        if(len < 0)
-            return false;
-
-        setReadFromKseqPtr(read, typedseq);
-
-        return true;
-    }
-
-    bool KseqReader::getNextReadUnsafe_impl(Read* read){
-        throw std::runtime_error("KseqReader::getNextReadUnsafe_impl not implemented");
-        return false;
-    }
-
-    void KseqReader::skipBytes_impl(std::uint64_t nBytes){
-        throw std::runtime_error("KseqReader::skipBytes_impl not implemented");
-    }
-
-    void KseqReader::skipReads_impl(std::uint64_t nReads){
-        throw std::runtime_error("KseqReader::skipReads_impl not implemented");
-    }
-
-    KseqGzReader::KseqGzReader(const std::string& filename_) : SequenceFileReader(filename_){
-        fp = gzopen(filename_.c_str(), "r");
-        if(fp == NULL){
-            throw std::runtime_error("could not open file " + filename_);
-        }
-        seq = (void*)kseqgz::kseq_init(fp);
-    }
-
-    KseqGzReader::~KseqGzReader(){
-        kseqgz::kseq_destroy((kseqgz::kseq_t*)seq);
-        gzclose(fp);
-    }
-
-    bool KseqGzReader::getNextRead_impl(Read* read){
-        kseqgz::kseq_t* typedseq = (kseqgz::kseq_t*)seq;
-
-        int len = kseqgz::kseq_read(typedseq);
-        if(len < 0)
-            return false;
-
-        setReadFromKseqPtr(read, typedseq);
-
-        return true;
-    }
-
-    bool KseqGzReader::getNextReadUnsafe_impl(Read* read){
-        throw std::runtime_error("KseqGzReader::getNextReadUnsafe_impl not implemented");
-        return false;
-    }
-
-    void KseqGzReader::skipBytes_impl(std::uint64_t nBytes){
-        throw std::runtime_error("KseqGzReader::skipBytes_impl not implemented");
-    }
-
-    void KseqGzReader::skipReads_impl(std::uint64_t nReads){
-        throw std::runtime_error("KseqGzReader::skipReads_impl not implemented");
-    }
-
-
-
-//###### END READER IMPLEMENTATION
 
 //###### BEGIN WRITER IMPLEMENTATION
 
@@ -278,13 +159,14 @@ void GZipWriter::writeImpl(const std::string& data){
         }
     }
 
-    bool hasQualityScores(const std::unique_ptr<SequenceFileReader>& reader){
-        Read read;
+    bool hasQualityScores(const std::string& filename){
+        kseqpp::KseqPP reader(filename);
+
+        const int n = 5;
         int i = 0;
-        int n = 5;
         int count = 0;
-        while (reader->getNextRead(&read) && i < n){
-            if(read.quality.size() > 0){
+        while(reader.next() >= 0 && i < n){
+            if(reader.getCurrentQuality().size() > 0){
                 count++;
             }
             i++;
@@ -299,35 +181,22 @@ void GZipWriter::writeImpl(const std::string& data){
     }
 
     FileFormat getFileFormat(const std::string& filename){
-        if(hasGzipHeader(filename)){
-            std::unique_ptr<SequenceFileReader> reader = std::make_unique<KseqGzReader>(filename);
-            if(hasQualityScores(reader)){
+        const bool gzip = hasGzipHeader(filename);
+        const bool qscore = hasQualityScores(filename);
+
+        if(gzip){
+            if(qscore){
                 return FileFormat::FASTQGZ;
             }else{
                 return FileFormat::FASTAGZ;
             }
         }else{
-            std::unique_ptr<SequenceFileReader> reader = std::make_unique<KseqReader>(filename);
-            if(hasQualityScores(reader)){
+            if(qscore){
                 return FileFormat::FASTQ;
             }else{
                 return FileFormat::FASTA;
             }
         }
-    }
-
-    std::unique_ptr<SequenceFileReader> makeSequenceReader(const std::string& filename, FileFormat fileFormat){
-        switch (fileFormat) {
-        case FileFormat::FASTA:
-        case FileFormat::FASTQ:
-            //reader.reset(new FastqReader(filename));
-            return std::make_unique<KseqReader>(filename);
-        case FileFormat::FASTAGZ:
-        case FileFormat::FASTQGZ:
-            return std::make_unique<KseqGzReader>(filename);
-    	default:
-    		throw std::runtime_error("makeSequenceReader: invalid format.");
-    	}
     }
 
     std::unique_ptr<SequenceFileWriter> makeSequenceWriter(const std::string& filename, FileFormat fileFormat){
@@ -396,58 +265,18 @@ void GZipWriter::writeImpl(const std::string& data){
         return prop;
     }
 
-    std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format){
-
-		if(format == FileFormat::FASTQ){
-			std::ifstream myis(filename);
-			std::uint64_t lines = 0;
-			std::string tmp;
-			while(myis.good()){
-				myis.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-				++lines;
-			}
-			//std::cout << "lines : " << lines << std::endl;
-			//std::cout << "reads : " << lines/4 << std::endl;
-
-			return lines / 4;
-		}else{
-			throw std::runtime_error("getNumberOfReads invalid format");
-		}
-	}
-
 	std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
 
-		std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+        std::uint64_t count = 0;
+        forEachReadInFile(
+            filename, 
+            format, 
+            [&](auto readNumber, auto read){
+                count++;
+            }
+        );
 
-		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-
-		//std::chrono::duration<double> duration;
-
-        Read r;
-
-		const std::uint64_t countlimit = 10000000;
-		std::uint64_t count = 0;
-		std::uint64_t totalCount = 0;
-		//tpa = std::chrono::system_clock::now();
-
-        while(reader->getNextRead(&r)){
-
-			++count;
-			++totalCount;
-
-			if(count == countlimit){
-				//tpb = std::chrono::system_clock::now();
-				//duration = tpb - tpa;
-				//std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-				count = 0;
-			}
-        }
-
-        //tpb = std::chrono::system_clock::now();
-		//duration = tpb - tpa;
-		//std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-
-        return reader->getReadnum();
+        return count;
 	}
 
     /*
@@ -527,8 +356,6 @@ void mergeResultFiles_impl(
         TIMERSTOPCPU(sort_during_merge);
     }
 
-    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
-
     //only output uncompressed for now
     FileFormat outputformat = originalFormat;
     if(outputformat == FileFormat::FASTQGZ)
@@ -553,6 +380,7 @@ void mergeResultFiles_impl(
     int numberOfUsableLQCorrectionsWithCandidates = 0;
     int numberOfUsableLQCorrectionsOnlyAnchor = 0;
 
+#if 0
     auto combineMultipleCorrectionResults2 = [](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
         assert(false && "uncorrectedpositions cannot be used");
@@ -729,7 +557,9 @@ void mergeResultFiles_impl(
 
         //return tmpresults[0].sequence;
     };
+#endif 
 
+#if 0
     auto combineMultipleCorrectionResults3 = [](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
 
@@ -781,14 +611,16 @@ void mergeResultFiles_impl(
         }
 
     };
+#endif 
 
+#if 1
     auto combineMultipleCorrectionResults4NewHQLQ = [&](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
 
         constexpr bool outputHQ = true;
         constexpr bool outputLQWithCandidates = true;
         constexpr bool outputLQOnlyAnchor = true;
-        constexpr bool outputOnlyCand = false;
+        // constexpr bool outputOnlyCand = false;
 
         auto isAnchor = [](const auto& tcs){
             return tcs.type == TempCorrectedSequence::Type::Anchor;
@@ -869,6 +701,7 @@ void mergeResultFiles_impl(
         }
 
     };
+#endif 
 
     auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults4NewHQLQ;
 
@@ -885,17 +718,29 @@ void mergeResultFiles_impl(
 
     bool firstiter = true;
 
-    auto filereader = partialResults.makeReader();
+    kseqpp::KseqPP inputFileReader(originalReadFile);
 
-    while(filereader.hasNext()){
-        TempCorrectedSequence tcs = *(filereader.next());
+    auto partialResultsReader = partialResults.makeReader();
+
+    Read read;
+    std::uint64_t originalReadId = 0;
+
+    auto updateRead = [&](Read& read){
+        read.name = inputFileReader.getCurrentName();
+        read.comment = inputFileReader.getCurrentComment();
+        read.sequence = inputFileReader.getCurrentSequence();
+        read.quality = inputFileReader.getCurrentQuality();
+    };
+
+    while(partialResultsReader.hasNext()){
+        TempCorrectedSequence tcs = *(partialResultsReader.next());
 
         if(firstiter || tcs.readId == currentReadId){
             currentReadId = tcs.readId ;
             correctionVector.emplace_back(std::move(tcs));
 
-            while(filereader.hasNext()){
-                TempCorrectedSequence tcs2 = *(filereader.next());
+            while(partialResultsReader.hasNext()){
+                TempCorrectedSequence tcs2 = *(partialResultsReader.next());
                 if(tcs2.readId == currentReadId){
                     correctionVector.emplace_back(std::move(tcs2));
                 }else{
@@ -909,25 +754,31 @@ void mergeResultFiles_impl(
             correctionVector_tmp.emplace_back(std::move(tcs));
         }
 
-        std::uint64_t originalReadId = reader->getReadnum();
-        Read read;
+        
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
-            bool valid = reader->getNextRead(&read);
+            const int status = inputFileReader.next();
+            const bool valid = status >= 0;
 
             assert(valid);
 
             //assert(isValidSequence(read.sequence));
 
+            updateRead(read);
+
             writer->writeRead(read);
             //swt.push(read);
 
-            originalReadId = reader->getReadnum();
+            originalReadId++;
         }
-        //replace sequence of next read with corrected sequence
-        bool valid = reader->getNextRead(&read);
 
+        //get read with id currentReadId
+        const int status = inputFileReader.next();
+        const bool valid = status >= 0;
         assert(valid);
+        updateRead(read);
+        originalReadId++;
+        //replace sequence of next read with corrected sequence
 
         for(auto& tmpres : correctionVector){
             if(tmpres.useEdits){
@@ -973,25 +824,25 @@ void mergeResultFiles_impl(
     }
 
     if(correctionVector.size() > 0){
-        std::uint64_t originalReadId = reader->getReadnum();
-        Read read;
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
-            bool valid = reader->getNextRead(&read);
-
+            const int status = inputFileReader.next();
+            const bool valid = status >= 0;
             assert(valid);
+            updateRead(read);
 
             //assert(isValidSequence(read.sequence));
 
             writer->writeRead(read);
-            //swt.push(read);
 
-            originalReadId = reader->getReadnum();
+            originalReadId++;
         }
-        //replace sequence of next read with corrected sequence
-        bool valid = reader->getNextRead(&read);
 
+        const int status = inputFileReader.next();
+        const bool valid = status >= 0;
         assert(valid);
+        updateRead(read);
+        originalReadId++;
 
         for(auto& tmpres : correctionVector){
             if(tmpres.useEdits){
@@ -1017,9 +868,10 @@ void mergeResultFiles_impl(
     }
 
     //copy remaining reads from original file
-    Read read;
+    while(inputFileReader.next() >= 0){
+        updateRead(read);
+        originalReadId++;
 
-    while(reader->getNextRead(&read)){
         //assert(isValidSequence(read.sequence));
 
         writer->writeRead(read);

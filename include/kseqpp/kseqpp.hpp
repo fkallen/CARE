@@ -20,6 +20,119 @@ namespace kseqpp{
 
 struct KseqPP{    
 
+public:
+
+
+    KseqPP() = default;
+
+    KseqPP(const std::string& filename)
+            : f(std::make_unique<Stream>(filename)){
+        // std::cerr << "KseqPP(" << filename << ")\n";
+        name.reserve(256);
+        comment.reserve(256);
+        seq.reserve(256);
+        qual.reserve(256);
+    }
+
+    int next(){
+        int c = 0;
+        int r = 0;
+
+        if (last_char == 0) { /* then jump to the next header line */
+            while ((c = f->ks_getc()) >= 0 && c != '>' && c != '@'){
+                ;
+            }
+            if (c < 0){
+                f->cancel();
+                return c; /* end of file or error*/
+            }
+            last_char = c;
+        } /* else: the first header char has been read in the previous call */
+
+        seq.clear();
+        qual.clear();
+        
+        if ((r=f->ks_getuntil(Stream::KS_SEP_SPACE, name, &c)) < 0){
+            f->cancel();
+            return r;  /* normal exit: EOF or error */
+        }
+        if (c != '\n'){
+            f->ks_getuntil(Stream::KS_SEP_LINE, comment, 0); /* read FASTA/Q comment */
+        }
+
+        // if(seq.capacity() == 0){
+        //     seq.reserve(256);
+        // }
+
+        while ((c = f->ks_getc()) >= 0 && c != '>' && c != '+' && c != '@') {
+            if (c == '\n'){
+                continue; /* skip empty lines */
+            }
+            seq.push_back(c);
+            f->ks_getuntil2(Stream::KS_SEP_LINE, seq, 0, 1); /* read the rest of the line */
+        }
+
+        if (c == '>' || c == '@'){
+            last_char = c; /* the first header char has been read */
+        }
+        if (c != '+'){
+            return seq.length(); /* FASTA */
+        }
+        if(qual.capacity() < seq.capacity()){
+            qual.reserve(seq.capacity()); /* allocate memory for qual in case insufficient */
+        }
+        
+        while ((c = f->ks_getc()) >= 0 && c != '\n'){
+            ; /* skip the rest of '+' line */
+        }
+
+        if (c == -1){
+            f->cancel();
+            return -2; /* error: no quality string */
+        }
+
+        while ((c = f->ks_getuntil2(Stream::KS_SEP_LINE, qual, 0, 1) >= 0 && qual.length() < seq.length())){
+            ;
+        }
+        if (c == -3){
+            f->cancel();
+            return -3; /* stream error */
+        }
+        last_char = 0;	/* we have not come to the next header line */
+        if(seq.length() != qual.length()){
+            std::cerr << "got seq " << seq << "\n got qual " << qual << "\n";
+            f->cancel();
+            return -2;  /* error: qual string is of a different length */
+        }
+        
+        return seq.length();
+    }
+
+    void kseq_rewind(){
+        last_char = 0;
+        f->is_eof = 0;
+        f->begin = 0;
+        f->end = 0;
+    }
+
+    const std::string& getCurrentName() const{
+        return name;
+    }
+
+    const std::string& getCurrentComment() const{
+        return comment;
+    }
+
+    const std::string& getCurrentSequence() const{
+        return seq;
+    }
+
+    const std::string& getCurrentQuality() const{
+        return qual;
+    }
+
+private:
+
     struct kstream_t {
         static constexpr std::size_t bufsize = 16384;
 
@@ -41,10 +154,10 @@ struct KseqPP{
         kstream_t(const std::string& filename) : begin(0), end(0), is_eof(0){
 
             if(hasGzipHeader(filename)){
-                std::cerr << "assume gz file\n";
+                //std::cerr << "assume gz file\n";
                 filereader.reset(new GzReader(filename));      
             }else{
-                std::cerr << "assume raw file\n";
+                //std::cerr << "assume raw file\n";
                 filereader.reset(new RawReader(filename));
             }
 
@@ -201,9 +314,6 @@ struct KseqPP{
             return ks_getuntil2(delimiter, str, dret, 0);
         }
     };
-
-
-
 
     struct asynckstream_t {
         static constexpr std::size_t bufsize = 16384;
@@ -443,113 +553,17 @@ struct KseqPP{
         }
     };
 
-
-
-
     //using Stream = kstream_t;
     using Stream = asynckstream_t;
 
-
-    KseqPP() = default;
-
-    KseqPP(const std::string& filename)
-            : f(std::make_unique<Stream>(filename)){
-                std::cerr << "KseqPP(" << filename << ")\n";
-        name.reserve(256);
-        comment.reserve(256);
-        seq.reserve(256);
-        qual.reserve(256);
-    }
-
-    int next(){
-        int c = 0;
-        int r = 0;
-
-        if (last_char == 0) { /* then jump to the next header line */
-            while ((c = f->ks_getc()) >= 0 && c != '>' && c != '@'){
-                ;
-            }
-            if (c < 0){
-                f->cancel();
-                return c; /* end of file or error*/
-            }
-            last_char = c;
-        } /* else: the first header char has been read in the previous call */
-
-        seq.clear();
-        qual.clear();
-        
-        if ((r=f->ks_getuntil(Stream::KS_SEP_SPACE, name, &c)) < 0){
-            f->cancel();
-            return r;  /* normal exit: EOF or error */
-        }
-        if (c != '\n'){
-            f->ks_getuntil(Stream::KS_SEP_LINE, comment, 0); /* read FASTA/Q comment */
-        }
-
-        // if(seq.capacity() == 0){
-        //     seq.reserve(256);
-        // }
-
-        while ((c = f->ks_getc()) >= 0 && c != '>' && c != '+' && c != '@') {
-            if (c == '\n'){
-                continue; /* skip empty lines */
-            }
-            seq.push_back(c);
-            f->ks_getuntil2(Stream::KS_SEP_LINE, seq, 0, 1); /* read the rest of the line */
-        }
-
-        if (c == '>' || c == '@'){
-            last_char = c; /* the first header char has been read */
-        }
-        if (c != '+'){
-            return seq.length(); /* FASTA */
-        }
-        if(qual.capacity() < seq.capacity()){
-            qual.reserve(seq.capacity()); /* allocate memory for qual in case insufficient */
-        }
-        
-        while ((c = f->ks_getc()) >= 0 && c != '\n'){
-            ; /* skip the rest of '+' line */
-        }
-
-        if (c == -1){
-            f->cancel();
-            return -2; /* error: no quality string */
-        }
-
-        while ((c = f->ks_getuntil2(Stream::KS_SEP_LINE, qual, 0, 1) >= 0 && qual.length() < seq.length())){
-            ;
-        }
-        if (c == -3){
-            f->cancel();
-            return -3; /* stream error */
-        }
-        last_char = 0;	/* we have not come to the next header line */
-        if(seq.length() != qual.length()){
-            std::cerr << "got seq " << seq << "\n got qual " << qual << "\n";
-            f->cancel();
-            return -2;  /* error: qual string is of a different length */
-        }
-        
-        return seq.length();
-    }
-
-    void kseq_rewind(){
-        last_char = 0;
-        f->is_eof = 0;
-        f->begin = 0;
-        f->end = 0;
-    }
-
-public:
     std::string name{};
     std::string comment{};
     std::string seq{};
     std::string qual{};	
-private:
+
     int last_char{};
     std::unique_ptr<Stream> f{};	
+
 };
 
 

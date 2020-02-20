@@ -2728,8 +2728,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
       std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
-      std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
-
       //std::vector<std::atomic_uint8_t> correctionStatusFlagsPerRead;
       //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
       //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
