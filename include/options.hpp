@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 
-#include "sequencefileio.hpp"
+#include <readlibraryio.hpp>
 
 #include <string>
 #include <vector>

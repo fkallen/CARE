@@ -6,7 +6,7 @@
 #include "msa.hpp"
 #include "utility_kernels.cuh"
 
-#include <sequencefileio.hpp>
+#include <correctionresultprocessing.hpp>
 
 //#include <gpu/thrust_custom_allocators.hpp>
 #include <gpu/simpleallocation.cuh>

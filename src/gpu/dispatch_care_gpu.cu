@@ -2,7 +2,7 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <minhasher.hpp>
 #include <build.hpp>
 #include <gpu/distributedreadstorage.hpp>

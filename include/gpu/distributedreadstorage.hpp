@@ -9,7 +9,7 @@
 #include <gpu/gpubitarray.cuh>
 
 #include <config.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 
 #include <atomic>
 #include <cstdint>

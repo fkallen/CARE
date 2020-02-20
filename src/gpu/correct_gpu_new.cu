@@ -19,7 +19,7 @@
 #include <minhasher.hpp>
 #include <options.hpp>
 #include <candidatedistribution.hpp>
-#include <sequencefileio.hpp>
+//#include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
 #include <memoryfile.hpp>

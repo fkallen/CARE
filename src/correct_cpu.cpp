@@ -16,7 +16,6 @@
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
 //#include "nn_classifier.hpp"
-#include <sequencefileio.hpp>
 #include "cpu_correction_core.hpp"
 #include <threadpool.hpp>
 #include <memoryfile.hpp>

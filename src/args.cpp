@@ -2,7 +2,7 @@
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <minhasher.hpp>
 #include <filehelpers.hpp>
 

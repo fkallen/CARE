@@ -8,7 +8,7 @@
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
 #include "readstorage.hpp"
-#include "sequencefileio.hpp"
+#include <readlibraryio.hpp>
 #include "sequence.hpp"
 #include "threadsafe_buffer.hpp"
 

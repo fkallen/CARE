@@ -3,7 +3,7 @@
 #include <config.hpp>
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 
 #include <cstdint>
 #include <cstring>

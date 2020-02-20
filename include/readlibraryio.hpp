@@ -164,8 +164,6 @@ void forEachReadInFile(const std::string& filename, Func f){
             std::cerr << "parser error status " << status << " in file " << filename << '\n';
         }
 
-        readNumber++;
-
         bool success = (status >= 0);
 
         return success;
@@ -176,6 +174,8 @@ void forEachReadInFile(const std::string& filename, Func f){
     while(success){
 
         f(readNumber, read);
+        
+        readNumber++;
 
         success = getNextRead();
     }

@@ -347,10 +347,10 @@ private:
         asynckstream_t(const std::string& filename) : begin(0), end(0), is_eof(0){
 
             if(hasGzipHeader(filename)){
-                std::cerr << filename << " : assume gz file\n";
+                //std::cerr << filename << " : assume gz file\n";
                 filereader.reset(new ZlibReader(filename));      
             }else{
-                std::cerr << filename << " : assume raw file\n";
+                //std::cerr << filename << " : assume raw file\n";
                 filereader.reset(new ZlibReader(filename));
             }
 

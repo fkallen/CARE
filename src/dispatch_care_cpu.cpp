@@ -2,7 +2,7 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <sequencefileio.hpp>
+
 #include <readstorage.hpp>
 
 #include <correct_cpu.hpp>

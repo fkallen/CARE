@@ -10,7 +10,7 @@
 
 #include <msa.hpp>
 #include <sequence.hpp>
-#include <sequencefileio.hpp>
+#include <correctionresultprocessing.hpp>
 
 #include <shiftedhammingdistance_common.hpp>
 

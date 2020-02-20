@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <minhasher.hpp>
 #include <readstorage.hpp>
 #include <gpu/distributedreadstorage.hpp>

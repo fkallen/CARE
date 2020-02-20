@@ -6,7 +6,7 @@
 
 #include <config.hpp>
 #include <sequence.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <threadpool.hpp>
 
 #include <atomic>

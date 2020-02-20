@@ -1,10 +1,8 @@
-#include <sequencefileio.hpp>
-#include <hpc_helpers.cuh>
+#include <readlibraryio.hpp>
+
 #include <config.hpp>
 #include <threadsafe_buffer.hpp>
 #include <sequence.hpp>
-#include <filesort.hpp>
-#include <memoryfile.hpp>
 
 #include <iterator>
 #include <iostream>
@@ -19,15 +17,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cassert>
-#include <experimental/filesystem>
 #include <future>
 
 #include <zlib.h>
 #include <fcntl.h> // open
-
-#include <klib/kseq.h>
-
-namespace filesys = std::experimental::filesystem;
 
 namespace care{
 
