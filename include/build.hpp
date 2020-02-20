@@ -36,7 +36,7 @@ namespace care{
             if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0 || fileOptions.minimum_sequence_length < 0) {
                 std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
 
-                return getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+                return getSequenceFileProperties(fileOptions.inputfile);
             }else{
                 std::cout << "Using the supplied number of reads and min/max sequence length." << std::endl;
 

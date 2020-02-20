@@ -339,7 +339,6 @@ namespace gpu{
         };
 
         forEachReadInFile(fileOptions.inputfile,
-                        fileOptions.format,
                         [&](auto readnum, const auto& read){
 
             if(oneIter){
@@ -608,7 +607,6 @@ namespace gpu{
             tpa = std::chrono::system_clock::now();
 
             forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
                             [&](auto readnum, auto& read){
 
                     handle_read(readnum, read, indicesBuffer, readsBuffer);
@@ -715,7 +713,6 @@ namespace gpu{
             tpa = std::chrono::system_clock::now();
 
             forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
                             [&](auto readnum, const auto& read){
 
                     if(!canBeUsed[bufferindex]){

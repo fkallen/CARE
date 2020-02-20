@@ -152,7 +152,6 @@ namespace care{
         };
 
         forEachReadInFile(fileOptions.inputfile,
-                        fileOptions.format,
                         [&](auto readnum, const auto& read){
 
             if(oneIter){
@@ -391,7 +390,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             };
 
             forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
                             [&](auto readnum, const auto& read){
 
                     if(!canBeUsed[bufferindex]){

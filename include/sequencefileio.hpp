@@ -139,16 +139,15 @@ private:
 
 std::unique_ptr<SequenceFileWriter> makeSequenceWriter(const std::string& filename, FileFormat fileFormat);
 
-bool hasGzipHeader(const std::string& filename);
 bool hasQualityScores(const std::string& filename);
 FileFormat getFileFormat(const std::string& filename);
 
 
-SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
-std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
+SequenceFileProperties getSequenceFileProperties(const std::string& filename);
+std::uint64_t getNumberOfReads(const std::string& filename);
 
 template<class Func>
-void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
+void forEachReadInFile(const std::string& filename, Func f){
 
     kseqpp::KseqPP reader(filename);
 

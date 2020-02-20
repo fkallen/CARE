@@ -147,17 +147,6 @@ void GZipWriter::writeImpl(const std::string& data){
 //###### END WRITER IMPLEMENTATION
 
 
-    bool hasGzipHeader(const std::string& filename){
-        std::ifstream is(filename, std::ios_base::binary);
-        unsigned char buf[2];
-        is.read(reinterpret_cast<char*>(&buf[0]), 2);
-
-        if(buf[0] == 0x1f && buf[1] == 0x8b){
-            return true;
-        }else{
-            return false;
-        }
-    }
 
     bool hasQualityScores(const std::string& filename){
         kseqpp::KseqPP reader(filename);
@@ -181,7 +170,7 @@ void GZipWriter::writeImpl(const std::string& data){
     }
 
     FileFormat getFileFormat(const std::string& filename){
-        const bool gzip = hasGzipHeader(filename);
+        const bool gzip = kseqpp::hasGzipHeader(filename);
         const bool qscore = hasQualityScores(filename);
 
         if(gzip){
@@ -212,7 +201,7 @@ void GZipWriter::writeImpl(const std::string& data){
     	}
     }
 
-    SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
+    SequenceFileProperties getSequenceFileProperties(const std::string& filename){
         //std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
 
 
@@ -234,7 +223,6 @@ void GZipWriter::writeImpl(const std::string& data){
 
         forEachReadInFile(
             filename, 
-            format, 
             [&](auto readNumber, auto read){
                 int len = read.sequence.length();
                 if(len > prop.maxSequenceLength)
@@ -265,12 +253,11 @@ void GZipWriter::writeImpl(const std::string& data){
         return prop;
     }
 
-	std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
+	std::uint64_t getNumberOfReads(const std::string& filename){
 
         std::uint64_t count = 0;
         forEachReadInFile(
             filename, 
-            format, 
             [&](auto readNumber, auto read){
                 count++;
             }
