@@ -1,4 +1,4 @@
-#if 1
+
 
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
@@ -73,7 +73,6 @@
 
 namespace care{
 namespace gpu{
-namespace test{
 
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
@@ -3328,26 +3327,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 }
 
-}
-
-
-
-#endif
