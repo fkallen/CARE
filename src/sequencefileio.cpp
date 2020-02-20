@@ -344,19 +344,8 @@ void GZipWriter::writeImpl(const std::string& data){
     }
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
-#if 1
-        std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
-        /*switch (format) {
-        case FileFormat::FASTQ:
-            //reader.reset(new FastqReader(filename));
-            reader.reset(new KseqReader(filename));
-            break;
-        case FileFormat::GZIP:
-            reader.reset(new KseqGzReader(filename));
-            break;
-    	default:
-    		throw std::runtime_error("care::getNumberOfReads: invalid format.");
-    	}*/
+        //std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+
 
         SequenceFileProperties prop;
 
@@ -367,30 +356,34 @@ void GZipWriter::writeImpl(const std::string& data){
 
 		std::chrono::duration<double> duration;
 
-        Read r;
+        //Read r;
 
 		std::uint64_t countlimit = 1000000;
 		std::uint64_t count = 0;
 		std::uint64_t totalCount = 0;
 		tpa = std::chrono::system_clock::now();
 
-        while(reader->getNextRead(&r)){
-            int len = int(r.sequence.length());
-            if(len > prop.maxSequenceLength)
-                prop.maxSequenceLength = len;
-            if(len < prop.minSequenceLength)
-                prop.minSequenceLength = len;
+        forEachReadInFile(
+            filename, 
+            format, 
+            [&](auto readNumber, auto read){
+                int len = read.sequence.length();
+                if(len > prop.maxSequenceLength)
+                    prop.maxSequenceLength = len;
+                if(len < prop.minSequenceLength)
+                    prop.minSequenceLength = len;
 
-			++count;
-			++totalCount;
+                ++count;
+                ++totalCount;
 
-			if(count == countlimit){
-				tpb = std::chrono::system_clock::now();
-				duration = tpb - tpa;
-				std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-				countlimit *= 2;
-			}
-        }
+                if(count == countlimit){
+                    tpb = std::chrono::system_clock::now();
+                    duration = tpb - tpa;
+                    std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+                    countlimit *= 2;
+                }
+            }
+        );
 
         if(count > 0){
             tpb = std::chrono::system_clock::now();
@@ -398,130 +391,8 @@ void GZipWriter::writeImpl(const std::string& data){
 		    std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
         }
 
-        prop.nReads = reader->getReadnum();
-#else
+        prop.nReads = totalCount;
 
-		/*TIMERSTARTCPU(asdf);
-		std::ifstream myis(filename);
-		std::uint64_t lines = 0;
-		std::string tmp;
-		while(myis.good()){
-			myis.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-			//std::getline(myis, tmp);
-			++lines;
-		}
-		std::cout << "lines : " << lines << std::endl;
-		std::cout << "reads : " << lines/4 << std::endl;
-		TIMERSTOPCPU(asdf);
-
-		SequenceFileProperties prop;
-
-        prop.maxSequenceLength = -1;
-        prop.minSequenceLength = -1;
-		prop.nReads = lines/4;*/
-
-		int nThreads = 4;
-		std::vector<std::unique_ptr<FastqReader>> readers;
-		for(int i = 0; i < nThreads; ++i){
-			switch (format) {
-			case FileFormat::FASTQ:
-				readers.emplace_back(new FastqReader(filename));
-				break;
-			default:
-				throw std::runtime_error("care::getSequenceFileProperties: invalid format.");
-			}
-		}
-
-		std::experimental::filesystem::path path = filename;
-		std::int64_t size = std::experimental::filesystem::file_size(path);
-
-		using Result_t = std::tuple<int, int,std::uint64_t>;
-		std::vector<std::future<Result_t>> futures;
-		std::vector<std::int64_t> endings(nThreads);
-		endings[nThreads-1] = size;
-
-		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-
-		tpa = std::chrono::system_clock::now();
-
-		std::int64_t sizePerThread = size / nThreads;
-		for(int i = 1; i < nThreads; ++i){
-			for(int j = i; j < nThreads; ++j){
-				readers[j]->skipBytes(sizePerThread);
-			}
-			endings[i-1] = readers[i]->is.tellg();
-
-			futures.emplace_back(std::async(std::launch::async, [&,i=i-1]{
-				auto& reader = readers[i];
-                int maxSequenceLength = 0;
-				int minSequenceLength = std::numeric_limits<int>::max();
-
-				Read r;
-
-				while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
-					int len = int(r.sequence.length());
-					if(len > maxSequenceLength)
-						maxSequenceLength = len;
-					if(len < minSequenceLength)
-						minSequenceLength = len;
-				}
-
-				std::uint64_t nReads = reader->getReadnum();
-
-				return Result_t(minSequenceLength, maxSequenceLength, nReads);
-			}));
-		}
-
-
-		futures.emplace_back(std::async(std::launch::async, [&,i=nThreads-1]{
-			auto& reader = readers[i];
-			int maxSequenceLength = 0;
-			int minSequenceLength = std::numeric_limits<int>::max();
-
-			Read r;
-
-			while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
-				int len = int(r.sequence.length());
-				if(len > maxSequenceLength)
-					maxSequenceLength = len;
-				if(len < minSequenceLength)
-					minSequenceLength = len;
-			}
-
-			std::uint64_t nReads = reader->getReadnum();
-
-			return Result_t(minSequenceLength, maxSequenceLength, nReads);
-		}));
-
-
-		SequenceFileProperties prop;
-
-        prop.maxSequenceLength = 0;
-        prop.minSequenceLength = std::numeric_limits<int>::max();
-		prop.nReads = 0;
-
-		for(int i = 0; i < nThreads; ++i){
-			futures[i].wait();
-			Result_t result = futures[i].get();
-			auto minSequenceLength = std::get<0>(result);
-			auto maxSequenceLength = std::get<1>(result);
-			auto nReads = std::get<2>(result);
-
-			if(minSequenceLength < prop.minSequenceLength)
-				prop.minSequenceLength = minSequenceLength;
-
-			if(maxSequenceLength > prop.maxSequenceLength)
-				prop.maxSequenceLength = maxSequenceLength;
-
-			prop.nReads += nReads;
-		}
-
-
-		tpb = std::chrono::system_clock::now();
-		std::chrono::duration<double> duration = tpb - tpa;
-		std::cout << prop.nReads << " : " << duration.count() << " seconds." << std::endl;
-
-#endif
         return prop;
     }
 

@@ -16,6 +16,8 @@
 #include <functional>
 
 
+namespace kseqpp{
+
 struct KseqPP{    
 
     struct kstream_t {
@@ -235,10 +237,10 @@ struct KseqPP{
         asynckstream_t(const std::string& filename) : begin(0), end(0), is_eof(0){
 
             if(hasGzipHeader(filename)){
-                std::cerr << "assume gz file\n";
+                std::cerr << filename << " : assume gz file\n";
                 filereader.reset(new ZlibReader(filename));      
             }else{
-                std::cerr << "assume raw file\n";
+                std::cerr << filename << " : assume raw file\n";
                 filereader.reset(new ZlibReader(filename));
             }
 
@@ -452,6 +454,7 @@ struct KseqPP{
 
     KseqPP(const std::string& filename)
             : f(std::make_unique<Stream>(filename)){
+                std::cerr << "KseqPP(" << filename << ")\n";
         name.reserve(256);
         comment.reserve(256);
         seq.reserve(256);
@@ -553,7 +556,7 @@ private:
 
 
 
-
+} // namespace kseqpp
 
 
 

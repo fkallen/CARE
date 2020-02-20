@@ -16,6 +16,9 @@
 #include <mutex>
 #include <condition_variable>
 
+namespace kseqpp{
+
+#if 0
 
 #ifndef TIMERSTARTCPU
     #define TIMERSTARTCPU(label)                                                  \
@@ -30,7 +33,7 @@
         std::cout << "# elapsed time ("<< #label <<"): "                       \
                   << delta##label.count()  << " s" << std::endl;
 #endif
-
+#endif
 
 class FileReader{
 public:    
@@ -329,7 +332,7 @@ using GzReader = GzReaderBase<RawReader>;
 using AsyncGzReader = GzReaderBase<AsyncRawReader>;
 
 
-
+} // namespace kseqpp
 
 
 

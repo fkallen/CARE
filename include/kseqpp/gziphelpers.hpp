@@ -6,6 +6,9 @@
 #include <fstream>
 #include <string>
 
+
+namespace kseqpp{
+
     inline
     bool hasGzipHeader(const std::string& filename){
         std::ifstream is(filename, std::ios_base::binary);
@@ -68,6 +71,6 @@
                                           reinterpret_cast<unsigned char*>(output), outputsize);
     }
 
-
+} // namespace kseqpp
 
 #endif

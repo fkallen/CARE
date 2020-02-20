@@ -4,6 +4,8 @@
 #include <config.hpp>
 #include <memoryfile.hpp>
 
+#include <kseqpp/kseqpp.hpp>
+
 #include <hpc_helpers.cuh>
 
 #include <cstdint>
@@ -42,6 +44,7 @@ public:
 };
 
 struct Read {
+    read_number readNumber;
 	std::string name = "";
     std::string comment = "";
 	std::string sequence = "";
@@ -49,7 +52,9 @@ struct Read {
 
 	bool operator==(const Read& other) const
 	{
-		return (name == other.name && comment == other.comment && sequence == other.sequence && quality == other.quality);
+		return (readNumber == other.readNumber && name == other.name 
+                && comment == other.comment && sequence == other.sequence 
+                && quality == other.quality);
 	}
 	bool operator!=(const Read& other) const
 	{
@@ -228,12 +233,47 @@ std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
 
 template<class Func>
 void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
-    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+    // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+
+    // Read read;
+    // while (reader->getNextRead(&read)) {
+    //     std::uint64_t readnum = reader->getReadnum()-1;
+    //     f(readnum, read);
+    // }
+
+    kseqpp::KseqPP reader(filename);
 
     Read read;
-    while (reader->getNextRead(&read)) {
-        std::uint64_t readnum = reader->getReadnum()-1;
-        f(readnum, read);
+
+    std::int64_t readNumber = 0;
+
+    auto getNextRead = [&](){
+        const int status = reader.next();
+        //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
+        if(status >= 0){
+            read.readNumber = readNumber;
+            read.name = reader.name;
+            read.comment = reader.comment;
+            read.sequence = reader.seq;
+            read.quality = reader.qual;
+        }else if(status < -1){
+            std::cerr << "parser error status " << status << " in file " << filename << '\n';
+        }
+
+        readNumber++;
+
+        bool success = (status >= 0);
+
+        return success;
+    };
+
+    bool success = getNextRead();
+
+    while(success){
+
+        f(read.readNumber, read);
+
+        success = getNextRead();
     }
 }
 
