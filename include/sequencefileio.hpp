@@ -181,25 +181,6 @@ public:
     std::uint64_t readnum; // 1 bases read id of read returned by previous successful call to getNextRead
 };
 
-#if 0
-
-struct FastqReader : public SequenceFileReader {
-public:
-	FastqReader(const std::string& filename);
-
-	~FastqReader() override;
-
-
-	bool getNextRead_impl(Read* read) override;
-    bool getNextReadUnsafe_impl(Read* read) override;
-	void skipBytes_impl(std::uint64_t nBytes) override;
-	void skipReads_impl(std::uint64_t nBytes) override;
-
-	std::ifstream is;
-	std::string stmp;
-};
-
-#endif
 
 struct KseqReader : public SequenceFileReader {
 public:

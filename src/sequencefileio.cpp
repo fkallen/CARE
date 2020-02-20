@@ -48,152 +48,7 @@ namespace care{
             readnum++;
         return b;
     }
-#if 0
-    FastqReader::FastqReader(const std::string& filename_) : SequenceFileReader(filename_){
-		is.open(filename);
-		if (!(bool)is)
-			throw std::runtime_error("could not open file " + filename);
-	}
 
-	FastqReader::~FastqReader(){
-		is.close();
-	}
-
-	bool FastqReader::getNextRead_impl(Read* read){
-		if (!is.good())
-			return false;
-
-		read->reset();
-        while(std::getline(is, read->header).good() && read->header == ""){
-            ;
-        }
-		if (!is.good())
-			return false;
-		if (read->header[0] != '@') {
-			std::stringstream ss; ss << "unexpected file format of file " << filename << ". Header does not start with @";
-			throw std::runtime_error(ss.str());
-		}
-
-		std::getline(is, read->sequence);
-		if (!is.good())
-			return false;
-		std::getline(is, stmp);
-		if (!is.good())
-			return false;
-
-		if (stmp[0] != '+') {
-			std::stringstream ss; ss << "unexpected file format of file " << filename << ". Line does not start with +";
-			throw std::runtime_error(ss.str());
-		}
-
-		std::getline(is, read->quality);
-		if (!is.good())
-			return false;
-
-		return !(is.fail() || is.bad());
-	}
-
-    bool FastqReader::getNextReadUnsafe_impl(Read* read){
-		if (!is.good())
-			return false;
-
-		read->reset();
-        while(std::getline(is, read->header).good() && read->header == ""){
-            ;
-        }
-		if (!is.good())
-			return false;
-
-		std::getline(is, read->sequence);
-		if (!is.good())
-			return false;
-		std::getline(is, stmp);
-		if (!is.good())
-			return false;
-
-		std::getline(is, read->quality);
-		if (!is.good())
-			return false;
-
-		return !(is.fail() || is.bad());
-	}
-
-	void FastqReader::skipBytes_impl(std::uint64_t nBytes){
-		std::uint64_t currentPos = is.tellg();
-		std::uint64_t newPos = currentPos + nBytes;
-
-		std::experimental::filesystem::path path = this->filename;
-		std::uint64_t size = std::experimental::filesystem::file_size(path);
-		assert(size >= newPos);
-
-		is.seekg(nBytes, std::ios::cur);
-
-		/*
-		 * search for the next read header. then skip one read
-		 */
-		//find nonempty line
-		while(std::getline(is, stmp).good() && stmp == ""){
-            ;
-        }
-        if (!is.good())
-			throw SkipException();
-
-		bool found = false;
-		while(!found){
-			bool foundPotentialHeader = false;
-			//search line which starts with @ (may be quality scores, too)
-			while(!foundPotentialHeader){
-				std::getline(is, stmp);
-				if (!is.good())
-					throw SkipException();
-				if(stmp[0] == '@')
-					foundPotentialHeader = true;
-			}
-			std::getline(is, stmp);
-			if (!is.good())
-					throw SkipException();
-			if(stmp[0] == '@'){
-				//two consecutive lines starting with @. second line must be the header. skip sequence, check for +, skip quality
-				std::getline(is, stmp);
-				if (!is.good())
-					throw SkipException();
-				std::getline(is, stmp);
-				if (!is.good())
-					throw SkipException();
-				if (stmp[0] == '+') {
-					//found @ in first line and + in third line. skip quality scores and exit
-					std::getline(is, stmp);
-					if (!is.good())
-						throw SkipException();
-					found = true;
-				}
-			}else{
-				std::getline(is, stmp);
-				if (!is.good())
-					throw SkipException();
-				if (stmp[0] == '+') {
-					//found @ in first line and + in third line. skip quality scores and exit
-					std::getline(is, stmp);
-					if (!is.good())
-						throw SkipException();
-					found = true;
-				}
-			}
-
-		}
-	}
-
-	void FastqReader::skipReads_impl(std::uint64_t nReads){
-		for(std::uint64_t counter = 0; counter < nReads; counter++){
-			for(int i = 0; i < 4; i++){
-				is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-				if (!is.good())
-					throw SkipException(); //std::runtime_error("Skipped too far in file");
-			}
-			++readnum;
-		}
-	}
-#endif
     template<class KSEQ>
     void setReadFromKseqPtr(Read* read, const KSEQ* kseq){
         read->reset();
@@ -748,70 +603,7 @@ void GZipWriter::writeImpl(const std::string& data){
         sequence
         ...
     */
-#if 0
-    void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
-                          FileFormat originalFormat,
-                          const std::vector<std::string>& filesToMerge, const std::string& outputfile){
-        std::vector<Read> reads(expectedNumReads);
-        std::uint32_t nreads = 0;
 
-        for(const auto& filename : filesToMerge){
-            std::ifstream is(filename);
-            if(!is)
-                throw std::runtime_error("could not open tmp file: " + filename);
-
-            std::string num;
-            std::string seq;
-
-            while(true){
-                std::getline(is, num);
-        		if (!is.good())
-        			break;
-                std::getline(is, seq);
-                if (!is.good())
-                    break;
-
-                nreads++;
-
-                auto readnum = std::stoull(num);
-                reads[readnum].sequence = std::move(seq);
-            }
-        }
-
-        std::unique_ptr<SequenceFileReader> reader;
-    	switch (originalFormat) {
-    	case FileFormat::FASTQ:
-    		reader.reset(new FastqReader(originalReadFile));
-    		break;
-    	default:
-    		throw std::runtime_error("Merging: Invalid file format.");
-    	}
-
-        Read read;
-
-    	while (reader->getNextRead(&read)) {
-            std::uint64_t readIndex = reader->getReadnum() - 1;
-            reads[readIndex].header = std::move(read.header);
-            reads[readIndex].quality = std::move(read.quality);
-            if(reads[readIndex].sequence == ""){
-                reads[readIndex].sequence = std::move(read.sequence);
-            }
-    	}
-
-    	std::ofstream outputstream(outputfile);
-
-    	for (const auto& read : reads) {
-    		outputstream << read.header << '\n' << read.sequence << '\n';
-
-    		if (originalFormat == FileFormat::FASTQ)
-    			outputstream << '+' << '\n' << read.quality << '\n';
-    	}
-
-    	outputstream.flush();
-    	outputstream.close();
-    }
-
-#else
 
 std::uint64_t linecount(const std::string& filename){
 	std::uint64_t count = 0;
@@ -824,48 +616,6 @@ std::uint64_t linecount(const std::string& filename){
 	}
 	return count;
 }
-
-
-
-struct SequenceWriterThread{
-
-    std::unique_ptr<SequenceFileWriter> writer;
-
-    ThreadsafeBuffer<Read, 1000> queue;
-    std::thread t;
-
-    SequenceWriterThread(const std::string& filename, FileFormat format){
-        writer = std::move(makeSequenceWriter(filename, format));
-
-        t = std::move(std::thread([&](){
-
-            auto popresult = queue.getNew();
-            while(!popresult.foreverEmpty){
-                writer->writeRead(popresult.value);
-                popresult = std::move(queue.getNew());
-            }
-        }));
-    }
-
-    ~SequenceWriterThread(){
-        t.join();
-    }
-
-
-    void push(Read&& data){
-        queue.add(std::move(data));
-    }
-
-    void push(Read data){
-        queue.add(std::move(data));
-    }
-
-    void producerDone(){
-        queue.done();
-    }
-
-};
-
 
 
 
@@ -1758,5 +1508,4 @@ void mergeResultFiles(
     }
 
 
-#endif
 }
