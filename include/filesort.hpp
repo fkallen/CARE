@@ -3,6 +3,7 @@
 
 #include <filehelpers.hpp>
 #include <util.hpp>
+#include <fixedsizestorage.hpp>
 
 #include <algorithm>
 #include <string>
@@ -500,53 +501,22 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
                             std::size_t memoryLimit, 
                             Ptrcomparator&& ptrcomparator){
 
-    std::size_t offsetsMemoryLimit = 1024 * (std::size_t(1) << 20);
-    assert(offsetsMemoryLimit < memoryLimit);
+    FixedSizeStorage memoryStorage(memoryLimit);
 
-    std::size_t dataMemoryLimit = memoryLimit - offsetsMemoryLimit;
+    auto serialize = [](const auto& element, auto beginptr, auto endptr){
+        return element.copyToContiguousMemory(beginptr, endptr);
+    };
 
-    std::cerr << "binKeySplitIntoSortedChunks : " << offsetsMemoryLimit << " " << dataMemoryLimit << "\n";
-    assert(offsetsMemoryLimit >= sizeof(std::size_t));
-    assert(dataMemoryLimit > 0);
-
-    auto rawData = std::make_unique<std::uint8_t[]>(dataMemoryLimit);
-
-    const std::int64_t maxNumElements = offsetsMemoryLimit / sizeof(std::size_t);
-    auto offsets = std::make_unique<std::size_t[]>(maxNumElements);
-
-    std::uint8_t* currentDataPtr = rawData.get();
-    std::uint8_t* const rawDataEnd = rawData.get() + dataMemoryLimit;
-    std::size_t* currentOffsetPtr = offsets.get();
-
-    std::int64_t numStoredElementsInMemory = 0;
 
     auto resetState = [&](){
-        currentDataPtr = rawData.get();
-        currentOffsetPtr = offsets.get();
-        numStoredElementsInMemory = 0;
+        memoryStorage.clear();
     };
 
     T item;
     bool itemProcessed = true;
 
     auto tryAddElementToBuffer = [&](const T& element){
-        if(numStoredElementsInMemory >= maxNumElements){
-            return false;
-        }
-        std::uint8_t* const newDataPtr = element.copyToContiguousMemory(currentDataPtr, rawDataEnd);
-        if(newDataPtr != nullptr){
-            *currentOffsetPtr = std::distance(rawData.get(), currentDataPtr);
-            currentDataPtr = newDataPtr;
-            ++currentOffsetPtr;
-            numStoredElementsInMemory++;
-            return true;
-        }else{
-            return false;
-        }
-    };
-
-    auto comparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-        return ptrcomparator(rawData.get() + elementOffset1, rawData.get() + elementOffset2);
+        return memoryStorage.insert(element, serialize);
     };
 
     std::int64_t numtempfiles = 0;
@@ -584,10 +554,10 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
             std::ofstream sortedtempfile(tempfilename);
 
             //TIMERSTARTCPU(actualsort);
-            std::cerr << "sort " << numStoredElementsInMemory << " elements in memory \n";
+            std::cerr << "sort " << memoryStorage.getNumStoredElements() << " elements in memory \n";
 
             try{
-                std::sort(offsets.get(), offsets.get() + numStoredElementsInMemory, comparator);
+                memoryStorage.sort(ptrcomparator);
             }catch(std::bad_alloc& e){
                 removeFile(tempfilename);
                 throw e;
@@ -596,14 +566,12 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
             //TIMERSTOPCPU(actualsort);
 
             //TIMERSTARTCPU(writingsortedbatch);
-            std::cerr << "save " << numStoredElementsInMemory << " elements to file " <<  tempfilename << '\n';
-            for(std::int64_t i = 0; i < numStoredElementsInMemory; i++){
-                const std::size_t offset = offsets[i];
-                const std::uint8_t* ptr = rawData.get() + offset;
+            std::cerr << "save " << memoryStorage.getNumStoredElements() << " elements to file " <<  tempfilename << '\n';
+            memoryStorage.forEachPointer([&](const auto ptr){
                 T tmp;
                 tmp.copyFromContiguousMemory(ptr);
                 sortedtempfile << tmp;
-            }
+            });
 
             //TIMERSTOPCPU(writingsortedbatch); 
 

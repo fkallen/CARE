@@ -400,7 +400,7 @@ struct MemoryFileFixedSize{
 
     MemoryFileFixedSize() = default;
 
-    MemoryFileFixedSize(std::size_t memoryLimitBytes, std::int64_t maxElementsInMemory_, std::string file)
+    MemoryFileFixedSize(std::size_t memoryLimitBytes, std::string file)
         : 
           memoryStorage(memoryLimitBytes),
           filename(file),
@@ -411,7 +411,7 @@ struct MemoryFileFixedSize{
     }
 
     Reader makeReader() const{
-        return Reader{memoryStorage.getRawData(), memoryStorage.getElementOffsets(), memoryStorage.getNumStoredElements(), filename};
+        return Reader{memoryStorage.getElementsData(), memoryStorage.getElementOffsets(), memoryStorage.getNumStoredElements(), filename};
     }
 
     void flush(){
@@ -454,7 +454,7 @@ struct MemoryFileFixedSize{
         std::cerr << '\n';
 
         auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-            return ptrcomparator(memoryStorage.getRawData() + elementOffset1, memoryStorage.getRawData() + elementOffset2);
+            return ptrcomparator(memoryStorage.getElementsData() + elementOffset1, memoryStorage.getElementsData() + elementOffset2);
         };
 
         //try to sort vector in memory
@@ -475,7 +475,7 @@ struct MemoryFileFixedSize{
 
         //append unsorted vector to file
         const std::size_t memoryBytes = memoryStorage.getNumOccupiedRawBytes();
-        outputstream.write(reinterpret_cast<const char*>(memoryStorage.getRawData()), memoryBytes);
+        outputstream.write(reinterpret_cast<const char*>(memoryStorage.getElementsData()), memoryBytes);
         outputstream.flush();
 
 
@@ -536,7 +536,7 @@ private:
 
     bool isUsingFile = false;
 
-    care::FixedSizeStorage memoryStorage;
+    FixedSizeStorage memoryStorage;
     std::int64_t numStoredElementsInFile = 0;
 
     std::string filename = "";    

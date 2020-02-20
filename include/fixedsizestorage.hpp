@@ -10,12 +10,17 @@ namespace care{
 
     struct FixedSizeStorage{
         std::size_t memoryLimitBytes = 0;
-        std::unique_ptr<std::uint8_t[]> rawData = nullptr;
-        std::size_t rawDataBytes = 0;
-        std::uint8_t* currentDataPtr = nullptr;
+        std::unique_ptr<std::size_t[]> rawData = nullptr;
 
-        std::unique_ptr<std::size_t[]> elementOffsets = nullptr;
-        std::int64_t maxElementsInMemory = 0;    
+        // offsets and elements share the same memory in rawData
+        // elements grow from left to right
+        // offsets grow from right to left
+
+        std::uint8_t* elementsBegin = nullptr;
+        std::uint8_t* elementsEnd = nullptr;
+
+        std::size_t* offsetsBegin = nullptr;
+        std::size_t* offsetsEnd = nullptr; 
         
         std::int64_t numStoredElementsInMemory = 0;
 
@@ -25,20 +30,26 @@ namespace care{
         FixedSizeStorage& operator=(const FixedSizeStorage&) = delete;
 
         FixedSizeStorage(FixedSizeStorage&& rhs){
+            memoryLimitBytes = std::exchange(rhs.memoryLimitBytes, 0);
+
             rawData = std::exchange(rhs.rawData, nullptr);
-            rawDataBytes = std::exchange(rhs.rawDataBytes, 0);
-            currentDataPtr = std::exchange(rhs.currentDataPtr, nullptr);
-            elementOffsets = std::exchange(rhs.elementOffsets, nullptr);
-            maxElementsInMemory = std::exchange(rhs.maxElementsInMemory, 0);
+            elementsBegin = std::exchange(rhs.elementsBegin, nullptr);
+            elementsEnd = std::exchange(rhs.elementsEnd, nullptr);
+            offsetsBegin = std::exchange(rhs.offsetsBegin, nullptr);
+            offsetsEnd = std::exchange(rhs.offsetsEnd, nullptr);
+
             numStoredElementsInMemory = std::exchange(rhs.numStoredElementsInMemory, 0);
         }
 
         FixedSizeStorage& operator=(FixedSizeStorage&& rhs){
+            memoryLimitBytes = std::exchange(rhs.memoryLimitBytes, 0);
+            
             rawData = std::exchange(rhs.rawData, nullptr);
-            rawDataBytes = std::exchange(rhs.rawDataBytes, 0);
-            currentDataPtr = std::exchange(rhs.currentDataPtr, nullptr);
-            elementOffsets = std::exchange(rhs.elementOffsets, nullptr);
-            maxElementsInMemory = std::exchange(rhs.maxElementsInMemory, 0);
+            elementsBegin = std::exchange(rhs.elementsBegin, nullptr);
+            elementsEnd = std::exchange(rhs.elementsEnd, nullptr);
+            offsetsBegin = std::exchange(rhs.offsetsBegin, nullptr);
+            offsetsEnd = std::exchange(rhs.offsetsEnd, nullptr);
+
             numStoredElementsInMemory = std::exchange(rhs.numStoredElementsInMemory, 0);
 
             return *this;
@@ -47,71 +58,72 @@ namespace care{
         FixedSizeStorage(std::size_t memoryLimitBytes_)
                 : memoryLimitBytes(memoryLimitBytes_){
 
-            maxElementsInMemory = 1024 * 1024 * 128;
-            const std::size_t memoryForOffsets = maxElementsInMemory * sizeof(std::size_t);
+            const std::size_t numSizeTs = memoryLimitBytes / sizeof(std::size_t);
 
-            std::size_t limit = memoryLimitBytes;
-            if(memoryForOffsets < limit){
-                elementOffsets = std::make_unique<std::size_t[]>(maxElementsInMemory);
-                limit -= memoryForOffsets;
+            rawData = std::make_unique<std::size_t[]>(numSizeTs);
 
-                if(limit > 0){
-                    rawData = std::make_unique<std::uint8_t[]>(limit);
-                    rawDataBytes = limit;
-                    currentDataPtr = rawData.get();
-                }else{
-                    elementOffsets = nullptr;
-                    rawData = nullptr;
-                    rawDataBytes = 0;
-                    currentDataPtr = rawData.get();
-                }
-            }else{
-                elementOffsets = nullptr;
-                rawData = nullptr;
-                rawDataBytes = 0;
-                currentDataPtr = rawData.get();
-            }
+            elementsBegin = reinterpret_cast<std::uint8_t*>(rawData.get());
+            elementsEnd = elementsBegin;
+            offsetsEnd = rawData.get() + numSizeTs;
+            offsetsBegin = offsetsEnd;
         }
 
         std::int64_t getNumStoredElements() const{
             return numStoredElementsInMemory;
         }
 
-        std::size_t getNumRawBytes() const{
-            return rawDataBytes;
-        }
-
-        const std::uint8_t* getRawData() const{
-            return rawData.get();
+        const std::uint8_t* getElementsData() const{
+            return elementsBegin;
         }
 
         const std::size_t* getElementOffsets() const{
-            return elementOffsets.get();
+            return offsetsBegin;
         }
 
         std::size_t getNumOccupiedRawBytes() const{
-            return std::distance(rawData.get(), currentDataPtr);
+            return std::distance(elementsBegin, elementsEnd);
+        }
+
+        void clear(){
+            const std::size_t numSizeTs = memoryLimitBytes / sizeof(std::size_t);
+
+            numStoredElementsInMemory = 0;
+            elementsBegin = reinterpret_cast<std::uint8_t*>(rawData.get());
+            elementsEnd = elementsBegin;
+            offsetsEnd = rawData.get() + numSizeTs;
+            offsetsBegin = offsetsEnd;
         }
 
         void destroy(){
+            memoryLimitBytes = 0;
             rawData = nullptr;
-            rawDataBytes = 0;
-            currentDataPtr = nullptr;
-            elementOffsets = nullptr;
-            maxElementsInMemory = 0;
+            elementsBegin = nullptr;
+            elementsEnd = nullptr;
+            offsetsEnd = nullptr;
+            offsetsBegin = nullptr;
+            numStoredElementsInMemory = 0;
         }
 
+        // Serializer::operator()(element, begin, end)
+        // serialized element fits into range [begin, end): copy serialized elements into range starting at begin. 
+        //   return pointer to position after last written byte
+        // serialized element does not fit into range: do not modify range. return nullptr
         template<class T, class Serializer>
         bool insert(T&& element, Serializer serialize){
-            if(getNumStoredElements() >= maxElementsInMemory){
+            std::size_t* newOffsetsBegin = offsetsBegin - 1;
+
+            //check that new offset does not reach into element buffer
+            if(((void*)elementsEnd) > ((void*)newOffsetsBegin)){
                 return false;
             }
 
-            std::uint8_t* const newDataPtr = serialize(element, currentDataPtr, rawData.get() + rawDataBytes);
-            if(newDataPtr != nullptr){
-                elementOffsets[numStoredElementsInMemory] = std::distance(rawData.get(), currentDataPtr);
+            std::uint8_t* const newDataPtr = serialize(element, elementsEnd, (std::uint8_t*)newOffsetsBegin);
 
-                currentDataPtr = newDataPtr;
+            if(newDataPtr != nullptr){
+                offsetsBegin = newOffsetsBegin;
+                *offsetsBegin = std::distance(elementsBegin, elementsEnd);
+
+                elementsEnd = newDataPtr;
                 numStoredElementsInMemory++;
                 return true;
             }else{
@@ -119,16 +131,29 @@ namespace care{
             }
         }
 
+        // Ptrcomparator::operator()(ptr1, ptr2)
+        // compare serialized element pointed to by ptr1 with serialized element pointer to by ptr2
         template<class Ptrcomparator>
         void sort(Ptrcomparator&& ptrcomparator){
             auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-                return ptrcomparator(getRawData() + elementOffset1, getRawData() + elementOffset2);
+                return ptrcomparator(elementsBegin + elementOffset1, elementsBegin + elementOffset2);
             };
 
-            std::sort(elementOffsets.get(), elementOffsets.get() + getNumStoredElements(), offsetcomparator);
+            std::sort(offsetsBegin, offsetsEnd, offsetcomparator);
         }
-    };
 
+        //Func::operator()(const std::uint8_t* ptr) ptr points to first byte of object
+        template<class Func>
+        void forEachPointer(Func&& consume){
+            for(std::int64_t i = 0; i < getNumStoredElements(); i++){
+                const std::size_t offset = getElementOffsets()[i];
+                const std::uint8_t* ptr = getElementsData() + offset;
+
+                consume(ptr);
+            }
+        }
+        
+    };
 
 }
 

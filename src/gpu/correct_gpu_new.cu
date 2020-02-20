@@ -2754,8 +2754,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         return x.getNumBytes();
     };
 
-    //MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, sequenceFileProperties.nReads, tmpfiles[0]);
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
 
     //   std::ofstream outputstream;
     //   std::unique_ptr<SequenceFileWriter> writer;
