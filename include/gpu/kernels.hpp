@@ -5,7 +5,7 @@
 //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
 #include <msa.hpp>
-#include <sequencefileio.hpp>
+#include <correctionresultprocessing.hpp>
 
 #include <config.hpp>
 

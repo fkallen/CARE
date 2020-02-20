@@ -8,6 +8,8 @@
 #include <gpu/cubcachingallocator.cuh>
 #include <gpu/minhashkernels.hpp>
 
+#include <correctionresultprocessing.hpp>
+
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
 #include <sequence.hpp>
@@ -3257,14 +3259,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               TIMERSTARTCPU(merge);
 
-              mergeResultFiles(
-                                fileOptions.tempdirectory,
-                                sequenceFileProperties.nReads, 
-                                fileOptions.inputfile, 
-                                fileOptions.format, 
-                                partialResults, 
-                                fileOptions.outputfile, 
-                                false);
+              constructOutputFileFromResults(
+                    fileOptions.tempdirectory,
+                    sequenceFileProperties.nReads, 
+                    fileOptions.inputfile, 
+                    fileOptions.format, 
+                    partialResults, 
+                    fileOptions.outputfile, 
+                    false
+                );
 
               TIMERSTOPCPU(merge);
 
