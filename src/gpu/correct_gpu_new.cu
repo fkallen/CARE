@@ -2750,10 +2750,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         memoryForPartialResultsInBytes = availableMemoryInBytes - (std::size_t(1) << 30);
     }
 
-    auto heapusageOfTCS = [](const auto& x){
-        return x.getNumBytes();
-    };
-
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
 
     //   std::ofstream outputstream;
