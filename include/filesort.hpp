@@ -66,8 +66,8 @@ namespace detail{
                     newfilenames.emplace_back(std::move(outtmpname));
 
                     if(step > 0 || remove){
-                        removeFile(filenames[i]);
-                        removeFile(filenames[i+1]);
+                        filehelpers::removeFile(filenames[i]);
+                        filehelpers::removeFile(filenames[i+1]);
                     }
                     
                 }else{
@@ -82,14 +82,14 @@ namespace detail{
         assert(filenames.size() > 0);
 
         if(filenames.size() == 1){
-            renameFileSameMount(filenames[0], outfilename);
+            filehelpers::renameFileSameMount(filenames[0], outfilename);
         }else{
             std::cerr << "merge " << filenames[0] << " + " << filenames[1] << " into " <<  outfilename << "\n";
             binKeyMergeTwoFiles<T>(filenames[0], filenames[1], outfilename, comparator);
 
             if(step > 0 || remove){
-                removeFile(filenames[0]);
-                removeFile(filenames[1]);
+                filehelpers::removeFile(filenames[0]);
+                filehelpers::removeFile(filenames[1]);
             }
         }
     }
@@ -243,7 +243,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             try{
                 std::sort(buffer.begin(), buffer.end(), comparator);
             }catch(std::bad_alloc& e){
-                removeFile(tempfilename);
+                filehelpers::removeFile(tempfilename);
                 throw e;
             }
 
@@ -430,8 +430,8 @@ namespace detail{
                     newfilenames.emplace_back(std::move(outtmpname));
 
                     if(step > 0 || remove){
-                        removeFile(filenames[i]);
-                        removeFile(filenames[i+1]);
+                        filehelpers::removeFile(filenames[i]);
+                        filehelpers::removeFile(filenames[i+1]);
                     }
                     
                 }else{
@@ -446,14 +446,14 @@ namespace detail{
         assert(filenames.size() > 0);
 
         if(filenames.size() == 1){
-            renameFileSameMount(filenames[0], outfilename);
+            filehelpers::renameFileSameMount(filenames[0], outfilename);
         }else{
             std::cerr << "merge " << filenames[0] << " + " << filenames[1] << " into " <<  outfilename << "\n";
             binKeyMergeTwoFiles<T>(filenames[0], filenames[1], outfilename, comparator);
 
             if(step > 0 || remove){
-                removeFile(filenames[0]);
-                removeFile(filenames[1]);
+                filehelpers::removeFile(filenames[0]);
+                filehelpers::removeFile(filenames[1]);
             }
         }
     }
@@ -559,7 +559,7 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
             try{
                 memoryStorage.sort(ptrcomparator);
             }catch(std::bad_alloc& e){
-                removeFile(tempfilename);
+                filehelpers::removeFile(tempfilename);
                 throw e;
             }
 

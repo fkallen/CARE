@@ -1038,7 +1038,7 @@ namespace gpu{
                             std::ifstream rstempistream(rstempfile, std::ios::binary);
                             readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
                             savedReadstorageGpuData.clear();
-                            removeFile(rstempfile);
+                            filehelpers::removeFile(rstempfile);
                         }
                         
                     }else{
@@ -1115,9 +1115,9 @@ namespace gpu{
                                 usableNumMaps++;
                             }
         
-                            removeFile(tmpmapsFilename);
+                            filehelpers::removeFile(tmpmapsFilename);
                             if(didSaveGpudata){
-                                removeFile(rstempfile);
+                                filehelpers::removeFile(rstempfile);
                             }
         
                             minhasher.minhashTables.resize(usableNumMaps);

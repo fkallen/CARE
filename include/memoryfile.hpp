@@ -11,7 +11,7 @@
 #include <functional>
 #include <memory>
 #include <filesort.hpp>
-
+#include <filehelpers.hpp>
 #include <fixedsizestorage.hpp>
 
 namespace care{
@@ -165,7 +165,7 @@ struct MemoryFile{
                         wrappercomparator,
                         wrapperheapusage);
 
-        renameFileSameMount(filename+"2", filename);
+        filehelpers::renameFileSameMount(filename+"2", filename);
 
         outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);
     }
@@ -509,7 +509,7 @@ struct MemoryFileFixedSize{
                         wrapperptrcomparator,
                         wrappercomparator);
 
-        renameFileSameMount(filename+"2", filename);
+        filehelpers::renameFileSameMount(filename+"2", filename);
 
         outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);
     }

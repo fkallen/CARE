@@ -22,6 +22,7 @@
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
 #include <util.hpp>
+#include <filehelpers.hpp>
 
 #include <hpc_helpers.cuh>
 
@@ -3271,7 +3272,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
           }
 
-          deleteFiles(tmpfiles);
+          filehelpers::deleteFiles(tmpfiles);
       }
 
       //concatenate feature files of each thread into one file
@@ -3302,12 +3303,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               for(const auto& s : featureTmpFiles)
                   std::cerr << s << '\n';
           }else{
-              deleteFiles(featureTmpFiles);
+            filehelpers::deleteFiles(featureTmpFiles);
           }
 
           std::cout << "end merging features" << std::endl;
       }else{
-          deleteFiles(featureTmpFiles);
+        filehelpers::deleteFiles(featureTmpFiles);
       }
 
       std::cout << "end merge" << std::endl;

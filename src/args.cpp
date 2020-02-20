@@ -31,10 +31,6 @@ namespace args{
     	return result;
     }
 
-    std::string getFileName(std::string filePath){
-        filesys::path path(filePath);
-        return path.filename().string();
-    }
 
 	template<>
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
@@ -170,7 +166,7 @@ namespace args{
         result.outputfilename = pr["outfile"].as<std::string>();
 
         if(result.outputfilename == "")
-            result.outputfilename = "corrected_" + getFileName(result.inputfile);
+            result.outputfilename = "corrected_" + filehelpers::getFileName(result.inputfile);
 
 		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
@@ -357,7 +353,7 @@ namespace args{
                 valid = false;
                 std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
             }else{
-                removeFile(opt.tempdirectory+"/tmptest");
+                filehelpers::removeFile(opt.tempdirectory+"/tmptest");
             }
         }
         

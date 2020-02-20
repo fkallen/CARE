@@ -266,18 +266,6 @@ void GZipWriter::writeImpl(const std::string& data){
         return count;
 	}
 
-    /*
-        Deletes every file in vector filenames
-    */
-    void deleteFiles(std::vector<std::string> filenames){
-        for (const auto& filename : filenames) {
-            int ret = std::remove(filename.c_str());
-            if (ret != 0){
-                const std::string errormessage = "Could not remove file " + filename;
-                std::perror(errormessage.c_str());
-            }
-        }
-    }
 
     /*
         Merges temporary results with unordered reads into single file outputfile with ordered reads.
@@ -292,17 +280,7 @@ void GZipWriter::writeImpl(const std::string& data){
     */
 
 
-std::uint64_t linecount(const std::string& filename){
-	std::uint64_t count = 0;
-	std::ifstream is(filename);
-	if(is){
-		std::string s;
-		while(std::getline(is, s)){
-			++count;
-		}
-	}
-	return count;
-}
+
 
 
 

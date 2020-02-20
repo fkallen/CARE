@@ -799,7 +799,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                             }                        
                         }
     
-                        removeFile(tmpmapsFilename);
+                        filehelpers::removeFile(tmpmapsFilename);
     
                         minhasher.minhashTables.resize(usableNumMaps);
                         std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
