@@ -45,151 +45,7 @@ struct DataArrays {
 	// 	//cudaSetDevice(deviceId);
 	// };
 
-    void printActiveDataOfSubject(int subjectIndex, std::ostream& out){
-#if 0
-        assert(subjectIndex < n_subjects);
-        size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
-        const int numIndices = h_indices_per_subject[subjectIndex];
-        const int* indices = h_indices + h_indices_per_subject_prefixsum[subjectIndex];
-        const int subjectColumnsBegin_incl = h_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-        const int subjectColumnsEnd_excl = h_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-        const int firstColumn_incl = h_msa_column_properties[subjectIndex].firstColumn_incl;
-        const int lastColumn_excl = h_msa_column_properties[subjectIndex].lastColumn_excl;
-        const int columnsToCheck = lastColumn_excl - firstColumn_incl;
-
-        const char* consensus = &h_consensus[subjectIndex * msa_pitch];
-        const int* countsA = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats];
-        const int* countsC = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats];
-        const int* countsG = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
-        const int* countsT = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
-        const float* weightsA = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats];
-        const float* weightsC = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats];
-        const float* weightsG = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
-        const float* weightsT = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
-
-        const int* coverage = &h_coverage[msa_weights_pitch_floats * subjectIndex];
-        const float* support = &h_support[msa_weights_pitch_floats * subjectIndex];
-        const float* origWeights = &h_origWeights[msa_weights_pitch_floats * subjectIndex];
-        const int* origCoverages = &h_origCoverages[msa_weights_pitch_floats * subjectIndex];
-
-        const bool subject_is_corrected = h_subject_is_corrected[subjectIndex];
-        const bool is_high_quality_subject = h_is_high_quality_subject[subjectIndex].hq();
-
-        const int numCandidates = h_candidates_per_subject_prefixsum[subjectIndex+1] - h_candidates_per_subject_prefixsum[subjectIndex];
-        //std::ostream_iterator<double>(std::cout, " ")
-        out << "subjectIndex: " << subjectIndex << '\n';
-        out << "Subject: ";
-        for(int i = 0; i < numCandidates; i++){
-
-        }
-
-        // handlearray(subject_sequences_data);
-        // handlearray(candidate_sequences_data);
-        // handlearray(subject_sequences_lengths);
-        // handlearray(candidate_sequences_lengths);
-        // handlearray(candidates_per_subject);
-        // handlearray(candidates_per_subject_prefixsum);
-        // handlearray(subject_read_ids);
-        // handlearray(candidate_read_ids);
-        // handlearray(indices);
-        // handlearray(indices_per_subject);
-        // handlearray(indices_per_subject_prefixsum);
-        // handlearray(num_indices);
-
-        // handlearray(subject_qualities);
-        // handlearray(candidate_qualities);
-
-        // handlearray(corrected_subjects);
-        // handlearray(corrected_candidates);
-        // handlearray(num_corrected_candidates);
-        // handlearray(subject_is_corrected);
-        // handlearray(indices_of_corrected_candidates);
-        // handlearray(num_uncorrected_positions_per_subject);
-        // handlearray(uncorrected_positions_per_subject);
-
-        // handlearray(is_high_quality_subject);
-        // handlearray(high_quality_subject_indices);
-        // handlearray(num_high_quality_subject_indices);
-
-        // handlearray(alignment_scores);
-        // handlearray(alignment_overlaps);
-        // handlearray(alignment_shifts);
-        // handlearray(alignment_nOps);
-        // handlearray(alignment_isValid);
-        // handlearray(alignment_best_alignment_flags);
-
-        out << "numIndices: " << numIndices << '\n';
-        out << "indices:\n";
-        std::copy(indices, indices + numIndices, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "subjectColumnsBegin_incl: " << subjectColumnsBegin_incl
-                << ", subjectColumnsEnd_excl: " << subjectColumnsEnd_excl
-                << ", columnsToCheck: " << columnsToCheck << '\n';
-
-        out << "shifts:\n";
-        for(int i = 0; i < numIndices; i++){
-            out << h_alignment_shifts[indices[i]] << ", ";
-        }
-        out << '\n';
-
-        out << "consensus:\n";
-        std::copy(consensus, consensus + columnsToCheck, std::ostream_iterator<char>(out, ""));
-        out << '\n';
-
-        out << "countsA:\n";
-        std::copy(countsA, countsA + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "countsC:\n";
-        std::copy(countsC, countsC + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "countsG:\n";
-        std::copy(countsG, countsG + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "countsT:\n";
-        std::copy(countsT, countsT + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "Coverage:\n";
-        std::copy(coverage, coverage + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "weightsA:\n";
-        std::copy(weightsA, weightsA + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "weightsC:\n";
-        std::copy(weightsC, weightsC + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "weightsG:\n";
-        std::copy(weightsG, weightsG + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "weightsT:\n";
-        std::copy(weightsT, weightsT + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "support:\n";
-        std::copy(support, support + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "origWeights:\n";
-        std::copy(origWeights, origWeights + columnsToCheck, std::ostream_iterator<float>(out, " "));
-        out << '\n';
-
-        out << "origCoverages:\n";
-        std::copy(origCoverages, origCoverages + columnsToCheck, std::ostream_iterator<int>(out, " "));
-        out << '\n';
-
-        out << "subject_is_corrected: " << subject_is_corrected << '\n';
-        out << "is_high_quality_subject: " << is_high_quality_subject << '\n';
-#endif
-    }
 
 #if 0
     void resizeAnchorSequenceData(int numAnchors, int maximumSequenceBytes){
@@ -281,7 +137,7 @@ struct DataArrays {
 
         // h_corrected_subjects.resize(n_sub * sequence_pitch);
         // h_corrected_candidates.resize(n_quer * sequence_pitch);
-        // h_num_corrected_candidates.resize(n_sub);
+        // h_num_corrected_candidates_per_anchor.resize(n_sub);
         // h_subject_is_corrected.resize(n_sub);
         // h_indices_of_corrected_candidates.resize(n_quer);
         // h_num_uncorrected_positions_per_subject.resize(n_sub);
@@ -289,7 +145,7 @@ struct DataArrays {
 
         // d_corrected_subjects.resize(n_sub * sequence_pitch);
         // d_corrected_candidates.resize(n_quer * sequence_pitch);
-        // d_num_corrected_candidates.resize(n_sub);
+        // d_num_corrected_candidates_per_anchor.resize(n_sub);
         // d_subject_is_corrected.resize(n_sub);
         // d_indices_of_corrected_candidates.resize(n_quer);
         // d_num_uncorrected_positions_per_subject.resize(n_sub);
@@ -361,7 +217,7 @@ struct DataArrays {
 
         //cudaMemsetAsync(d_corrected_subjects, 0, d_corrected_subjects.sizeInBytes(), stream); CUERR;
         //cudaMemsetAsync(d_corrected_candidates, 0, d_corrected_candidates.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_num_corrected_candidates, 0, d_num_corrected_candidates.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_num_corrected_candidates_per_anchor, 0, d_num_corrected_candidates_per_anchor.sizeInBytes(), stream); CUERR;
         //cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
         //cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
         //cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
@@ -459,7 +315,8 @@ struct DataArrays {
 
         h_corrected_subjects = std::move(SimpleAllocationPinnedHost<char>{});
         h_corrected_candidates = std::move(SimpleAllocationPinnedHost<char>{});
-        h_num_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
+        h_num_corrected_candidates_per_anchor = std::move(SimpleAllocationPinnedHost<int>{});
+        h_num_corrected_candidates_per_anchor_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
         h_subject_is_corrected = std::move(SimpleAllocationPinnedHost<bool>{});
         h_indices_of_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
         h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<AnchorHighQualityFlag>{});
@@ -470,7 +327,8 @@ struct DataArrays {
 
         d_corrected_subjects = std::move(SimpleAllocationDevice<char>{});
         d_corrected_candidates = std::move(SimpleAllocationDevice<char>{});
-        d_num_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
+        d_num_corrected_candidates_per_anchor = std::move(SimpleAllocationDevice<int>{});
+        d_num_corrected_candidates_per_anchor_prefixsum = std::move(SimpleAllocationDevice<int>{});
         d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
         d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
         d_is_high_quality_subject = std::move(SimpleAllocationDevice<AnchorHighQualityFlag>{});
@@ -565,7 +423,8 @@ struct DataArrays {
 
         bytes += f(h_corrected_subjects);
         bytes += f(h_corrected_candidates);
-        bytes += f(h_num_corrected_candidates);
+        bytes += f(h_num_corrected_candidates_per_anchor);
+        bytes += f(h_num_corrected_candidates_per_anchor_prefixsum);
         bytes += f(h_subject_is_corrected);
         bytes += f(h_indices_of_corrected_candidates);
         bytes += f(h_is_high_quality_subject);
@@ -629,7 +488,8 @@ struct DataArrays {
 
         bytes += f(d_corrected_subjects);
         bytes += f(d_corrected_candidates);
-        bytes += f(d_num_corrected_candidates);
+        bytes += f(d_num_corrected_candidates_per_anchor);
+        bytes += f(d_num_corrected_candidates_per_anchor_prefixsum);
         bytes += f(d_subject_is_corrected);
         bytes += f(d_indices_of_corrected_candidates);
         bytes += f(d_is_high_quality_subject);
@@ -700,7 +560,8 @@ struct DataArrays {
 
         bytes += f(h_corrected_subjects);
         bytes += f(h_corrected_candidates);
-        bytes += f(h_num_corrected_candidates);
+        bytes += f(h_num_corrected_candidates_per_anchor);
+        bytes += f(h_num_corrected_candidates_per_anchor_prefixsum);
         bytes += f(h_subject_is_corrected);
         bytes += f(h_indices_of_corrected_candidates);
         bytes += f(h_is_high_quality_subject);
@@ -765,7 +626,8 @@ struct DataArrays {
 
         bytes += f(d_corrected_subjects);
         bytes += f(d_corrected_candidates);
-        bytes += f(d_num_corrected_candidates);
+        bytes += f(d_num_corrected_candidates_per_anchor);
+        bytes += f(d_num_corrected_candidates_per_anchor_prefixsum);
         bytes += f(d_subject_is_corrected);
         bytes += f(d_indices_of_corrected_candidates);
         bytes += f(d_is_high_quality_subject);
@@ -924,7 +786,7 @@ struct DataArrays {
         CorrectionResultPointers pointers{
             h_corrected_subjects.get(),
             h_corrected_candidates.get(),
-            h_num_corrected_candidates.get(),
+            h_num_corrected_candidates_per_anchor.get(),
             h_subject_is_corrected.get(),
             h_indices_of_corrected_candidates.get(),
             h_is_high_quality_subject.get(),
@@ -940,7 +802,7 @@ struct DataArrays {
         CorrectionResultPointers pointers{
             d_corrected_subjects.get(),
             d_corrected_candidates.get(),
-            d_num_corrected_candidates.get(),
+            d_num_corrected_candidates_per_anchor.get(),
             d_subject_is_corrected.get(),
             d_indices_of_corrected_candidates.get(),
             d_is_high_quality_subject.get(),
@@ -956,7 +818,8 @@ struct DataArrays {
 
     SimpleAllocationPinnedHost<char> h_corrected_subjects;
     SimpleAllocationPinnedHost<char> h_corrected_candidates;
-    SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
+    SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor;
+    SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor_prefixsum;
     SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
     SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
     SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
@@ -964,7 +827,8 @@ struct DataArrays {
 
     SimpleAllocationDevice<char> d_corrected_subjects;
     SimpleAllocationDevice<char> d_corrected_candidates;
-    SimpleAllocationDevice<int> d_num_corrected_candidates;
+    SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor;
+    SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor_prefixsum;
     SimpleAllocationDevice<bool> d_subject_is_corrected;
     SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
     SimpleAllocationDevice<int> d_num_uncorrected_positions_per_subject;
@@ -1114,7 +978,7 @@ struct DataArrays {
 
         handlearray(corrected_subjects);
         handlearray(corrected_candidates);
-        handlearray(num_corrected_candidates);
+        handlearray(num_corrected_candidates_per_anchor);
         handlearray(subject_is_corrected);
         handlearray(indices_of_corrected_candidates);
         handlearray(num_uncorrected_positions_per_subject);
@@ -1181,7 +1045,7 @@ struct DataArrays {
 
         handlearray(corrected_subjects);
         handlearray(corrected_candidates);
-        handlearray(num_corrected_candidates);
+        handlearray(num_corrected_candidates_per_anchor);
         handlearray(subject_is_corrected);
         handlearray(indices_of_corrected_candidates);
         handlearray(num_uncorrected_positions_per_subject);
@@ -1247,7 +1111,7 @@ struct DataArrays {
 
         handlearray(corrected_subjects);
         handlearray(corrected_candidates);
-        handlearray(num_corrected_candidates);
+        handlearray(num_corrected_candidates_per_anchor);
         handlearray(subject_is_corrected);
         handlearray(indices_of_corrected_candidates);
         handlearray(num_uncorrected_positions_per_subject);

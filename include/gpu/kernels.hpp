@@ -355,6 +355,20 @@ void callCorrectCandidatesWithGroupKernel_async(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
+void callCompactCandidateCorrectionResultsKernel_async(
+            char* __restrict__ d_compactedCorrectedCandidates,
+            const int* __restrict__ d_numCorrectedCandidatesPerAnchor,
+            const int* __restrict__ d_numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
+            const int* __restrict__ d_high_quality_subject_indices,
+            const int* __restrict__ d_num_high_quality_subject_indices,
+            const int* __restrict__ d_candidates_per_subject_prefixsum,
+            const char* __restrict__ d_correctedCandidates,
+            const int* __restrict__ d_correctedCandidateLengths,
+            size_t decodedSequencePitch,
+            int n_subjects,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
 
 void callConstructAnchorResultsKernelAsync(
             TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedSubject,

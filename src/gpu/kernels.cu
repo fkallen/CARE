@@ -1887,6 +1887,53 @@ namespace gpu{
 
 
 
+    template<int BLOCKSIZE>
+    __global__
+    void compactCandidateCorrectionResultsKernel(
+            char* __restrict__ compactedCorrectedCandidates,
+            const int* __restrict__ numCorrectedCandidatesPerAnchor,
+            const int* __restrict__ numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
+            const int* __restrict__ high_quality_subject_indices,
+            const int* __restrict__ num_high_quality_subject_indices,
+            const int* __restrict__ candidates_per_subject_prefixsum,
+            const char* __restrict__ correctedCandidates,
+            const int* __restrict__ correctedCandidateLengths,
+            size_t decodedSequencePitch,
+            int n_subjects){
+
+        constexpr int groupsize = 32;
+        static_assert(groupsize <= 32);
+        static_assert(BLOCKSIZE % groupsize == 0);
+
+        const int numHqSubjects = *num_high_quality_subject_indices;
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        for(int hqsubjectIndex = groupId;
+                hqsubjectIndex < numHqSubjects;
+                hqsubjectIndex += numGroups){
+
+            const int subjectIndex = high_quality_subject_indices[hqsubjectIndex];
+            const int myNumCorrectedCandidates = numCorrectedCandidatesPerAnchor[subjectIndex];
+
+            if(myNumCorrectedCandidates > 0){
+                const int inputbaseoffset = candidates_per_subject_prefixsum[subjectIndex];
+                const int outputbaseoffset = numCorrectedCandidatesPerAnchorPrefixsum[subjectIndex];
+
+                for(int cIndex = tgroup.thread_rank(); cIndex < myNumCorrectedCandidates; cIndex += tgroup.size()){
+
+                    for(int i = 0; i < decodedSequencePitch; i++){
+                        compactedCorrectedCandidates[(outputbaseoffset+cIndex) * decodedSequencePitch + i] 
+                            = correctedCandidates[(inputbaseoffset+cIndex) * decodedSequencePitch + i];
+                    }
+                }
+            }
+        }
+    }
 
     template<int BLOCKSIZE, int groupsize>
     __global__
@@ -3461,7 +3508,7 @@ namespace gpu{
         //calculate prefixsum of candidatesPerHQAnchor. 
         //only the first d_correctionResultPointersnumHighQualitySubjectIndices+1 entries will contain valid data.
         cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
-        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR; //released at end of function
         cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
         cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
@@ -3569,6 +3616,40 @@ namespace gpu{
     		#undef mycall
 
         cubCachingAllocator.DeviceFree(d_candidatesPerHQAnchorPrefixSum);  CUERR;
+    }
+
+
+    void callCompactCandidateCorrectionResultsKernel_async(
+            char* __restrict__ d_compactedCorrectedCandidates,
+            const int* __restrict__ d_numCorrectedCandidatesPerAnchor,
+            const int* __restrict__ d_numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
+            const int* __restrict__ d_high_quality_subject_indices,
+            const int* __restrict__ d_num_high_quality_subject_indices,
+            const int* __restrict__ d_candidates_per_subject_prefixsum,
+            const char* __restrict__ d_correctedCandidates,
+            const int* __restrict__ d_correctedCandidateLengths,
+            size_t decodedSequencePitch,
+            int n_subjects,
+            cudaStream_t stream,
+            KernelLaunchHandle& /*handle*/){
+
+        constexpr int blocksize = 256;
+
+        dim3 block(blocksize);
+        dim3 grid(SDIV(n_subjects, blocksize / 32));
+
+        compactCandidateCorrectionResultsKernel<blocksize><<<grid, block, 0, stream>>>(
+            d_compactedCorrectedCandidates,
+            d_numCorrectedCandidatesPerAnchor,
+            d_numCorrectedCandidatesPerAnchorPrefixsum,
+            d_high_quality_subject_indices,
+            d_num_high_quality_subject_indices,
+            d_candidates_per_subject_prefixsum,
+            d_correctedCandidates,
+            d_correctedCandidateLengths,
+            decodedSequencePitch,
+            n_subjects
+        );
     }
 
 
