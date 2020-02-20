@@ -6,6 +6,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/dataarrays.hpp>
 #include <gpu/cubcachingallocator.cuh>
+#include <gpu/minhashkernels.hpp>
 
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
@@ -147,6 +148,8 @@ namespace test{
         SimpleAllocationDevice<bool> d_anchorContainsN;
         SimpleAllocationDevice<bool> d_candidateContainsN;
 
+        SimpleAllocationDevice<read_number> d_candidate_read_ids_tmp;
+
         int n_subjects = -1;
         std::atomic<int> n_queries{-1};
 
@@ -157,6 +160,8 @@ namespace test{
         int deviceId;
 
         ThreadPool::ParallelForHandle pforHandle;
+
+        MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
 
         SyncFlag syncFlag;
     };
@@ -485,6 +490,8 @@ namespace test{
         cudaSetDevice(deviceId); CUERR;
         cudaStreamCreate(&nextData.stream); CUERR;
         cudaEventCreate(&nextData.event); CUERR;
+
+        nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
     }
 
     void destroyNextIterationData(NextIterationData& nextData){
@@ -505,6 +512,10 @@ namespace test{
         nextData.d_candidate_read_ids = std::move(SimpleAllocationDevice<read_number>{});
         nextData.d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
         nextData.d_candidates_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
+
+        nextData.d_candidate_read_ids_tmp.destroy();
+
+        destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
 
     void getSubjectDataOfNextIteration(Batch& batchData, int batchsize, const DistributedReadStorage& readStorage){
@@ -517,7 +528,7 @@ namespace test{
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
         nextData.d_subject_read_ids.resize(batchsize);
-        nextData.h_anchorContainsN.resize(batchsize);
+        //nextData.h_anchorContainsN.resize(batchsize);
         nextData.d_anchorContainsN.resize(batchsize);        
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
@@ -574,19 +585,26 @@ namespace test{
             nextData.stream
         ); CUERR;
 
-        for(int i = 0; i < nextData.n_subjects; i++){
-            const read_number anchorReadId = nextData.h_subject_read_ids[i];
-            const bool containsN = readStorage.readContainsN(anchorReadId);
-            nextData.h_anchorContainsN[i] = containsN;
-        }
-
-        cudaMemcpyAsync(
-            nextData.d_anchorContainsN,
-            nextData.h_anchorContainsN,
-            nextData.h_anchorContainsN.sizeInBytes(),
-            H2D,
+        readStorage.readsContainN_async(
+            nextData.d_anchorContainsN.get(), 
+            nextData.d_subject_read_ids.get(),
+            nextData.n_subjects, 
             nextData.stream
-        ); CUERR;
+        );
+
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     const read_number anchorReadId = nextData.h_subject_read_ids[i];
+        //     const bool containsN = readStorage.readContainsN(anchorReadId);
+        //     nextData.h_anchorContainsN[i] = containsN;
+        // }
+
+        // cudaMemcpyAsync(
+        //     nextData.d_anchorContainsN,
+        //     nextData.h_anchorContainsN,
+        //     nextData.h_anchorContainsN.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;
         
     }
 
@@ -645,6 +663,42 @@ namespace test{
             );
             nvtx::pop_range();
 
+            // nvtx::push_range("gpumakeUniqueQueryResults", 2);
+            // OperationResult gpumergeresults = mergeRangesGpu(
+            //     nextDataPtr->mergeRangesGpuHandle, 
+            //     minhashHandle.multiranges.data(), 
+            //     minhashHandle.multiranges.size(), 
+            //     minhasherPtr->minparams.maps, 
+            //     nextData.stream,
+            //     MergeRangesKernelType::allcub
+            // );
+            // nvtx::pop_range();            
+
+            // {
+            //     //assert that gpu results are identical to cpu results
+            //     const int total = minhashHandle.numResultsPerSequencePrefixSum.back();
+
+            //     for(int i = 0; i < total; i++){
+            //         const auto a = minhashHandle.multiallUniqueResults[i];
+            //         const auto b = gpumergeresults.candidateIds[i];
+            //         if(a != b){
+            //             std::cerr << "error pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+            //         }
+            //         assert(a == b);
+            //     }
+
+            //     for(int i = begin; i < end; i++){
+            //         const auto a = minhashHandle.numResultsPerSequence[i-begin];
+            //         const auto b = gpumergeresults.candidateIdsPerSequence[i-begin];
+
+            //         if(a != b){
+            //             std::cerr << "error2 pos i = " << i << " cpu = " << a << ", gpu = " << b << "\n";
+            //         }
+            //         assert(a == b);
+            //     }
+                
+            // }
+
             nvtx::push_range("remove self", 3);
 
             int initialNumberOfCandidates = 0;  
@@ -676,7 +730,10 @@ namespace test{
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
 
-        batchData.threadPool->parallelFor(
+        int numChunksRequired = batchData.threadsInThreadPool;
+
+#if 1       
+        numChunksRequired = batchData.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
             nextData.n_subjects, 
@@ -684,11 +741,15 @@ namespace test{
                 calculateMinhash(begin, end, threadId);
             }
         );
+#else 
 
+        calculateMinhash(0, nextData.n_subjects, 0);
+
+#endif
 
 
         nextData.decodedSubjectStrings.clear();
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
+        for(int i = 0; i < numChunksRequired; i++){
             nextData.decodedSubjectStrings.insert(
                 nextData.decodedSubjectStrings.end(),
                 decodedSubjectStringsPerThread[i].begin(),
@@ -707,7 +768,7 @@ namespace test{
 
         //copy candidate ids to pinned buffer, then to gpu
         auto destbegin = nextData.h_candidate_read_ids.get();
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
+        for(int i = 0; i < numChunksRequired; i++){
             auto& minhashHandle = batchData.minhashHandles[i];
 
             for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
@@ -721,6 +782,11 @@ namespace test{
             }            
         }
 
+        // std::cerr << "candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidate_read_ids[i] << "\n";
+        // }
+
         cudaMemcpyAsync(
             nextData.d_candidate_read_ids.get(),
             nextData.h_candidate_read_ids.get(),
@@ -733,7 +799,7 @@ namespace test{
 
         //make candidates per subject prefix sum
         int subject_index = 0;
-        for(int i = 0; i < batchData.threadsInThreadPool; i++){
+        for(int i = 0; i < numChunksRequired; i++){
             auto& minhashHandle = batchData.minhashHandles[i];
 
             for(int k = 0; k < int(minhashHandle.numResultsPerSequence.size()); k++){
@@ -746,6 +812,11 @@ namespace test{
                 subject_index++;
             }            
         }
+
+        // std::cerr << "num candidate ids \n\n";
+        // for(int i = 0; i < nextData.n_subjects; i++){
+        //     std::cerr << nextData.h_candidates_per_subject[i] << "\n";
+        // }
 
         cudaMemcpyAsync(
             nextData.d_candidates_per_subject.get(),
@@ -769,6 +840,13 @@ namespace test{
             nextData.h_candidateContainsN[i] = containsN;
         }
 
+        // std::cerr << "contains \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidateContainsN[i] << "\n";
+        // }
+
+        // std::exit(0);
+
         cudaMemcpyAsync(
             nextData.d_candidateContainsN,
             nextData.h_candidateContainsN,
@@ -776,6 +854,247 @@ namespace test{
             H2D,
             nextData.stream
         ); CUERR;    
+    }
+
+    void determineCandidateReadIdsOfNextIterationGpu(
+            Batch& batchData, 
+            const Minhasher& minhasher, 
+            const DistributedReadStorage& readStorage){
+
+        NextIterationData& nextData = batchData.nextIterationData;
+
+        //minhash the retrieved anchors to find candidate ids
+
+        Batch* batchptr = &batchData;
+        NextIterationData* nextDataPtr = &nextData;
+        const Minhasher* minhasherPtr = &minhasher;
+
+        nextData.n_queries = 0;
+
+        //std::vector<std::vector<std::string>> decodedSubjectStringsPerThread(batchData.threadsInThreadPool);
+
+        auto makeSignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+
+            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+
+            std::vector<std::string> decodedSubjectStrings(end-begin);
+
+            nvtx::push_range("decode sequences", 1);
+            for(int i = begin; i < end; i++){
+                const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
+                const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+
+                decodedSubjectStrings[i - begin] = get2BitString(sequenceptr, sequencelength);
+            }
+            nvtx::pop_range();
+
+
+            nvtx::push_range("calculateMinhashSignatures", 5);
+            minhasherPtr->calculateMinhashSignatures(
+                minhashHandle,
+                decodedSubjectStrings
+            );
+            nvtx::pop_range();
+
+            //decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
+        };
+
+        auto querySignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+
+            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            minhasherPtr->queryPrecalculatedSignatures(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+        };
+
+
+        cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
+
+        int numChunksRequired = batchData.threadPool->parallelFor(
+            nextData.pforHandle,
+            0, 
+            nextData.n_subjects, 
+            [=](auto begin, auto end, auto threadId){
+                makeSignatures(begin, end, threadId);
+            }
+        );
+        batchData.threadPool->parallelFor(
+            nextData.pforHandle,
+            0, 
+            nextData.n_subjects, 
+            [=](auto begin, auto end, auto threadId){
+                querySignatures(begin, end, threadId);
+            }
+        );
+
+        std::vector<std::pair<const read_number*, const read_number*>> allRanges;
+        std::vector<int> idsPerChunkPrefixSum(numChunksRequired+1, 0);
+
+        int totalNumIds = 0;
+        for(int i = 0; i < numChunksRequired; i++){
+            allRanges.insert(
+                allRanges.end(), 
+                batchptr->minhashHandles[i].multiranges.begin(),
+                batchptr->minhashHandles[i].multiranges.end()
+            );
+
+            for(const auto& range : batchptr->minhashHandles[i].multiranges){
+                totalNumIds += std::distance(range.first, range.second);
+            }
+
+            idsPerChunkPrefixSum[i+1] = totalNumIds;
+        }
+
+        nextData.h_candidate_read_ids.resize(totalNumIds);
+        nextData.d_candidate_read_ids.resize(totalNumIds);
+        nextData.d_candidate_read_ids_tmp.resize(totalNumIds);
+        nextData.h_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.d_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        //nextData.h_candidateContainsN.resize(totalNumIds);
+        nextData.d_candidateContainsN.resize(totalNumIds);
+
+        auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
+            nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
+            for(int chunkId = begin; chunkId < end; chunkId++){
+                const auto hostdatabegin = nextData.h_candidate_read_ids.get() + idsPerChunkPrefixSum[chunkId];
+                const auto devicedatabegin = nextData.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                const size_t elementsInChunk = idsPerChunkPrefixSum[chunkId+1] - idsPerChunkPrefixSum[chunkId];
+
+                const auto& ranges = batchptr->minhashHandles[chunkId].multiranges;
+
+                auto dest = hostdatabegin;
+
+                const int lmax = ranges.size();
+                for(int k = 0; k < lmax; k++){
+                    constexpr int nextprefetch = 2;
+                    if(k+nextprefetch < lmax){
+                        __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                    }
+                    const auto& range = ranges[k];
+
+                    dest = std::copy(range.first, range.second, dest);
+                }
+
+                cudaMemcpyAsync(
+                    devicedatabegin,
+                    hostdatabegin,
+                    sizeof(read_number) * elementsInChunk,
+                    H2D,
+                    nextData.stream
+                ); CUERR;
+            }
+            nvtx::pop_range();
+        };
+
+        batchData.threadPool->parallelFor(
+            nextData.pforHandle,
+            0, 
+            numChunksRequired, 
+            [=](auto begin, auto end, auto threadId){
+                copyCandidateIdsToContiguousMem(begin, end, threadId);
+            }
+        );
+
+
+        nvtx::push_range("gpumakeUniqueQueryResults", 2);
+        mergeRangesGpuAsync(
+            nextDataPtr->mergeRangesGpuHandle, 
+            nextData.d_candidate_read_ids.get(),
+            nextData.d_candidates_per_subject.get(),
+            nextData.d_candidates_per_subject_prefixsum.get(),
+            nextData.d_candidate_read_ids_tmp.get(),
+            allRanges.data(), 
+            allRanges.size(), 
+            nextData.d_subject_read_ids.get(),
+            minhasherPtr->minparams.maps, 
+            nextData.stream,
+            MergeRangesKernelType::allcub
+        );
+
+        cudaMemcpyAsync(
+            nextData.h_candidates_per_subject_prefixsum.get(),
+            nextData.d_candidates_per_subject_prefixsum.get(),
+            sizeof(int) * (nextData.n_subjects + 1),
+            D2H,
+            nextData.stream
+        ); CUERR;
+
+        cudaStreamSynchronize(nextData.stream); CUERR;
+
+        nextData.n_queries = nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects];
+
+        nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        nextData.d_candidate_read_ids.resize(nextData.n_queries);
+
+        nextData.d_candidateContainsN.resize(nextData.n_queries);
+
+        cudaMemcpyAsync(
+            nextData.h_candidate_read_ids.get(),
+            nextData.d_candidate_read_ids.get(),
+            sizeof(read_number) * nextData.n_queries,
+            D2H,
+            nextData.stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            nextData.h_candidates_per_subject.get(),
+            nextData.d_candidates_per_subject.get(),
+            sizeof(int) * (nextData.n_subjects),
+            D2H,
+            nextData.stream
+        ); CUERR;        
+
+        readStorage.readsContainN_async(
+            nextData.d_candidateContainsN.get(), 
+            nextData.d_candidate_read_ids.get(), 
+            //nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,
+            nextData.n_queries, 
+            nextData.stream
+        );
+
+        cudaStreamSynchronize(nextData.stream); CUERR;
+        nvtx::pop_range();
+
+        
+
+        //nextData.h_candidateContainsN.resize(nextData.n_queries);
+
+        // cudaMemcpyAsync(
+        //     nextData.h_candidateContainsN,
+        //     nextData.d_candidateContainsN,
+        //     nextData.n_queries * sizeof(bool),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;  
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     const read_number candidateReadId = nextData.h_candidate_read_ids[i];
+        //     const bool containsN = readStorage.readContainsN(candidateReadId);
+        //     assert(containsN == nextData.h_candidateContainsN[i]);
+        // }
+
+        // std::cerr << "contains \n\n";
+        // for(int i = 0; i < nextData.n_queries; i++){
+        //     std::cerr << nextData.h_candidateContainsN[i] << "\n";
+        // }
+
+        // std::exit(0);
+
+        // cudaMemcpyAsync(
+        //     nextData.d_candidateContainsN,
+        //     nextData.h_candidateContainsN,
+        //     nextData.h_candidateContainsN.sizeInBytes(),
+        //     H2D,
+        //     nextData.stream
+        // ); CUERR;    
     }
 
 
@@ -795,7 +1114,7 @@ namespace test{
             nvtx::push_range("determineCandidateReadIdsOfNextIteration",2);
 
             if(batchptr->nextIterationData.n_subjects > 0){
-                determineCandidateReadIdsOfNextIteration(
+                determineCandidateReadIdsOfNextIterationGpu(
                     *batchptr, 
                     *batchptr->transFuncData->minhasher,
                     *batchptr->transFuncData->readStorage
@@ -819,14 +1138,18 @@ namespace test{
             batchData.nextIterationData.syncFlag.wait(); //wait until data is available
         }
 
-        batchData.updateFromIterationData(batchData.nextIterationData);
-
-        //asynchronously prepare data for next iteration
+        batchData.updateFromIterationData(batchData.nextIterationData);        
             
         batchData.nextIterationData.syncFlag.setBusy();
+#if 1   
+        //asynchronously prepare data for next iteration
         batchData.backgroundWorker->enqueue(
             getDataForNextIteration
         );
+#else  
+        getDataForNextIteration();
+#endif
+
     }
 
     void resizeArrays(Batch& batchData){
@@ -1100,17 +1423,17 @@ namespace test{
 
         cudaStreamWaitEvent(streams[secondary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0) ;
 
-        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+        //                 dataArrays.d_subject_sequences_data,
+        //                 dataArrays.d_subject_sequences_data.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
+        //                 dataArrays.d_candidate_sequences_data,
+        //                 dataArrays.d_candidate_sequences_data.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
                         dataArrays.d_subject_sequences_lengths,
@@ -1230,28 +1553,28 @@ namespace test{
 			batch.kernelLaunchHandle
         );
 
-        cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+        // cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+        // cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_num_indices,
-                        dataArrays.d_num_indices,
-                        sizeof(int),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_num_indices,
+        //                 dataArrays.d_num_indices,
+        //                 sizeof(int),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_indices,
+        //                 dataArrays.d_indices,
+        //                 dataArrays.d_indices.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+        //                 dataArrays.d_indices_per_subject,
+        //                 dataArrays.d_indices_per_subject.sizeInBytes(),
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+        // cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
        
 
         
@@ -1590,39 +1913,39 @@ namespace test{
 
         cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
         
-        {
-            //std::cerr << "minimization finished\n";
+        // {
+        //     //std::cerr << "minimization finished\n";
 
-            cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+        //     cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+        //     cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_num_indices,
-                            dataArrays.d_num_indices,
-                            dataArrays.d_num_indices.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_num_indices,
+        //                     dataArrays.d_num_indices,
+        //                     dataArrays.d_num_indices.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_indices,
-                            dataArrays.d_indices,
-                            dataArrays.d_indices.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_indices,
+        //                     dataArrays.d_indices,
+        //                     dataArrays.d_indices.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+        //     cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+        //                     dataArrays.d_indices_per_subject,
+        //                     dataArrays.d_indices_per_subject.sizeInBytes(),
+        //                     D2H,
+        //                     streams[secondary_stream_index]); CUERR;
 
-                        //update host qscores accordingly
-                        /*cudaMemcpyAsync(dataArrays.h_candidate_qualities,
-                                        dataArrays.d_candidate_qualities,
-                                        dataArrays.d_candidate_qualities.sizeInBytes(),
-                                        D2H,
-                                        streams[secondary_stream_index]);*/
+        //                 //update host qscores accordingly
+        //                 /*cudaMemcpyAsync(dataArrays.h_candidate_qualities,
+        //                                 dataArrays.d_candidate_qualities,
+        //                                 dataArrays.d_candidate_qualities.sizeInBytes(),
+        //                                 D2H,
+        //                                 streams[secondary_stream_index]);*/
 
-            cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-        }
+        //     cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+        // }
 
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
@@ -2059,39 +2382,6 @@ namespace test{
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
 
-#if 0
-    SimpleAllocationPinnedHost<bool> candidateAlreadyHQAnchorCorrected
-    for(int i = 0; i < n_queries; i++){
-        const read_number readId = rawResults.h_candidate_read_ids[i];
-        const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[readId];
-        if(!(mask & readCorrectedAsHQAnchor)) {
-            candidateAlreadyHQAnchorCorrected[i] = false;
-        }else{
-            candidateAlreadyHQAnchorCorrected[i] = true;
-        }
-    }
-
-    //Writes indices of candidates with alignmentflag != None to d_indices
-    size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-    cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                                cubTempSize,
-                                cub::CountingInputIterator<int>(0),
-                                rawResults.d_subject_is_corrected[subject_index].get(),
-                                dataArrays.d_indices_of_corrected_subjects.get(),
-                                dataArrays.d_num_indices_of_corrected_subjects.get(),
-                                batch.n_subjects,
-                                streams[primary_stream_index]); CUERR;
-
-    SimpleAllocationPinnedHost<bool> anchorIsAlreadyHQCorrected(n_subjects);
-    TransformIterator anchorIsHQCorrected; return anchorIsAlreadyHQCorrected[i] || h_is_high_quality_subject[i]
-
-    PrefixSum of h_subject_is_corrected to get indices of corrected subjects
-
-    
-
-
-#endif
 
     void constructResults(Batch& batch){
 
@@ -2232,9 +2522,7 @@ namespace test{
 
                 
                 tmp.edits.clear();
-
-#if 1                
-                
+       
 
                 const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
                 if(numEdits != doNotUseEditsValue){
@@ -2245,64 +2533,7 @@ namespace test{
                 }else{
                     tmp.useEdits = false;
                 }
-                
-#else              
 
-                TempCorrectedSequence debugresult;
-
-                const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                if(numEdits != doNotUseEditsValue){
-                    debugresult.edits.resize(numEdits);
-                    const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
-                    std::copy_n(gpuedits, numEdits, debugresult.edits.begin());
-                    debugresult.useEdits = true;
-                }else{
-                    debugresult.useEdits = false;
-                }
-
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
-                if(!originalReadContainsN){
-                    const std::string originalSubjectString = rawResults.decodedSubjectStrings[subject_index];
-
-                    const int maxEdits = subject_length / 7;
-                    int edits = 0;
-                    
-                    for(int i = 0; i < subject_length && edits <= maxEdits; i++){
-                        if(tmp.sequence[i] != originalSubjectString[i]){
-                            tmp.edits.emplace_back(i, tmp.sequence[i]);
-                            edits++;
-                        }
-                    }
-                    tmp.useEdits = edits <= maxEdits;
-                }else{
-                    tmp.useEdits = false;
-                }
-
-                assert(tmp.useEdits == debugresult.useEdits && debugresult.edits == tmp.edits);
-
-#endif                
-#if 0 // validity check of gpu data
-                if(tmp.useEdits){
-                    const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                    const int cpures = tmp.edits.size();
-                    if(gpures != cpures){
-                        std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
-                    }else{
-                        const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
-                        for(int k = 0; k < cpures; k++){
-                            if(tmp.edits[k] != gpuedits[k]){
-                                std::cerr << "error " << positionInVector << " " << k << "\n";
-                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << gpuedits[k].pos << " " << gpuedits[k].base << "\n";
-                            }
-                        }
-                    }
-                }else{
-                    const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
-                    if(gpures != doNotUseEditsValue){
-                        std::cerr << "!useEdits, but gpures = " << gpures << "\n";
-                    }
-                }
-#endif
                 tmpencoded = tmp.encode();
 
                 // if(readId == 13158000){
@@ -2351,24 +2582,21 @@ namespace test{
 
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
-                const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
                 const int candidate_shift = rawResults.h_alignment_shifts[global_candidate_index];
-
-                const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
+                
                 //TIMERSTOPCPU(setup);
                 if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
                     std::cerr << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
-                            << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                 }
                 assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
-
+                
                 //TIMERSTARTCPU(tmp);
                 tmp.type = TempCorrectedSequence::Type::Candidate;
                 tmp.shift = candidate_shift;
                 tmp.readId = candidate_read_id;
-                tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
                 //TIMERSTOPCPU(tmp);
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+                //const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
                 
                 tmp.edits.clear();
                 const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
@@ -2378,57 +2606,11 @@ namespace test{
                     std::copy_n(gpuedits, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
+                    const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
+                    const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
+                    tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
                     tmp.useEdits = false;
                 }
-
-                // TempCorrectedSequence old;
-                // if(!originalReadContainsN){
-                //     //TIMERSTARTCPU(edits);
-                //     const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
-                //     const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
-
-                //     const int maxEdits = candidate_length / 7;
-                //     int edits = 0;
-                //     for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
-                //         if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                //             old.edits.emplace_back(pos, tmp.sequence[pos]);
-                //             edits++;
-                //         }
-                //     }
-
-                //     old.useEdits = edits <= maxEdits;
-                //     //TIMERSTOPCPU(edits);
-                // }else{
-                //     old.useEdits = false;
-                // }
-#if 0 // validity check of gpu data
-                std::cerr  << global_candidate_index << " " << tmp.sequence << "\n";
-
-
-                if(old.useEdits){
-                    const int gpures = tmp.edits.size();
-                    const int cpures = old.edits.size();
-                    if(gpures != cpures || global_candidate_index == 749){
-                        std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
-                        std::cerr << "subject_index " << subject_index << ", candidateIndex " << candidateIndex << ", subjectReadId = " << subjectReadId << ", \ncorrected candidate sequence = " << tmp.sequence << "\n";
-                        assert(0);
-                    }else{
-                        for(int k = 0; k < cpures; k++){
-                            if(tmp.edits[k] != old.edits[k]){
-                                std::cerr << "error " << positionInVector << " " << k << "\n";
-                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << old.edits[k].pos << " " << old.edits[k].base << "\n";
-                                assert(0);
-                            }
-                        }
-                    }
-                }else{
-                    const int gpures = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
-                    if(gpures != doNotUseEditsValue){
-                        std::cerr << "!useEdits, but gpures = " << gpures << "\n";
-                        assert(0);
-                    }
-                }
-#endif
 
                 //TIMERSTARTCPU(encode);
                 tmpencoded = tmp.encode();
@@ -2498,15 +2680,15 @@ namespace test{
 
             for(int i = 0; i < numA; i++){
                 transFuncData->saveCorrectedSequence(
-                    outputData.anchorCorrections[i], 
-                    outputData.encodedAnchorCorrections[i]
+                    std::move(outputData.anchorCorrections[i]), 
+                    std::move(outputData.encodedAnchorCorrections[i])
                 );
             }
 
             for(int i = 0; i < numC; i++){
                 transFuncData->saveCorrectedSequence(
-                    outputData.candidateCorrections[i], 
-                    outputData.encodedCandidateCorrections[i]
+                    std::move(outputData.candidateCorrections[i]), 
+                    std::move(outputData.encodedCandidateCorrections[i])
                 );
             }
 
@@ -2561,14 +2743,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
-    const std::size_t availableMemory = getAvailableMemoryInKB();
-    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
+    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
 
-    auto heapusageOfTCS = [](const auto& x){
-        return x.data.capacity();
-    };
+    if(availableMemoryInBytes > (std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - (std::size_t(1) << 30);
+    }
 
-    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
 
     //   std::ofstream outputstream;
     //   std::unique_ptr<SequenceFileWriter> writer;
@@ -2611,7 +2793,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 #ifndef DO_PROFILE
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-        //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+        //cpu::RangeGenerator<read_number> readIdGenerator(10000);
 #else
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -2633,12 +2815,21 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.featurestream = &featurestream;
 
       //std::mutex outputstreammutex;
+      std::map<bool, int> useEditsCountMap;
+      std::map<bool, int> useEditsSavedCountMap;
+      std::map<int, int> numEditsHistogram;
 
-      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence encoded){
+      transFuncData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
+          //useEditsCountMap[tmp.useEdits]++;
+
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
               //outputstream << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
+              //useEditsSavedCountMap[tmp.useEdits]++;
+              //numEditsHistogram[tmp.edits.size()]++;
+
+             // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
           }
       };
 
@@ -3034,6 +3225,23 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       minhasher.destroy();
       readStorage.destroy();
+
+      std::cerr << "useEditsCountMap\n";
+      for(const auto& pair : useEditsCountMap){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      std::cerr << "useEditsSavedCountMap\n";
+      for(const auto& pair : useEditsSavedCountMap){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      std::cerr << "numEditsHistogram\n";
+      for(const auto& pair : numEditsHistogram){
+          std::cerr << int(pair.first) << " : " << pair.second << "\n";
+      }
+
+      
 
       #ifndef DO_PROFILE
 

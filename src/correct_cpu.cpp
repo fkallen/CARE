@@ -1157,14 +1157,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     //     throw std::runtime_error("Could not open output file " + tmpfiles[0]);
     // }
 
-    const std::size_t availableMemory = getAvailableMemoryInKB();
-    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(2) << 30);
+    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
 
-    auto heapusageOfTCS = [](const auto& x){
-        return x.data.capacity();
-    };
+    if(availableMemoryInBytes > (std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - (std::size_t(1) << 30);
+    }
 
-    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
 
     std::ofstream featurestream;
       //if(correctionOptions.extractFeatures){
@@ -1195,7 +1195,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
     }
 
-    auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
+    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
           //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
@@ -1452,15 +1452,15 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             auto outputfunction = [&, outputData = std::move(batchData.outputData)](){
                 for(int i = 0; i < int(outputData.anchorCorrections.size()); i++){
                     saveCorrectedSequence(
-                        outputData.anchorCorrections[i], 
-                        outputData.encodedAnchorCorrections[i]
+                        std::move(outputData.anchorCorrections[i]), 
+                        std::move(outputData.encodedAnchorCorrections[i])
                     );
                 }
 
                 for(int i = 0; i < int(outputData.candidateCorrections.size()); i++){
                     saveCorrectedSequence(
-                        outputData.candidateCorrections[i], 
-                        outputData.encodedCandidateCorrections[i]
+                        std::move(outputData.candidateCorrections[i]), 
+                        std::move(outputData.encodedCandidateCorrections[i])
                     );
                 }
             };

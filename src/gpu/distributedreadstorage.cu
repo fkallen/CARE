@@ -48,6 +48,9 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     if(getMaximumNumberOfReads() > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
         lengthStorage = std::move(LengthStore_t(sequenceLengthLowerBound, sequenceLengthUpperBound, getMaximumNumberOfReads()));
 
+        destroyGpuBitArray(bitArrayUndeterminedBase);
+        bitArrayUndeterminedBase = makeGpuBitArray<read_number>(getMaximumNumberOfReads());
+
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
@@ -117,6 +120,7 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     sequenceLengthUpperBound = std::move(rhs.sequenceLengthUpperBound);
     useQualityScores = std::move(rhs.useQualityScores);
     readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
+    bitArrayUndeterminedBase = std::move(rhs.bitArrayUndeterminedBase);
     lengthStorage = std::move(rhs.lengthStorage);
     gpulengthStorage = std::move(rhs.gpulengthStorage);
     distributedSequenceData = std::move(rhs.distributedSequenceData);
@@ -164,6 +168,7 @@ void DistributedReadStorage::destroy(){
     sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
     lengthStorage = std::move(LengthStore_t{});
+    destroyGpuBitArray(bitArrayUndeterminedBase);
     gpulengthStorage = std::move(GPULengthStore_t{});
     distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
     distributedQualities = std::move(DistributedArray<char, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
@@ -328,8 +333,62 @@ bool DistributedReadStorage::readContainsN(read_number readId) const{
     return b2;
 }
 
+void DistributedReadStorage::setReadsContainN_async(
+    bool* d_values, 
+    const read_number* d_positions, 
+    int nPositions,
+    cudaStream_t stream) const{
+
+    dim3 block = 256;
+    dim3 grid = SDIV(nPositions, block.x);
+
+    setBitarray<<<grid, block, 0, stream>>>(
+        bitArrayUndeterminedBase, 
+        d_values, 
+        d_positions, 
+        nPositions
+    );
+}
+
+void DistributedReadStorage::readsContainN_async(
+        bool* d_result, 
+        const read_number* d_positions, 
+        int nPositions, 
+        cudaStream_t stream) const{
+
+    dim3 block = 256;
+    dim3 grid = SDIV(nPositions, block.x);
+
+    readBitarray<<<grid, block, 0, stream>>>(
+        d_result, 
+        bitArrayUndeterminedBase, 
+        d_positions, 
+        nPositions
+    );
+}
+
+void DistributedReadStorage::readsContainN_async(
+        bool* d_result, 
+        const read_number* d_positions, 
+        const int* d_nPositions,
+        int nPositionsUpperBound, 
+        cudaStream_t stream) const{
+
+    dim3 block = 256;
+    dim3 grid = SDIV(nPositionsUpperBound, block.x);
+
+    readBitarray<<<grid, block, 0, stream>>>(
+        d_result, 
+        bitArrayUndeterminedBase, 
+        d_positions, 
+        d_nPositions
+    );
+}
+
+
 void DistributedReadStorage::constructionIsComplete(){
     gpulengthStorage = std::move(GPULengthStore_t{std::move(lengthStorage), deviceIds});
+    setGpuBitArrayFromVector();
     isReadOnly = true;
 }
 
@@ -868,11 +927,56 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
     stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
+    //gpu read ids with N
+    setGpuBitArrayFromVector();
+    
+
 }
 
 
 
 #endif
+
+
+void DistributedReadStorage::setGpuBitArrayFromVector(){
+    constexpr size_t chunksize = 1024 * 1024;
+
+    const size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
+    std::cerr << "setGpuBitArrayFromVector numUndeterminedReads = " << numUndeterminedReads << "\n";
+    bool* d_values;
+    cudaMalloc(&d_values, sizeof(bool) * chunksize); CUERR;
+    cudaMemset(d_values, 1, sizeof(bool) * chunksize); CUERR;
+
+    read_number* d_positions;
+    cudaMalloc(&d_positions, sizeof(read_number) * chunksize); CUERR;
+
+    const int chunks = SDIV(numUndeterminedReads, chunksize);
+
+    for(int i = 0; i < chunks; i++){
+        size_t begin = i * chunksize;
+        size_t end = std::min((i+1) * chunksize, numUndeterminedReads);
+
+        size_t elements = end - begin;
+
+        cudaMemcpy(
+            d_positions, 
+            readIdsOfReadsWithUndeterminedBase.data() + begin, 
+            sizeof(read_number) * elements, 
+            H2D
+        ); CUERR;
+
+        setReadsContainN_async(
+            d_values, 
+            d_positions, 
+            elements,
+            0
+        );
+        cudaDeviceSynchronize(); CUERR;
+    }
+
+    cudaFree(d_values); CUERR;
+    cudaFree(d_positions); CUERR;
+}
 
 
 DistributedReadStorage::SavedGpuPartitionData DistributedReadStorage::saveGpuPartitionData(

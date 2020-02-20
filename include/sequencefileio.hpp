@@ -7,6 +7,7 @@
 #include <hpc_helpers.cuh>
 
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -263,18 +264,48 @@ void deleteFiles(std::vector<std::string> filenames);
 
 
 struct EncodedTempCorrectedSequence{
+    std::uint32_t encodedflags; //contains size of data in bytes, and boolean flags
     read_number readId;
-    std::string data;
+    std::unique_ptr<std::uint8_t[]> data;
+
+    EncodedTempCorrectedSequence() = default;
+    EncodedTempCorrectedSequence(EncodedTempCorrectedSequence&&) = default;
+    EncodedTempCorrectedSequence& operator=(EncodedTempCorrectedSequence&&) = default;
+
+    EncodedTempCorrectedSequence(const EncodedTempCorrectedSequence& rhs){
+        *this = rhs;
+    }
+
+    EncodedTempCorrectedSequence& operator=(const EncodedTempCorrectedSequence& rhs){
+        encodedflags = rhs.encodedflags;
+        readId = rhs.readId;
+
+        const int numBytes = rhs.getNumBytes();
+        data = std::make_unique<std::uint8_t[]>(numBytes);
+        std::memcpy(data.get(), rhs.data.get(), numBytes);
+
+        return *this;
+    }
 
     bool writeToBinaryStream(std::ostream& s) const;
     bool readFromBinaryStream(std::istream& s);
 
+    std::uint8_t* copyToContiguousMemory(std::uint8_t*, std::uint8_t*) const;
+    void copyFromContiguousMemory(const std::uint8_t*);
+
     bool operator==(const EncodedTempCorrectedSequence& rhs) const{
-        return readId == rhs.readId && data == rhs.data;
+        std::uint32_t numBytes = 123;
+        return encodedflags == rhs.encodedflags && readId == rhs.readId 
+                && std::memcmp(data.get(), rhs.data.get(), numBytes);
     }
 
     bool operator!=(const EncodedTempCorrectedSequence& rhs) const{
         return !(operator==(rhs));
+    }
+
+    int getNumBytes() const{
+        constexpr std::uint32_t mask = (std::uint32_t(1) << 29)-1;
+        return (encodedflags & mask);
     }
 };
 
@@ -351,6 +382,15 @@ void mergeResultFiles(
                     const std::string& originalReadFile,
                     FileFormat originalFormat,
                     MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
+                    const std::string& outputfile,
+                    bool isSorted);
+
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
                     const std::string& outputfile,
                     bool isSorted);
 

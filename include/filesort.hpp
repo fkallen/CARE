@@ -3,6 +3,7 @@
 
 #include <filehelpers.hpp>
 #include <util.hpp>
+#include <fixedsizestorage.hpp>
 
 #include <algorithm>
 #include <string>
@@ -137,7 +138,35 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                             Tcomparator&& comparator,
                             Theapsizefunc&& getHeapUsage){
 
-    const std::size_t availableMemory = buffersizeInBytes;
+    //const std::size_t availableMemory = buffersizeInBytes;
+
+    std::size_t availableMemory = 0;
+
+    auto getAvailableMemoryInBytes = [](){
+        const std::size_t availableMemoryInKB = getAvailableMemoryInKB();
+        return availableMemoryInKB << 10;
+    };
+
+    auto updateAvailableMemory = [&](){
+        availableMemory = getAvailableMemoryInBytes();
+
+        constexpr std::size_t oneGB = std::size_t(1) << 30; 
+        constexpr std::size_t safetybuffer = oneGB;
+
+        if(availableMemory > safetybuffer){
+            availableMemory -= safetybuffer;
+        }else{
+            availableMemory = 0;
+        }
+        if(availableMemory > oneGB){
+            //round down to next multiple of 1GB
+            availableMemory = (availableMemory / oneGB) * oneGB;
+        }
+    };
+
+    updateAvailableMemory();
+
+    std::size_t initialAvailableMemory = availableMemory;
    
     T item;
     bool itemProcessed = true;
@@ -147,6 +176,13 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
     std::size_t usedHeapMemory = 0;
 
     auto couldAddElementToBuffer = [&](const T& element){
+        if(buffer.size() < 2 || buffer.size() % 65536 == 0){
+            updateAvailableMemory();
+            //std::cerr << buffer.size() << " " << availableMemory << '\n';
+
+            usedHeapMemory = initialAvailableMemory - availableMemory;
+        }
+
         if(buffer.capacity() * sizeof(T) + usedHeapMemory + getHeapUsage(element) <= availableMemory){
             if(buffer.size() < buffer.capacity()){
                 return true;
@@ -220,8 +256,10 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             //TIMERSTOPCPU(writingsortedbatch); 
 
             //TIMERSTARTCPU(clear);
-            buffer.clear();
+            //buffer.clear();
+            buffer = std::vector<T>{};
             usedHeapMemory = 0;
+            updateAvailableMemory();
             tempfilenames.emplace_back(std::move(tempfilename));
             numtempfiles++;
             //TIMERSTOPCPU(clear);
@@ -341,6 +379,344 @@ void binKeySort(const std::string& tempdir,
                 Tcomparator&& comparator){
     binKeySort(tempdir, infilenames, outfilename, comparator, [](const auto&){return 0;});
 }
+
+
+
+
+
+
+namespace fixedmemory{
+
+
+template<class T, class Tcomparator>
+void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2, const std::string& outfile, Tcomparator&& comparator);
+
+template<class T>
+void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2, const std::string& outfile);
+
+namespace detail{
+
+    template<class T, class Tcomparator>
+    void
+    binKeyMergeSortedChunksImpl(bool remove, 
+                                const std::string& tempdir, 
+                                const std::vector<std::string>& infilenames, 
+                                const std::string& outfilename, 
+                                Tcomparator&& comparator){
+                                    
+        //if no input file specified create empty outputfile and return
+        if(infilenames.empty()){            
+            std::ofstream outfile(outfilename);
+            outfile.close();
+            return;
+        }
+        //merge the temp files
+        std::vector<std::string> filenames = infilenames;
+        std::vector<std::string> newfilenames;
+
+        int step = 0;
+        while(filenames.size() > 2){
+            const int numtempfiles = filenames.size();
+            for(int i = 0; i < numtempfiles ; i += 2){
+                //merge tempfile i with i+1
+                if(i+1 < numtempfiles){
+
+                    std::string outtmpname(tempdir+"/"+std::to_string(i) + "-" + std::to_string(step));
+
+                    std::cerr << "merge " << filenames[i] << " + " << filenames[i+1] << " into " <<  outtmpname << "\n";
+
+                    binKeyMergeTwoFiles<T>(filenames[i], filenames[i+1], outtmpname, comparator);
+
+                    newfilenames.emplace_back(std::move(outtmpname));
+
+                    if(step > 0 || remove){
+                        removeFile(filenames[i]);
+                        removeFile(filenames[i+1]);
+                    }
+                    
+                }else{
+                    newfilenames.emplace_back(filenames[i]);
+                }
+            }
+
+            filenames = std::move(newfilenames);
+            step++;
+        }
+
+        assert(filenames.size() > 0);
+
+        if(filenames.size() == 1){
+            renameFileSameMount(filenames[0], outfilename);
+        }else{
+            std::cerr << "merge " << filenames[0] << " + " << filenames[1] << " into " <<  outfilename << "\n";
+            binKeyMergeTwoFiles<T>(filenames[0], filenames[1], outfilename, comparator);
+
+            if(step > 0 || remove){
+                removeFile(filenames[0]);
+                removeFile(filenames[1]);
+            }
+        }
+    }
+
+} //namespace detail
+
+
+
+//merge two sorted input files into sorted output file
+template<class T, class Tcomparator>
+void binKeyMergeTwoFiles(
+                        const std::string& infile1, 
+                        const std::string& infile2, 
+                        const std::string& outfile, 
+                        Tcomparator&& comparator){
+    std::ifstream in1(infile1);
+    std::ifstream in2(infile2);
+    std::ofstream out(outfile);
+
+    assert(in1);
+    assert(in2);
+    assert(out);
+
+    std::merge(std::istream_iterator<T>(in1),
+                std::istream_iterator<T>(),
+                std::istream_iterator<T>(in2),
+                std::istream_iterator<T>(),
+                std::ostream_iterator<T>(out, ""),
+                comparator);
+}
+
+template<class Index_t>
+void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2, const std::string& outfile){
+    binKeyMergeTwoFiles(infile1, infile2, outfile, std::less<Index_t>{});
+}
+
+//split input files into sorted chunks. returns filenames of sorted chunks
+//each line in infile must begin with a number of type Index_t which was written in binary mode.
+//infile is sorted by this number using comparator Comp
+//sorted chunks will be named tempdir/temp_i where i is the chunk number
+template<class T, class Ptrcomparator>
+std::vector<std::string>
+binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames, 
+                            const std::string& tempdir, 
+                            std::size_t memoryLimit, 
+                            Ptrcomparator&& ptrcomparator){
+
+    FixedSizeStorage memoryStorage(memoryLimit);
+
+    auto serialize = [](const auto& element, auto beginptr, auto endptr){
+        return element.copyToContiguousMemory(beginptr, endptr);
+    };
+
+
+    auto resetState = [&](){
+        memoryStorage.clear();
+    };
+
+    T item;
+    bool itemProcessed = true;
+
+    auto tryAddElementToBuffer = [&](const T& element){
+        return memoryStorage.insert(element, serialize);
+    };
+
+    std::int64_t numtempfiles = 0;
+    std::vector<std::string> tempfilenames;
+
+    //split input files into sorted temp files
+    for(const auto& filename : infilenames){
+        std::ifstream istream(filename);
+        if(!istream){
+            assert(false);
+        }
+
+        //handle item which did not fit into buffer in previous iteration //TODO move to end of while loop
+        if(!itemProcessed){
+            bool ok = tryAddElementToBuffer(item);
+            assert(ok);
+            itemProcessed = true;
+        }
+
+        while(bool(istream >> item)){
+            bool ok = tryAddElementToBuffer(item);
+            assert(ok);
+
+            //TIMERSTARTCPU(readingbatch);
+            while(bool(istream >> item)){
+                ok = tryAddElementToBuffer(item);
+                if(!ok){
+                    itemProcessed = false;
+                    break;
+                }
+            }
+            //TIMERSTOPCPU(readingbatch);
+
+            std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
+            std::ofstream sortedtempfile(tempfilename);
+
+            //TIMERSTARTCPU(actualsort);
+            std::cerr << "sort " << memoryStorage.getNumStoredElements() << " elements in memory \n";
+
+            try{
+                memoryStorage.sort(ptrcomparator);
+            }catch(std::bad_alloc& e){
+                removeFile(tempfilename);
+                throw e;
+            }
+
+            //TIMERSTOPCPU(actualsort);
+
+            //TIMERSTARTCPU(writingsortedbatch);
+            std::cerr << "save " << memoryStorage.getNumStoredElements() << " elements to file " <<  tempfilename << '\n';
+            memoryStorage.forEachPointer([&](const auto ptr){
+                T tmp;
+                tmp.copyFromContiguousMemory(ptr);
+                sortedtempfile << tmp;
+            });
+
+            //TIMERSTOPCPU(writingsortedbatch); 
+
+            //TIMERSTARTCPU(clear);
+            resetState();
+
+            tempfilenames.emplace_back(std::move(tempfilename));
+            numtempfiles++;
+            //TIMERSTOPCPU(clear);
+            
+            //TIMERSTARTCPU(flushclose);
+            sortedtempfile.flush();
+            sortedtempfile.close();
+            //TIMERSTOPCPU(flushclose);
+        }
+    }
+    return tempfilenames;
+}
+
+
+template<class T, class Ptrcomparator>
+std::vector<std::string>
+binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, 
+                            const std::string& tempdir, 
+                            std::size_t memoryLimit,
+                            Ptrcomparator&& ptrcomparator){
+
+    constexpr int maxIters = 4;
+    for(int i = 0; i < maxIters; i++){
+        try{
+            return binKeySplitIntoSortedChunksImpl<T>(infilenames, 
+                            tempdir, 
+                            memoryLimit, 
+                            std::move(ptrcomparator));
+        }catch(...){
+            memoryLimit /= 2;
+        }
+    }
+
+    throw std::runtime_error("Could not sort files");
+    return {};
+}
+
+
+
+template<class T, class Tcomparator>
+void
+binKeyMergeSortedChunksAndDeleteChunks(const std::string& tempdir,
+                                        const std::vector<std::string>& infilenames, 
+                                        const std::string& outfilename, 
+                                        Tcomparator&& comparator){
+    detail::binKeyMergeSortedChunksImpl<T>(true, tempdir, infilenames, outfilename, comparator);
+}
+
+
+template<class T, class Tcomparator>
+void
+binKeyMergeSortedChunks(const std::string& tempdir,
+                        const std::vector<std::string>& infilenames, 
+                        const std::string& outfilename, 
+                        Tcomparator&& comparator){
+    detail::binKeyMergeSortedChunksImpl<T>(false, tempdir, infilenames, outfilename, comparator);
+}
+
+
+//sort infile to outfile
+//infile is sorted by this number using comparator Comp
+template<class T, class Ptrcomparator, class Tcomparator>
+void binKeySort(const std::string& tempdir,
+                const std::vector<std::string>& infilenames, 
+                const std::string& outfilename,
+                std::size_t memoryLimit,
+                Ptrcomparator&& ptrcomparator,
+                Tcomparator&& comparator){
+
+    //TIMERSTARTCPU(split);
+    auto tempfilenames = binKeySplitIntoSortedChunks<T>(infilenames, tempdir, memoryLimit, ptrcomparator);
+    //TIMERSTOPCPU(split);
+    //TIMERSTARTCPU(merge);
+    binKeyMergeSortedChunksAndDeleteChunks<T>(tempdir, tempfilenames, outfilename, comparator);
+    //TIMERSTOPCPU(merge);
+}
+
+
+
+
+
+
+} //namespace fixedmemory
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 }    
