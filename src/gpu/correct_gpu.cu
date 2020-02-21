@@ -95,7 +95,8 @@ namespace gpu{
     constexpr int indices_calculated_event_index = 8;
     constexpr int num_indices_transfered_event_index = 9;
     constexpr int secondary_stream_finished_event_index = 10;
-    constexpr int nEventsPerBatch = 11;
+    constexpr int highqualityindices_event_index = 11;
+    constexpr int nEventsPerBatch = 12;
 
     constexpr int doNotUseEditsValue = -1;
 
@@ -180,6 +181,7 @@ namespace gpu{
         SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
         SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
         SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor;
+        SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor_prefixsum;
         SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
         SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
         SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
@@ -345,6 +347,7 @@ namespace gpu{
             std::swap(dataArrays.h_subject_is_corrected, rawResults.h_subject_is_corrected);
             std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
             std::swap(dataArrays.h_num_corrected_candidates_per_anchor, rawResults.h_num_corrected_candidates_per_anchor);
+            std::swap(dataArrays.h_num_corrected_candidates_per_anchor_prefixsum, rawResults.h_num_corrected_candidates_per_anchor_prefixsum);
             std::swap(dataArrays.h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
             std::swap(dataArrays.h_candidates_per_subject_prefixsum, rawResults.h_candidates_per_subject_prefixsum);
             std::swap(dataArrays.h_candidate_read_ids, rawResults.h_candidate_read_ids);
@@ -2260,6 +2263,8 @@ namespace gpu{
                             D2H,
                             streams[secondary_stream_index]); CUERR;
 
+            cudaEventRecord(events[highqualityindices_event_index], streams[secondary_stream_index]); CUERR;
+
             cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
             //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
@@ -2377,8 +2382,21 @@ namespace gpu{
             batch.kernelLaunchHandle
         );
 
-        cubCachingAllocator.DeviceFree(d_compactCorrectedCandidates); CUERR;
+        cudaMemcpyAsync(
+            dataArrays.h_num_corrected_candidates_per_anchor,
+            dataArrays.d_num_corrected_candidates_per_anchor,
+            dataArrays.d_num_corrected_candidates_per_anchor.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
 
+        cudaMemcpyAsync(
+            dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.get(),
+            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(),
+            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
                 
         cudaMemcpyAsync(
             dataArrays.h_editsPerCorrectedCandidate,
@@ -2396,28 +2414,43 @@ namespace gpu{
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_corrected_candidates,
-                        dataArrays.d_corrected_candidates,
-                        dataArrays.d_corrected_candidates.sizeInBytes(),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_num_corrected_candidates_per_anchor,
-                        dataArrays.d_num_corrected_candidates_per_anchor,
-                        dataArrays.d_num_corrected_candidates_per_anchor.sizeInBytes(),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_indices_of_corrected_candidates,
                         dataArrays.d_indices_of_corrected_candidates,
                         dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
+
         cudaMemcpyAsync(dataArrays.h_alignment_shifts,
                         dataArrays.d_alignment_shifts,
-                        dataArrays.d_alignment_shifts.sizeInBytes(),
+                        dataArrays.d_alignment_shifts.sizeInBytes() / 2, // device by 2 because size includes fwd + revc
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
+        cudaEventSynchronize(events[highqualityindices_event_index]); CUERR;
+
+        int maxNumCorrectedCandidates = 0;
+        for(int i = 0; i < *dataArrays.h_num_high_quality_subject_indices.get(); i++){
+            const int subjectIndex = dataArrays.h_high_quality_subject_indices[i];
+            maxNumCorrectedCandidates += dataArrays.h_indices_per_subject[subjectIndex];
+        }
+
+        cudaMemcpyAsync(dataArrays.h_corrected_candidates,
+            d_compactCorrectedCandidates,
+            //dataArrays.d_corrected_candidates,
+            batch.decodedSequencePitchInBytes * maxNumCorrectedCandidates,
+            D2H,
+            streams[primary_stream_index]); CUERR;
+
+        // cudaMemcpyAsync(dataArrays.h_corrected_candidates,
+        //                 d_compactCorrectedCandidates,
+        //                 //dataArrays.d_corrected_candidates,
+        //                 dataArrays.d_corrected_candidates.sizeInBytes(),
+        //                 D2H,
+        //                 streams[primary_stream_index]); CUERR;
+
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+
+        cubCachingAllocator.DeviceFree(d_compactCorrectedCandidates); CUERR;
     }
 
 
@@ -2609,9 +2642,10 @@ namespace gpu{
                 auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
 
                 const size_t offset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
+                const size_t offsetForCorrectedCandidateData = rawResults.h_num_corrected_candidates_per_anchor_prefixsum[subject_index];
 
                 const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
-                                                + offset * rawResults.decodedSequencePitchInBytes;
+                                                + offsetForCorrectedCandidateData * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
                                                 + offset;           
 
