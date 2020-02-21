@@ -96,6 +96,7 @@ enum class KernelId {
     Conversion2BitTo2BitHiLoNT,
     Conversion2BitTo2BitHiLoTT,
     SelectIndicesOfGoodCandidates,
+    GetNumCorrectedCandidatesPerAnchor,
     PopcountSHDTiled,
     PopcountSHDTiledPitch8,
 	FindBestAlignmentExp,
@@ -177,6 +178,17 @@ void callSelectIndicesOfGoodCandidatesKernelAsync(
             int* d_totalNumIndices,
             const BestAlignment_t* d_alignmentFlags,
             const int* d_candidates_per_subject,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_anchorIndicesOfCandidates,
+            int numAnchors,
+            int numCandidates,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
+void callGetNumCorrectedCandidatesPerAnchorKernel(
+            int* d_numIndicesPerAnchor,
+            const bool* d_isCorrectedCandidate,
+            const int* d_numGoodIndicesPerSubject,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_anchorIndicesOfCandidates,
             int numAnchors,

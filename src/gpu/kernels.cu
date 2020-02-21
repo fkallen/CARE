@@ -119,6 +119,68 @@ namespace gpu{
     }
 
 
+    template<int blocksize, int tilesize>
+    __global__
+    void getNumCorrectedCandidatesPerAnchorKernel(
+            int* __restrict__ d_numIndicesPerAnchor,
+            const bool* __restrict__ d_isCorrectedCandidate,
+            const int* __restrict__ d_numGoodIndicesPerSubject,
+            const int* __restrict__ d_candidates_per_subject_prefixsum,
+            const int* __restrict__ d_anchorIndicesOfCandidates,
+            int numAnchors,
+            int numCandidates){
+
+        static_assert(blocksize % tilesize == 0);
+        static_assert(tilesize == 32);
+
+        constexpr int numTilesPerBlock = blocksize / tilesize;
+
+        const int numTiles = (gridDim.x * blocksize) / tilesize;
+        const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
+        const int tileIdInBlock = threadIdx.x / tilesize;
+
+        __shared__ int counts[numTilesPerBlock];
+
+
+        auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+
+        for(int anchorIndex = tileId; anchorIndex < numAnchors; anchorIndex += numTiles){
+
+            const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
+            int* const numIndicesPtr = d_numIndicesPerAnchor + anchorIndex;
+
+            const int numCandidatesForAnchor = d_numGoodIndicesPerSubject[anchorIndex];
+
+            if(tile.thread_rank() == 0){
+                counts[tileIdInBlock] = 0;
+            }
+            tile.sync();
+
+            for(int localCandidateIndex = tile.thread_rank(); 
+                    localCandidateIndex < numCandidatesForAnchor; 
+                    localCandidateIndex += tile.size()){
+                
+                const int globalCandidateIndex = localCandidateIndex + offset;
+                const bool isCorrected = d_isCorrectedCandidate[globalCandidateIndex];
+
+                if(isCorrected){
+                    cg::coalesced_group g = cg::coalesced_threads();
+                    if (g.thread_rank() == 0) {
+                        atomicAdd(&counts[tileIdInBlock], g.size());
+                    }
+                }
+            }
+
+            tile.sync();
+            if(tile.thread_rank() == 0){
+                atomicAdd(numIndicesPtr, counts[tileIdInBlock]);
+            }
+
+        }
+
+    }
+
+
 
 
 
@@ -3563,6 +3625,82 @@ namespace gpu{
     }
 
 
+    void callGetNumCorrectedCandidatesPerAnchorKernel(
+            int* d_numIndicesPerAnchor,
+            const bool* d_isCorrectedCandidate,
+            const int* d_numGoodIndicesPerSubject,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_anchorIndicesOfCandidates,
+            int numAnchors,
+            int numCandidates,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle){
+
+        constexpr int blocksize = 128;
+        constexpr int tilesize = 32;
+
+        const std::size_t smem = 0;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::GetNumCorrectedCandidatesPerAnchor);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = 0; \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                    getNumCorrectedCandidatesPerAnchorKernel<(blocksize), tilesize>, \
+                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::GetNumCorrectedCandidatesPerAnchor] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
+        cudaMemsetAsync(d_numIndicesPerAnchor, 0, numAnchors * sizeof(int), stream); CUERR;
+
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(std::min(SDIV(numCandidates, blocksize), max_blocks_per_device));
+
+        getNumCorrectedCandidatesPerAnchorKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
+            d_numIndicesPerAnchor,
+            d_isCorrectedCandidate,
+            d_numGoodIndicesPerSubject,
+            d_candidates_per_subject_prefixsum,
+            d_anchorIndicesOfCandidates,
+            numAnchors,
+            numCandidates
+        );
+    }
+
+
 
 
 
@@ -4073,7 +4211,7 @@ namespace gpu{
             int doNotUseEditsValue,
             int numEditsThreshold,
             int n_subjects,
-            int n_queries,
+            int n_candidates,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
@@ -4134,7 +4272,7 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(max_blocks_per_device, n_subjects * numGroupsPerBlock));
+        dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
         
         assert(smem % sizeof(int) == 0);
 
@@ -4157,7 +4295,7 @@ namespace gpu{
                     doNotUseEditsValue, \
                     numEditsThreshold, \
                     n_subjects, \
-                    n_queries, \
+                    n_candidates, \
                     encodedSequencePitchInInts, \
                     sequence_pitch, \
                     msa_pitch, \
