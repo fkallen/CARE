@@ -333,6 +333,7 @@ void callCorrectCandidatesWithGroupKernel_async(
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
             CorrectionResultPointers d_correctionResultPointers,
+            int* d_numTotalCorrectedCandidates,
             TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
             int* __restrict__ d_numEditsPerCorrectedCandidate,
             const bool* d_candidateContainsN,

@@ -820,6 +820,7 @@ struct DataArrays {
     SimpleAllocationPinnedHost<char> h_corrected_candidates;
     SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor;
     SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor_prefixsum;
+    SimpleAllocationPinnedHost<int> h_num_total_corrected_candidates;
     SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
     SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
     SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
@@ -829,6 +830,7 @@ struct DataArrays {
     SimpleAllocationDevice<char> d_corrected_candidates;
     SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor;
     SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor_prefixsum;
+    SimpleAllocationDevice<int> d_num_total_corrected_candidates;
     SimpleAllocationDevice<bool> d_subject_is_corrected;
     SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
     SimpleAllocationDevice<int> d_num_uncorrected_positions_per_subject;
@@ -841,6 +843,8 @@ struct DataArrays {
     SimpleAllocationDevice<AnchorHighQualityFlag> d_is_high_quality_subject;
     SimpleAllocationDevice<int> d_high_quality_subject_indices;
     SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
+
+    char* d_compactCorrectedCandidates = nullptr;
 
 
 	//alignment results

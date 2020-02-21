@@ -1942,6 +1942,7 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
+                int* __restrict__ d_numTotalCorrectedCandidates,
                 TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
                 int* __restrict__ d_numEditsPerCorrectedCandidate,
                 const bool* __restrict__ d_candidateContainsN,
@@ -2075,6 +2076,7 @@ namespace gpu{
                     if(tgroup.thread_rank() == 0){                        
                         shared_destinationIndex[groupIdInBlock] = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
                         shared_numEditsOfCandidate[groupIdInBlock] = 0;
+                        assert(shared_destinationIndex[groupIdInBlock] < d_indices_per_subject[subjectIndex]);
                     }
                     tgroup.sync();
 
@@ -3455,6 +3457,7 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
+                int* d_numTotalCorrectedCandidates,
                 TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
                 int* __restrict__ d_numEditsPerCorrectedCandidate,
                 const bool* __restrict__ d_candidateContainsN,
@@ -3579,6 +3582,7 @@ namespace gpu{
             d_alignmentresultpointers, \
             d_sequencePointers, \
             d_correctionResultPointers, \
+            d_numTotalCorrectedCandidates, \
             d_editsPerCorrectedCandidate, \
             d_numEditsPerCorrectedCandidate, \
             d_candidateContainsN, \
