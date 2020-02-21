@@ -391,6 +391,52 @@ void callConstructAnchorResultsKernelAsync(
             KernelLaunchHandle& handle);
 
 
+void callFlagCandidatesToBeCorrectedKernel_async(
+            bool* __restrict__ d_candidateCanBeCorrected,
+            int* __restrict__ d_numCorrectedCandidatesPerAnchor,
+            const float* __restrict__ d_support,
+            const int* __restrict__ d_coverages,
+            const MSAColumnProperties* __restrict__ d_msaColumnProperties,
+            const int* __restrict__ d_alignmentShifts,
+            const int* __restrict__ d_candidateSequencesLengths,
+            const int* __restrict__ d_anchorIndicesOfCandidates,
+            const AnchorHighQualityFlag* __restrict__ d_hqflags,
+            size_t msa_weights_pitch_floats,
+            float min_support_threshold,
+            float min_coverage_threshold,
+            int new_columns_to_correct,
+            int n_candidates,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
+void callCorrectCandidatesWithGroupKernel2_async(
+            char* __restrict__ correctedCandidates,
+            TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+            int* __restrict__ d_numEditsPerCorrectedCandidate,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const char* __restrict__ consensus,
+            const float* __restrict__ support,
+            const int* __restrict__ shifts,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const int* __restrict__ candidateSequencesLengths,
+            const bool* __restrict__ d_candidateContainsN,
+            const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+            const int* __restrict__ numCandidatesToBeCorrected,
+            const int* __restrict__ anchorIndicesOfCandidates,
+            int doNotUseEditsValue,
+            int numEditsThreshold,
+            int n_subjects,
+            int n_queries,
+            int encodedSequencePitchInInts,
+            size_t sequence_pitch,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            int maximum_sequence_length,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);            
+
+
 
 void callConversionKernel2BitTo2BitHiLoNN(
             const unsigned int* d_inputdata,
