@@ -205,6 +205,8 @@ namespace gpu{
         SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
         SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedCandidate;
 
+        SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_compactEditsPerCorrectedCandidate;
+
     };
 
     struct OutputData{
@@ -373,6 +375,8 @@ namespace gpu{
 
             std::swap(dataArrays.h_indices_of_corrected_subjects, rawResults.h_indices_of_corrected_subjects);
             std::swap(dataArrays.h_num_indices_of_corrected_subjects, rawResults.h_num_indices_of_corrected_subjects);
+
+            std::swap(dataArrays.h_compactEditsPerCorrectedCandidate, rawResults.h_compactEditsPerCorrectedCandidate);
         }
 
 	};
@@ -1259,6 +1263,9 @@ namespace gpu{
         dataArrays.d_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
         dataArrays.d_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
         dataArrays.d_candidateContainsN.resize(batchData.n_queries);
+
+        dataArrays.h_compactEditsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
+        
 
 
 
@@ -2375,6 +2382,22 @@ namespace gpu{
             streams[primary_stream_index]
         );
 
+        {
+            // calculate number of corrected candidates
+            
+            const int n_subjects = batch.n_subjects;
+            const int* const d_numCorrectedCandidatesPerAnchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
+            const int* const d_numCorrectedCandidatesPerAnchorPrefixsum = dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get();
+            int* const d_numTotalCorrectedCandidates = dataArrays.d_num_total_corrected_candidates.get();
+
+            generic_kernel<<<1,1,0,streams[primary_stream_index]>>>([=] __device__ (){
+                const int lastNum = d_numCorrectedCandidatesPerAnchor[n_subjects-1];
+                const int ps = d_numCorrectedCandidatesPerAnchorPrefixsum[n_subjects-1];
+                *d_numTotalCorrectedCandidates = ps + lastNum;
+            }); CUERR;
+
+        }
+
         //char* d_compactCorrectedCandidates;
         cubCachingAllocator.DeviceAllocate(
             (void**)&dataArrays.d_compactCorrectedCandidates, 
@@ -2382,9 +2405,15 @@ namespace gpu{
             streams[primary_stream_index]
         );  CUERR;
 
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&dataArrays.d_compactEditsPerCorrectedCandidate, 
+            dataArrays.d_editsPerCorrectedCandidate.capacityInBytes(), 
+            streams[primary_stream_index]
+        );  CUERR;
+
         callCompactCandidateCorrectionResultsKernel_async(
             dataArrays.d_compactCorrectedCandidates,
-            dataArrays.d_num_total_corrected_candidates.get(),
+            dataArrays.d_compactEditsPerCorrectedCandidate,
             dataArrays.d_num_corrected_candidates_per_anchor.get(),
             dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(),
             dataArrays.d_high_quality_subject_indices.get(),
@@ -2392,7 +2421,9 @@ namespace gpu{
             dataArrays.d_candidates_per_subject_prefixsum.get(),
             dataArrays.d_corrected_candidates.get(),
             dataArrays.d_candidate_sequences_lengths.get(),
+            dataArrays.d_editsPerCorrectedCandidate.get(),
             batch.decodedSequencePitchInBytes,
+            batch.maxNumEditsPerSequence,
             batch.n_subjects,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -2509,7 +2540,17 @@ namespace gpu{
             streams[primary_stream_index]
         ); CUERR;
 
+        cudaMemcpyAsync(
+            //dataArrays.h_editsPerCorrectedCandidate,
+            dataArrays.h_compactEditsPerCorrectedCandidate,
+            dataArrays.d_compactEditsPerCorrectedCandidate,
+            sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
         cubCachingAllocator.DeviceFree(dataArrays.d_compactCorrectedCandidates); CUERR;
+        cubCachingAllocator.DeviceFree(dataArrays.d_compactEditsPerCorrectedCandidate); CUERR;
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
@@ -2723,7 +2764,10 @@ namespace gpu{
                 const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
                                                 + offsetForCorrectedCandidateData * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
-                                                + offset;           
+                                                + offset;
+                const TempCorrectedSequence::Edit* const my_editsPerCorrectedCandidate = rawResults.h_compactEditsPerCorrectedCandidate
+                                                        + offsetForCorrectedCandidateData * rawResults.maxNumEditsPerSequence;
+
 
                 const int localCandidateIndex = my_indices_of_corrected_candidates[candidateIndex];
                 const int global_candidate_index = offset + localCandidateIndex;
@@ -2750,8 +2794,12 @@ namespace gpu{
                 const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
-                    const auto* gpuedits = rawResults.h_editsPerCorrectedCandidate + global_candidate_index * rawResults.maxNumEditsPerSequence;
-                    std::copy_n(gpuedits, numEdits, tmp.edits.begin());
+                    //const auto* gpuedits = rawResults.h_editsPerCorrectedCandidate + global_candidate_index * rawResults.maxNumEditsPerSequence;
+                    const auto* gpuedits = my_editsPerCorrectedCandidate + candidateIndex * rawResults.maxNumEditsPerSequence;
+                    const auto* gpueditscompact = rawResults.h_compactEditsPerCorrectedCandidate 
+                                            + offsetForCorrectedCandidateData * rawResults.maxNumEditsPerSequence
+                                            + candidateIndex * rawResults.maxNumEditsPerSequence;
+                    std::copy_n(gpueditscompact, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
                     const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
@@ -2791,7 +2839,7 @@ namespace gpu{
             });
 #endif 
 
-#if 0
+#if 1
             unpackcandidates(0, numCorrectedCandidates);
 #else            
             batch.threadPool->parallelFor(
@@ -2892,8 +2940,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
-    if(availableMemoryInBytes > (std::size_t(1) << 30)){
-        memoryForPartialResultsInBytes = availableMemoryInBytes - (std::size_t(1) << 30);
+    if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
@@ -3095,8 +3143,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
         auto processBatchUntilCandidateCorrectionStarted = [&](auto& batchData){
-            auto& streams = batchData.streams;
-            auto& events = batchData.events;
+            //auto& streams = batchData.streams;
+            //auto& events = batchData.events;
 
             auto pushrange = [&](const std::string& msg, int color){
                 nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);

@@ -1891,6 +1891,7 @@ namespace gpu{
     __global__
     void compactCandidateCorrectionResultsKernel(
             char* __restrict__ compactedCorrectedCandidates,
+            TempCorrectedSequence::Edit* __restrict__ compactedEditsPerCorrectedCandidate,
             const int* __restrict__ numCorrectedCandidatesPerAnchor,
             const int* __restrict__ numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
             const int* __restrict__ high_quality_subject_indices,
@@ -1898,7 +1899,9 @@ namespace gpu{
             const int* __restrict__ candidates_per_subject_prefixsum,
             const char* __restrict__ correctedCandidates,
             const int* __restrict__ correctedCandidateLengths,
+            const TempCorrectedSequence::Edit* __restrict__ editsPerCorrectedCandidate,
             size_t decodedSequencePitch,
+            int numEditsThreshold,
             int n_subjects){
 
         constexpr int groupsize = 32;
@@ -1929,6 +1932,11 @@ namespace gpu{
                     for(int i = 0; i < decodedSequencePitch; i++){
                         compactedCorrectedCandidates[(outputbaseoffset+cIndex) * decodedSequencePitch + i] 
                             = correctedCandidates[(inputbaseoffset+cIndex) * decodedSequencePitch + i];
+                    }
+
+                    for(int i = 0; i < numEditsThreshold; i++){
+                        compactedEditsPerCorrectedCandidate[(outputbaseoffset+cIndex) * numEditsThreshold + i] 
+                            = editsPerCorrectedCandidate[(inputbaseoffset+cIndex) * numEditsThreshold + i];
                     }
                 }
             }
@@ -2148,14 +2156,16 @@ namespace gpu{
 
                     const bool thisSequenceContainsN = d_candidateContainsN[global_candidate_index];            
                     int* const myNumEdits = d_numEditsPerCorrectedCandidate + global_candidate_index;
+                    TempCorrectedSequence::Edit* const editsForThisAnchor = d_editsPerCorrectedCandidate + numEditsThreshold * globalOffset;
 
                     if(thisSequenceContainsN){
                         if(tgroup.thread_rank() == 0){
                             *myNumEdits = doNotUseEditsValue;
                         }
                     }else{
-
-                        TempCorrectedSequence::Edit* const myEdits = d_editsPerCorrectedCandidate + numEditsThreshold * global_candidate_index;
+                        const int destinationindex = shared_destinationIndex[groupIdInBlock];
+                        //TempCorrectedSequence::Edit* const myEdits = d_editsPerCorrectedCandidate + numEditsThreshold * global_candidate_index;
+                        TempCorrectedSequence::Edit* const myEdits = editsForThisAnchor + destinationindex * numEditsThreshold;
 
                         const int maxEdits = min(candidate_length / 7, numEditsThreshold);
 
@@ -3622,8 +3632,8 @@ namespace gpu{
 
 
     void callCompactCandidateCorrectionResultsKernel_async(
-            char* __restrict__ d_compactedCorrectedCandidates,            
-            int* __restrict__ d_numTotalCorrectedCandidates,
+            char* __restrict__ d_compactedCorrectedCandidates, 
+            TempCorrectedSequence::Edit* __restrict__ d_compactedEditsPerCorrectedCandidate,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchor,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
             const int* __restrict__ d_high_quality_subject_indices,
@@ -3631,16 +3641,12 @@ namespace gpu{
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const char* __restrict__ d_correctedCandidates,
             const int* __restrict__ d_correctedCandidateLengths,
+            const TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
             size_t decodedSequencePitch,
+            int numEditsThreshold,
             int n_subjects,
             cudaStream_t stream,
             KernelLaunchHandle& /*handle*/){
-
-        generic_kernel<<<1,1,0,stream>>>([=] __device__ (){
-            const int lastNum = d_numCorrectedCandidatesPerAnchor[n_subjects-1];
-            const int ps = d_numCorrectedCandidatesPerAnchorPrefixsum[n_subjects-1];
-            *d_numTotalCorrectedCandidates = ps + lastNum;
-        }); CUERR;
 
         constexpr int blocksize = 256;
 
@@ -3649,6 +3655,7 @@ namespace gpu{
 
         compactCandidateCorrectionResultsKernel<blocksize><<<grid, block, 0, stream>>>(
             d_compactedCorrectedCandidates,
+            d_compactedEditsPerCorrectedCandidate,
             d_numCorrectedCandidatesPerAnchor,
             d_numCorrectedCandidatesPerAnchorPrefixsum,
             d_high_quality_subject_indices,
@@ -3656,7 +3663,9 @@ namespace gpu{
             d_candidates_per_subject_prefixsum,
             d_correctedCandidates,
             d_correctedCandidateLengths,
+            d_editsPerCorrectedCandidate,
             decodedSequencePitch,
+            numEditsThreshold,
             n_subjects
         );
     }

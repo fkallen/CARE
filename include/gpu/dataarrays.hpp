@@ -845,6 +845,8 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
 
     char* d_compactCorrectedCandidates = nullptr;
+    TempCorrectedSequence::Edit* d_compactEditsPerCorrectedCandidate = nullptr;
+    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_compactEditsPerCorrectedCandidate;
 
 
 	//alignment results
