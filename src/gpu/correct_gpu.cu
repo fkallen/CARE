@@ -1381,6 +1381,13 @@ namespace gpu{
             true,
             streams[primary_stream_index]
         );
+
+        call_fill_kernel_async(
+            dataArrays.d_num_total_corrected_candidates.get(),
+            1,
+            0,
+            streams[primary_stream_index]
+        );
     }
 
 
@@ -2331,8 +2338,7 @@ namespace gpu{
             dataArrays.getDeviceMSAPointers(),
             dataArrays.getDeviceAlignmentResultPointers(),
             dataArrays.getDeviceSequencePointers(),
-            dataArrays.getDeviceCorrectionResultPointers(),
-            dataArrays.d_num_total_corrected_candidates.get(),
+            dataArrays.getDeviceCorrectionResultPointers(),            
             dataArrays.d_editsPerCorrectedCandidate.get(),
             dataArrays.d_numEditsPerCorrectedCandidate.get(),
             dataArrays.d_candidateContainsN.get(),
@@ -2358,16 +2364,6 @@ namespace gpu{
 
 #endif
 
-        cudaMemcpyAsync(
-            dataArrays.h_num_total_corrected_candidates.get(),
-            dataArrays.d_num_total_corrected_candidates.get(),
-            sizeof(int),
-            D2H,
-            streams[primary_stream_index]
-        ); CUERR;
-
-        cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[primary_stream_index]); CUERR;
-
         size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
         cub::DeviceScan::ExclusiveSum(
@@ -2388,6 +2384,7 @@ namespace gpu{
 
         callCompactCandidateCorrectionResultsKernel_async(
             dataArrays.d_compactCorrectedCandidates,
+            dataArrays.d_num_total_corrected_candidates.get(),
             dataArrays.d_num_corrected_candidates_per_anchor.get(),
             dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(),
             dataArrays.d_high_quality_subject_indices.get(),
@@ -2400,6 +2397,16 @@ namespace gpu{
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
+
+        cudaMemcpyAsync(
+            dataArrays.h_num_total_corrected_candidates.get(),
+            dataArrays.d_num_total_corrected_candidates.get(),
+            sizeof(int),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(
             dataArrays.h_num_corrected_candidates_per_anchor,
@@ -3087,7 +3094,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
 
-        auto processBatchUntilResultTransferIsInitiated = [&](auto& batchData){
+        auto processBatchUntilCandidateCorrectionStarted = [&](auto& batchData){
             auto& streams = batchData.streams;
             auto& events = batchData.events;
 
@@ -3168,13 +3175,30 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 correctCandidates(batchData);
 
                 poprange();
+                
+            }
+            
+        };
+
+        auto copyCandidateCorrectionsToHostAndJoinStreams = [&](auto& batchData){
+            auto& streams = batchData.streams;
+            auto& events = batchData.events;
+
+            auto pushrange = [&](const std::string& msg, int color){
+                nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+            };
+
+            auto poprange = [&](){
+                nvtx::pop_range();
+            };
+
+            if(transFuncData.correctionOptions.correctCandidates) {
 
                 pushrange("copyCorrectedCandidatesToHost", 8);
 
                 copyCorrectedCandidatesToHost(batchData);
 
-                poprange();
-                
+                poprange();                
             }
 
             cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
@@ -3183,8 +3207,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             //cudaDeviceSynchronize(); CUERR;
 
             batchData.hasUnprocessedResults = true;
-
-            
         };
 
         auto processBatchResults = [&](auto& batchData){
@@ -3268,7 +3290,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     auto& batchData = batchDataArray[batchIndex];
 
-                    processBatchUntilResultTransferIsInitiated(batchData);
+                    processBatchUntilCandidateCorrectionStarted(batchData);
 
                     if(batchData.n_queries == 0){
                         batchData.waitableOutputData.signal();
@@ -3276,6 +3298,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         batchData.reset();
                         continue;
                     }
+
+                    copyCandidateCorrectionsToHostAndJoinStreams(batchData);
 
                     processBatchResults(batchData);
 
@@ -3299,12 +3323,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     if(isFirstIteration){
                         isFirstIteration = false;
-//std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << currentBatchData.id << "\n";
-                        processBatchUntilResultTransferIsInitiated(currentBatchData);
+//std::cerr << "\nprocessBatchUntilCandidateCorrectionStarted batch " << currentBatchData.id << "\n";
+                        processBatchUntilCandidateCorrectionStarted(currentBatchData);
                     }else{
 
-                        //std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << nextBatchData.id << "\n";
-                        processBatchUntilResultTransferIsInitiated(nextBatchData);
+                        //std::cerr << "\nprocessBatchUntilCandidateCorrectionStarted batch " << nextBatchData.id << "\n";
+                        processBatchUntilCandidateCorrectionStarted(nextBatchData);
 
                         if(currentBatchData.n_queries == 0){
                             currentBatchData.waitableOutputData.signal();
@@ -3313,6 +3337,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                             batchIndex = 1-batchIndex;
                             continue;
                         }
+
+                        copyCandidateCorrectionsToHostAndJoinStreams(currentBatchData);
+
                         //std::cerr << "\processBatchResults batch " << currentBatchData.id << "\n";
                         processBatchResults(currentBatchData);
     

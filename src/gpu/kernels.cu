@@ -1942,7 +1942,6 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
-                int* __restrict__ d_numTotalCorrectedCandidates,
                 TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
                 int* __restrict__ d_numEditsPerCorrectedCandidate,
                 const bool* __restrict__ d_candidateContainsN,
@@ -2025,6 +2024,7 @@ namespace gpu{
 
         __shared__ int shared_destinationIndex[groupsPerBlock];
         __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
+        
         extern __shared__ int dynamicsmem[];
 
 
@@ -2076,7 +2076,7 @@ namespace gpu{
                     if(tgroup.thread_rank() == 0){                        
                         shared_destinationIndex[groupIdInBlock] = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
                         shared_numEditsOfCandidate[groupIdInBlock] = 0;
-                        assert(shared_destinationIndex[groupIdInBlock] < d_indices_per_subject[subjectIndex]);
+                        //assert(shared_destinationIndex[groupIdInBlock] < d_indices_per_subject[subjectIndex]);
                     }
                     tgroup.sync();
 
@@ -3457,7 +3457,6 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
-                int* d_numTotalCorrectedCandidates,
                 TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
                 int* __restrict__ d_numEditsPerCorrectedCandidate,
                 const bool* __restrict__ d_candidateContainsN,
@@ -3582,7 +3581,6 @@ namespace gpu{
             d_alignmentresultpointers, \
             d_sequencePointers, \
             d_correctionResultPointers, \
-            d_numTotalCorrectedCandidates, \
             d_editsPerCorrectedCandidate, \
             d_numEditsPerCorrectedCandidate, \
             d_candidateContainsN, \
@@ -3624,7 +3622,8 @@ namespace gpu{
 
 
     void callCompactCandidateCorrectionResultsKernel_async(
-            char* __restrict__ d_compactedCorrectedCandidates,
+            char* __restrict__ d_compactedCorrectedCandidates,            
+            int* __restrict__ d_numTotalCorrectedCandidates,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchor,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
             const int* __restrict__ d_high_quality_subject_indices,
@@ -3636,6 +3635,12 @@ namespace gpu{
             int n_subjects,
             cudaStream_t stream,
             KernelLaunchHandle& /*handle*/){
+
+        generic_kernel<<<1,1,0,stream>>>([=] __device__ (){
+            const int lastNum = d_numCorrectedCandidatesPerAnchor[n_subjects-1];
+            const int ps = d_numCorrectedCandidatesPerAnchorPrefixsum[n_subjects-1];
+            *d_numTotalCorrectedCandidates = ps + lastNum;
+        }); CUERR;
 
         constexpr int blocksize = 256;
 
