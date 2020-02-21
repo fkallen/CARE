@@ -1943,6 +1943,15 @@ namespace gpu{
         }
     }
 
+
+    // __global__ 
+    // void flagCandidatesToBeCorrectedKernel(
+    //         bool* __restrict__ candidateCanBeCorrected,
+    //         const int* __restrict__ d_anchorIndicesOfCandidates
+    //         ){
+
+    // }
+
     template<int BLOCKSIZE, int groupsize>
     __global__
     void msa_correct_candidates_with_group_kernel(

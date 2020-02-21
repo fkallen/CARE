@@ -846,7 +846,6 @@ struct DataArrays {
 
     char* d_compactCorrectedCandidates = nullptr;
     TempCorrectedSequence::Edit* d_compactEditsPerCorrectedCandidate = nullptr;
-    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_compactEditsPerCorrectedCandidate;
 
 
 	//alignment results
