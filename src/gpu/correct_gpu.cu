@@ -2387,6 +2387,9 @@ namespace gpu{
             dataArrays.d_candidate_sequences_lengths.get(),
             dataArrays.d_anchorIndicesOfCandidates.get(),
             dataArrays.d_is_high_quality_subject.get(),
+            dataArrays.d_candidates_per_subject_prefixsum,
+            dataArrays.d_indices,
+            dataArrays.d_indices_per_subject,
             batch.msa_weights_pitch / sizeof(float),
             min_support_threshold,
             min_coverage_threshold,
@@ -2416,6 +2419,7 @@ namespace gpu{
             streams[primary_stream_index]
         ); CUERR;
 
+        // //debug
         // cudaMemcpyAsync(
         //     dataArrays.h_indices_of_corrected_candidates.get(),
         //     dataArrays.d_indices_of_corrected_candidates.get(),
@@ -2424,6 +2428,7 @@ namespace gpu{
         //     streams[primary_stream_index]
         // ); CUERR;
 
+        // //debug
         // cudaMemcpyAsync(
         //     dataArrays.h_num_corrected_candidates_per_anchor.get(),
         //     dataArrays.d_num_corrected_candidates_per_anchor.get(),
@@ -2431,7 +2436,7 @@ namespace gpu{
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
-
+        // //debug
         // cudaMemcpyAsync(
         //     dataArrays.h_num_total_corrected_candidates.get(),
         //     dataArrays.d_num_total_corrected_candidates.get(),
@@ -2631,33 +2636,33 @@ namespace gpu{
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-                cudaDeviceSynchronize(); CUERR;
+        //         cudaDeviceSynchronize(); CUERR;
 
-        std::cerr << "h_num_total_corrected_candidates: " 
-                    << *dataArrays.h_num_total_corrected_candidates.get() << "\n";
+        // std::cerr << "h_num_total_corrected_candidates: " 
+        //             << *dataArrays.h_num_total_corrected_candidates.get() << "\n";
 
-        std::cerr << "h_num_corrected_candidates_per_anchor + prefixsum: \n";
-        for(int i = 0; i < batch.n_subjects; i++){
-            std::cerr << dataArrays.h_num_corrected_candidates_per_anchor[i] << " "
-                    << dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i] << "\n";
-        }
-        std::cerr << "\n";
+        // std::cerr << "h_num_corrected_candidates_per_anchor + prefixsum: \n";
+        // for(int i = 0; i < batch.n_subjects; i++){
+        //     std::cerr << dataArrays.h_num_corrected_candidates_per_anchor[i] << " "
+        //             << dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i] << "\n";
+        // }
+        // std::cerr << "\n";
 
-        std::cerr << "corrected candidate read ids per subject\n";
-        for(int i = 0; i < batch.n_subjects; i++){
-            std::cerr << "subject read id " << dataArrays.h_subject_read_ids[i] << "\n";
-            const int numcor = dataArrays.h_num_corrected_candidates_per_anchor[i];
-            const int offset = dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i];
+        // std::cerr << "corrected candidate read ids per subject\n";
+        // for(int i = 0; i < batch.n_subjects; i++){
+        //     std::cerr << "subject read id " << dataArrays.h_subject_read_ids[i] << "\n";
+        //     const int numcor = dataArrays.h_num_corrected_candidates_per_anchor[i];
+        //     const int offset = dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i];
 
-            for(int k = 0; k < numcor; k++){
-                const int corrIndex = offset + k;
-                const int gIndex = dataArrays.h_indices_of_corrected_candidates[corrIndex];
-                const read_number cid = dataArrays.h_candidate_read_ids[gIndex];
-                std::cerr << gIndex << " " << cid << "\n";
-            }
-        }
+        //     for(int k = 0; k < numcor; k++){
+        //         const int corrIndex = offset + k;
+        //         const int gIndex = dataArrays.h_indices_of_corrected_candidates[corrIndex];
+        //         const read_number cid = dataArrays.h_candidate_read_ids[gIndex];
+        //         std::cerr << gIndex << " " << cid << "\n";
+        //     }
+        // }
 
-        std::cerr << "\n";
+        // std::cerr << "\n";
 
         // cudaDeviceSynchronize(); CUERR;
 
@@ -2762,22 +2767,22 @@ namespace gpu{
                 transFuncData.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
             }
 
-            if(readId == 37){
-                std::cerr << "readid = 37, stats\n";
-                std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
-                auto& dataArrays = batch.dataArrays;
-                std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
-                    << "num good candidates " << rawResults.h_indices_per_subject[subject_index] << "\n";
-                std::cerr << "good candidate ids:\n";
+            // if(readId == 37){
+            //     std::cerr << "readid = 37, stats\n";
+            //     std::cerr << "isCorrected " << isCorrected << ", isHQ " << isHQ << "\n";
+            //     auto& dataArrays = batch.dataArrays;
+            //     std::cerr << "num candidates " << dataArrays.h_candidates_per_subject[subject_index] 
+            //         << "num good candidates " << rawResults.h_indices_per_subject[subject_index] << "\n";
+            //     std::cerr << "good candidate ids:\n";
 
-                const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
+            //     const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
 
-                for(int i = 0; i < rawResults.h_indices_per_subject[subject_index]; i++){
-                    const int index = dataArrays.h_indices[globalOffset + i];
-                    const read_number candidateId = rawResults.h_candidate_read_ids[globalOffset + index];
-                    std::cerr << candidateId << "\n";
-                }
-            }
+            //     for(int i = 0; i < rawResults.h_indices_per_subject[subject_index]; i++){
+            //         const int index = dataArrays.h_indices[globalOffset + i];
+            //         const read_number candidateId = rawResults.h_candidate_read_ids[globalOffset + index];
+            //         std::cerr << candidateId << "\n";
+            //     }
+            // }
         }
 
         //int acc = 0;
@@ -2988,14 +2993,14 @@ namespace gpu{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                if(candidate_read_id == 37){
-                    std::cerr << "readid = 37, as candidate of anchor with id " << subjectReadId << "\n";
-                    std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
-                    std::cerr << "\nedits: ";
-                    for(int i = 0; i < int(tmp.edits.size()); i++){
-                        std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
-                    }
-                }
+                // if(candidate_read_id == 37){
+                //     std::cerr << "readid = 37, as candidate of anchor with id " << subjectReadId << "\n";
+                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
+                //     std::cerr << "\nedits: ";
+                //     for(int i = 0; i < int(tmp.edits.size()); i++){
+                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                //     }
+                // }
             }
 
             nvtx::pop_range();
@@ -3162,8 +3167,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       ThreadPool threadPool(threadPoolSize);
 
 #ifndef DO_PROFILE
-        //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-        cpu::RangeGenerator<read_number> readIdGenerator(1000);
+        cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+        //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 #else
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -3191,7 +3196,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       transFuncData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //useEditsCountMap[tmp.useEdits]++;
-            std::cerr << tmp << "\n";
+            //std::cerr << tmp << "\n";
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
               //outputstream << tmp << '\n';

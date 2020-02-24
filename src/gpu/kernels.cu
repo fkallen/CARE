@@ -2081,45 +2081,87 @@ namespace gpu{
             const int* __restrict__ candidateSequencesLengths,
             const int* __restrict__ anchorIndicesOfCandidates,
             const AnchorHighQualityFlag* __restrict__ hqflags,
+            const int* __restrict__ numCandidatesPerSubjectPrefixsum,
+            const int* __restrict__ localGoodCandidateIndices,
+            const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
-            int n_candidates
-            ){
+            int n_subjects,
+            int n_candidates){
 
-        for(int candidateIndex = threadIdx.x + blockIdx.x * blockDim.x; 
-                candidateIndex < n_candidates; 
-                candidateIndex += blockDim.x * gridDim.x){
-            
-            const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+        for(int anchorIndex = blockIdx.x; 
+                anchorIndex < n_subjects; 
+                anchorIndex += blockDim.x * gridDim.x){
+
             const bool isHighQualitySubject = hqflags[anchorIndex].hq();
+            const int numGoodIndices = numLocalGoodCandidateIndicesPerSubject[anchorIndex];
+            const int dataoffset = numCandidatesPerSubjectPrefixsum[anchorIndex];
+            const int* myGoodIndices = localGoodCandidateIndices + dataoffset;
 
             if(isHighQualitySubject){
 
-                const bool canHandleCandidate = checkIfCandidateShouldBeCorrectedGlobal(
-                    support,
-                    coverages,
-                    msaColumnProperties,
-                    alignmentShifts,
-                    candidateSequencesLengths,
-                    msa_weights_pitch_floats,
-                    min_support_threshold,
-                    min_coverage_threshold,
-                    new_columns_to_correct,
-                    anchorIndex,
-                    candidateIndex
-                );
+                for(int tid = threadIdx.x; tid < numGoodIndices; tid += blockDim.x){
+                    const int localCandidateIndex = myGoodIndices[tid];
+                    const int globalCandidateIndex = dataoffset + localCandidateIndex;
 
-                candidateCanBeCorrected[candidateIndex] = canHandleCandidate;
+                    const bool canHandleCandidate = checkIfCandidateShouldBeCorrectedGlobal(
+                        support,
+                        coverages,
+                        msaColumnProperties,
+                        alignmentShifts,
+                        candidateSequencesLengths,
+                        msa_weights_pitch_floats,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        new_columns_to_correct,
+                        anchorIndex,
+                        globalCandidateIndex
+                    );
 
-                if(canHandleCandidate){
-                    atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
+                    candidateCanBeCorrected[globalCandidateIndex] = canHandleCandidate;
+
+                    if(canHandleCandidate){
+                        atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
+                    }
                 }
-            }else{
-                candidateCanBeCorrected[candidateIndex] = false;
+                
             }
         }
+
+        // for(int candidateIndex = threadIdx.x + blockIdx.x * blockDim.x; 
+        //         candidateIndex < n_candidates; 
+        //         candidateIndex += blockDim.x * gridDim.x){
+            
+        //     const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
+        //     const bool isHighQualitySubject = hqflags[anchorIndex].hq();
+
+        //     if(isHighQualitySubject){
+
+        //         const bool canHandleCandidate = checkIfCandidateShouldBeCorrectedGlobal(
+        //             support,
+        //             coverages,
+        //             msaColumnProperties,
+        //             alignmentShifts,
+        //             candidateSequencesLengths,
+        //             msa_weights_pitch_floats,
+        //             min_support_threshold,
+        //             min_coverage_threshold,
+        //             new_columns_to_correct,
+        //             anchorIndex,
+        //             candidateIndex
+        //         );
+
+        //         candidateCanBeCorrected[candidateIndex] = canHandleCandidate;
+
+        //         if(canHandleCandidate){
+        //             atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
+        //         }
+        //     }else{
+        //         candidateCanBeCorrected[candidateIndex] = false;
+        //     }
+        // }
     }
 
     template<int BLOCKSIZE, int groupsize>
@@ -3992,6 +4034,9 @@ namespace gpu{
             const int* __restrict__ d_candidateSequencesLengths,
             const int* __restrict__ d_anchorIndicesOfCandidates,
             const AnchorHighQualityFlag* __restrict__ d_hqflags,
+            const int* __restrict__ candidatesPerSubjectPrefixsum,
+            const int* __restrict__ localGoodCandidateIndices,
+            const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
@@ -4008,10 +4053,17 @@ namespace gpu{
             stream
         ); CUERR;
 
+        cudaMemsetAsync(
+            d_candidateCanBeCorrected, 
+            0, 
+            sizeof(bool) * n_candidates, 
+            stream
+        ); CUERR;
+
         constexpr int blocksize = 256;
 
         dim3 block(blocksize);
-        dim3 grid(SDIV(n_candidates, blocksize));
+        dim3 grid(n_subjects);
 
         flagCandidatesToBeCorrectedKernel<<<grid, block, 0, stream>>>(
             d_candidateCanBeCorrected,
@@ -4023,10 +4075,14 @@ namespace gpu{
             d_candidateSequencesLengths,
             d_anchorIndicesOfCandidates,
             d_hqflags,
+            candidatesPerSubjectPrefixsum,
+            localGoodCandidateIndices,
+            numLocalGoodCandidateIndicesPerSubject,
             msa_weights_pitch_floats,
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct,
+            n_subjects,
             n_candidates
         );
 
