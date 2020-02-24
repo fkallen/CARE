@@ -2826,7 +2826,7 @@ namespace gpu{
             });
 #endif 
 
-#if 1
+#if 0
             unpackcandidates(0, numCorrectedCandidates);
 #else            
             batch.threadPool->parallelFor(
