@@ -2631,6 +2631,34 @@ namespace gpu{
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
+                cudaDeviceSynchronize(); CUERR;
+
+        std::cerr << "h_num_total_corrected_candidates: " 
+                    << *dataArrays.h_num_total_corrected_candidates.get() << "\n";
+
+        std::cerr << "h_num_corrected_candidates_per_anchor + prefixsum: \n";
+        for(int i = 0; i < batch.n_subjects; i++){
+            std::cerr << dataArrays.h_num_corrected_candidates_per_anchor[i] << " "
+                    << dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i] << "\n";
+        }
+        std::cerr << "\n";
+
+        std::cerr << "corrected candidate read ids per subject\n";
+        for(int i = 0; i < batch.n_subjects; i++){
+            std::cerr << "subject read id " << dataArrays.h_subject_read_ids[i] << "\n";
+            const int numcor = dataArrays.h_num_corrected_candidates_per_anchor[i];
+            const int offset = dataArrays.h_num_corrected_candidates_per_anchor_prefixsum[i];
+
+            for(int k = 0; k < numcor; k++){
+                const int corrIndex = offset + k;
+                const int gIndex = dataArrays.h_indices_of_corrected_candidates[corrIndex];
+                const read_number cid = dataArrays.h_candidate_read_ids[gIndex];
+                std::cerr << gIndex << " " << cid << "\n";
+            }
+        }
+
+        std::cerr << "\n";
+
         // cudaDeviceSynchronize(); CUERR;
 
         // for(int i = 0; i < batch.n_subjects; i++){
@@ -3134,8 +3162,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       ThreadPool threadPool(threadPoolSize);
 
 #ifndef DO_PROFILE
-        cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-        //cpu::RangeGenerator<read_number> readIdGenerator(10000);
+        //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+        cpu::RangeGenerator<read_number> readIdGenerator(1000);
 #else
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -3163,7 +3191,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       transFuncData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //useEditsCountMap[tmp.useEdits]++;
-
+            std::cerr << tmp << "\n";
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
               //outputstream << tmp << '\n';
