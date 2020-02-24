@@ -181,26 +181,18 @@ namespace gpu{
         SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
         SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
         SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
-        SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
         SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor;
         SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor_prefixsum;
         SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
-        SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
         SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
         SimpleAllocationPinnedHost<char> h_corrected_subjects;
         SimpleAllocationPinnedHost<char> h_corrected_candidates;
         SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
-        SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
-        SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
         SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
         SimpleAllocationPinnedHost<int> h_alignment_shifts;
-        SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
-        SimpleAllocationPinnedHost<int> h_indices_per_subject;
 
         SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
         SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedSubject;
-        SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;
-        SimpleAllocationPinnedHost<int> h_num_indices_of_corrected_subjects;
 
         SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
         SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedCandidate;
@@ -349,21 +341,15 @@ namespace gpu{
             std::swap(dataArrays.h_subject_read_ids, rawResults.h_subject_read_ids);
             std::swap(dataArrays.h_subject_is_corrected, rawResults.h_subject_is_corrected);
             std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
-            std::swap(dataArrays.h_high_quality_subject_indices, rawResults.h_high_quality_subject_indices);
             std::swap(dataArrays.h_num_corrected_candidates_per_anchor, rawResults.h_num_corrected_candidates_per_anchor);
             std::swap(dataArrays.h_num_corrected_candidates_per_anchor_prefixsum, rawResults.h_num_corrected_candidates_per_anchor_prefixsum);
             std::swap(dataArrays.h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
-            std::swap(dataArrays.h_candidates_per_subject_prefixsum, rawResults.h_candidates_per_subject_prefixsum);
             std::swap(dataArrays.h_candidate_read_ids, rawResults.h_candidate_read_ids);
             std::swap(dataArrays.h_corrected_subjects, rawResults.h_corrected_subjects);
             std::swap(dataArrays.h_corrected_candidates, rawResults.h_corrected_candidates);
             std::swap(dataArrays.h_subject_sequences_lengths, rawResults.h_subject_sequences_lengths);
-            std::swap(dataArrays.h_num_uncorrected_positions_per_subject, rawResults.h_num_uncorrected_positions_per_subject);
-            std::swap(dataArrays.h_uncorrected_positions_per_subject, rawResults.h_uncorrected_positions_per_subject);
             std::swap(dataArrays.h_candidate_sequences_lengths, rawResults.h_candidate_sequences_lengths);
             std::swap(dataArrays.h_alignment_shifts, rawResults.h_alignment_shifts);
-            std::swap(dataArrays.h_candidate_sequences_data, rawResults.h_candidate_sequences_data);
-            std::swap(dataArrays.h_indices_per_subject, rawResults.h_indices_per_subject);
 
             std::swap(dataArrays.h_editsPerCorrectedSubject, rawResults.h_editsPerCorrectedSubject);
             std::swap(dataArrays.h_numEditsPerCorrectedSubject, rawResults.h_numEditsPerCorrectedSubject);
@@ -371,8 +357,6 @@ namespace gpu{
             std::swap(dataArrays.h_editsPerCorrectedCandidate, rawResults.h_editsPerCorrectedCandidate);
             std::swap(dataArrays.h_numEditsPerCorrectedCandidate, rawResults.h_numEditsPerCorrectedCandidate);
 
-            std::swap(dataArrays.h_indices_of_corrected_subjects, rawResults.h_indices_of_corrected_subjects);
-            std::swap(dataArrays.h_num_indices_of_corrected_subjects, rawResults.h_num_indices_of_corrected_subjects);
         }
 
 	};
@@ -2752,6 +2736,8 @@ namespace gpu{
         subjectIndicesToProcess.reserve(rawResults.n_subjects);
         candidateIndicesToProcess.reserve(16 * rawResults.n_subjects);
 
+        nvtx::push_range("preprocess anchor results",0);
+
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
             const read_number readId = rawResults.h_subject_read_ids[subject_index];
             const bool isCorrected = rawResults.h_subject_is_corrected[subject_index];
@@ -2784,6 +2770,10 @@ namespace gpu{
             //     }
             // }
         }
+
+        nvtx::pop_range();
+
+        nvtx::push_range("preprocess candidate results",0);
 
         //int acc = 0;
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
@@ -2828,23 +2818,30 @@ namespace gpu{
             //acc += n_corrected_candidates;
         }
 
+        nvtx::pop_range();
+
         const int numCorrectedAnchors = subjectIndicesToProcess.size();
         const int numCorrectedCandidates = candidateIndicesToProcess.size();
 
         //std::cerr << "numCorrectedCandidates " << numCorrectedCandidates << "\n";
 
-        // std::cerr << "\n" << "batch " << batch.id << " " 
-        //     << numCorrectedAnchors << " " << numCorrectedCandidates << "\n";
+        //  std::cerr << "\n" << "batch " << batch.id << " " 
+        //      << numCorrectedAnchors << " " << numCorrectedCandidates << "\n";
 
-        outputData.anchorCorrections.clear();
-        outputData.encodedAnchorCorrections.clear();
-        outputData.candidateCorrections.clear();
-        outputData.encodedCandidateCorrections.clear();
+        // nvtx::push_range("clear",1);
+        // outputData.anchorCorrections.clear();
+        // outputData.encodedAnchorCorrections.clear();
+        // outputData.candidateCorrections.clear();
+        // outputData.encodedCandidateCorrections.clear();
+        // nvtx::pop_range();
 
+
+        nvtx::push_range("resize",1);
         outputData.anchorCorrections.resize(numCorrectedAnchors);
         outputData.encodedAnchorCorrections.resize(numCorrectedAnchors);
         outputData.candidateCorrections.resize(numCorrectedCandidates);
         outputData.encodedCandidateCorrections.resize(numCorrectedCandidates);
+        nvtx::pop_range();
 
         auto outputDataPtr = &outputData;
         auto transFuncDataPtr = batch.transFuncData;
@@ -2862,17 +2859,13 @@ namespace gpu{
 
                 auto& tmp = outputData.anchorCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
-
-                const char* const my_corrected_subject_data = rawResults.h_corrected_subjects + subject_index * rawResults.decodedSequencePitchInBytes;
+                
                 const read_number readId = rawResults.h_subject_read_ids[subject_index];
-
-                const int subject_length = rawResults.h_subject_sequences_lengths[subject_index];
 
                 tmp.hq = rawResults.h_is_high_quality_subject[subject_index].hq();                    
                 tmp.type = TempCorrectedSequence::Type::Anchor;
                 tmp.readId = readId;
-                tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
-
+                
                 // const int numUncorrectedPositions = rawResults.h_num_uncorrected_positions_per_subject[subject_index];
 
                 // if(numUncorrectedPositions > 0){
@@ -2883,20 +2876,6 @@ namespace gpu{
 
                 // }
 
-                auto isValidSequence = [](const std::string& s){
-                    return std::all_of(s.begin(), s.end(), [](char c){
-                        return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-                    });
-                };
-
-                if(!isValidSequence(tmp.sequence)){
-                    std::cerr << tmp.sequence << "\n";
-                }
-
-                
-                tmp.edits.clear();
-       
-
                 const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
@@ -2904,7 +2883,22 @@ namespace gpu{
                     std::copy_n(gpuedits, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
+                    tmp.edits.clear();
                     tmp.useEdits = false;
+
+                    const char* const my_corrected_subject_data = rawResults.h_corrected_subjects + subject_index * rawResults.decodedSequencePitchInBytes;
+                    const int subject_length = rawResults.h_subject_sequences_lengths[subject_index];
+                    tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};       
+                    
+                    auto isValidSequence = [](const std::string& s){
+                        return std::all_of(s.begin(), s.end(), [](char c){
+                            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                        });
+                    };
+    
+                    if(!isValidSequence(tmp.sequence)){
+                        std::cerr << tmp.sequence << "\n";
+                    }
                 }
 
                 tmpencoded = tmp.encode();
@@ -2944,7 +2938,6 @@ namespace gpu{
                 auto& tmp = outputData.candidateCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
 
-                const size_t offset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
                 const size_t offsetForCorrectedCandidateData = rawResults.h_num_corrected_candidates_per_anchor_prefixsum[subject_index];
 
                 const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
@@ -2975,7 +2968,7 @@ namespace gpu{
                 //TIMERSTOPCPU(tmp);
                 //const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
                 
-                tmp.edits.clear();
+                
                 const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
@@ -2986,6 +2979,7 @@ namespace gpu{
                     const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
                     const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
                     tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
+                    tmp.edits.clear();
                     tmp.useEdits = false;
                 }
 
@@ -3012,17 +3006,25 @@ namespace gpu{
                 unpackAnchors(begin, end);
             });
         }else{
+
 #if 0            
             unpackAnchors(0, numCorrectedAnchors);
 #else            
+            nvtx::push_range("parallel anchor unpacking",1);
+
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
+
+            nvtx::pop_range();
 #endif 
+
 
 #if 0
             unpackcandidates(0, numCorrectedCandidates);
 #else            
+            nvtx::push_range("parallel candidate unpacking", 3);
+
             batch.threadPool->parallelFor(
                 batch.pforHandle, 
                 0, 
@@ -3032,6 +3034,8 @@ namespace gpu{
                 },
                 batch.threadPool->getConcurrency() * 4
             );
+
+            nvtx::pop_range();
 #endif            
         }
 
