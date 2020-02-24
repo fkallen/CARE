@@ -2374,6 +2374,8 @@ namespace gpu{
 #else 
 
         bool* const d_candidateCanBeCorrected = dataArrays.d_alignment_isValid.get(); //reuse
+        //bool* d_candidateCanBeCorrected;
+        //cudaMallocManaged(&d_candidateCanBeCorrected, sizeof(bool) * batch.n_queries); CUERR;
 
         callFlagCandidatesToBeCorrectedKernel_async(
             d_candidateCanBeCorrected,
@@ -2389,10 +2391,17 @@ namespace gpu{
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct,
+            batch.n_subjects,
             batch.n_queries,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
+
+        // cudaDeviceSynchronize(); CUERR;
+        // for(int i = 0; i < 50; i++){
+        //     std::cerr << d_candidateCanBeCorrected[i] << " ";
+        // }
+        // std::cerr << "\n";
 
         size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
@@ -2407,17 +2416,74 @@ namespace gpu{
             streams[primary_stream_index]
         ); CUERR;
 
-        callGetNumCorrectedCandidatesPerAnchorKernel(
-            dataArrays.d_num_corrected_candidates_per_anchor.get(),
-            d_candidateCanBeCorrected,
-            dataArrays.d_indices_per_subject.get(),
-            dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
-            batch.n_subjects,
-            batch.n_queries,
-            streams[primary_stream_index],
-            batch.kernelLaunchHandle
-        );
+        // cudaMemcpyAsync(
+        //     dataArrays.h_indices_of_corrected_candidates.get(),
+        //     dataArrays.d_indices_of_corrected_candidates.get(),
+        //     dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+
+        // cudaMemcpyAsync(
+        //     dataArrays.h_num_corrected_candidates_per_anchor.get(),
+        //     dataArrays.d_num_corrected_candidates_per_anchor.get(),
+        //     dataArrays.d_num_corrected_candidates_per_anchor.sizeInBytes(),
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+
+        // cudaMemcpyAsync(
+        //     dataArrays.h_num_total_corrected_candidates.get(),
+        //     dataArrays.d_num_total_corrected_candidates.get(),
+        //     dataArrays.d_num_total_corrected_candidates.sizeInBytes(),
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+
+        // //debug
+        // cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+        //     dataArrays.d_alignment_shifts,
+        //     dataArrays.d_alignment_shifts.sizeInBytes() / 2, // divide by 2 because size includes fwd + revc
+        //     D2H,
+        //     streams[primary_stream_index]); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR;
+        // std::cerr << "numcorrcanddiates: \n";
+        // std::cerr << dataArrays.h_num_corrected_candidates_per_anchor[0] << "\n";
+
+        // std::cerr << "indicesofcorrectedcand: \n";
+        // for(int i = 0; i < dataArrays.h_num_corrected_candidates_per_anchor[0]; i++){
+        //     std::cerr << dataArrays.h_indices_of_corrected_candidates[i] << " ";
+        // }
+        // std::cerr << "\n";
+
+        // std::cerr << "readidsfocrrectedcand: \n";
+        // for(int i = 0; i < dataArrays.h_num_corrected_candidates_per_anchor[0]; i++){
+        //     std::cerr << dataArrays.h_candidate_read_ids[
+        //         dataArrays.h_indices_of_corrected_candidates[i]] << " ";
+        // }
+        // std::cerr << "\n";
+        // std::cerr << "Checking shifts \n";
+        // for(int i = 0; i < *dataArrays.h_num_total_corrected_candidates.get(); i++){
+        //     int gindex = dataArrays.h_indices_of_corrected_candidates[i];
+        //     std::cerr << gindex << "\n";
+        //     assert(transFuncData.correctionOptions.new_columns_to_correct 
+        //             >= dataArrays.h_alignment_shifts[gindex]);
+        // }
+
+        //std::exit(0);
+
+        // callGetNumCorrectedCandidatesPerAnchorKernel(
+        //     dataArrays.d_num_corrected_candidates_per_anchor.get(),
+        //     d_candidateCanBeCorrected,
+        //     dataArrays.d_indices_per_subject.get(),
+        //     dataArrays.d_candidates_per_subject_prefixsum.get(),
+        //     dataArrays.d_anchorIndicesOfCandidates.get(),
+        //     batch.n_subjects,
+        //     batch.n_queries,
+        //     streams[primary_stream_index],
+        //     batch.kernelLaunchHandle
+        // );
 
         callCorrectCandidatesWithGroupKernel2_async(
             dataArrays.d_corrected_candidates.get(),
@@ -2686,10 +2752,11 @@ namespace gpu{
             // }
         }
 
+        //int acc = 0;
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
 
-            const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
-
+            const int globalOffset = rawResults.h_num_corrected_candidates_per_anchor_prefixsum[subject_index];
+            //assert(globalOffset == acc);
             const int n_corrected_candidates = rawResults.h_num_corrected_candidates_per_anchor[subject_index];
             // if(n_corrected_candidates > 0){
             //     assert(
@@ -2718,9 +2785,14 @@ namespace gpu{
                     savingIsOk = true;
                 }
                 if (savingIsOk) {
+                    //std::cerr << global_candidate_index << " will be corrected\n";
                     candidateIndicesToProcess.emplace_back(std::make_pair(subject_index, i));
+                }else{
+                    //std::cerr << global_candidate_index << " discarded\n";
                 }
             }
+
+            //acc += n_corrected_candidates;
         }
 
         const int numCorrectedAnchors = subjectIndicesToProcess.size();
@@ -2819,6 +2891,7 @@ namespace gpu{
 
         auto unpackcandidates = [outputDataPtr, transFuncDataPtr](int begin, int end){
             nvtx::push_range("candidate unpacking", 3);
+            //std::cerr << "\n\n unpack candidates \n\n";
             
             auto& outputData = *outputDataPtr;
             auto& rawResults = outputData.rawResults;
@@ -2844,13 +2917,13 @@ namespace gpu{
                 const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
                                                 + offsetForCorrectedCandidateData * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
-                                                + offset;
+                                                + offsetForCorrectedCandidateData;
                 const TempCorrectedSequence::Edit* const my_editsPerCorrectedCandidate = rawResults.h_editsPerCorrectedCandidate
                                                         + offsetForCorrectedCandidateData * rawResults.maxNumEditsPerSequence;
 
 
                 const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
-
+                //std::cerr << global_candidate_index << "\n";
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
                 const int candidate_shift = rawResults.h_alignment_shifts[global_candidate_index];
@@ -2914,7 +2987,7 @@ namespace gpu{
             });
 #endif 
 
-#if 1
+#if 0
             unpackcandidates(0, numCorrectedCandidates);
 #else            
             batch.threadPool->parallelFor(

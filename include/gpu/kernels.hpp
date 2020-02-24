@@ -417,6 +417,7 @@ void callFlagCandidatesToBeCorrectedKernel_async(
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
+            int n_subjects,
             int n_candidates,
             cudaStream_t stream,
             KernelLaunchHandle& handle);

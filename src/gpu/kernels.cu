@@ -2093,7 +2093,7 @@ namespace gpu{
                 candidateIndex += blockDim.x * gridDim.x){
             
             const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
-            const bool isHighQualitySubject = hqflags[candidateIndex].hq();
+            const bool isHighQualitySubject = hqflags[anchorIndex].hq();
 
             if(isHighQualitySubject){
 
@@ -2116,6 +2116,8 @@ namespace gpu{
                 if(canHandleCandidate){
                     atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
                 }
+            }else{
+                candidateCanBeCorrected[candidateIndex] = false;
             }
         }
     }
@@ -3994,9 +3996,17 @@ namespace gpu{
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
+            int n_subjects,
             int n_candidates,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
+
+        cudaMemsetAsync(
+            d_numCorrectedCandidatesPerAnchor, 
+            0, 
+            sizeof(int) * n_subjects, 
+            stream
+        ); CUERR;
 
         constexpr int blocksize = 256;
 
