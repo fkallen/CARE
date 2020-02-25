@@ -4,6 +4,7 @@
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
+#include <gpu/kernellaunch.hpp>
 #include <gpu/dataarrays.hpp>
 #include <gpu/cubcachingallocator.cuh>
 #include <gpu/minhashkernels.hpp>
