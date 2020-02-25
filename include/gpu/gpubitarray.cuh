@@ -17,6 +17,7 @@ struct BitArrayBase{
     
     Data_t* data = nullptr;
     size_t numBits = 0;
+    size_t numAllocatedBytes = 0;
 
     BitArrayBase() = default;
     BitArrayBase(const BitArrayBase&) = default;
@@ -29,6 +30,7 @@ struct BitArrayBase{
     BitArrayBase& operator=(BitArrayBase&& rhs){
         data = std::exchange(rhs.data, nullptr);
         numBits = std::exchange(rhs.numBits, 0);
+        numAllocatedBytes = std::exchange(rhs.numAllocatedBytes, 0);
         return *this;
     }
 
@@ -82,6 +84,7 @@ CpuBitArray<Index_t> makeCpuBitArray(size_t numBits){
     const size_t dataElements = SDIV(numBits, 8 * sizeof(Data_t));
     array.data = new Data_t[dataElements];
     array.numBits = numBits;
+    array.numAllocatedBytes = dataElements * sizeof(Data_t);
 
     std::fill_n(array.data, dataElements, 0);
 
@@ -93,6 +96,7 @@ void destroyCpuBitArray(CpuBitArray<Index_t>& array){
     delete [] array.data;  
     array.data = nullptr;
     array.numBits = 0;
+    array.numAllocatedBytes = 0;
 }
 
 #ifdef __CUDACC__
@@ -109,6 +113,7 @@ GpuBitArray<Index_t> makeGpuBitArray(size_t numBits){
     const size_t dataElements = SDIV(numBits, 8 * sizeof(Data_t));
     cudaMalloc(&array.data, sizeof(Data_t) * dataElements); CUERR;
     array.numBits = numBits;
+    array.numAllocatedBytes = dataElements * sizeof(Data_t);
 
     cudaMemset(array.data, 0, dataElements); CUERR;
 
@@ -124,6 +129,7 @@ GpuBitArray<Index_t> makeGpuBitArrayFrom(const CpuBitArray<Index_t>& other){
     const size_t dataElements = SDIV(other.numBits, 8 * sizeof(Data_t));
     cudaMalloc(&array.data, sizeof(Data_t) * dataElements); CUERR;
     array.numBits = other.numBits;
+    array.numAllocatedBytes = dataElements * sizeof(Data_t);
 
     cudaMemcpy(array.data, other.data, sizeof(Data_t) * dataElements, H2D); CUERR
 
@@ -135,6 +141,7 @@ void destroyGpuBitArray(GpuBitArray<Index_t>& array){
     cudaFree(array.data); CUERR;
     array.data = nullptr;
     array.numBits = 0;
+    array.numAllocatedBytes = 0;
 }
 
 

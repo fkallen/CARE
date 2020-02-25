@@ -8,6 +8,8 @@
 #include <gpu/gpulengthstorage.hpp>
 #include <gpu/gpubitarray.cuh>
 
+#include <memorymanagement.hpp>
+
 #include <config.hpp>
 #include <readlibraryio.hpp>
 
@@ -15,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <map>
 
 namespace care{
 namespace gpu{
@@ -22,11 +25,11 @@ namespace gpu{
 struct DistributedReadStorage {
 public:
 
-    struct MemoryInfo{
-        size_t hostSizeInBytes{};
-        std::vector<size_t> deviceSizeInBytes{};
-        std::vector<int> deviceIds{};
-    };
+    // struct MemoryInfo{
+    //     size_t hostSizeInBytes{};
+    //     std::vector<size_t> deviceSizeInBytes{};
+    //     std::vector<int> deviceIds{};
+    // };
 
     struct Statistics{
         int maximumSequenceLength = 0;
@@ -81,7 +84,7 @@ public:
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
     mutable DistributedArray<char, read_number> distributedQualities;
 
-    GpuBitArray<read_number> bitArrayUndeterminedBase;
+    std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
 
 
 
@@ -101,7 +104,7 @@ public:
 
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
-	MemoryInfo getMemoryInfo() const;
+	MemoryUsage getMemoryInfo() const;
 
     Statistics getStatistics() const;
 
@@ -152,12 +155,14 @@ public:
     bool readContainsN(read_number readId) const;
 
     void readsContainN_async(
+        int deviceId,
         bool* d_result, 
         const read_number* d_positions, 
         int nPositions, 
         cudaStream_t stream) const;
 
     void readsContainN_async(
+        int deviceId,
         bool* d_result, 
         const read_number* d_positions, 
         const int* d_nPositions,
@@ -165,12 +170,13 @@ public:
         cudaStream_t stream) const;
 
     void setReadsContainN_async(
+        int deviceId,
         bool* d_values, 
         const read_number* d_positions, 
         int nPositions,
         cudaStream_t stream) const;
     
-    void setGpuBitArrayFromVector();
+    void setGpuBitArraysFromVector();
 
     void constructionIsComplete();
     void allowModifications();

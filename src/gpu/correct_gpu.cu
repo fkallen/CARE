@@ -580,6 +580,7 @@ namespace gpu{
         ); CUERR;
 
         readStorage.readsContainN_async(
+            nextData.deviceId,
             nextData.d_anchorContainsN.get(), 
             nextData.d_subject_read_ids.get(),
             nextData.n_subjects, 
@@ -1045,6 +1046,7 @@ namespace gpu{
         ); CUERR;        
 
         readStorage.readsContainN_async(
+            nextData.deviceId,
             nextData.d_candidateContainsN.get(), 
             nextData.d_candidate_read_ids.get(), 
             //nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,

@@ -1,6 +1,12 @@
 #ifndef CARE_MEMORY_FILE
 #define CARE_MEMORY_FILE
 
+#include <filesort.hpp>
+#include <filehelpers.hpp>
+#include <fixedsizestorage.hpp>
+#include <memorymanagement.hpp>
+
+
 #include <vector>
 #include <cassert>
 #include <cstdint>
@@ -10,9 +16,8 @@
 #include <type_traits>
 #include <functional>
 #include <memory>
-#include <filesort.hpp>
-#include <filehelpers.hpp>
-#include <fixedsizestorage.hpp>
+
+
 
 namespace care{
 

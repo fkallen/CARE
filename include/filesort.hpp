@@ -2,7 +2,8 @@
 #define CARE_FILESORT_HPP
 
 #include <filehelpers.hpp>
-#include <util.hpp>
+//#include <util.hpp>
+#include <memorymanagement.hpp>
 #include <fixedsizestorage.hpp>
 
 #include <algorithm>

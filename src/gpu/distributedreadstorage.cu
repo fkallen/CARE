@@ -3,6 +3,7 @@
 
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/distributedarray.hpp>
+#include <memorymanagement.hpp>
 
 #include <config.hpp>
 #include <sequence.hpp>
@@ -32,6 +33,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
     constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUEqual;
 
+    int oldId; cudaGetDevice(&oldId); CUERR;
+
     isReadOnly = false;
     deviceIds = deviceIds_;
     numberOfInsertedReads = 0;
@@ -42,14 +45,27 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
     int numGpus = deviceIds.size();
 
+    for(auto& pair : bitArraysUndeterminedBase){
+        cudaSetDevice(pair.first); CUERR;
+        destroyGpuBitArray(pair.second);
+    }
+    bitArraysUndeterminedBase.clear();
+
+
     constexpr size_t headRoom = gpuReadStorageHeadroomPerGPU; 
     //constexpr size_t headRoom = (size_t(1) << 30) * 11; 
 
     if(getMaximumNumberOfReads() > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
+        
+
         lengthStorage = std::move(LengthStore_t(sequenceLengthLowerBound, sequenceLengthUpperBound, getMaximumNumberOfReads()));
 
-        destroyGpuBitArray(bitArrayUndeterminedBase);
-        bitArrayUndeterminedBase = makeGpuBitArray<read_number>(getMaximumNumberOfReads());
+
+        for(int deviceId : deviceIds){
+            cudaSetDevice(deviceId); CUERR;
+            bitArraysUndeterminedBase[deviceId] = makeGpuBitArray<read_number>(getMaximumNumberOfReads());
+        }
+        
 
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
@@ -75,7 +91,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
             std::cerr << "\n";
         };
 
-        int oldId; cudaGetDevice(&oldId); CUERR;
+        
 
 
         const int intsPerSequence = getEncodedNumInts2Bit(sequenceLengthUpperBound);
@@ -102,8 +118,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         std::copy(freeMemPerGpu.begin(), freeMemPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
         std::cerr << "\n";
 
-        cudaSetDevice(oldId); CUERR;
     }
+    cudaSetDevice(oldId); CUERR;
 }
 
 DistributedReadStorage::DistributedReadStorage(DistributedReadStorage&& other){
@@ -120,7 +136,7 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     sequenceLengthUpperBound = std::move(rhs.sequenceLengthUpperBound);
     useQualityScores = std::move(rhs.useQualityScores);
     readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
-    bitArrayUndeterminedBase = std::move(rhs.bitArrayUndeterminedBase);
+    bitArraysUndeterminedBase = std::move(rhs.bitArraysUndeterminedBase);
     lengthStorage = std::move(rhs.lengthStorage);
     gpulengthStorage = std::move(rhs.gpulengthStorage);
     distributedSequenceData = std::move(rhs.distributedSequenceData);
@@ -132,27 +148,41 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     return *this;
 }
 
-DistributedReadStorage::MemoryInfo DistributedReadStorage::getMemoryInfo() const{
-    MemoryInfo info;
-    info.deviceSizeInBytes.resize(deviceIds.size(),0);
-    info.deviceIds = deviceIds;
+MemoryUsage DistributedReadStorage::getMemoryInfo() const{
+
+
+    MemoryUsage info;
 
     auto handlearray = [&](const auto& array){
         const auto partitions = array.getPartitions();
 
         for(int location = 0; location < distributedSequenceData.numLocations; location++){
+            
             size_t bytes = partitions[location] * array.sizeOfElement;
             std::cerr << "location " << location << " " << bytes << "\n";
             if(location == array.hostLocation){
-                info.hostSizeInBytes += bytes;
+                info.host += bytes;
             }else{
-                info.deviceSizeInBytes[location] += bytes;
+                const int deviceId = deviceIds[location];
+                info.device[deviceId] += bytes;
             }
         }
     };
 
     handlearray(distributedSequenceData);
     handlearray(distributedQualities);
+
+    auto lengthstorageMem = gpulengthStorage.getMemoryInfo();
+
+    info.host = lengthstorageMem.host;
+    for(const auto& pair : lengthstorageMem.device){
+        info.device[pair.first] += pair.second;
+    }
+
+    for(int deviceId : deviceIds){
+        info.device[deviceId] += bitArraysUndeterminedBase.at(deviceId).numAllocatedBytes;
+    }
+       
 
     return info;
 }
@@ -163,16 +193,25 @@ DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const
 }
 
 void DistributedReadStorage::destroy(){
+    int oldId = 0;
+    cudaGetDevice(&oldId); CUERR;
+
     numberOfInsertedReads = 0;
     maximumNumberOfReads = 0;
     sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
     lengthStorage = std::move(LengthStore_t{});
-    destroyGpuBitArray(bitArrayUndeterminedBase);
+    for(auto& pair : bitArraysUndeterminedBase){
+        cudaSetDevice(pair.first); CUERR;
+        destroyGpuBitArray(pair.second);
+    }
+    bitArraysUndeterminedBase.clear();
     gpulengthStorage = std::move(GPULengthStore_t{});
     distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
     distributedQualities = std::move(DistributedArray<char, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
     statistics = Statistics{};
+
+    cudaSetDevice(oldId); CUERR;
 }
 
 read_number DistributedReadStorage::getNumberOfReads() const{
@@ -334,61 +373,82 @@ bool DistributedReadStorage::readContainsN(read_number readId) const{
 }
 
 void DistributedReadStorage::setReadsContainN_async(
+    int deviceId,
     bool* d_values, 
     const read_number* d_positions, 
     int nPositions,
     cudaStream_t stream) const{
 
+    int oldId = 0;
+    cudaGetDevice(&oldId); CUERR;
+    cudaSetDevice(deviceId); CUERR;
+
     dim3 block = 256;
     dim3 grid = SDIV(nPositions, block.x);
 
     setBitarray<<<grid, block, 0, stream>>>(
-        bitArrayUndeterminedBase, 
+        bitArraysUndeterminedBase.at(deviceId), 
         d_values, 
         d_positions, 
         nPositions
-    );
+    ); CUERR;
+
+    cudaSetDevice(oldId); CUERR;
 }
 
 void DistributedReadStorage::readsContainN_async(
+        int deviceId,
         bool* d_result, 
         const read_number* d_positions, 
         int nPositions, 
         cudaStream_t stream) const{
+
+    int oldId = 0;
+    cudaGetDevice(&oldId); CUERR;
+    cudaSetDevice(deviceId); CUERR;
 
     dim3 block = 256;
     dim3 grid = SDIV(nPositions, block.x);
 
     readBitarray<<<grid, block, 0, stream>>>(
         d_result, 
-        bitArrayUndeterminedBase, 
+        bitArraysUndeterminedBase.at(deviceId), 
         d_positions, 
         nPositions
-    );
+    ); CUERR;
+
+    cudaSetDevice(oldId); CUERR;
 }
 
 void DistributedReadStorage::readsContainN_async(
+        int deviceId,
         bool* d_result, 
         const read_number* d_positions, 
         const int* d_nPositions,
         int nPositionsUpperBound, 
         cudaStream_t stream) const{
 
+    int oldId = 0;
+    cudaGetDevice(&oldId); CUERR;
+    cudaSetDevice(deviceId); CUERR;
+
     dim3 block = 256;
     dim3 grid = SDIV(nPositionsUpperBound, block.x);
 
     readBitarray<<<grid, block, 0, stream>>>(
         d_result, 
-        bitArrayUndeterminedBase, 
+        bitArraysUndeterminedBase.at(deviceId), 
         d_positions, 
         d_nPositions
-    );
+    ); CUERR;
+
+    cudaSetDevice(oldId); CUERR;
 }
 
 
 void DistributedReadStorage::constructionIsComplete(){
     gpulengthStorage = std::move(GPULengthStore_t{std::move(lengthStorage), deviceIds});
-    setGpuBitArrayFromVector();
+    setGpuBitArraysFromVector();
     isReadOnly = true;
 }
 
@@ -928,7 +988,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
     //gpu read ids with N
-    setGpuBitArrayFromVector();
+    setGpuBitArraysFromVector();
     
 
 }
@@ -938,44 +998,53 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 #endif
 
 
-void DistributedReadStorage::setGpuBitArrayFromVector(){
+void DistributedReadStorage::setGpuBitArraysFromVector(){
     constexpr size_t chunksize = 1024 * 1024;
 
+    int oldId = 0;
+    cudaGetDevice(&oldId); CUERR;
+
     const size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
-    std::cerr << "setGpuBitArrayFromVector numUndeterminedReads = " << numUndeterminedReads << "\n";
-    bool* d_values;
-    cudaMalloc(&d_values, sizeof(bool) * chunksize); CUERR;
-    cudaMemset(d_values, 1, sizeof(bool) * chunksize); CUERR;
+    //std::cerr << "setGpuBitArraysFromVector numUndeterminedReads = " << numUndeterminedReads << "\n";
+    for(int deviceId : deviceIds){
+        cudaSetDevice(deviceId); CUERR;
 
-    read_number* d_positions;
-    cudaMalloc(&d_positions, sizeof(read_number) * chunksize); CUERR;
+        bool* d_values;
+        cudaMalloc(&d_values, sizeof(bool) * chunksize); CUERR;
+        cudaMemset(d_values, 1, sizeof(bool) * chunksize); CUERR;
 
-    const int chunks = SDIV(numUndeterminedReads, chunksize);
+        read_number* d_positions;
+        cudaMalloc(&d_positions, sizeof(read_number) * chunksize); CUERR;
 
-    for(int i = 0; i < chunks; i++){
-        size_t begin = i * chunksize;
-        size_t end = std::min((i+1) * chunksize, numUndeterminedReads);
+        const int chunks = SDIV(numUndeterminedReads, chunksize);
 
-        size_t elements = end - begin;
+        for(int i = 0; i < chunks; i++){
+            size_t begin = i * chunksize;
+            size_t end = std::min((i+1) * chunksize, numUndeterminedReads);
 
-        cudaMemcpy(
-            d_positions, 
-            readIdsOfReadsWithUndeterminedBase.data() + begin, 
-            sizeof(read_number) * elements, 
-            H2D
-        ); CUERR;
+            size_t elements = end - begin;
 
-        setReadsContainN_async(
-            d_values, 
-            d_positions, 
-            elements,
-            0
-        );
-        cudaDeviceSynchronize(); CUERR;
+            cudaMemcpy(
+                d_positions, 
+                readIdsOfReadsWithUndeterminedBase.data() + begin, 
+                sizeof(read_number) * elements, 
+                H2D
+            ); CUERR;
+
+            setReadsContainN_async(
+                deviceId,
+                d_values, 
+                d_positions, 
+                elements,
+                0
+            );
+            cudaDeviceSynchronize(); CUERR;
+        }
+
+        cudaFree(d_values); CUERR;
+        cudaFree(d_positions); CUERR;
     }
-
-    cudaFree(d_values); CUERR;
-    cudaFree(d_positions); CUERR;
+    cudaSetDevice(oldId); CUERR;
 }
 
 

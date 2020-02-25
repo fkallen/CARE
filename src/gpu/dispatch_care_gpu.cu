@@ -27,13 +27,11 @@ namespace care{
     			    return gb;
     		    };
 
-        auto memInfo = readStorage.getMemoryInfo();
+        auto rsMemInfo = readStorage.getMemoryInfo();
 
-        assert(memInfo.deviceIds.size() == memInfo.deviceSizeInBytes.size());
-
-        std::cout << "Reads occupy " << toGB(memInfo.hostSizeInBytes) << " GB on host\n";
-        for(size_t i = 0; i < memInfo.deviceIds.size(); i++){
-            std::cout << "Reads occupy " << toGB(memInfo.deviceSizeInBytes[i]) << " GB on device " << memInfo.deviceIds[i] << '\n';
+        std::cout << "Reads occupy " << toGB(rsMemInfo.host) << " GB on host\n";
+        for(const auto& pair : rsMemInfo.device){
+            std::cout << "Reads occupy " << toGB(pair.second) << " GB on device " << pair.first << '\n';
         }
 
     	//std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;

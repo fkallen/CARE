@@ -10,7 +10,8 @@
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/peeraccess.hpp>
 #include <threadpool.hpp>
-#include <util.hpp>
+//#include <util.hpp>
+#include <memorymanagement.hpp>
 
 #include <algorithm>
 #include <numeric>

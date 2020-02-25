@@ -6,6 +6,7 @@
 #include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <lengthstorage.hpp>
+#include <memorymanagement.hpp>
 
 #include <cassert>
 #include <cmath>
@@ -191,6 +192,17 @@ struct GPULengthStore{
 
     void writeCpuLengthStoreToStream(std::ofstream& stream) const{
         lengthStore.writeToStream(stream);
+    }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage info;
+        info.host = lengthStore.getRawSizeInBytes();
+
+        for(int deviceId : deviceIds){
+            info.device[deviceId] = lengthStore.getRawSizeInBytes();
+        }
+
+        return info;
     }
 
 private:
