@@ -393,7 +393,7 @@ struct MemoryFileFixedSize{
         const std::uint8_t* rawData;
         const std::size_t* elementOffsets;
 
-        std::size_t elementIndexInMemory = 0;
+        std::int64_t elementIndexInMemory = 0;
         std::int64_t numElementsInMemory;
         T currentMemoryElement;
 
@@ -477,9 +477,12 @@ struct MemoryFileFixedSize{
             return;
         }
 
+
+
         //if all elements from memory and file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
         //insert all elements into that, then sort it in memory.
         try{
+
             outputstream.flush();
             std::size_t filesizeBytes = filehelpers::getSizeOfFileBytes(filename);
 
@@ -487,6 +490,7 @@ struct MemoryFileFixedSize{
             requiredMemForAllElements += filesizeBytes;
             requiredMemForAllElements += sizeof(std::size_t) * getNumElements();
             std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
+            
             if(requiredMemForAllElements < memoryForSortingInBytes){
                 FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
 
@@ -519,6 +523,7 @@ struct MemoryFileFixedSize{
         }
 
         
+        
         //append unsorted elements in memory to file
         const std::size_t memoryBytes = memoryStorage.getNumOccupiedRawElementBytes();
         outputstream.write(reinterpret_cast<const char*>(memoryStorage.getElementsData()), memoryBytes);
@@ -529,6 +534,8 @@ struct MemoryFileFixedSize{
         numStoredElementsInFile = numElements;
         
         memoryStorage.destroy();
+
+        memoryForSortingInBytes += memoryStorage.getSizeInBytes();
 
         //perform mergesort on file
         auto wrapperptrcomparator = [&](const std::uint8_t* l, const std::uint8_t* r){
