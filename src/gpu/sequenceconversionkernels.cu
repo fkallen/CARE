@@ -415,7 +415,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         size_t inputpitchInInts,
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
-        int* d_sequenceLengths,
+        const int* d_sequenceLengths,
         int numSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
@@ -498,7 +498,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
         size_t inputpitchInInts,
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
-        int* d_sequenceLengths,
+        const int* d_sequenceLengths,
         int numSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
@@ -579,7 +579,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
         size_t inputpitchInInts,
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
-        int* d_sequenceLengths,
+        const int* d_sequenceLengths,
         int numSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){

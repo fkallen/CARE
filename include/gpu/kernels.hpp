@@ -96,22 +96,29 @@ struct CorrectionResultPointers{
 
 
 void call_popcount_shifted_hamming_distance_kernel_async(
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* h_candidates_per_subject,
-            const int* d_candidates_per_subject,
-            const int* d_anchorIndicesOfCandidates,
-            int n_subjects,
-            int n_queries,
-            int maximumSequenceLength,
-            int encodedSequencePitchInInts2Bit,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            float estimatedNucleotideErrorRate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+                int* d_alignment_overlaps,
+                int* d_alignment_shifts,
+                int* d_alignment_nOps,
+                bool* d_alignment_isValid,
+                BestAlignment_t* d_alignment_best_alignment_flags,
+                const unsigned int* d_subjectSequencesData,
+                const unsigned int* d_candidateSequencesData,
+                const int* d_subjectSequencesLength,
+                const int* d_candidateSequencesLength,
+    			const int* d_candidates_per_subject_prefixsum,
+                const int* h_candidates_per_subject,
+                const int* d_candidates_per_subject,
+                const int* d_anchorIndicesOfCandidates,
+    			int n_subjects,
+    			int n_queries,
+                int maximumSequenceLength,
+                int encodedSequencePitchInInts2Bit,
+    			int min_overlap,
+    			float maxErrorRate,
+                float min_overlap_ratio,
+                float estimatedNucleotideErrorRate,
+    			cudaStream_t stream,
+    			KernelLaunchHandle& handle);
 
 
 
@@ -366,7 +373,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
             size_t inputpitchInInts,
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
-            int* d_sequenceLengths,
+            const int* d_sequenceLengths,
             int numSequences,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
@@ -376,7 +383,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
             size_t inputpitchInInts,
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
-            int* d_sequenceLengths,
+            const int* d_sequenceLengths,
             int numSequences,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
@@ -386,7 +393,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
             size_t inputpitchInInts,
             unsigned int* d_outputdata,
             size_t outputpitchInInts,
-            int* d_sequenceLengths,
+            const int* d_sequenceLengths,
             int numSequences,
             cudaStream_t stream,
             KernelLaunchHandle& handle);            

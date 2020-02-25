@@ -1504,11 +1504,18 @@ namespace gpu{
         ); CUERR;
         
         call_popcount_shifted_hamming_distance_kernel_async(
-                    dataArrays.getDeviceAlignmentResultPointers(),
-                    dataArrays.getDeviceSequencePointers(),
-                    dataArrays.d_candidates_per_subject_prefixsum,
-                    dataArrays.h_candidates_per_subject,
-                    dataArrays.d_candidates_per_subject,
+                    dataArrays.d_alignment_overlaps.get(),
+                    dataArrays.d_alignment_shifts.get(),
+                    dataArrays.d_alignment_nOps.get(),
+                    dataArrays.d_alignment_isValid.get(),
+                    dataArrays.d_alignment_best_alignment_flags.get(),
+                    dataArrays.d_subject_sequences_data.get(),
+                    dataArrays.d_candidate_sequences_data.get(),
+                    dataArrays.d_subject_sequences_lengths.get(),
+                    dataArrays.d_candidate_sequences_lengths.get(),
+                    dataArrays.d_candidates_per_subject_prefixsum.get(),
+                    dataArrays.h_candidates_per_subject.get(),
+                    dataArrays.d_candidates_per_subject.get(),
                     dataArrays.d_anchorIndicesOfCandidates.get(),
                     batch.n_subjects,
                     batch.n_queries,

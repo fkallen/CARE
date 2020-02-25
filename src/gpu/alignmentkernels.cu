@@ -114,7 +114,6 @@ namespace gpu{
 
 
 
-
     /*
 
         For each candidate, compute the alignment of anchor|candidate and anchor|revc-candidate
@@ -130,10 +129,15 @@ namespace gpu{
     __global__
     void
     popcount_shifted_hamming_distance_kernel(
-                const unsigned int* subjectDataHiLo,
-                const unsigned int* candidateDataHiLoTransposed,
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                const unsigned int* __restrict__ subjectDataHiLo,
+                const unsigned int* __restrict__ candidateDataHiLoTransposed,
+                int* __restrict__ d_alignment_overlaps,
+                int* __restrict__ d_alignment_shifts,
+                int* __restrict__ d_alignment_nOps,
+                bool* __restrict__ d_alignment_isValid,
+                BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+                const int* __restrict__ subjectSequencesLength,
+                const int* __restrict__ candidateSequencesLength,
                 const int* __restrict__ candidates_per_subject_prefixsum,
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 int n_subjects,
@@ -249,7 +253,7 @@ namespace gpu{
             const int tileForThisSubject = logicalTileId - tiles_per_subject_prefixsum[subjectIndex];
             const int candidateIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
 
-            const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
+            const int subjectbases = subjectSequencesLength[subjectIndex];
             const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
             const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
 
@@ -265,7 +269,7 @@ namespace gpu{
 
             if(candidateIndex < maxCandidateIndex_excl){
 
-                const int querybases = d_sequencePointers.candidateSequencesLength[candidateIndex];
+                const int querybases = candidateSequencesLength[candidateIndex];
                 const int queryints = getEncodedNumInts2BitHiLo(querybases);
                 const int totalbases = subjectbases + querybases;
                 const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
@@ -404,16 +408,7 @@ namespace gpu{
                     querybases
                 );
 
-                //int* const d_alignment_scores = d_alignmentresultpointers.scores;
-                int* const d_alignment_overlaps = d_alignmentresultpointers.overlaps;
-                int* const d_alignment_shifts = d_alignmentresultpointers.shifts;
-                int* const d_alignment_nOps = d_alignmentresultpointers.nOps;
-                bool* const d_alignment_isValid = d_alignmentresultpointers.isValid;
-                BestAlignment_t* const d_alignment_best_alignment_flags = d_alignmentresultpointers.bestAlignmentFlags;
-
                 d_alignment_best_alignment_flags[candidateIndex] = flag;
-                //scores are unused in the program
-                //d_alignment_scores[candidateIndex] = flag == BestAlignment_t::Forward ? bestScore[0] : bestScore[1];
                 d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
                 d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
                 d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
@@ -440,7 +435,6 @@ namespace gpu{
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
                 BestAlignment_t* __restrict__ bestAlignmentFlags,
-                int* __restrict__ alignment_scores,
                 int* __restrict__ alignment_overlaps,
                 int* __restrict__ alignment_shifts,
                 int* __restrict__ alignment_nOps,
@@ -785,8 +779,6 @@ namespace gpu{
             );
 
             bestAlignmentFlags[candidateIndex] = flag;
-            //scores are unused in the program
-            //d_alignment_scores[candidateIndex] = flag == BestAlignment_t::Forward ? bestScore[0] : bestScore[1];
             alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
             alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
             alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
@@ -1041,8 +1033,15 @@ namespace gpu{
 
 
     void call_popcount_shifted_hamming_distance_kernel_async(
-    			AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                int* d_alignment_overlaps,
+                int* d_alignment_shifts,
+                int* d_alignment_nOps,
+                bool* d_alignment_isValid,
+                BestAlignment_t* d_alignment_best_alignment_flags,
+                const unsigned int* d_subjectSequencesData,
+                const unsigned int* d_candidateSequencesData,
+                const int* d_subjectSequencesLength,
+                const int* d_candidateSequencesLength,
     			const int* d_candidates_per_subject_prefixsum,
                 const int* h_candidates_per_subject,
                 const int* d_candidates_per_subject,
@@ -1071,11 +1070,11 @@ namespace gpu{
             ); CUERR;
 
             callConversionKernel2BitTo2BitHiLoNT(
-                d_sequencePointers.candidateSequencesData,
+                d_candidateSequencesData,
                 encodedSequencePitchInInts2Bit,
                 d_candidateDataHiLoTransposed,
                 intsPerSequence2BitHiLo,
-                d_sequencePointers.candidateSequencesLength,
+                d_candidateSequencesLength,
                 n_queries,
                 stream,
                 handle
@@ -1089,11 +1088,11 @@ namespace gpu{
                 ); CUERR;
 
                 callConversionKernel2BitTo2BitHiLoNT(
-                    d_sequencePointers.subjectSequencesData,
+                    d_subjectSequencesData,
                     encodedSequencePitchInInts2Bit,
                     d_subjectDataHiLoTransposed,
                     intsPerSequence2BitHiLo,
-                    d_sequencePointers.subjectSequencesLength,
+                    d_subjectSequencesLength,
                     n_subjects,
                     stream,
                     handle
@@ -1143,14 +1142,13 @@ namespace gpu{
                     <<<grid, block, 0, stream>>>(
                         d_subjectDataHiLoTransposed,
                         d_candidateDataHiLoTransposed,
-                        d_sequencePointers.subjectSequencesLength,
-                        d_sequencePointers.candidateSequencesLength,
-                        d_alignmentresultpointers.bestAlignmentFlags,
-                        d_alignmentresultpointers.scores,
-                        d_alignmentresultpointers.overlaps,
-                        d_alignmentresultpointers.shifts,
-                        d_alignmentresultpointers.nOps,
-                        d_alignmentresultpointers.isValid,
+                        d_subjectSequencesLength,
+                        d_candidateSequencesLength,
+                        d_alignment_best_alignment_flags,
+                        d_alignment_overlaps,
+                        d_alignment_shifts,
+                        d_alignment_nOps,
+                        d_alignment_isValid,
                         d_anchorIndicesOfCandidates,
                         n_subjects,
                         n_queries,
@@ -1201,18 +1199,19 @@ namespace gpu{
                 const int numBlocks = SDIV(n_queries, blocksize);
                 dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
+                
+
                 popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
                     <<<grid, block, 0, stream>>>(
                         d_subjectDataHiLoTransposed,
                         d_candidateDataHiLoTransposed,
-                        d_sequencePointers.subjectSequencesLength,
-                        d_sequencePointers.candidateSequencesLength,
-                        d_alignmentresultpointers.bestAlignmentFlags,
-                        d_alignmentresultpointers.scores,
-                        d_alignmentresultpointers.overlaps,
-                        d_alignmentresultpointers.shifts,
-                        d_alignmentresultpointers.nOps,
-                        d_alignmentresultpointers.isValid,
+                        d_subjectSequencesLength,
+                        d_candidateSequencesLength,
+                        d_alignment_best_alignment_flags,
+                        d_alignment_overlaps,
+                        d_alignment_shifts,
+                        d_alignment_nOps,
+                        d_alignment_isValid,
                         d_anchorIndicesOfCandidates,
                         n_subjects,
                         n_queries,
@@ -1236,11 +1235,11 @@ namespace gpu{
                 ); CUERR;
 
                 callConversionKernel2BitTo2BitHiLoNN(
-                    d_sequencePointers.subjectSequencesData,
+                    d_subjectSequencesData,
                     encodedSequencePitchInInts2Bit,
                     d_subjectDataHiLo,
                     intsPerSequence2BitHiLo,
-                    d_sequencePointers.subjectSequencesLength,
+                    d_subjectSequencesLength,
                     n_subjects,
                     stream,
                     handle
@@ -1352,8 +1351,13 @@ namespace gpu{
                                                     <<<grid, block, smem, stream>>>( \
                                                     d_subjectDataHiLo, \
                                                     d_candidateDataHiLoTransposed, \
-                                                    d_alignmentresultpointers, \
-                                                    d_sequencePointers, \
+                                                    d_alignment_overlaps, \
+                                                    d_alignment_shifts, \
+                                                    d_alignment_nOps, \
+                                                    d_alignment_isValid, \
+                                                    d_alignment_best_alignment_flags, \
+                                                    d_subjectSequencesLength, \
+                                                    d_candidateSequencesLength, \
                                                     d_candidates_per_subject_prefixsum, \
                                                     d_tiles_per_subject_prefixsum, \
                                                     n_subjects, \
@@ -1383,7 +1387,6 @@ namespace gpu{
             // cudaDeviceSynchronize();
             // std::exit(0);
     }
-
 
     void call_cuda_find_best_alignment_kernel_async_exp(
                 AlignmentResultPointers d_alignmentresultpointers,
