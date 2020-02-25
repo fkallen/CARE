@@ -3658,6 +3658,13 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       //then, the corrected reads from the output file have to be merged with the original input file to get headers, uncorrected reads, and quality scores
       if(true || correctionOptions.correctCandidates){
 
+        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+        }
+
           std::cout << "begin merge" << std::endl;
 
           if(!correctionOptions.extractFeatures){
@@ -3672,6 +3679,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     fileOptions.inputfile, 
                     fileOptions.format, 
                     partialResults, 
+                    memoryForSorting,
                     fileOptions.outputfile, 
                     false
                 );
