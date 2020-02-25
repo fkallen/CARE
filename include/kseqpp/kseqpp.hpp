@@ -389,12 +389,18 @@ private:
                 }
                 if(tempBufferFilled){
                     //std::cerr << "filereaderThread: temp buffer still filled\n";
-                    threadSyncData->cv_producer.wait(ul, [&](){return !tempBufferFilled;});
+                    threadSyncData->cv_producer.wait(ul, [&](){return !tempBufferFilled || !canContinue;});
                 }
-                std::swap(threadBuffer, tempbuf);
+
                 tempBufferFilled = true;
-                tempReadBytes = n;
-                //std::cerr << "filereaderThread: temp buffer filled\n";
+                if(canContinue){
+                    std::swap(threadBuffer, tempbuf);                    
+                    tempReadBytes = n;
+                    //std::cerr << "filereaderThread: temp buffer filled\n";                    
+                }else{
+                    tempReadBytes = 0;
+                }
+
                 threadSyncData->cv_consumer.notify_one();
             }while(n > 0 && canContinue);
 
