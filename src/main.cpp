@@ -137,6 +137,9 @@ int main(int argc, char** argv){
 
 		("memHashtables", "Memory limit for hash tables and hash table construction",
 		cxxopts::value<std::string>()->default_value("0"))
+
+		("memTotal", "Total memory limit (This is not a hard limit)",
+		cxxopts::value<std::string>()->default_value("0"))
 		
 	;
 

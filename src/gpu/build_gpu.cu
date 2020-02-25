@@ -877,11 +877,10 @@ namespace gpu{
 
             std::size_t writtenTableBytes = 0;
 
-            constexpr std::size_t GB1 = std::size_t(1) << 30;
-            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024 - GB1;
-            if(memoryOptions.memoryForHashtables > 0){
-                maxMemoryForTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTables);
-            }
+            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
+
+            maxMemoryForTables = std::min(maxMemoryForTables, 
+                                    std::min(memoryOptions.memoryForHashtables, memoryOptions.memoryTotalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
             std::size_t availableMemForTables = maxMemoryForTables;
@@ -1013,6 +1012,7 @@ namespace gpu{
                     //if there is more than 10% gpu memory missing, make room for it
                     //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
                     {
+                        constexpr std::size_t GB1 = 1 << 30;
                         std::ofstream rstempostream(rstempfile, std::ios::binary);
                         std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
                         savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));

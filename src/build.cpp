@@ -624,11 +624,10 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             }
             std::size_t writtenTableBytes = 0;
 
-            constexpr std::size_t GB1 = std::size_t(1) << 30;
-            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024 - GB1;
-            if(memoryOptions.memoryForHashtables > 0){
-                maxMemoryForTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTables);
-            }
+            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
+
+            maxMemoryForTables = std::min(maxMemoryForTables, 
+                                    std::min(memoryOptions.memoryForHashtables, memoryOptions.memoryTotalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
             std::size_t availableMemForTables = maxMemoryForTables;
