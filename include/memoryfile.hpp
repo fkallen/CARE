@@ -358,7 +358,7 @@ struct MemoryFileFixedSize{
         Reader(
             const std::uint8_t* rawData_, 
             const std::size_t* elementOffsets_, 
-            std::size_t numElementsInMemory_, 
+            std::int64_t numElementsInMemory_, 
             std::string filename)
                 : 
                 rawData(rawData_),
@@ -394,7 +394,7 @@ struct MemoryFileFixedSize{
         const std::size_t* elementOffsets;
 
         std::size_t elementIndexInMemory = 0;
-        std::size_t numElementsInMemory;
+        std::int64_t numElementsInMemory;
         T currentMemoryElement;
 
         Twrapper currentFileElement;
@@ -451,7 +451,7 @@ struct MemoryFileFixedSize{
     }
 
     template<class Ptrcomparator, class TComparator>
-    void sort(const std::string& tempdir, std::size_t memoryForSorting, Ptrcomparator&& ptrcomparator, TComparator&& elementcomparator){
+    void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, Ptrcomparator&& ptrcomparator, TComparator&& elementcomparator){
     //void sort(const std::string& tempdir){
         std::cerr << "Sorting memory file:";
         std::cerr << " elements in memory = " << getNumElementsInMemory();
@@ -462,24 +462,65 @@ struct MemoryFileFixedSize{
             return ptrcomparator(memoryStorage.getElementsData() + elementOffset1, memoryStorage.getElementsData() + elementOffset2);
         };
 
-        //try to sort vector in memory
-        bool vectorCouldBeSortedInMemory = false;
-        if(getNumElementsInFile() == 0){
-            try{
+        bool success = false;
+
+        try{
+            if(getNumElementsInFile() == 0){
                 memoryStorage.sort(ptrcomparator);
-                vectorCouldBeSortedInMemory = true;
-            }catch(std::bad_alloc& e){
-                ; //nothing
+                success = true;
             }
+        }catch(...){
+
         }
 
-        if(vectorCouldBeSortedInMemory && getNumElementsInFile() == 0){
-            ; //done
+        if(success){
             return;
         }
 
-        //append unsorted vector to file
-        const std::size_t memoryBytes = memoryStorage.getNumOccupiedRawBytes();
+        //if all elements from memory and file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
+        //insert all elements into that, then sort it in memory.
+        try{
+            outputstream.flush();
+            std::size_t filesizeBytes = filehelpers::getSizeOfFileBytes(filename);
+
+            std::size_t requiredMemForAllElements = memoryStorage.getNumOccupiedRawElementBytes();
+            requiredMemForAllElements += filesizeBytes;
+            requiredMemForAllElements += sizeof(std::size_t) * getNumElements();
+            std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
+            if(requiredMemForAllElements < memoryForSortingInBytes){
+                FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
+
+                success = newMemoryStorage.insert(memoryStorage);
+                assert(success);
+
+                Reader r = makeFileOnlyReader();
+
+                auto serialize = [](const auto& element, auto beginptr, auto endptr){
+                    return element.copyToContiguousMemory(beginptr, endptr);
+                };
+
+                while(r.hasNext()){
+                    const T* element = r.next();
+                    newMemoryStorage.insert(*element, serialize);
+                }
+
+                newMemoryStorage.sort(ptrcomparator);
+
+                std::swap(memoryStorage, newMemoryStorage);
+                numStoredElementsInFile = 0;
+                outputstream = std::ofstream(filename, std::ios::binary);
+            }
+        }catch(...){
+
+        }
+
+        if(success){
+            return;
+        }
+
+        
+        //append unsorted elements in memory to file
+        const std::size_t memoryBytes = memoryStorage.getNumOccupiedRawElementBytes();
         outputstream.write(reinterpret_cast<const char*>(memoryStorage.getElementsData()), memoryBytes);
         outputstream.flush();
 
@@ -498,12 +539,12 @@ struct MemoryFileFixedSize{
             return elementcomparator(l.data, r.data);
         };
 
-        assert(memoryForSorting > 0);
+        assert(memoryForSortingInBytes > 0);
 
         filesort::fixedmemory::binKeySort<Twrapper>(tempdir,
                         {filename}, 
                         filename+"2",
-                        memoryForSorting,
+                        memoryForSortingInBytes,
                         wrapperptrcomparator,
                         wrappercomparator);
 
@@ -513,6 +554,10 @@ struct MemoryFileFixedSize{
     }
 
 private:
+    Reader makeFileOnlyReader() const{
+        return Reader{nullptr, nullptr, 0, filename};
+    }
+
     bool storeInMemory(const T& element){
 
         auto serialize = [](const auto& element, auto beginptr, auto endptr){
@@ -534,7 +579,7 @@ private:
 
     bool isUsingFile = false;
 
-    FixedSizeStorage memoryStorage;
+    FixedSizeStorage<T> memoryStorage;
     std::int64_t numStoredElementsInFile = 0;
 
     std::string filename = "";    

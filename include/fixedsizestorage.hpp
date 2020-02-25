@@ -7,7 +7,7 @@
 
 namespace care{
 
-
+    template<class T>
     struct FixedSizeStorage{
         std::size_t memoryLimitBytes = 0;
         std::unique_ptr<std::size_t[]> rawData = nullptr;
@@ -80,8 +80,16 @@ namespace care{
             return offsetsBegin;
         }
 
-        std::size_t getNumOccupiedRawBytes() const{
+        std::size_t getNumOccupiedRawElementBytes() const{
             return std::distance(elementsBegin, elementsEnd);
+        }
+
+        std::size_t getNumOccupiedRawOffsetBytes() const{
+            return std::distance(offsetsEnd, offsetsBegin);
+        }
+
+        std::size_t getSizeInBytes() const{
+            return memoryLimitBytes;
         }
 
         void clear(){
@@ -108,8 +116,8 @@ namespace care{
         // serialized element fits into range [begin, end): copy serialized elements into range starting at begin. 
         //   return pointer to position after last written byte
         // serialized element does not fit into range: do not modify range. return nullptr
-        template<class T, class Serializer>
-        bool insert(T&& element, Serializer serialize){
+        template<class Serializer>
+        bool insert(const T& element, Serializer serialize){
             std::size_t* newOffsetsBegin = offsetsBegin - 1;
 
             //check that new offset does not reach into element buffer
@@ -125,6 +133,38 @@ namespace care{
 
                 elementsEnd = newDataPtr;
                 numStoredElementsInMemory++;
+                return true;
+            }else{
+                return false;
+            }
+        }
+
+        bool insert(const FixedSizeStorage<T>& other){
+            std::size_t otherBytes = other.getNumOccupiedRawElementBytes() + other.getNumOccupiedRawOffsetBytes();
+
+            std::size_t myFreeBytes = std::distance((const char*)elementsEnd, (const char*)offsetsBegin);
+            myFreeBytes -= sizeof(std::size_t); //make sure that offsets can be stored at size_t boundary
+
+            if(myFreeBytes >= otherBytes){
+                numStoredElementsInMemory += other.getNumStoredElements();
+                elementsEnd = std::copy(
+                    other.elementsBegin,
+                    other.elementsEnd,
+                    elementsEnd
+                );
+
+                std::size_t* newOffsetsBegin = offsetsBegin - other.getNumStoredElements();
+
+                assert(((void*)elementsEnd) <= ((void*)newOffsetsBegin));
+
+                std::copy(
+                    other.offsetsBegin,
+                    other.offsetsEnd,
+                    newOffsetsBegin
+                );
+
+                offsetsBegin = newOffsetsBegin;
+
                 return true;
             }else{
                 return false;

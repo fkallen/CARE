@@ -502,7 +502,7 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
                             std::size_t memoryLimit, 
                             Ptrcomparator&& ptrcomparator){
 
-    FixedSizeStorage memoryStorage(memoryLimit);
+    FixedSizeStorage<T> memoryStorage(memoryLimit);
 
     auto serialize = [](const auto& element, auto beginptr, auto endptr){
         return element.copyToContiguousMemory(beginptr, endptr);

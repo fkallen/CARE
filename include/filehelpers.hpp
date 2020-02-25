@@ -18,6 +18,15 @@ namespace filesys = std::experimental::filesystem;
 namespace filehelpers{
 
 __inline__
+std::size_t getSizeOfFileBytes(const std::string& filename){
+    // https://stackoverflow.com/a/32286531
+    
+    filesys::path p{filename};
+    p = filesys::canonical(p);
+    return filesys::file_size(p);
+}
+
+__inline__
 void renameFileSameMount(const std::string& filename, const std::string& newFilename){
 #ifdef FILE_HELPERS_DEBUG        
     std::cerr << "Rename " << filename << " to " << newFilename << "\n";
