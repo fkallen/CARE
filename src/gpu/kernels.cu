@@ -1,6 +1,7 @@
 //#define NDEBUG
 
 #include <gpu/kernels.hpp>
+#include <gpu/kernellaunch.hpp>
 #include <gpu/devicefunctionsforkernels.cuh>
 
 //#include <gpu/bestalignment.hpp>
@@ -31,13 +32,6 @@ namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
-
-    KernelLaunchHandle make_kernel_launch_handle(int deviceId){
-        KernelLaunchHandle handle;
-        handle.deviceId = deviceId;
-        cudaGetDeviceProperties(&handle.deviceProperties, deviceId); CUERR;
-        return handle;
-    }
 
 
     template<int blocksize, int tilesize>
