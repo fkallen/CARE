@@ -404,6 +404,11 @@ private:
                 threadSyncData->cv_consumer.notify_one();
             }while(n > 0 && canContinue);
 
+            std::unique_lock<std::mutex> ul(threadSyncData->m);
+            tempBufferFilled = true;
+            tempReadBytes = 0;
+            threadSyncData->cv_consumer.notify_one();
+
             //std::cerr << "finished thread\n";
         }
 
