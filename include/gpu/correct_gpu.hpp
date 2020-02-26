@@ -22,26 +22,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
+			const MemoryOptions& memoryOptions,
 			const SequenceFileProperties& sequenceFileProperties,
             Minhasher& minhasher,
             DistributedReadStorage& readStorage,
             std::uint64_t maxCandidatesPerRead);
 
-
-namespace test{
-
-void correct_gpu(const MinhashOptions& minhashOptions,
-			const AlignmentOptions& alignmentOptions,
-			const GoodAlignmentProperties& goodAlignmentProperties,
-			const CorrectionOptions& correctionOptions,
-			const RuntimeOptions& runtimeOptions,
-			const FileOptions& fileOptions,
-			const SequenceFileProperties& sequenceFileProperties,
-            Minhasher& minhasher,
-            DistributedReadStorage& readStorage,
-            std::uint64_t maxCandidatesPerRead);			
-
-}
 
 }
 }

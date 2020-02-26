@@ -2877,38 +2877,42 @@ namespace gpu{
 
 
 
-void correct_gpu(const MinhashOptions& minhashOptions,
-                  const AlignmentOptions& alignmentOptions,
-                  const GoodAlignmentProperties& goodAlignmentProperties,
-                  const CorrectionOptions& correctionOptions,
-                  const RuntimeOptions& runtimeOptions,
-                  const FileOptions& fileOptions,
-                  const SequenceFileProperties& sequenceFileProperties,
-                  Minhasher& minhasher,
-                  DistributedReadStorage& readStorage,
-                  std::uint64_t maxCandidatesPerRead){
+void correct_gpu(
+        const MinhashOptions& minhashOptions,
+        const AlignmentOptions& alignmentOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        Minhasher& minhasher,
+        DistributedReadStorage& readStorage,
+        std::uint64_t maxCandidatesPerRead){
 
-      assert(runtimeOptions.canUseGpu);
-      //assert(runtimeOptions.max_candidates > 0);
-      assert(runtimeOptions.deviceIds.size() > 0);
+    assert(runtimeOptions.canUseGpu);
+    //assert(runtimeOptions.max_candidates > 0);
+    assert(runtimeOptions.deviceIds.size() > 0);
 
-      const auto& deviceIds = runtimeOptions.deviceIds;
+    const auto& deviceIds = runtimeOptions.deviceIds;
 
-      std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
-      std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
+    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
-      //std::vector<std::atomic_uint8_t> correctionStatusFlagsPerRead;
-      //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-      //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+    //std::vector<std::atomic_uint8_t> correctionStatusFlagsPerRead;
+    //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-      std::unique_ptr<std::atomic_uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::atomic_uint8_t[]>(sequenceFileProperties.nReads);
+    //std::size_t memoryAvailable = 
 
-      #pragma omp parallel for
-      for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
-          correctionStatusFlagsPerRead[i] = 0;
-      }
+    std::unique_ptr<std::atomic_uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::atomic_uint8_t[]>(sequenceFileProperties.nReads);
 
-      std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+    #pragma omp parallel for
+    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+        correctionStatusFlagsPerRead[i] = 0;
+    }
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
     const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
