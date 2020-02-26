@@ -1533,6 +1533,13 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     if(!correctionOptions.extractFeatures){
 
+        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+        }
+
         std::cout << "begin merging reads" << std::endl;
 
         TIMERSTARTCPU(merge);
@@ -1543,6 +1550,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             fileOptions.inputfile, 
             fileOptions.format, 
             partialResults, 
+            memoryForSorting, 
             fileOptions.outputfile, 
             false
         );
