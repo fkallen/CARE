@@ -128,7 +128,7 @@ namespace gpu{
     template<int tilesize>
     __global__
     void
-    popcount_shifted_hamming_distance_kernel(
+    popcount_shifted_hamming_distance_smem_kernel(
                 const unsigned int* __restrict__ subjectDataHiLo,
                 const unsigned int* __restrict__ candidateDataHiLoTransposed,
                 int* __restrict__ d_alignment_overlaps,
@@ -429,7 +429,7 @@ namespace gpu{
     template<int blocksize, int maxValidIntsPerSequence>
     __global__
     void
-    popcount_shifted_hamming_distance_ctpitch_kernel(
+    popcount_shifted_hamming_distance_reg_kernel(
                 const unsigned int* __restrict__ subjectDataHiLoTransposed,
                 const unsigned int* __restrict__ candidateDataHiLoTransposed,
                 const int* __restrict__ subjectSequencesLength,
@@ -504,6 +504,36 @@ namespace gpu{
             }
 
             return result;
+        };
+
+        auto maskBitArray = [](auto& uintarrayHi, auto& uintarrayLo, int keeplength){
+            //only keep the first keeplength bits, set remaining bits to 0
+            constexpr int N = maxValidIntsPerSequence / 2;
+
+            const int unusedInts = N - SDIV(keeplength, 32);
+            if(unusedInts > 0){
+                #pragma unroll
+                for(int i = 0; i < N; ++i){
+                    if(i >= N-unusedInts){
+                        uintarrayHi[i] = 0;
+                        uintarrayLo[i] = 0;
+                    }
+                }
+            }
+
+            const int unusedBitsInt = SDIV(keeplength, 32) * 32 - keeplength;
+
+            if(unusedBitsInt != 0){
+                #pragma unroll
+                for(int i = 0; i < N - 1; ++i){
+                    if(i == N-unusedInts-1){
+                        unsigned int mask = ~((1u << unusedBitsInt)-1);
+                        uintarrayHi[i] &= mask;
+                        uintarrayLo[i] &= mask;
+                        break;
+                    }
+                }
+            }
         };
 
         auto shiftBitArrayLeftBy1 = [](auto& uintarray){
@@ -1031,361 +1061,465 @@ namespace gpu{
 
     //####################   KERNEL DISPATCH   ####################
 
+    template<int maxValidIntsPerSequence>
+    void call_popcount_shifted_hamming_distance_reg_kernel_async(
+        int* d_alignment_overlaps,
+        int* d_alignment_shifts,
+        int* d_alignment_nOps,
+        bool* d_alignment_isValid,
+        BestAlignment_t* d_alignment_best_alignment_flags,
+        const unsigned int* d_subjectSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const int* d_subjectSequencesLength,
+        const int* d_candidateSequencesLength,
+        const int* d_candidates_per_subject_prefixsum,
+        const int* h_candidates_per_subject,
+        const int* d_candidates_per_subject,
+        const int* d_anchorIndicesOfCandidates,
+        int n_subjects,
+        int n_queries,
+        int maximumSequenceLength,
+        int encodedSequencePitchInInts2Bit,
+        int min_overlap,
+        float maxErrorRate,
+        float min_overlap_ratio,
+        float estimatedNucleotideErrorRate,
+        cudaStream_t stream,
+        KernelLaunchHandle& handle){
 
-    void call_popcount_shifted_hamming_distance_kernel_async(
-                int* d_alignment_overlaps,
-                int* d_alignment_shifts,
-                int* d_alignment_nOps,
-                bool* d_alignment_isValid,
-                BestAlignment_t* d_alignment_best_alignment_flags,
-                const unsigned int* d_subjectSequencesData,
-                const unsigned int* d_candidateSequencesData,
-                const int* d_subjectSequencesLength,
-                const int* d_candidateSequencesLength,
-    			const int* d_candidates_per_subject_prefixsum,
-                const int* h_candidates_per_subject,
-                const int* d_candidates_per_subject,
-                const int* d_anchorIndicesOfCandidates,
-    			int n_subjects,
-    			int n_queries,
-                int maximumSequenceLength,
-                int encodedSequencePitchInInts2Bit,
-    			int min_overlap,
-    			float maxErrorRate,
-                float min_overlap_ratio,
-                float estimatedNucleotideErrorRate,
-    			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
 
-            const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
-            const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
+        unsigned int* d_subjectDataHiLoTransposed = nullptr;
+        unsigned int* d_candidateDataHiLoTransposed = nullptr;
 
-            unsigned int* d_subjectDataHiLoTransposed = nullptr;
-            unsigned int* d_candidateDataHiLoTransposed = nullptr;
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_candidateDataHiLoTransposed, 
+            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
+            stream
+        ); CUERR;
 
-            cubCachingAllocator.DeviceAllocate(
-                (void**)&d_candidateDataHiLoTransposed, 
-                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
-                stream
+        callConversionKernel2BitTo2BitHiLoNT(
+            d_candidateSequencesData,
+            encodedSequencePitchInInts2Bit,
+            d_candidateDataHiLoTransposed,
+            intsPerSequence2BitHiLo,
+            d_candidateSequencesLength,
+            n_queries,
+            stream,
+            handle
+        );
+        
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_subjectDataHiLoTransposed, 
+            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+            stream
+        ); CUERR;
+
+        callConversionKernel2BitTo2BitHiLoNT(
+            d_subjectSequencesData,
+            encodedSequencePitchInInts2Bit,
+            d_subjectDataHiLoTransposed,
+            intsPerSequence2BitHiLo,
+            d_subjectSequencesLength,
+            n_subjects,
+            stream,
+            handle
+        );
+        
+
+        constexpr int blocksize = 128;
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = 0;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiledPitch8);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
             ); CUERR;
 
-            callConversionKernel2BitTo2BitHiLoNT(
-                d_candidateSequencesData,
-                encodedSequencePitchInInts2Bit,
+            mymap[kernelLaunchConfig] = kernelProperties;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::PopcountSHDTiledPitch8] = std::move(mymap);
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
+        dim3 block(blocksize, 1, 1);
+        const int numBlocks = SDIV(n_queries, blocksize);
+        dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
+
+        popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
+            <<<grid, block, 0, stream>>>(
+                d_subjectDataHiLoTransposed,
                 d_candidateDataHiLoTransposed,
-                intsPerSequence2BitHiLo,
+                d_subjectSequencesLength,
                 d_candidateSequencesLength,
+                d_alignment_best_alignment_flags,
+                d_alignment_overlaps,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_isValid,
+                d_anchorIndicesOfCandidates,
+                n_subjects,
                 n_queries,
-                stream,
-                handle
-            );
-            
-            if(maximumSequenceLength <= 256){
-                cubCachingAllocator.DeviceAllocate(
-                    (void**)&d_subjectDataHiLoTransposed, 
-                    sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
-                    stream
-                ); CUERR;
+                intsPerSequence2BitHiLo, 
+                min_overlap,
+                maxErrorRate,
+                min_overlap_ratio,
+                estimatedNucleotideErrorRate
+        ); CUERR;
 
-                callConversionKernel2BitTo2BitHiLoNT(
-                    d_subjectSequencesData,
-                    encodedSequencePitchInInts2Bit,
-                    d_subjectDataHiLoTransposed,
-                    intsPerSequence2BitHiLo,
-                    d_subjectSequencesLength,
+        cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;        
+        
+        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
+
+        // cudaDeviceSynchronize();
+        // std::exit(0);
+    }
+
+
+    void call_popcount_shifted_hamming_distance_smem_kernel_async(
+            int* d_alignment_overlaps,
+            int* d_alignment_shifts,
+            int* d_alignment_nOps,
+            bool* d_alignment_isValid,
+            BestAlignment_t* d_alignment_best_alignment_flags,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* h_candidates_per_subject,
+            const int* d_candidates_per_subject,
+            const int* d_anchorIndicesOfCandidates,
+            int n_subjects,
+            int n_queries,
+            int maximumSequenceLength,
+            int encodedSequencePitchInInts2Bit,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio,
+            float estimatedNucleotideErrorRate,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle){
+
+        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
+
+        unsigned int* d_candidateDataHiLoTransposed = nullptr;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_candidateDataHiLoTransposed, 
+            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
+            stream
+        ); CUERR;
+
+        callConversionKernel2BitTo2BitHiLoNT(
+            d_candidateSequencesData,
+            encodedSequencePitchInInts2Bit,
+            d_candidateDataHiLoTransposed,
+            intsPerSequence2BitHiLo,
+            d_candidateSequencesLength,
+            n_queries,
+            stream,
+            handle
+        );
+        
+        unsigned int* d_subjectDataHiLo = nullptr;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_subjectDataHiLo, 
+            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+            stream
+        ); CUERR;
+
+        callConversionKernel2BitTo2BitHiLoNN(
+            d_subjectSequencesData,
+            encodedSequencePitchInInts2Bit,
+            d_subjectDataHiLo,
+            intsPerSequence2BitHiLo,
+            d_subjectSequencesLength,
+            n_subjects,
+            stream,
+            handle
+        );
+
+        constexpr int tilesize = 16;
+
+        int* d_tiles_per_subject_prefixsum;
+        cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+
+        // calculate blocks per subject prefixsum
+        auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
+            return SDIV(candidates_for_subject, tilesize);
+        };
+        cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
+            d_tiles_per_subject(d_candidates_per_subject,
+                        getTilesPerSubject);
+
+        void* tempstorage = nullptr;
+        size_t tempstoragesize = 0;
+
+        cub::DeviceScan::InclusiveSum(nullptr,
+                    tempstoragesize,
+                    d_tiles_per_subject,
+                    d_tiles_per_subject_prefixsum+1,
                     n_subjects,
-                    stream,
-                    handle
-                );
-            }
-            
+                    stream); CUERR;
 
-            if(maximumSequenceLength <= 128){
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+
+        cub::DeviceScan::InclusiveSum(tempstorage,
+                    tempstoragesize,
+                    d_tiles_per_subject,
+                    d_tiles_per_subject_prefixsum+1,
+                    n_subjects,
+                    stream); CUERR;
+
+        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+        call_set_kernel_async(d_tiles_per_subject_prefixsum,
+                                0,
+                                0,
+                                stream);
+
+
+
+
+        constexpr int blocksize = 128;
+        constexpr int tilesPerBlock = blocksize / tilesize;
+
+        //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+
+        int requiredTiles = 0;
+        for(int i = 0; i < n_subjects;i++){
+            requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
+        }
+
+        const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
+
+        //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
+
+
+        const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiled);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize, tilesize) { \
+                    KernelLaunchConfig kernelLaunchConfig; \
+                    kernelLaunchConfig.threads_per_block = (blocksize); \
+                    kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
+                    KernelProperties kernelProperties; \
+                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                        popcount_shifted_hamming_distance_smem_kernel<tilesize>, \
+                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                    mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+            getProp(1, tilesize);
+            getProp(32, tilesize);
+            getProp(64, tilesize);
+            getProp(96, tilesize);
+            getProp(128, tilesize);
+            getProp(160, tilesize);
+            getProp(192, tilesize);
+            getProp(224, tilesize);
+            getProp(256, tilesize);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::PopcountSHDTiled] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
+        #define mycall popcount_shifted_hamming_distance_smem_kernel<tilesize> \
+                                            <<<grid, block, smem, stream>>>( \
+                                            d_subjectDataHiLo, \
+                                            d_candidateDataHiLoTransposed, \
+                                            d_alignment_overlaps, \
+                                            d_alignment_shifts, \
+                                            d_alignment_nOps, \
+                                            d_alignment_isValid, \
+                                            d_alignment_best_alignment_flags, \
+                                            d_subjectSequencesLength, \
+                                            d_candidateSequencesLength, \
+                                            d_candidates_per_subject_prefixsum, \
+                                            d_tiles_per_subject_prefixsum, \
+                                            n_subjects, \
+                                            n_queries, \
+                                            intsPerSequence2BitHiLo, \
+                                            min_overlap, \
+                                            maxErrorRate, \
+                                            min_overlap_ratio, \
+                                            estimatedNucleotideErrorRate); CUERR;
+
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
+
+        mycall;
+
+        #undef mycall
+
+        cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+        cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
+        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
+
+        // cudaDeviceSynchronize();
+        // std::exit(0);
+    }
+
+
+    void call_popcount_shifted_hamming_distance_kernel_async(
+            int* d_alignment_overlaps,
+            int* d_alignment_shifts,
+            int* d_alignment_nOps,
+            bool* d_alignment_isValid,
+            BestAlignment_t* d_alignment_best_alignment_flags,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* h_candidates_per_subject,
+            const int* d_candidates_per_subject,
+            const int* d_anchorIndicesOfCandidates,
+            int n_subjects,
+            int n_queries,
+            int maximumSequenceLength,
+            int encodedSequencePitchInInts2Bit,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio,
+            float estimatedNucleotideErrorRate,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle){
+
+            #define regKernel(intsPerSequence){ \
+                call_popcount_shifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
+                    d_alignment_overlaps, \
+                    d_alignment_shifts, \
+                    d_alignment_nOps, \
+                    d_alignment_isValid, \
+                    d_alignment_best_alignment_flags, \
+                    d_subjectSequencesData, \
+                    d_candidateSequencesData, \
+                    d_subjectSequencesLength, \
+                    d_candidateSequencesLength, \
+                    d_candidates_per_subject_prefixsum, \
+                    h_candidates_per_subject, \
+                    d_candidates_per_subject, \
+                    d_anchorIndicesOfCandidates, \
+                    n_subjects, \
+                    n_queries, \
+                    maximumSequenceLength, \
+                    encodedSequencePitchInInts2Bit, \
+                    min_overlap, \
+                    maxErrorRate, \
+                    min_overlap_ratio, \
+                    estimatedNucleotideErrorRate, \
+                    stream, \
+                    handle \
+                ); \
+            };
+
+            
+            if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
+               
+                constexpr int maxValidIntsPerSequence = 2;
+                regKernel(maxValidIntsPerSequence);
+
+            }else if(33 <= maximumSequenceLength && maximumSequenceLength <= 64){
+               
+                constexpr int maxValidIntsPerSequence = 4;
+                regKernel(maxValidIntsPerSequence);
+
+            }else if(65 <= maximumSequenceLength && maximumSequenceLength <= 96){
+               
+                constexpr int maxValidIntsPerSequence = 6;
+                regKernel(maxValidIntsPerSequence);
+
+            }else if(97 <= maximumSequenceLength && maximumSequenceLength <= 128){
                
                 constexpr int maxValidIntsPerSequence = 8;
+                regKernel(maxValidIntsPerSequence);
 
-                constexpr int blocksize = 128;
-                int max_blocks_per_device = 1;
+            }else if(129 <= maximumSequenceLength && maximumSequenceLength <= 160){
+               
+                constexpr int maxValidIntsPerSequence = 10;
+                regKernel(maxValidIntsPerSequence);
 
-                KernelLaunchConfig kernelLaunchConfig;
-                kernelLaunchConfig.threads_per_block = blocksize;
-                kernelLaunchConfig.smem = 0;
+            }else if(161 <= maximumSequenceLength && maximumSequenceLength <= 192){
+               
+                constexpr int maxValidIntsPerSequence = 12;
+                regKernel(maxValidIntsPerSequence);
 
-                auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiledPitch8);
-                if(iter == handle.kernelPropertiesMap.end()) {
+            }else if(193 <= maximumSequenceLength && maximumSequenceLength <= 224){
+               
+                constexpr int maxValidIntsPerSequence = 14;
+                regKernel(maxValidIntsPerSequence);
 
-                    std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-                    KernelProperties kernelProperties;
-                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                        &kernelProperties.max_blocks_per_SM,
-                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>,
-                        kernelLaunchConfig.threads_per_block, 
-                        kernelLaunchConfig.smem
-                    ); CUERR;
-
-                    mymap[kernelLaunchConfig] = kernelProperties;
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-                    handle.kernelPropertiesMap[KernelId::PopcountSHDTiledPitch8] = std::move(mymap);
-                }else{
-                    std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-                    const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-                }
-
-                dim3 block(blocksize, 1, 1);
-                const int numBlocks = SDIV(n_queries, blocksize);
-                dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
-
-                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
-                    <<<grid, block, 0, stream>>>(
-                        d_subjectDataHiLoTransposed,
-                        d_candidateDataHiLoTransposed,
-                        d_subjectSequencesLength,
-                        d_candidateSequencesLength,
-                        d_alignment_best_alignment_flags,
-                        d_alignment_overlaps,
-                        d_alignment_shifts,
-                        d_alignment_nOps,
-                        d_alignment_isValid,
-                        d_anchorIndicesOfCandidates,
-                        n_subjects,
-                        n_queries,
-                        intsPerSequence2BitHiLo, 
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        estimatedNucleotideErrorRate
-                ); CUERR;
-
-                cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;
-
-            }else if(maximumSequenceLength <= 256){
+            }else if(225 <= maximumSequenceLength && maximumSequenceLength <= 256){
                
                 constexpr int maxValidIntsPerSequence = 16;
-
-                constexpr int blocksize = 128;
-                int max_blocks_per_device = 1;
-
-                KernelLaunchConfig kernelLaunchConfig;
-                kernelLaunchConfig.threads_per_block = blocksize;
-                kernelLaunchConfig.smem = 0;
-
-                auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiledPitch8);
-                if(iter == handle.kernelPropertiesMap.end()) {
-
-                    std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-                    KernelProperties kernelProperties;
-                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                        &kernelProperties.max_blocks_per_SM,
-                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>,
-                        kernelLaunchConfig.threads_per_block, 
-                        kernelLaunchConfig.smem
-                    ); CUERR;
-
-                    mymap[kernelLaunchConfig] = kernelProperties;
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-                    handle.kernelPropertiesMap[KernelId::PopcountSHDTiledPitch8] = std::move(mymap);
-                }else{
-                    std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-                    const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-                }
-
-                dim3 block(blocksize, 1, 1);
-                const int numBlocks = SDIV(n_queries, blocksize);
-                dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
-
-                
-
-                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
-                    <<<grid, block, 0, stream>>>(
-                        d_subjectDataHiLoTransposed,
-                        d_candidateDataHiLoTransposed,
-                        d_subjectSequencesLength,
-                        d_candidateSequencesLength,
-                        d_alignment_best_alignment_flags,
-                        d_alignment_overlaps,
-                        d_alignment_shifts,
-                        d_alignment_nOps,
-                        d_alignment_isValid,
-                        d_anchorIndicesOfCandidates,
-                        n_subjects,
-                        n_queries,
-                        intsPerSequence2BitHiLo, 
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        estimatedNucleotideErrorRate
-                ); CUERR;
-
-                cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;
+                regKernel(maxValidIntsPerSequence);
 
             }else{
 
-                unsigned int* d_subjectDataHiLo = nullptr;
-
-                cubCachingAllocator.DeviceAllocate(
-                    (void**)&d_subjectDataHiLo, 
-                    sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
-                    stream
-                ); CUERR;
-
-                callConversionKernel2BitTo2BitHiLoNN(
+                call_popcount_shifted_hamming_distance_smem_kernel_async(
+                    d_alignment_overlaps,
+                    d_alignment_shifts,
+                    d_alignment_nOps,
+                    d_alignment_isValid,
+                    d_alignment_best_alignment_flags,
                     d_subjectSequencesData,
-                    encodedSequencePitchInInts2Bit,
-                    d_subjectDataHiLo,
-                    intsPerSequence2BitHiLo,
+                    d_candidateSequencesData,
                     d_subjectSequencesLength,
+                    d_candidateSequencesLength,
+                    d_candidates_per_subject_prefixsum,
+                    h_candidates_per_subject,
+                    d_candidates_per_subject,
+                    d_anchorIndicesOfCandidates,
                     n_subjects,
+                    n_queries,
+                    maximumSequenceLength,
+                    encodedSequencePitchInInts2Bit,
+                    min_overlap,
+                    maxErrorRate,
+                    min_overlap_ratio,
+                    estimatedNucleotideErrorRate,
                     stream,
                     handle
                 );
-
-                constexpr int tilesize = 16;
-
-                int* d_tiles_per_subject_prefixsum;
-                cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
-
-                // calculate blocks per subject prefixsum
-                auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
-                    return SDIV(candidates_for_subject, tilesize);
-                };
-                cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
-                    d_tiles_per_subject(d_candidates_per_subject,
-                                getTilesPerSubject);
-
-                void* tempstorage = nullptr;
-                size_t tempstoragesize = 0;
-
-                cub::DeviceScan::InclusiveSum(nullptr,
-                            tempstoragesize,
-                            d_tiles_per_subject,
-                            d_tiles_per_subject_prefixsum+1,
-                            n_subjects,
-                            stream); CUERR;
-
-                cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-
-                cub::DeviceScan::InclusiveSum(tempstorage,
-                            tempstoragesize,
-                            d_tiles_per_subject,
-                            d_tiles_per_subject_prefixsum+1,
-                            n_subjects,
-                            stream); CUERR;
-
-                cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
-
-                call_set_kernel_async(d_tiles_per_subject_prefixsum,
-                                        0,
-                                        0,
-                                        stream);
-
-
-
-
-                constexpr int blocksize = 128;
-                constexpr int tilesPerBlock = blocksize / tilesize;
-
-                //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
-
-                int requiredTiles = 0;
-                for(int i = 0; i < n_subjects;i++){
-                    requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
-                }
-
-                const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
-
-                //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
-
-
-                const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
-
-                int max_blocks_per_device = 1;
-
-                KernelLaunchConfig kernelLaunchConfig;
-                kernelLaunchConfig.threads_per_block = blocksize;
-                kernelLaunchConfig.smem = smem;
-
-                auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiled);
-                if(iter == handle.kernelPropertiesMap.end()) {
-
-                    std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-                    #define getProp(blocksize, tilesize) { \
-                            KernelLaunchConfig kernelLaunchConfig; \
-                            kernelLaunchConfig.threads_per_block = (blocksize); \
-                            kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
-                            KernelProperties kernelProperties; \
-                            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                                popcount_shifted_hamming_distance_kernel<tilesize>, \
-                                        kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                            mymap[kernelLaunchConfig] = kernelProperties; \
-                    }
-                    getProp(1, tilesize);
-                    getProp(32, tilesize);
-                    getProp(64, tilesize);
-                    getProp(96, tilesize);
-                    getProp(128, tilesize);
-                    getProp(160, tilesize);
-                    getProp(192, tilesize);
-                    getProp(224, tilesize);
-                    getProp(256, tilesize);
-
-                    const auto& kernelProperties = mymap[kernelLaunchConfig];
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-                    handle.kernelPropertiesMap[KernelId::PopcountSHDTiled] = std::move(mymap);
-
-                    #undef getProp
-                }else{
-                    std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-                    const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-                }
-
-                #define mycall popcount_shifted_hamming_distance_kernel<tilesize> \
-                                                    <<<grid, block, smem, stream>>>( \
-                                                    d_subjectDataHiLo, \
-                                                    d_candidateDataHiLoTransposed, \
-                                                    d_alignment_overlaps, \
-                                                    d_alignment_shifts, \
-                                                    d_alignment_nOps, \
-                                                    d_alignment_isValid, \
-                                                    d_alignment_best_alignment_flags, \
-                                                    d_subjectSequencesLength, \
-                                                    d_candidateSequencesLength, \
-                                                    d_candidates_per_subject_prefixsum, \
-                                                    d_tiles_per_subject_prefixsum, \
-                                                    n_subjects, \
-                                                    n_queries, \
-                                                    intsPerSequence2BitHiLo, \
-                                                    min_overlap, \
-                                                    maxErrorRate, \
-                                                    min_overlap_ratio, \
-                                                    estimatedNucleotideErrorRate); CUERR;
-
-                dim3 block(blocksize, 1, 1);
-                dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
-
-                mycall;
-
-                #undef mycall
-
-                cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
-
-                cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
             }
 
-            
-            
-            cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
-
-            // cudaDeviceSynchronize();
-            // std::exit(0);
+        #undef regKernel 
     }
 
     void call_cuda_find_best_alignment_kernel_async_exp(
