@@ -1380,7 +1380,7 @@ public:
     }
 
     void writeToStream(std::ofstream& stream) const{
-        const size_t totalMemory = numRows * numColumns * sizeOfElement;
+        const size_t totalMemory = numRows * sizeOfElement;
         stream.write(reinterpret_cast<const char*>(&totalMemory), sizeof(size_t));
 
         writeGpuPartitionsToStream(stream);
