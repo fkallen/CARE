@@ -1181,7 +1181,9 @@ namespace gpu{
 
                                 if(currentNumEdits + g.size() <= maxEdits){
                                     const int myEditOutputPos = g.thread_rank() + currentNumEdits;
-                                    myEdits[myEditOutputPos] = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                    if(myEditOutputPos < maxEdits){
+                                        myEdits[myEditOutputPos] = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                    }
                                 }
                             }
                         }
@@ -1278,7 +1280,9 @@ namespace gpu{
                     const char uncorrectedNuc = to_nuc(get(encodedUncorrectedSequence, length, i, [](auto i){return i;}));
 
                     if(correctedNuc != uncorrectedNuc){
-                        myEdits[edits] = TempCorrectedSequence::Edit{i, correctedNuc};
+                        if(edits < maxEdits){
+                            myEdits[edits] = TempCorrectedSequence::Edit{i, correctedNuc};
+                        }
                         edits++;
                     }
                 }
