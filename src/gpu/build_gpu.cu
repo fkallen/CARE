@@ -877,13 +877,27 @@ namespace gpu{
 
             std::size_t writtenTableBytes = 0;
 
+            
+            const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
+            std::size_t totalLimit = memoryOptions.memoryTotalLimit;
+            if(totalLimit > memoryUsageOfReadStorage.host){
+                totalLimit -= memoryUsageOfReadStorage.host;
+            }else{
+                totalLimit = 0;
+            }
+            if(totalLimit == 0){
+                throw std::runtime_error("Not enough memory available for hash tables. Abort!");
+            }
             std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
+            std::cerr << "available: " << maxMemoryForTables 
+                    << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
+                    << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
+                    << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
             maxMemoryForTables = std::min(maxMemoryForTables, 
-                                    std::min(memoryOptions.memoryForHashtables, memoryOptions.memoryTotalLimit));
+                                    std::min(memoryOptions.memoryForHashtables, totalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
-            std::size_t availableMemForTables = maxMemoryForTables;
 
 
 
@@ -1005,6 +1019,26 @@ namespace gpu{
                     std::size_t freeGpuMem, totalGpuMem;
                     cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
 
+                    std::size_t availableMemoryToSaveGpuPartitions = totalLimit;
+                    //account for constructed tables in previous iteration
+                    if(availableMemoryToSaveGpuPartitions > bytesOfCachedConstructedTables){
+                        availableMemoryToSaveGpuPartitions -= bytesOfCachedConstructedTables;
+                    }else{
+                        availableMemoryToSaveGpuPartitions = 0;
+                    }
+                    //account for constructed tables in current iteration and space needed by transformation
+                    for(int i = 0; i < 2 + int(minhashTables.size()); i++){
+                        const std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                        if(availableMemoryToSaveGpuPartitions > requiredMemPerTable){
+                            availableMemoryToSaveGpuPartitions -= requiredMemPerTable;
+                        }else{
+                            availableMemoryToSaveGpuPartitions = 0;
+                            break;
+                        }
+                    }               
+                    
+                    std::cerr << "availableMemoryToSaveGpuPartitions: " << availableMemoryToSaveGpuPartitions << "\n";
+
                     DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
                     const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
                     bool didSaveGpudata = false;
@@ -1012,10 +1046,9 @@ namespace gpu{
                     //if there is more than 10% gpu memory missing, make room for it
                     //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
                     {
-                        constexpr std::size_t GB1 = 1 << 30;
                         std::ofstream rstempostream(rstempfile, std::ios::binary);
                         std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
-                        savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));
+                        savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, availableMemoryToSaveGpuPartitions));
 
                         didSaveGpudata = true;
                     }
@@ -1197,6 +1230,8 @@ namespace gpu{
                     << "which may be different from supplied parameters" << std::endl;      
 
         detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
+
+        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(fileOptions, 

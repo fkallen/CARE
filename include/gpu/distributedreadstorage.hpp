@@ -122,11 +122,11 @@ public:
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
     // void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
     // void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
-    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numBytesMustRemainFree) const;
+    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numUsableBytes) const;
     SavedGpuPartitionData saveGpuPartitionData(
             int deviceId,
             std::ofstream& stream, 
-            std::size_t numBytesMustRemainFree) const;
+            std::size_t* numBytesMustRemainFree) const;
 
     void loadGpuPartitionData(int deviceId, 
                                         std::ifstream& stream, 
@@ -138,7 +138,7 @@ public:
     SavedGpuPartitionData saveGpuPartitionDataAndFreeGpuMem(
                     int deviceId,
                     std::ofstream& stream, 
-                    std::size_t numBytesMustRemainFree) const;
+                    std::size_t* numUsableBytes) const;
 
     void allocGpuMemAndLoadGpuPartitionData(int deviceId, 
                                             std::ifstream& stream, 
@@ -153,6 +153,7 @@ public:
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
+    std::int64_t getNumberOfReadsWithN() const;
 
     void readsContainN_async(
         int deviceId,
