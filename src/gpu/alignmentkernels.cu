@@ -677,6 +677,8 @@ namespace gpu{
                 subjectBackupLo[i] = subjectptr[(i + maxValidIntsPerSequence / 2) * n_subjects];
             }
 
+            maskBitArray(subjectBackupHi, subjectBackupLo, subjectbases);
+
             const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
 
             //save query in reg
@@ -686,6 +688,8 @@ namespace gpu{
                 queryBackupHi[i] = candidateptr[i * n_candidates];
                 queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
             }
+
+            maskBitArray(queryBackupHi, queryBackupLo, querybases);
 
             //begin SHD algorithm
 
@@ -815,16 +819,6 @@ namespace gpu{
             alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
         }
     }
-
-
-
-
-
-
-
-
-
-
 
 
 
