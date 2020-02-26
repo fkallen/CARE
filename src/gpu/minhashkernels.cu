@@ -8,6 +8,7 @@
 #include <nvToolsExt.h>
 
 #include <cub/cub.cuh>
+#include <cub/iterator/discard_output_iterator.cuh>
 
 #include <algorithm>
 #include <cassert>
