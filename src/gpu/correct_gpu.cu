@@ -2903,7 +2903,9 @@ void correct_gpu(
     //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
     //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-    //std::size_t memoryAvailable = 
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit 
+                                            - readStorage.getMemoryInfo().host
+                                            - minhasher.getMemoryInfo().host;
 
     std::unique_ptr<std::atomic_uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::atomic_uint8_t[]>(sequenceFileProperties.nReads);
 
@@ -2914,7 +2916,9 @@ void correct_gpu(
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
-    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    memoryAvailableBytesHost -= sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads;
+
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
     if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){

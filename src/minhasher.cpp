@@ -3,6 +3,7 @@
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
+#include <memorymanagement.hpp>
 
 #include <ntHash/nthash.hpp>
 
@@ -72,12 +73,24 @@ namespace care{
         return !(*this == rhs);
     }
 
+
+
     std::size_t Minhasher::numBytes() const{
         //return minhashTables[0]->numBytes() * minhashTables.size();
         std::size_t result = 0;
         for(const auto& m : minhashTables)
             result += m->numBytes();
         return result;
+    }
+
+    MemoryUsage Minhasher::getMemoryInfo() const{
+        MemoryUsage memoryInfo;
+
+        memoryInfo.host = 0;
+        for(const auto& m : minhashTables)
+            memoryInfo.host += m->numBytes();
+            
+        return memoryInfo;
     }
 
 

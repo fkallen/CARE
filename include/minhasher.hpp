@@ -6,6 +6,7 @@
 #include "util.hpp"
 
 #include <config.hpp>
+#include <memorymanagement.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -550,7 +551,7 @@ struct Minhasher {
 
     std::size_t numBytes() const;
 
-
+    MemoryUsage getMemoryInfo() const;
 
     void saveToFile(const std::string& filename) const;
 
