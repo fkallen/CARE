@@ -635,6 +635,13 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     float m_coverage,
                                     int neighborRegionSize){
 
+    if(nCandidates == 0){
+        //cannot be corrected without candidates
+
+        CorrectionResult result;
+        result.isCorrected = false;
+        return result;
+    }
 
     const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
