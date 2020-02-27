@@ -3154,15 +3154,15 @@ void correct_gpu(
 
             poprange();
 
-            // if(transFuncData.correctionOptions.correctCandidates) {                        
+            if(transFuncData.correctionOptions.correctCandidates) {                        
 
-            //     pushrange("correctCandidates", 8);
+                pushrange("correctCandidates", 8);
 
-            //     correctCandidates(batchData);
+                correctCandidates(batchData);
 
-            //     poprange();
+                poprange();
                 
-            //}
+            }
             
         };
 
