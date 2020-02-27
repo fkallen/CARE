@@ -279,7 +279,7 @@ struct DataArrays {
         d_subject_qualities = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities_transposed = std::move(SimpleAllocationDevice<char>{});
-        d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
+        //d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
 
         h_consensus = std::move(SimpleAllocationPinnedHost<char>{});
         h_support = std::move(SimpleAllocationPinnedHost<float>{});
@@ -468,7 +468,7 @@ struct DataArrays {
         bytes += f(d_subject_qualities);
         bytes += f(d_candidate_qualities);
         bytes += f(d_candidate_qualities_transposed);
-        bytes += f(d_candidate_qualities_tmp);
+        //bytes += f(d_candidate_qualities_tmp);
 
         bytes += f(d_consensus);
         bytes += f(d_support);
@@ -606,7 +606,7 @@ struct DataArrays {
         bytes += f(d_subject_qualities);
         bytes += f(d_candidate_qualities);
         bytes += f(d_candidate_qualities_transposed);
-        bytes += f(d_candidate_qualities_tmp);
+        //bytes += f(d_candidate_qualities_tmp);
 
         bytes += f(d_consensus);
         bytes += f(d_support);
@@ -778,7 +778,7 @@ struct DataArrays {
     SimpleAllocationDevice<char> d_subject_qualities;
     SimpleAllocationDevice<char> d_candidate_qualities;
     SimpleAllocationDevice<char> d_candidate_qualities_transposed;
-    SimpleAllocationDevice<char> d_candidate_qualities_tmp;
+    //SimpleAllocationDevice<char> d_candidate_qualities_tmp;
 
 	//correction results output
 

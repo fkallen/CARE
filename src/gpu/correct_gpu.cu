@@ -406,77 +406,6 @@ namespace gpu{
 
 
 
-    void build_msa_async(MSAPointers d_msapointers,
-                    AlignmentResultPointers d_alignmentresultpointers,
-                    ReadSequencesPointers d_sequencePointers,
-                    ReadQualitiesPointers d_qualityPointers,
-                    const int* d_candidates_per_subject_prefixsum,
-                    const int* d_indices,
-                    const int* d_indices_per_subject,
-                    int n_subjects,
-                    int n_queries,
-                    const int* d_num_indices,
-                    float expectedAffectedIndicesFraction,
-                    bool useQualityScores,
-                    float desiredAlignmentMaxErrorRate,
-                    int maximum_sequence_length,
-                    int encodedSequencePitchInInts,
-                    int qualityPitchInBytes,
-                    size_t msa_pitch,
-                    size_t msa_weights_pitch,
-                    const bool* d_canExecute,
-                    cudaStream_t stream,
-                    gpu::KernelLaunchHandle& kernelLaunchHandle){
-
-        call_msa_init_kernel_async_exp(
-                d_msapointers,
-                d_alignmentresultpointers,
-                d_sequencePointers,
-                d_indices,
-                d_indices_per_subject,
-                d_candidates_per_subject_prefixsum,
-                n_subjects,
-                n_queries,
-                d_canExecute,
-                stream,
-                kernelLaunchHandle);
-
-        call_msa_add_sequences_kernel_implicit_async(
-                    d_msapointers,
-                    d_alignmentresultpointers,
-                    d_sequencePointers,
-                    d_qualityPointers,
-                    d_candidates_per_subject_prefixsum,
-                    d_indices,
-                    d_indices_per_subject,
-                    n_subjects,
-                    n_queries,
-                    d_num_indices,
-                    expectedAffectedIndicesFraction,
-                    useQualityScores,
-                    desiredAlignmentMaxErrorRate,
-                    maximum_sequence_length,
-                    encodedSequencePitchInInts,
-                    qualityPitchInBytes,
-                    msa_pitch,
-                    msa_weights_pitch,
-                    d_canExecute,
-                    stream,
-                    kernelLaunchHandle,
-                    false);
-
-        call_msa_find_consensus_implicit_kernel_async(
-                    d_msapointers,
-                    d_sequencePointers,
-                    d_indices_per_subject,
-                    n_subjects,
-                    encodedSequencePitchInInts,
-                    msa_pitch,
-                    msa_weights_pitch,
-                    d_canExecute,
-                    stream,
-                    kernelLaunchHandle);
-    };
 
 
     void initNextIterationData(NextIterationData& nextData, int deviceId){
@@ -1256,7 +1185,7 @@ namespace gpu{
             dataArrays.d_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
             dataArrays.d_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
             dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * batchData.qualityPitchInBytes);
-            dataArrays.d_candidate_qualities_tmp.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+            
         }
 
 
@@ -1688,29 +1617,42 @@ namespace gpu{
 
         //std::cout << "msa_init" << std::endl;
 
-        
 
-        build_msa_async(dataArrays.getDeviceMSAPointers(),
-                        dataArrays.getDeviceAlignmentResultPointers(),
-                        dataArrays.getDeviceSequencePointers(),
-                        dataArrays.getDeviceQualityPointers(),
-                        dataArrays.d_candidates_per_subject_prefixsum,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices_per_subject,
-                        batch.n_subjects,
-                        batch.n_queries,
-                        dataArrays.d_num_indices,
-                        1.0f,
-                        transFuncData.correctionOptions.useQualityScores,
-                        desiredAlignmentMaxErrorRate,
-                        transFuncData.sequenceFileProperties.maxSequenceLength,
-                        batch.encodedSequencePitchInInts,
-                        batch.qualityPitchInBytes,
-                        batch.msa_pitch,
-                        batch.msa_weights_pitch,
-                        dataArrays.d_canExecute,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
+        callBuildMSAKernel_async(
+            dataArrays.d_msa_column_properties.get(),
+            dataArrays.d_counts.get(),
+            dataArrays.d_weights.get(),
+            dataArrays.d_coverage.get(),
+            dataArrays.d_origWeights.get(),
+            dataArrays.d_origCoverages.get(),
+            dataArrays.d_support.get(),
+            dataArrays.d_consensus.get(),
+            dataArrays.d_alignment_overlaps.get(),
+            dataArrays.d_alignment_shifts.get(),
+            dataArrays.d_alignment_nOps.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_subject_sequences_data.get(),
+            dataArrays.d_subject_sequences_lengths.get(),
+            dataArrays.d_transposedCandidateSequencesData.get(),
+            dataArrays.d_candidate_sequences_lengths.get(),
+            dataArrays.d_subject_qualities.get(),
+            dataArrays.d_candidate_qualities.get(),
+            transFuncData.correctionOptions.useQualityScores,
+            batch.encodedSequencePitchInInts,
+            batch.qualityPitchInBytes,
+            batch.msa_pitch,
+            batch.msa_weights_pitch / sizeof(float),
+            dataArrays.d_indices,
+            dataArrays.d_indices_per_subject_tmp,
+            dataArrays.d_candidates_per_subject_prefixsum,
+            batch.n_subjects,
+            batch.n_queries,
+            dataArrays.d_canExecute,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
+
+
 
         //batch.dataArrays.copyEverythingToHostForDebugging();
 
@@ -1796,7 +1738,6 @@ namespace gpu{
                 batch.msa_weights_pitch,
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject,
-                desiredAlignmentMaxErrorRate,
                 transFuncData.correctionOptions.estimatedCoverage,
                 dataArrays.d_canExecute.get(),
                 streams[primary_stream_index],
@@ -1910,27 +1851,41 @@ namespace gpu{
             std::swap(dataArrays.d_indices, dataArrays.d_indices_tmp);
             std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
 
-            build_msa_async(dataArrays.getDeviceMSAPointers(),
-                            dataArrays.getDeviceAlignmentResultPointers(),
-                            dataArrays.getDeviceSequencePointers(),
-                            dataArrays.getDeviceQualityPointers(),
-                            dataArrays.d_candidates_per_subject_prefixsum,
-                            dataArrays.d_indices,
-                            dataArrays.d_indices_per_subject_tmp,
-                            batch.n_subjects,
-                            batch.n_queries,
-                            dataArrays.d_num_indices,
-                            0.05f, //
-                            transFuncData.correctionOptions.useQualityScores,
-                            desiredAlignmentMaxErrorRate,
-                            transFuncData.sequenceFileProperties.maxSequenceLength,
-                            batch.encodedSequencePitchInInts,
-                            batch.qualityPitchInBytes,
-                            batch.msa_pitch,
-                            batch.msa_weights_pitch,
-                            dataArrays.d_canExecute,
-                            streams[primary_stream_index],
-                            batch.kernelLaunchHandle);
+
+
+
+            callBuildMSAKernel_async(dataArrays.d_msa_column_properties.get(),
+                dataArrays.d_counts.get(),
+                dataArrays.d_weights.get(),
+                dataArrays.d_coverage.get(),
+                dataArrays.d_origWeights.get(),
+                dataArrays.d_origCoverages.get(),
+                dataArrays.d_support.get(),
+                dataArrays.d_consensus.get(),
+                dataArrays.d_alignment_overlaps.get(),
+                dataArrays.d_alignment_shifts.get(),
+                dataArrays.d_alignment_nOps.get(),
+                dataArrays.d_alignment_best_alignment_flags.get(),
+                dataArrays.d_subject_sequences_data.get(),
+                dataArrays.d_subject_sequences_lengths.get(),
+                dataArrays.d_transposedCandidateSequencesData.get(),
+                dataArrays.d_candidate_sequences_lengths.get(),
+                dataArrays.d_subject_qualities.get(),
+                dataArrays.d_candidate_qualities.get(),
+                transFuncData.correctionOptions.useQualityScores,
+                batch.encodedSequencePitchInInts,
+                batch.qualityPitchInBytes,
+                batch.msa_pitch,
+                batch.msa_weights_pitch / sizeof(float),
+                dataArrays.d_candidates_per_subject_prefixsum,
+                dataArrays.d_indices,
+                dataArrays.d_indices_per_subject_tmp,
+                batch.n_subjects,
+                batch.n_queries,
+                dataArrays.d_canExecute,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle
+            );
         }
 
         cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
@@ -2685,7 +2640,7 @@ namespace gpu{
                     };
     
                     if(!isValidSequence(tmp.sequence)){
-                        std::cerr << tmp.sequence << "\n";
+                        std::cerr << "invalid sequence\n"; //std::cerr << tmp.sequence << "\n";
                     }
                 }
 
@@ -3102,17 +3057,21 @@ void correct_gpu(
         };
 
         auto showProgress = [&](std::int64_t totalCount, int seconds){
-            int hours = seconds / 3600;
-            seconds = seconds % 3600;
-            int minutes = seconds / 60;
-            seconds = seconds % 60;
+            if(runtimeOptions.showProgress){
 
-            printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                int hours = seconds / 3600;
+                seconds = seconds % 3600;
+                int minutes = seconds / 60;
+                seconds = seconds % 60;
+                
+                printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
                 totalCount, sequenceFileProperties.nReads,
                 hours, minutes, seconds);
+                
+                if(totalCount == std::int64_t(sequenceFileProperties.nReads)){
+                    std::cerr << '\n';
+                }
 
-            if(totalCount == std::int64_t(sequenceFileProperties.nReads)){
-                std::cerr << '\n';
             }
         };
 
@@ -3197,15 +3156,15 @@ void correct_gpu(
 
             poprange();
 
-            if(transFuncData.correctionOptions.correctCandidates) {                        
+            // if(transFuncData.correctionOptions.correctCandidates) {                        
 
-                pushrange("correctCandidates", 8);
+            //     pushrange("correctCandidates", 8);
 
-                correctCandidates(batchData);
+            //     correctCandidates(batchData);
 
-                poprange();
+            //     poprange();
                 
-            }
+            //}
             
         };
 
