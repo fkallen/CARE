@@ -750,6 +750,7 @@ namespace gpu{
             //for each column in msa, find consensus and support
             for(int subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
                 if(d_indices_per_subject[subjectIndex] > 0){
+
                     const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
                     const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
                     const int firstColumn_incl = d_msapointers.msaColumnProperties[subjectIndex].firstColumn_incl;
@@ -766,6 +767,41 @@ namespace gpu{
                     float* const my_orig_weights = d_msapointers.origWeights + subjectIndex * msa_weights_pitch_floats;
                     int* const my_orig_coverage = d_msapointers.origCoverages + subjectIndex * msa_weights_pitch_floats;
 
+
+                    //set columns to zero which are not in range firstColumn_incl <= column && column < lastColumn_excl
+
+                    for(int column = localBlockId * blockDim.x + threadIdx.x; 
+                            column < firstColumn_incl; 
+                            column += blocks_per_msa * BLOCKSIZE){
+
+                        my_support[column] = 0;
+                        my_orig_weights[column] = 0;
+                        my_orig_coverage[column] = 0;
+                    }
+
+                    for(int column = localBlockId * blockDim.x + threadIdx.x; 
+                            lastColumn_excl <= column && column < msa_weights_pitch_floats; 
+                            column += blocks_per_msa * BLOCKSIZE){
+
+                        my_support[column] = 0;
+                        my_orig_weights[column] = 0;
+                        my_orig_coverage[column] = 0;
+                    }
+
+                    for(int column = localBlockId * blockDim.x + threadIdx.x; 
+                        column < firstColumn_incl; 
+                        column += blocks_per_msa * BLOCKSIZE){
+                            
+                        my_consensus[column] = 0;
+                    }
+
+                    for(int column = localBlockId * blockDim.x + threadIdx.x; 
+                            lastColumn_excl <= column && column < msa_weights_pitch_floats; 
+                            column += blocks_per_msa * BLOCKSIZE){
+
+                        my_consensus[column] = 0;
+                    }
+
                     const int* const myCountsA = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
                     const int* const myCountsC = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
                     const int* const myCountsG = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
@@ -775,6 +811,8 @@ namespace gpu{
                     const float* const my_weightsC = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
                     const float* const my_weightsG = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
                     const float* const my_weightsT = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
+                    
 
                     //calculate average count per weight
                     // float myaverageCountPerWeightA = 0.0f;
@@ -1924,30 +1962,30 @@ namespace gpu{
                             KernelLaunchHandle& handle){
 
 
-        generic_kernel<<<n_subjects, 128, 0, stream>>>([=] __device__ (){
-            if(*d_canExecute){
-                for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-                    if(d_indices_per_subject[subjectIndex] > 0){
-                        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        // generic_kernel<<<n_subjects, 128, 0, stream>>>([=] __device__ (){
+        //     if(*d_canExecute){
+        //         for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+        //             if(d_indices_per_subject[subjectIndex] > 0){
+        //                 const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
-                        float* const mysupport = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                        float* const myorigweights = d_msapointers.origWeights + msa_weights_pitch_floats * subjectIndex;
-                        int* const myorigcoverages = d_msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
-                        char* const myconsensus = d_msapointers.consensus + msa_pitch * subjectIndex;
+        //                 float* const mysupport = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
+        //                 float* const myorigweights = d_msapointers.origWeights + msa_weights_pitch_floats * subjectIndex;
+        //                 int* const myorigcoverages = d_msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
+        //                 char* const myconsensus = d_msapointers.consensus + msa_pitch * subjectIndex;
 
-                        for(int column = threadIdx.x; column < msa_weights_pitch_floats; column += blockDim.x){
-                            mysupport[column] = 0;
-                            myorigweights[column] = 0;
-                            myorigcoverages[column] = 0;
-                        }
+        //                 for(int column = threadIdx.x; column < msa_weights_pitch_floats; column += blockDim.x){
+        //                     mysupport[column] = 0;
+        //                     myorigweights[column] = 0;
+        //                     myorigcoverages[column] = 0;
+        //                 }
 
-                        for(int column = threadIdx.x; column < msa_pitch; column += blockDim.x){
-                            myconsensus[column] = 0;
-                        }
-                    }
-                }
-            }
-        }); CUERR;
+        //                 for(int column = threadIdx.x; column < msa_pitch; column += blockDim.x){
+        //                     myconsensus[column] = 0;
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }); CUERR;
 
         constexpr int blocksize = 128;
         constexpr int blocks_per_msa = 2;
