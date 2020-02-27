@@ -32,6 +32,16 @@ namespace cg = cooperative_groups;
 namespace care{
 namespace gpu{
 
+    enum class MemoryType{
+        Global,
+        Shared
+    };
+
+    enum class SequenceLayout{
+        Transposed,
+        Linear
+    };
+
 
     __device__ __forceinline__
     void checkBuiltMSA(
@@ -121,6 +131,247 @@ namespace gpu{
             my_columnproperties.lastColumn_excl = endindex - startindex;
 
             *msaColumnProperties = my_columnproperties;
+        }
+    }
+
+
+
+    template<bool isTransposedSequence>
+    __device__ 
+    void addASequence2BitToMSA(
+            int* __restrict__ counts,
+            float* __restrict__ weights,
+            int* __restrict__ coverages,
+            int rowPitchInElements,
+            const unsigned int* sequence, 
+            int sequenceLength, 
+            bool isForward,
+            int columnStart,
+            float overlapweight,
+            const char* quality,
+            bool canUseQualityScores,
+            int sequenceelementoffset){
+
+        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+            return ((data >> (30 - 2*pos)) & 0x00000003);
+        };
+
+        constexpr int nucleotidesPerInt2Bit = 16;
+        const int fullInts = sequenceLength / nucleotidesPerInt2Bit;
+
+        for(int intIndex = 0; intIndex < fullInts; intIndex++){
+            const unsigned int currentDataInt = sequence[intIndex * sequenceelementoffset];
+
+            for(int k = 0; k < 4; k++){
+                alignas(4) char currentFourQualities[4];
+
+                assert(size_t(&currentFourQualities[0]) % 4 == 0);
+
+                if(canUseQualityScores){
+                    *((int*)&currentFourQualities[0]) = ((const int*)quality)[intIndex * 4 + k];
+                }
+
+                for(int l = 0; l < 4; l++){
+                    const int posInInt = k * 4 + l;
+
+                    unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                    if(!isForward){
+                        //reverse complement
+                        encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                    }
+                    const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
+
+                    assert(weight != 0);
+                    const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                    const int columnIndex = columnStart 
+                            + (isForward ? (intIndex * 16 + posInInt) : sequenceLength - 1 - (intIndex * 16 + posInInt));
+                    
+                    atomicAdd(counts + rowOffset + columnIndex, 1);
+                    atomicAdd(weights + rowOffset + columnIndex, weight);
+                    atomicAdd(coverages + columnIndex, 1);
+                }
+            }
+        }
+
+        //add remaining positions
+        if(sequenceLength % nucleotidesPerInt2Bit != 0){
+            const unsigned int currentDataInt = sequence[fullInts * sequenceelementoffset];
+            const int maxPos = sequenceLength - fullInts * 16;
+            for(int posInInt = 0; posInInt < maxPos; posInInt++){
+                unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                if(!isForward){
+                    //reverse complement
+                    encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                }
+                const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
+
+                assert(weight != 0);
+                const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                const int columnIndex = columnStart 
+                    + (isForward ? (fullInts * 16 + posInInt) : sequenceLength - 1 - (fullInts * 16 + posInInt));
+                atomicAdd(counts + rowOffset + columnIndex, 1);
+                atomicAdd(weights + rowOffset + columnIndex, weight);
+                atomicAdd(coverages + columnIndex, 1);
+            } 
+        }
+    }
+
+    template<MemoryType memType>
+    __device__ __forceinline__
+    void addSequencesToMSASingleBlock(
+            float* __restrict__ sharedmem,
+            int* __restrict__ inputcounts,
+            float* __restrict__ inputweights,
+            int* __restrict__ inputcoverages,
+            const MSAColumnProperties* __restrict__ myMsaColumnProperties,
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myOverlaps,
+            const int* __restrict__ myNops,
+            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const unsigned int* __restrict__ myAnchorSequenceData,
+            const char* __restrict__ myAnchorQualityData,
+            const unsigned int* __restrict__ myTransposedCandidateSequencesData,
+            const char* __restrict__ myCandidateQualities,
+            const int* __restrict__ myCandidateLengths,
+            const int* __restrict__ myIndices,
+            int numIndices,
+            size_t elementOffsetForTransposedCandidates,
+            bool canUseQualityScores, 
+            size_t msa_weights_row_pitch_floats,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            int subjectIndex){  
+
+        constexpr bool candidatesAreTransposed = true;
+        constexpr bool useSmem = memType == MemoryType::Shared;
+
+        float* const shared_weights = sharedmem;
+        int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
+        int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
+
+        int* const mycounts = (useSmem ? shared_counts : inputcounts);
+        float* const myweights = (useSmem ? shared_weights : inputweights);
+        int* const mycoverages = (useSmem ? shared_coverages : inputcoverages);        
+
+        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += blockDim.x){
+            mycounts[column] = 0;
+            myweights[column] = 0;
+        }
+
+        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats; column += blockDim.x){
+            mycoverages[column] = 0;
+        }   
+        
+        __syncthreads();
+
+        //add subject
+        const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
+        const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
+
+        assert(columnsToCheck <= msa_weights_row_pitch_floats);
+
+        const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+        const unsigned int* const subject = myAnchorSequenceData;
+        const char* const subjectQualityScore = myAnchorQualityData;
+                        
+        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+            const int columnIndex = subjectColumnsBegin_incl + i;
+            const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
+            const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
+            const int rowOffset = int(encbase) * msa_weights_row_pitch_floats;
+
+            atomicAdd(mycounts + rowOffset + columnIndex, 1);
+            atomicAdd(myweights + rowOffset + columnIndex, weight);
+            atomicAdd(mycoverages + columnIndex, 1);
+        }
+
+        for(int indexInList = threadIdx.x; indexInList < numIndices; indexInList += blockDim.x){
+
+            const int localCandidateIndex = myIndices[indexInList];
+            const int shift = myShifts[localCandidateIndex];
+            const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+
+            const int queryLength = myCandidateLengths[localCandidateIndex];
+            const unsigned int* const query = myTransposedCandidateSequencesData + localCandidateIndex;
+
+            const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
+
+            const int query_alignment_overlap = myOverlaps[localCandidateIndex];
+            const int query_alignment_nops = myNops[localCandidateIndex];
+
+            const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
+
+            assert(overlapweight <= 1.0f);
+            assert(overlapweight >= 0.0f);
+            assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+
+            const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+            const bool isForward = flag == BestAlignment_t::Forward;
+
+            addASequence2BitToMSA<candidatesAreTransposed>(
+                mycounts,
+                myweights,
+                mycoverages,
+                msa_weights_row_pitch_floats,
+                query, 
+                queryLength, 
+                isForward,
+                defaultcolumnoffset,
+                overlapweight,
+                queryQualityScore,
+                canUseQualityScores,
+                elementOffsetForTransposedCandidates
+            );
+        }
+
+        if(useSmem){
+
+            __syncthreads(); //wait until msa is ready
+
+            checkBuiltMSA(
+                myMsaColumnProperties,
+                mycounts,
+                myweights,
+                msa_weights_row_pitch_floats,
+                subjectIndex
+            ); 
+
+            // copy from shared to global
+
+            int* const gmemCoverage  = inputcoverages;
+            for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
+                for(int k = 0; k < 4; k++){
+                    const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
+                    int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
+
+                    const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
+                    float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
+
+                    *destCounts = *srcCounts;
+                    *destWeights = *srcWeights;
+                    //atomicAdd(destCounts ,*srcCounts);
+                    //atomicAdd(destWeights, *srcWeights);
+                }
+                gmemCoverage[index] = mycoverages[index];
+                //atomicAdd(gmemCoverage + index, mycoverage[index]);
+            }
+
+            __syncthreads(); //wait until smem can be reused
+        }else{
+
+            __syncthreads(); //wait until msa is ready
+
+            //check msa
+
+            checkBuiltMSA(
+                myMsaColumnProperties,
+                mycounts,
+                myweights,
+                msa_weights_row_pitch_floats,
+                subjectIndex
+            ); 
         }
     }
 
@@ -236,98 +487,12 @@ namespace gpu{
 
 
 
-    template<bool isTransposedSequence>
-    __device__ 
-    void addASequence2BitToMSA(
-            int* __restrict__ counts,
-            float* __restrict__ weights,
-            int* __restrict__ coverages,
-            int rowPitchInElements,
-            const unsigned int* sequence, 
-            int sequenceLength, 
-            bool isForward,
-            int columnStart,
-            float overlapweight,
-            const char* quality,
-            bool canUseQualityScores,
-            int sequenceelementoffset){
-
-        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
-            return ((data >> (30 - 2*pos)) & 0x00000003);
-        };
-
-        constexpr int nucleotidesPerInt2Bit = 16;
-        const int fullInts = sequenceLength / nucleotidesPerInt2Bit;
-
-        for(int intIndex = 0; intIndex < fullInts; intIndex++){
-            const unsigned int currentDataInt = sequence[intIndex * sequenceelementoffset];
-
-            for(int k = 0; k < 4; k++){
-                alignas(4) char currentFourQualities[4];
-
-                assert(size_t(&currentFourQualities[0]) % 4 == 0);
-
-                if(canUseQualityScores){
-                    *((int*)&currentFourQualities[0]) = ((const int*)quality)[intIndex * 4 + k];
-                }
-
-                for(int l = 0; l < 4; l++){
-                    const int posInInt = k * 4 + l;
-
-                    unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                    if(!isForward){
-                        //reverse complement
-                        encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                    }
-                    const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
-
-                    assert(weight != 0);
-                    const int rowOffset = encodedBaseAsInt * rowPitchInElements;
-                    const int columnIndex = columnStart 
-                            + (isForward ? (intIndex * 16 + posInInt) : sequenceLength - 1 - (intIndex * 16 + posInInt));
-                    
-                    atomicAdd(counts + rowOffset + columnIndex, 1);
-                    atomicAdd(weights + rowOffset + columnIndex, weight);
-                    atomicAdd(coverages + columnIndex, 1);
-                }
-            }
-        }
-
-        //add remaining positions
-        if(sequenceLength % nucleotidesPerInt2Bit != 0){
-            const unsigned int currentDataInt = sequence[fullInts * sequenceelementoffset];
-            const int maxPos = sequenceLength - fullInts * 16;
-            for(int posInInt = 0; posInInt < maxPos; posInInt++){
-                unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                if(!isForward){
-                    //reverse complement
-                    encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                }
-                const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
-
-                assert(weight != 0);
-                const int rowOffset = encodedBaseAsInt * rowPitchInElements;
-                const int columnIndex = columnStart 
-                    + (isForward ? (fullInts * 16 + posInInt) : sequenceLength - 1 - (fullInts * 16 + posInInt));
-                atomicAdd(counts + rowOffset + columnIndex, 1);
-                atomicAdd(weights + rowOffset + columnIndex, weight);
-                atomicAdd(coverages + columnIndex, 1);
-            } 
-        }
-    }
 
 
-    enum class MemoryType{
-        Global,
-        Shared
-    };
 
-    enum class SequenceLayout{
-        Transposed,
-        Linear
-    };
 
-    template<MemoryType memType, SequenceLayout candidatelayout>
+
+    template<MemoryType memType>
     __global__
     void msa_add_sequences_kernel_singleblock(
             int* __restrict__ coverage,
@@ -357,26 +522,10 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             const bool* __restrict__ canExecute){
 
-        constexpr bool candidatesAreTransposed = candidatelayout == SequenceLayout::Transposed;
-        constexpr bool useSmem = memType == MemoryType::Shared;
-
-        auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
-        };
 
         if(*canExecute){
 
             extern __shared__ float sharedmem[];
-
-
-            //const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-            const int smemsizefloats = 4 * msa_weights_row_pitch_floats 
-                                     + 4 * msa_weights_row_pitch_floats
-                                     + 1 * msa_weights_row_pitch_floats;
-
-            float* const shared_weights = sharedmem;
-            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
-            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
             
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
                 const int numGoodCandidates = d_indices_per_subject[subjectIndex];
@@ -384,155 +533,52 @@ namespace gpu{
                 if(numGoodCandidates > 0){
 
                     const int globalCandidateOffset = d_candidates_per_subject_prefixsum[subjectIndex];
-                    
-                    if(useSmem){
-                        //clear shared memory
-                        for(int i = threadIdx.x; i < smemsizefloats; i += blockDim.x){
-                            sharedmem[i] = 0;
-                        }
-                        __syncthreads();
-                    }else{
-                        //clear destination global memory for atomicAdd updates
 
-                        int* const mycounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                        float* const myweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                        int* const mycoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
-
-                        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += blockDim.x){
-                            mycounts[column] = 0;
-                            myweights[column] = 0;
-                        }
-
-                        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats; column += blockDim.x){
-                            mycoverages[column] = 0;
-                        }   
-                        
-                        __syncthreads();
-                    }
-
-                    int* const mycounts = (useSmem ? shared_counts : counts + subjectIndex * 4 * msa_weights_row_pitch_floats);
-                    float* const myweights = (useSmem ? shared_weights : weights + subjectIndex * 4 * msa_weights_row_pitch_floats);
-                    int* const mycoverage = (useSmem ? shared_coverages : coverage + subjectIndex * msa_weights_row_pitch_floats);
-
-                    //add subject
-                    const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-                    const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                    const int columnsToCheck = msaColumnProperties[subjectIndex].lastColumn_excl;
-
-                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
-
-                    const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-                    const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const char* const subjectQualityScore = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
-                                    
-                    for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-                        const int columnIndex = subjectColumnsBegin_incl + i;
-                        const char base = get((const char*)subject, subjectLength, i);
-                        const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
-                        const int rowOffset = int(base) * msa_weights_row_pitch_floats;
-
-                        atomicAdd(mycounts + rowOffset + columnIndex, 1);
-                        atomicAdd(myweights + rowOffset + columnIndex, weight);
-                        atomicAdd(mycoverage + columnIndex, 1);
-                    }
+                    int* const mycounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    float* const myweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    int* const mycoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
+                    const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
 
                     const int* const myShifts = shifts + globalCandidateOffset;
                     const int* const myOverlaps = overlaps + globalCandidateOffset;
                     const int* const myNops = nOps + globalCandidateOffset;
 
                     const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
-                    const int* const myCandidateLengths = candidateSequencesLength + globalCandidateOffset;
-
-                    const unsigned int* const myCandidateSequencesData = 
-                            (candidatesAreTransposed ? candidateSequencesTransposedData + size_t(globalCandidateOffset)
-                                                    : candidateSequencesData + size_t(globalCandidateOffset) * encodedSequencePitchInInts);
+                    const unsigned int* const myAnchorSequenceData = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                    const unsigned int* const myCandidateSequencesData = candidateSequencesTransposedData + size_t(globalCandidateOffset);
 
                     const char* const myCandidateQualities = candidateQualities 
-                                                                        + size_t(globalCandidateOffset) * qualityPitchInBytes; 
-                                                                        
+                                                                        + size_t(globalCandidateOffset) * qualityPitchInBytes;
+
+                    const int* const myCandidateLengths = candidateSequencesLength + globalCandidateOffset;
+
                     const int* const myIndices = d_indices + globalCandidateOffset;
 
-                    for(int indexInList = threadIdx.x; indexInList < numGoodCandidates; indexInList += blockDim.x){
-
-                        const int localCandidateIndex = myIndices[indexInList];
-                        const int shift = myShifts[localCandidateIndex];
-                        const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
-
-                        const int queryLength = myCandidateLengths[localCandidateIndex];
-                        const unsigned int* const query = myCandidateSequencesData 
-                                + (candidatesAreTransposed ? localCandidateIndex 
-                                                            : localCandidateIndex * encodedSequencePitchInInts);
-
-                        const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
-
-                        const int query_alignment_overlap = myOverlaps[localCandidateIndex];
-                        const int query_alignment_nops = myNops[localCandidateIndex];
-
-                        const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
-
-                        assert(overlapweight <= 1.0f);
-                        assert(overlapweight >= 0.0f);
-                        assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-
-                        const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-
-                        const bool isForward = flag == BestAlignment_t::Forward;
-
-                        addASequence2BitToMSA<candidatesAreTransposed>(
-                            mycounts,
-                            myweights,
-                            mycoverage,
-                            msa_weights_row_pitch_floats,
-                            query, 
-                            queryLength, 
-                            isForward,
-                            defaultcolumnoffset,
-                            overlapweight,
-                            queryQualityScore,
-                            canUseQualityScores,
-                            (candidatesAreTransposed ? n_queries : 1)
-                        );
-                    }
-
-                    if(useSmem){
-
-                        __syncthreads();
-
-                        //check msa
-
-                        checkBuiltMSA(
-                            msaColumnProperties + subjectIndex,
-                            shared_counts,
-                            shared_weights,
-                            msa_weights_row_pitch_floats,
-                            subjectIndex
-                        ); 
-
-
-                        // copy from shared to global
-
-                        int* const gmemCoverage  = coverage + subjectIndex * msa_weights_row_pitch_floats;
-                        for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
-                            for(int k = 0; k < 4; k++){
-                                const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
-                                int* const destCounts = counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
-
-                                const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
-                                float* const destWeights = weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
-
-                                *destCounts = *srcCounts;
-                                *destWeights = *srcWeights;
-                                //atomicAdd(destCounts ,*srcCounts);
-                                //atomicAdd(destWeights, *srcWeights);
-                            }
-                            gmemCoverage[index] = mycoverage[index];
-                            //atomicAdd(gmemCoverage + index, mycoverage[index]);
-                        }
-
-                        __syncthreads();
-                    }
-
-
+                    addSequencesToMSASingleBlock<memType>(
+                        sharedmem,
+                        mycounts,
+                        myweights,
+                        mycoverages,
+                        myMsaColumnProperties,
+                        myShifts,
+                        myOverlaps,
+                        myNops,
+                        myAlignmentFlags,
+                        myAnchorSequenceData,
+                        myAnchorQualityData,
+                        myCandidateSequencesData,
+                        myCandidateQualities,
+                        myCandidateLengths,
+                        myIndices,
+                        numGoodCandidates,
+                        n_queries,
+                        canUseQualityScores, 
+                        msa_weights_row_pitch_floats,
+                        encodedSequencePitchInInts,
+                        qualityPitchInBytes,
+                        subjectIndex
+                    );
                 }                
             }
         }
@@ -1610,7 +1656,7 @@ namespace gpu{
     }
 
 
-    template<MemoryType memType, SequenceLayout candidatelayout>
+    template<MemoryType memType>
     void call_msaAddSequencesKernelSingleBlock_async(
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
@@ -1663,7 +1709,7 @@ namespace gpu{
     		kernelLaunchConfig.smem = smem; \
     		KernelProperties kernelProperties; \
     		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                msa_add_sequences_kernel_singleblock<memType,candidatelayout>, \
+                msa_add_sequences_kernel_singleblock<memType>, \
     					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
     		mymap[kernelLaunchConfig] = kernelProperties; \
     }
@@ -1694,7 +1740,7 @@ namespace gpu{
     	dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device), 1, 1);
 
-        msa_add_sequences_kernel_singleblock<memType,candidatelayout>
+        msa_add_sequences_kernel_singleblock<memType>
                 <<<grid, block, smem, stream>>>(
             d_msapointers.coverage,
             d_msapointers.msaColumnProperties,
@@ -1977,7 +2023,7 @@ namespace gpu{
 
 #else 
 
-        call_msaAddSequencesKernelSingleBlock_async<memType,candidatelayout>(
+        call_msaAddSequencesKernelSingleBlock_async<memType>(
             d_msapointers,
             d_alignmentresultpointers,
             d_sequencePointers,
