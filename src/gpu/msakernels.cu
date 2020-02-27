@@ -33,6 +33,98 @@ namespace care{
 namespace gpu{
 
 
+    __device__ __forceinline__
+    void checkBuiltMSA(
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const int* __restrict__ counts,
+            const float* __restrict__ weights,
+            size_t msa_weights_row_pitch_floats,
+            int subjectIndex){
+
+        const int firstColumn_incl = msaColumnProperties->firstColumn_incl;
+        const int lastColumn_excl = msaColumnProperties->lastColumn_excl;
+
+        for(int column = firstColumn_incl + threadIdx.x; column < lastColumn_excl; column += blockDim.x){
+            const int* const mycounts = counts + column;
+            const float* const myweights = weights + column;
+            float sumOfWeights = 0.0f;
+
+            for(int k = 0; k < 4; k++){
+                const int count = mycounts[k * msa_weights_row_pitch_floats];
+                const float weight = myweights[k * msa_weights_row_pitch_floats];
+                if(count > 0 && weight <= 0.0f){
+                    printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
+                        subjectIndex, column, k, count, weight);
+                    assert(false);
+                }
+
+                if(count <= 0 && weight > 0.0f){
+                    printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
+                        subjectIndex, column, k, count, weight);
+                    assert(false);
+                }
+
+                sumOfWeights += weight;
+            }
+
+            if(sumOfWeights == 0){
+                printf("s %d c %d\n", subjectIndex, column);
+                assert(sumOfWeights != 0);
+            }
+        }
+    }
+
+    template<int BLOCKSIZE>
+    __device__ __forceinline__
+    void msaInit(
+            typename cub::BlockReduce<int, BLOCKSIZE>::TempStorage& tempReduce,
+            MSAColumnProperties* __restrict__ msaColumnProperties,
+            const int* __restrict__ goodCandidateIndices,
+            int numGoodCandidates,
+            const int* __restrict__ shifts,
+            const BestAlignment_t* __restrict__ alignmentFlags,
+            const int subjectLength,
+            const int* __restrict__ candidateLengths
+            ){
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+        int startindex = 0;
+        int endindex = subjectLength;
+
+        for(int k = threadIdx.x; k < numGoodCandidates; k += blockDim.x) {
+            const int localCandidateIndex = goodCandidateIndices[k];
+
+            const int shift = shifts[localCandidateIndex];
+            const BestAlignment_t flag = alignmentFlags[localCandidateIndex];
+            const int queryLength = candidateLengths[localCandidateIndex];
+
+            assert(flag != BestAlignment_t::None);
+
+            const int queryEndsAt = queryLength + shift;
+            startindex = min(startindex, shift);
+            endindex = max(endindex, queryEndsAt);
+        }
+
+        startindex = BlockReduceInt(tempReduce).Reduce(startindex, cub::Min());
+        __syncthreads();
+
+        endindex = BlockReduceInt(tempReduce).Reduce(endindex, cub::Max());
+        __syncthreads();
+
+        if(threadIdx.x == 0) {
+            MSAColumnProperties my_columnproperties;
+
+            my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
+            my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+            my_columnproperties.firstColumn_incl = 0;
+            my_columnproperties.lastColumn_excl = endindex - startindex;
+
+            *msaColumnProperties = my_columnproperties;
+        }
+    }
+
+
 
     template<int BLOCKSIZE>
     __global__
@@ -69,52 +161,19 @@ namespace gpu{
                     const int* const myCandidateLengthsPtr = d_sequencePointers.candidateSequencesLength + globalOffset;
 
                     const int subjectLength = d_sequencePointers.subjectSequencesLength[subjectIndex];
-                    int startindex = 0;
-                    int endindex = subjectLength;
 
-                    for(int k = threadIdx.x; k < num_indices_for_this_subject; k += BLOCKSIZE) {
-                        const int localCandidateIndex = myIndicesPtr[k];
 
-                        const int shift = myShiftsPtr[localCandidateIndex];
-                        const BestAlignment_t flag = myAlignmentFlagsPtr[localCandidateIndex];
-                        const int queryLength = myCandidateLengthsPtr[localCandidateIndex];
-
-                        assert(flag != BestAlignment_t::None);
-
-                        const int queryEndsAt = queryLength + shift;
-                        startindex = min(startindex, shift);
-                        endindex = max(endindex, queryEndsAt);
-                    }
-
-                    startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
-                    __syncthreads();
-
-                    endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
-                    __syncthreads();
-
-                    if(threadIdx.x == 0) {
-                        MSAColumnProperties my_columnproperties;
-
-                        my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
-                        my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
-                        my_columnproperties.firstColumn_incl = 0;
-                        my_columnproperties.lastColumn_excl = endindex - startindex;
-
-                        *properties_ptr = my_columnproperties;
-                    }
-                }/*else{
-                    //empty MSA
-                    if(threadIdx.x == 0) {
-                        MSAColumnProperties my_columnproperties;
-
-                        my_columnproperties.subjectColumnsBegin_incl = 0;
-                        my_columnproperties.subjectColumnsEnd_excl = 0;
-                        my_columnproperties.firstColumn_incl = 0;
-                        my_columnproperties.lastColumn_excl = 0;
-
-                        *properties_ptr = my_columnproperties;
-                    }
-                }*/
+                    msaInit<BLOCKSIZE>(
+                        temp_storage.reduce,
+                        properties_ptr,
+                        indices + globalOffset,
+                        num_indices_for_this_subject,
+                        d_alignmentresultpointers.shifts + globalOffset,
+                        d_alignmentresultpointers.bestAlignmentFlags + globalOffset,
+                        subjectLength,
+                        d_sequencePointers.candidateSequencesLength + globalOffset
+                    );
+                }
             }
         }
     }
@@ -437,6 +496,19 @@ namespace gpu{
 
                         __syncthreads();
 
+                        //check msa
+
+                        checkBuiltMSA(
+                            msaColumnProperties + subjectIndex,
+                            shared_counts,
+                            shared_weights,
+                            msa_weights_row_pitch_floats,
+                            subjectIndex
+                        ); 
+
+
+                        // copy from shared to global
+
                         int* const gmemCoverage  = coverage + subjectIndex * msa_weights_row_pitch_floats;
                         for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
                             for(int k = 0; k < 4; k++){
@@ -457,6 +529,8 @@ namespace gpu{
 
                         __syncthreads();
                     }
+
+
                 }                
             }
         }
@@ -655,9 +729,10 @@ namespace gpu{
 
 
 
-
     __global__
-    void check_built_msa_kernel(MSAPointers d_msapointers,
+    void check_built_msa_kernel(const MSAColumnProperties* __restrict__ msaColumnProperties,
+                                const int* __restrict__ counts,
+                                const float* __restrict__ weights,
                                 const int* __restrict__ d_indices_per_subject,
                                 int nSubjects,
                                 size_t msa_weights_row_pitch,
@@ -669,37 +744,13 @@ namespace gpu{
 
             for(int subjectIndex = blockIdx.x; subjectIndex < nSubjects; subjectIndex += gridDim.x){
                 if(d_indices_per_subject[subjectIndex] > 0){
-                    const int firstColumn_incl = d_msapointers.msaColumnProperties[subjectIndex].firstColumn_incl;
-                    const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
-
-                    for(int column = firstColumn_incl + threadIdx.x; column < lastColumn_excl; column += blockDim.x){
-                        const int* const counts = d_msapointers.counts + 4 * msa_weights_row_pitch_floats * subjectIndex + column;
-                        const float* const weights = d_msapointers.weights + 4 * msa_weights_row_pitch_floats * subjectIndex + column;
-                        float sumOfWeights = 0.0f;
-
-                        for(int k = 0; k < 4; k++){
-                            const int count = counts[k * msa_weights_row_pitch_floats];
-                            const float weight = weights[k * msa_weights_row_pitch_floats];
-                            if(count > 0 && weight <= 0.0f){
-                                printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
-                                    subjectIndex, column, k, count, weight);
-                                assert(false);
-                            }
-
-                            if(count <= 0 && weight > 0.0f){
-                                printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
-                                    subjectIndex, column, k, count, weight);
-                                assert(false);
-                            }
-
-                            sumOfWeights += weight;
-                        }
-
-                        if(sumOfWeights == 0){
-                            printf("s %d c %d\n", subjectIndex, column);
-                            assert(sumOfWeights != 0);
-                        }
-                    }                        
+                    checkBuiltMSA(
+                        msaColumnProperties + subjectIndex,
+                        counts + 4 * msa_weights_row_pitch_floats * subjectIndex,
+                        weights + 4 * msa_weights_row_pitch_floats * subjectIndex,
+                        msa_weights_row_pitch_floats,
+                        subjectIndex
+                    );                      
                 }
             }
         }
@@ -1910,6 +1961,16 @@ namespace gpu{
             handle
         );
 
+        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(
+            d_msapointers.msaColumnProperties,
+            d_msapointers.counts,
+            d_msapointers.weights,
+            d_indices_per_subject,
+            n_subjects,
+            msa_weights_row_pitch,
+            d_canExecute
+        ); CUERR;
+
 #else 
 
         call_msaAddSequencesKernelSingleBlock_async<memType,candidatelayout>(
@@ -1938,13 +1999,7 @@ namespace gpu{
 
 #endif
 
-        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(
-            d_msapointers,
-            d_indices_per_subject,
-            n_subjects,
-            msa_weights_row_pitch,
-            d_canExecute
-        ); CUERR;
+        
 
     }
 
