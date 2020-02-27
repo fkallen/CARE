@@ -32,6 +32,17 @@ namespace cpu{
             return isEmpty;
         }
 
+        void skip(Count_t n){
+            std::lock_guard<std::mutex> lm(mutex);
+            Count_t remaining = end - current;
+            Count_t resultsize = std::min(remaining, n);
+            current += resultsize;
+
+            if(current == end){
+                isEmpty = true;
+            }
+        }
+
         std::vector<Count_t> next_n(Count_t n){
             std::lock_guard<std::mutex> lm(mutex);
             if(isEmpty)
