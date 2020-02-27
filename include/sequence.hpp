@@ -138,11 +138,11 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    void getEncodedNuc2Bit(const unsigned int* encodedsequence,
+    unsigned int getEncodedNuc2Bit(const unsigned int* encodedsequence,
                                 int length,
                                 int position){
         auto identity = [](auto i){return i;};
-        getEncodedNuc2Bit(encodedsequence, length, position, identity);
+        return getEncodedNuc2Bit(encodedsequence, length, position, identity);
     }
 
     HD_WARNING_DISABLE
