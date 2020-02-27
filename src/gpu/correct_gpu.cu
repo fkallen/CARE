@@ -1643,7 +1643,7 @@ namespace gpu{
             batch.msa_pitch,
             batch.msa_weights_pitch / sizeof(float),
             dataArrays.d_indices,
-            dataArrays.d_indices_per_subject_tmp,
+            dataArrays.d_indices_per_subject,
             dataArrays.d_candidates_per_subject_prefixsum,
             batch.n_subjects,
             batch.n_queries,
@@ -1851,10 +1851,8 @@ namespace gpu{
             std::swap(dataArrays.d_indices, dataArrays.d_indices_tmp);
             std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
 
-
-
-
-            callBuildMSAKernel_async(dataArrays.d_msa_column_properties.get(),
+            callBuildMSAKernel_async(
+                dataArrays.d_msa_column_properties.get(),
                 dataArrays.d_counts.get(),
                 dataArrays.d_weights.get(),
                 dataArrays.d_coverage.get(),
@@ -1877,9 +1875,9 @@ namespace gpu{
                 batch.qualityPitchInBytes,
                 batch.msa_pitch,
                 batch.msa_weights_pitch / sizeof(float),
-                dataArrays.d_candidates_per_subject_prefixsum,
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject_tmp,
+                dataArrays.d_candidates_per_subject_prefixsum,
                 batch.n_subjects,
                 batch.n_queries,
                 dataArrays.d_canExecute,

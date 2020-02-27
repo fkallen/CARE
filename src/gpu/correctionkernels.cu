@@ -567,6 +567,9 @@ namespace gpu{
 
                 if(flag > 0){
                     for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                        const char nuc = my_consensus[i];
+                        assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
+
                         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                     }
                 }else{
@@ -579,6 +582,7 @@ namespace gpu{
                             const unsigned int* subject = getSubjectPtr(subjectIndex);
                             const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
                             const char base = to_nuc(encodedBase);
+                            assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
                             my_corrected_subject[i - subjectColumnsBegin_incl] = base;
                         }
                     }
