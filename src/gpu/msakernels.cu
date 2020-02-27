@@ -129,9 +129,11 @@ namespace gpu{
     template<int BLOCKSIZE>
     __global__
     void msaInitKernel(
-                MSAPointers d_msapointers,
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                MSAColumnProperties* __restrict__ msaColumnProperties,
+                const int* __restrict__ alignmentShifts,
+                const BestAlignment_t* __restrict__ bestAlignmentFlags,
+                const int* __restrict__ anchorLengths,
+                const int* __restrict__ candidateLengths,
                 const int* __restrict__ indices,
                 const int* __restrict__ indices_per_subject,
                 const int* __restrict__ candidatesPerSubjectPrefixSum,
@@ -147,31 +149,31 @@ namespace gpu{
             } temp_storage;
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
-                MSAColumnProperties* const properties_ptr = d_msapointers.msaColumnProperties + subjectIndex;
-
+                
                 // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
-                const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
+                const int myNumGoodCandidates = indices_per_subject[subjectIndex];
+                
+                if(myNumGoodCandidates > 0){
+                    MSAColumnProperties* const properties_ptr = msaColumnProperties + subjectIndex;
 
-                if(num_indices_for_this_subject > 0){
                     const int globalOffset = candidatesPerSubjectPrefixSum[subjectIndex];
 
                     const int* const myIndicesPtr = indices + globalOffset;
-                    const int* const myShiftsPtr = d_alignmentresultpointers.shifts + globalOffset;
-                    const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentresultpointers.bestAlignmentFlags + globalOffset;
-                    const int* const myCandidateLengthsPtr = d_sequencePointers.candidateSequencesLength + globalOffset;
+                    const int* const myShiftsPtr = alignmentShifts + globalOffset;
+                    const BestAlignment_t* const myAlignmentFlagsPtr = bestAlignmentFlags + globalOffset;
+                    const int* const myCandidateLengthsPtr = candidateLengths + globalOffset;
 
-                    const int subjectLength = d_sequencePointers.subjectSequencesLength[subjectIndex];
-
+                    const int subjectLength = anchorLengths[subjectIndex];
 
                     msaInit<BLOCKSIZE>(
                         temp_storage.reduce,
                         properties_ptr,
-                        indices + globalOffset,
-                        num_indices_for_this_subject,
-                        d_alignmentresultpointers.shifts + globalOffset,
-                        d_alignmentresultpointers.bestAlignmentFlags + globalOffset,
+                        myIndicesPtr,
+                        myNumGoodCandidates,
+                        myShiftsPtr,
+                        myAlignmentFlagsPtr,
                         subjectLength,
-                        d_sequencePointers.candidateSequencesLength + globalOffset
+                        myCandidateLengthsPtr
                     );
                 }
             }
@@ -1520,9 +1522,11 @@ namespace gpu{
         dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
 
 		#define mycall(blocksize) msaInitKernel<(blocksize)> \
-                <<<grid, block, 0, stream>>>(d_msapointers, \
-                                               d_alignmentresultpointers, \
-                                               d_sequencePointers, \
+                <<<grid, block, 0, stream>>>(d_msapointers.msaColumnProperties, \
+                                               d_alignmentresultpointers.shifts, \
+                                               d_alignmentresultpointers.bestAlignmentFlags, \
+                                               d_sequencePointers.subjectSequencesLength, \
+                                               d_sequencePointers.candidateSequencesLength, \
                                                d_indices, \
                                                d_indices_per_subject, \
                                                d_candidates_per_subject_prefixsum, \
@@ -2043,7 +2047,7 @@ namespace gpu{
         // }); CUERR;
 
         constexpr int blocksize = 128;
-        constexpr int blocks_per_msa = 2;
+        constexpr int blocks_per_msa = 1;
         const std::size_t smem = 0;
 
         int max_blocks_per_device = 1;
@@ -2087,7 +2091,12 @@ namespace gpu{
             std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
             const KernelProperties& kernelProperties = map[kernelLaunchConfig];
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            // std::cerr << max_blocks_per_device 
+            //         << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << "\n";
         }
+  #if 0      
+        //std::cerr << grid.x << " " << max_blocks_per_device << " " << n_subjects << "\n";
 
         #define launch(blocksize) \
             dim3 block((blocksize), 1, 1); \
@@ -2105,7 +2114,22 @@ namespace gpu{
         launch(128);
 
         #undef launch
+#endif 
 
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(n_subjects, 1, 1);
+
+        msa_find_consensus_implicit_kernel<(blocksize), blocks_per_msa>
+                <<<grid, block, 0, stream>>>(
+            d_msapointers,
+            d_sequencePointers,
+            d_indices_per_subject,
+            n_subjects,
+            encodedSequencePitchInInts,
+            msa_pitch,
+            msa_weights_pitch,
+            d_canExecute
+        ); CUERR;
     }
 
 
