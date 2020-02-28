@@ -375,7 +375,7 @@ namespace gpu{
         }
     }
 
-
+    template<int BLOCKSIZE>
     __device__ __forceinline__
     void findConsensusSingleBlock(
             float* __restrict__ my_support,
@@ -405,7 +405,7 @@ namespace gpu{
 
         for(int column = threadIdx.x; 
                 column < firstColumn_incl; 
-                column += blockDim.x){
+                column += BLOCKSIZE){
 
             my_support[column] = 0;
             my_orig_weights[column] = 0;
@@ -414,7 +414,7 @@ namespace gpu{
 
         for(int column = threadIdx.x; 
                 lastColumn_excl <= column && column < msa_weights_pitch_floats; 
-                column += blockDim.x){
+                column += BLOCKSIZE){
 
             my_support[column] = 0;
             my_orig_weights[column] = 0;
@@ -423,14 +423,14 @@ namespace gpu{
 
         for(int column = threadIdx.x; 
             column < firstColumn_incl; 
-            column += blockDim.x){
+            column += BLOCKSIZE){
                 
             my_consensus[column] = 0;
         }
 
         for(int column = threadIdx.x; 
                 lastColumn_excl <= column && column < msa_weights_pitch_floats; 
-                column += blockDim.x){
+                column += BLOCKSIZE){
 
             my_consensus[column] = 0;
         }
@@ -445,7 +445,7 @@ namespace gpu{
         const float* const my_weightsG = myWeights + 2 * msa_weights_pitch_floats;
         const float* const my_weightsT = myWeights + 3 * msa_weights_pitch_floats;
 
-        for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += blockDim.x){
+        for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += BLOCKSIZE){
             const int ca = myCountsA[column];
             const int cc = myCountsC[column];
             const int cg = myCountsG[column];
@@ -936,7 +936,7 @@ namespace gpu{
         }
     }
 
-    template<int BLOCKSIZE, int blocks_per_msa>
+    template<int BLOCKSIZE>
     __global__
     void msaFindConsensusKernel(
             const MSAColumnProperties* __restrict__ d_msaColumnProperties,
@@ -955,40 +955,13 @@ namespace gpu{
             size_t msa_weights_pitch,
             const bool* __restrict__ canExecute){
 
-        static_assert(blocks_per_msa == 1, "");
-
         if(*canExecute){
-
-            constexpr char A_enc = 0x00;
-            constexpr char C_enc = 0x01;
-            constexpr char G_enc = 0x02;
-            constexpr char T_enc = 0x03;
-
-            // using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
-
-            // __shared__ union {
-            //     typename BlockReduceFloat::TempStorage floatreduce;
-            // } temp_storage;
-
-            // __shared__ float avgCountPerWeight[4];
-
-            auto get = [] (const char* data, int length, int index){
-                return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
-            };
-
-            auto getSubjectPtr = [&] (int subjectIndex){
-                const unsigned int* result = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                return result;
-            };
 
             const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
-            const int localBlockId = blockIdx.x % blocks_per_msa;
-            //const int n_indices = *d_num_indices;
-
             //process multiple sequence alignment of each subject
             //for each column in msa, find consensus and support
-            for(int subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                 if(d_indices_per_subject[subjectIndex] > 0){
 
                     char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
@@ -1003,7 +976,7 @@ namespace gpu{
 
                     const unsigned int* const anchorData = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
 
-                    findConsensusSingleBlock(
+                    findConsensusSingleBlock<BLOCKSIZE>(
                         my_support,
                         my_orig_weights,
                         my_orig_coverage,
@@ -2116,8 +2089,6 @@ namespace gpu{
                             KernelLaunchHandle& handle){
 
         constexpr int blocksize = 128;
-        constexpr int blocks_per_msa = 1;
-        static_assert(blocks_per_msa == 1, "");
 
         const std::size_t smem = 0;
 
@@ -2138,7 +2109,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                                                                msaFindConsensusKernel<blocksize, blocks_per_msa>, \
+                                                                msaFindConsensusKernel<blocksize>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -2172,7 +2143,7 @@ namespace gpu{
         #define launch(blocksize) \
             dim3 block((blocksize), 1, 1); \
             dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1); \
-            msaFindConsensusKernel<(blocksize), blocks_per_msa><<<grid, block, 0, stream>>>( \
+            msaFindConsensusKernel<(blocksize)><<<grid, block, 0, stream>>>( \
                                                                 d_msapointers, \
                                                                 d_sequencePointers, \
                                                                 d_indices_per_subject, \
@@ -2190,7 +2161,7 @@ namespace gpu{
         dim3 block(blocksize, 1, 1);
         dim3 grid(n_subjects, 1, 1);
 
-        msaFindConsensusKernel<(blocksize), blocks_per_msa>
+        msaFindConsensusKernel<(blocksize)>
                 <<<grid, block, 0, stream>>>(
             d_msaColumnProperties,
             d_counts,
