@@ -454,6 +454,335 @@ namespace gpu{
     }
 
 
+
+    template<int BLOCKSIZE>
+    __device__ __forceinline__
+    void findCandidatesOfDifferentRegionSingleBlock(
+            int2* smem,
+            int* __restrict__ myNewIndicesPtr,
+            int* __restrict__ myNewNumIndicesPerSubjectPtr,
+            int* __restrict__ d_newNumIndices,
+            const MSAColumnProperties* __restrict__ myMsaColumnProperties,
+            const char* __restrict__ myConsensus,
+            const int* __restrict__ myCounts,
+            const float* __restrict__ myWeights,
+            const unsigned int* __restrict__ myAnchorSequenceData,
+            const int subjectLength,
+
+            const unsigned int* __restrict__ myCandidateSequencesData,
+            const int* __restrict__ myCandidateLengths,
+            const BestAlignment_t* myAlignmentFlags,
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myNops,
+            const int* __restrict__ myOverlaps,
+            bool* __restrict__ myShouldBeKept,
+            int subjectIndex,
+            int encodedSequencePitchInInts,
+            size_t msa_pitch,
+            size_t msa_weights_pitch_floats,
+            const int* __restrict__ myIndices,
+            const int myNumIndices,
+            int dataset_coverage){
+
+        auto is_significant_count = [](int count, int coverage){
+            if(int(coverage * 0.3f) <= count)
+                return true;
+            return false;
+        };        
+
+        auto to_nuc = [](unsigned int c){
+            constexpr unsigned int A_enc = 0x00;
+            constexpr unsigned int C_enc = 0x01;
+            constexpr unsigned int G_enc = 0x02;
+            constexpr unsigned int T_enc = 0x03;
+
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+        using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
+
+        typename BlockReduceBool::TempStorage* temp_storage_boolreduce = (typename BlockReduceBool::TempStorage*) smem;
+        typename BlockReduceInt2::TempStorage* temp_storage_int2reduce = (typename BlockReduceInt2::TempStorage*) smem;
+
+        __shared__ bool broadcastbufferbool;
+        __shared__ int broadcastbufferint4[4];
+        __shared__ int totalIndices;
+        __shared__ int counts[1];
+
+        if(threadIdx.x == 0){
+            totalIndices = 0;
+        }
+        __syncthreads();
+
+        const unsigned int* const subjectptr = myAnchorSequenceData;
+
+        const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
+
+        //check if subject and consensus differ at at least one position
+
+        bool hasMismatchToConsensus = false;
+
+        for(int pos = threadIdx.x; pos < subjectLength && !hasMismatchToConsensus; pos += BLOCKSIZE){
+            const int column = subjectColumnsBegin_incl + pos;
+            const char consbase = myConsensus[column];
+            const char subjectbase = to_nuc(getEncodedNuc2Bit(subjectptr, subjectLength, pos));
+
+            hasMismatchToConsensus |= (consbase != subjectbase);
+        }
+
+        hasMismatchToConsensus = BlockReduceBool(temp_storage_boolreduce).Reduce(hasMismatchToConsensus, [](auto l, auto r){return l || r;});
+
+        if(threadIdx.x == 0){
+            broadcastbufferbool = hasMismatchToConsensus;
+        }
+        __syncthreads();
+
+        hasMismatchToConsensus = broadcastbufferbool;
+
+        //if subject and consensus differ at at least one position, check columns in msa
+
+        if(hasMismatchToConsensus){
+            int col = std::numeric_limits<int>::max();
+            bool foundColumn = false;
+            char foundBase = 'F';
+            int foundBaseIndex = std::numeric_limits<int>::max();
+            int consindex = std::numeric_limits<int>::max();
+
+            const int* const myCountsA = myCounts + 0 * msa_weights_pitch_floats;
+            const int* const myCountsC = myCounts + 1 * msa_weights_pitch_floats;
+            const int* const myCountsG = myCounts + 2 * msa_weights_pitch_floats;
+            const int* const myCountsT = myCounts + 3 * msa_weights_pitch_floats;
+
+            const float* const myWeightsA = myWeights + 0 * msa_weights_pitch_floats;
+            const float* const myWeightsC = myWeights + 1 * msa_weights_pitch_floats;
+            const float* const myWeightsG = myWeights + 2 * msa_weights_pitch_floats;
+            const float* const myWeightsT = myWeights + 3 * msa_weights_pitch_floats;
+
+            for(int columnindex = subjectColumnsBegin_incl + threadIdx.x; 
+                    columnindex < subjectColumnsEnd_excl && !foundColumn; 
+                    columnindex += BLOCKSIZE){
+
+                int counts[4];
+                counts[0] = myCountsA[columnindex];
+                counts[1] = myCountsC[columnindex];
+                counts[2] = myCountsG[columnindex];
+                counts[3] = myCountsT[columnindex];
+
+                const char consbase = myConsensus[columnindex];
+                consindex = -1;
+
+                switch(consbase){
+                    case 'A': consindex = 0;break;
+                    case 'C': consindex = 1;break;
+                    case 'G': consindex = 2;break;
+                    case 'T': consindex = 3;break;
+                }
+
+                //find out if there is a non-consensus base with significant coverage
+                int significantBaseIndex = -1;
+
+                #pragma unroll
+                for(int i = 0; i < 4; i++){
+                    if(i != consindex){
+                        const bool significant = is_significant_count(counts[i], dataset_coverage);
+
+                        significantBaseIndex = significant ? i : significantBaseIndex;
+                    }
+                }
+
+                if(significantBaseIndex != -1){
+                    foundColumn = true;
+                    col = columnindex;
+                    foundBaseIndex = significantBaseIndex;
+                }
+            }
+
+            int2 packed{col, foundBaseIndex};
+            //find packed value with smallest col
+            packed = BlockReduceInt2(temp_storage_int2reduce).Reduce(packed, [](auto l, auto r){
+                if(l.x < r.x){
+                    return l;
+                }else{
+                    return r;
+                }
+            });
+
+            if(threadIdx.x == 0){
+                if(packed.x != std::numeric_limits<int>::max()){
+                    broadcastbufferint4[0] = 1;
+                    broadcastbufferint4[1] = packed.x;
+                    broadcastbufferint4[2] = to_nuc(packed.y);
+                    broadcastbufferint4[3] = packed.y;
+                }else{
+                    broadcastbufferint4[0] = 0;
+                }
+            }
+
+            __syncthreads();
+
+            foundColumn = (1 == broadcastbufferint4[0]);
+            col = broadcastbufferint4[1];
+            foundBase = broadcastbufferint4[2];
+            foundBaseIndex = broadcastbufferint4[3];
+
+            if(foundColumn){
+
+                //compare found base to original base
+                const char originalbase = to_nuc(getEncodedNuc2Bit(subjectptr, subjectLength, col - subjectColumnsBegin_incl));
+
+                auto discard_rows = [&](bool keepMatching){
+
+                    for(int k = threadIdx.x; k < myNumIndices; k += BLOCKSIZE){
+                        const int localCandidateIndex = myIndices[k];
+                        const unsigned int* const candidateptr = myCandidateSequencesData + std::size_t(localCandidateIndex) * encodedSequencePitchInInts;
+                        const int candidateLength = myCandidateLengths[localCandidateIndex];
+                        const int shift = myShifts[localCandidateIndex];
+                        const BestAlignment_t alignmentFlag = myAlignmentFlags[localCandidateIndex];
+
+                        //check if row is affected by column col
+                        const int row_begin_incl = subjectColumnsBegin_incl + shift;
+                        const int row_end_excl = row_begin_incl + candidateLength;
+                        const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
+                        char base = 'F';
+                        if(!notAffected){
+                            if(alignmentFlag == BestAlignment_t::Forward){
+                                base = to_nuc(getEncodedNuc2Bit(candidateptr, candidateLength, (col - row_begin_incl)));
+                            }else{
+                                //all candidates of MSA must not have alignmentflag None
+                                assert(alignmentFlag == BestAlignment_t::ReverseComplement); 
+
+                                const unsigned int forwardbaseEncoded = getEncodedNuc2Bit(candidateptr, candidateLength, row_end_excl-1 - col);
+                                base = to_nuc((~forwardbaseEncoded & 0x03));
+                            }
+                        }
+
+                        if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                            myShouldBeKept[k] = true; //same region
+                        }else{
+                            myShouldBeKept[k] = false; //different region
+                        }
+                    }
+                    #if 1
+                    //check that no candidate which should be removed has very good alignment.
+                    //if there is such a candidate, none of the candidates will be removed.
+                    bool veryGoodAlignment = false;
+                    for(int k = threadIdx.x; k < myNumIndices && !veryGoodAlignment; k += BLOCKSIZE){
+                        if(!myShouldBeKept[+ k]){
+                            const int localCandidateIndex = myIndices[k];
+                            const int nOps = myNops[localCandidateIndex];
+                            const int overlapsize = myOverlaps[localCandidateIndex];
+                            const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                            assert(overlapweight <= 1.0f);
+                            assert(overlapweight >= 0.0f);
+
+                            if(overlapweight >= 0.90f){
+                                veryGoodAlignment = true;
+                            }
+                        }
+                    }
+
+                    veryGoodAlignment = BlockReduceBool(temp_storage_boolreduce).Reduce(veryGoodAlignment, [](auto l, auto r){return l || r;});
+
+                    if(threadIdx.x == 0){
+                        broadcastbufferbool = veryGoodAlignment;
+                    }
+                    __syncthreads();
+
+                    veryGoodAlignment = broadcastbufferbool;
+
+                    if(veryGoodAlignment){
+                        for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                            myShouldBeKept[k] = true;
+                        }
+                    }
+                    #endif
+
+                    //select indices of candidates to keep and write them to new indices
+                    if(threadIdx.x == 0){
+                        counts[0] = 0;
+                    }
+                    __syncthreads();
+
+                    const int limit = SDIV(myNumIndices, BLOCKSIZE) * BLOCKSIZE;
+                    for(int k = threadIdx.x; k < limit; k += BLOCKSIZE){
+                        bool keep = false;
+                        if(k < myNumIndices){
+                            keep = myShouldBeKept[k];
+                        }                               
+            
+                        if(keep){
+                            cg::coalesced_group g = cg::coalesced_threads();
+                            int outputPos;
+                            if (g.thread_rank() == 0) {
+                                outputPos = atomicAdd(&counts[0], g.size());
+                                atomicAdd(&totalIndices, g.size());
+                            }
+                            outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                            myNewIndicesPtr[outputPos] = myIndices[k];
+                        }                        
+                    }
+
+                    __syncthreads();
+
+                    if(threadIdx.x == 0){
+                        *myNewNumIndicesPerSubjectPtr = counts[0];
+                    }
+
+                    __syncthreads();
+
+                };
+
+
+
+                if(originalbase == foundBase){
+                    //discard all candidates whose base in column col differs from foundBase
+                    discard_rows(true);
+                }else{
+                    //discard all candidates whose base in column col matches foundBase
+                    discard_rows(false);
+                }
+
+            }else{
+                //did not find a significant columns
+
+                //remove no candidate
+                for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                    myNewIndicesPtr[k] = myIndices[k];
+                }
+                if(threadIdx.x == 0){
+                    *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                    totalIndices += myNumIndices;
+                }
+            }
+
+        }else{
+            //no mismatch between consensus and subject
+
+            //remove no candidate
+            for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                myNewIndicesPtr[k] = myIndices[k];
+            }
+            if(threadIdx.x == 0){
+                *myNewNumIndicesPerSubjectPtr = myNumIndices;
+                totalIndices += myNumIndices;
+            }
+        }
+
+        __syncthreads();
+
+        if(threadIdx.x == 0){
+            atomicAdd(d_newNumIndices, totalIndices);
+        }
+    }
+
   
 
     template<int BLOCKSIZE>
