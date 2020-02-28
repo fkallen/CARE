@@ -216,10 +216,9 @@ namespace gpu{
         }
     }
 
-    template<int BLOCKSIZE, MemoryType memType>
+    template<int BLOCKSIZE>
     __device__ __forceinline__
     void addSequencesToMSASingleBlock(
-            float* __restrict__ sharedmem,
             int* __restrict__ inputcounts,
             float* __restrict__ inputweights,
             int* __restrict__ inputcoverages,
@@ -243,15 +242,10 @@ namespace gpu{
             int subjectIndex){  
 
         constexpr bool candidatesAreTransposed = true;
-        constexpr bool useSmem = memType == MemoryType::Shared;
 
-        float* const shared_weights = sharedmem;
-        int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
-        int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
-
-        int* const mycounts = (useSmem ? shared_counts : inputcounts);
-        float* const myweights = (useSmem ? shared_weights : inputweights);
-        int* const mycoverages = (useSmem ? shared_coverages : inputcoverages);        
+        int* const mycounts = inputcounts;
+        float* const myweights = inputweights;
+        int* const mycoverages = inputcoverages;        
 
         for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += BLOCKSIZE){
             mycounts[column] = 0;
@@ -267,9 +261,6 @@ namespace gpu{
         //add subject
         const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
-        const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
-
-        assert(columnsToCheck <= msa_weights_row_pitch_floats);
 
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
         const unsigned int* const subject = myAnchorSequenceData;
@@ -324,54 +315,6 @@ namespace gpu{
                 canUseQualityScores,
                 elementOffsetForTransposedCandidates
             );
-        }
-
-        if(useSmem){
-
-            __syncthreads(); //wait until msa is ready
-
-            checkBuiltMSA(
-                myMsaColumnProperties,
-                mycounts,
-                myweights,
-                msa_weights_row_pitch_floats,
-                subjectIndex
-            ); 
-
-            // copy from shared to global
-
-            int* const gmemCoverage  = inputcoverages;
-            for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
-                for(int k = 0; k < 4; k++){
-                    const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
-                    int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
-
-                    const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
-                    float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
-
-                    *destCounts = *srcCounts;
-                    *destWeights = *srcWeights;
-                    //atomicAdd(destCounts ,*srcCounts);
-                    //atomicAdd(destWeights, *srcWeights);
-                }
-                gmemCoverage[index] = mycoverages[index];
-                //atomicAdd(gmemCoverage + index, mycoverage[index]);
-            }
-
-            __syncthreads(); //wait until smem can be reused
-        }else{
-
-            __syncthreads(); //wait until msa is ready
-
-            //check msa
-
-            checkBuiltMSA(
-                myMsaColumnProperties,
-                mycounts,
-                myweights,
-                msa_weights_row_pitch_floats,
-                subjectIndex
-            ); 
         }
     }
 
@@ -657,10 +600,15 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             const bool* __restrict__ canExecute){
 
+        constexpr bool useSmem = memType == MemoryType::Shared;
 
         if(*canExecute){
 
             extern __shared__ float sharedmem[];
+
+            float* const shared_weights = sharedmem;
+            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
+            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
             
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
                 const int numGoodCandidates = d_indices_per_subject[subjectIndex];
@@ -669,10 +617,18 @@ namespace gpu{
 
                     const int globalCandidateOffset = d_candidates_per_subject_prefixsum[subjectIndex];
 
-                    int* const mycounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    float* const myweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    int* const mycoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
+                    int* const inputcounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    float* const inputweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    int* const inputcoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
                     const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
+
+                    const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
+
+                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
+
+                    int* const mycounts = (useSmem ? shared_counts : inputcounts);
+                    float* const myweights = (useSmem ? shared_weights : inputweights);
+                    int* const mycoverages = (useSmem ? shared_coverages : inputcoverages);  
 
                     const int* const myShifts = shifts + globalCandidateOffset;
                     const int* const myOverlaps = overlaps + globalCandidateOffset;
@@ -690,8 +646,7 @@ namespace gpu{
 
                     const int* const myIndices = d_indices + globalCandidateOffset;
 
-                    addSequencesToMSASingleBlock<BLOCKSIZE, memType>(
-                        sharedmem,
+                    addSequencesToMSASingleBlock<BLOCKSIZE>(
                         mycounts,
                         myweights,
                         mycoverages,
@@ -714,6 +669,40 @@ namespace gpu{
                         qualityPitchInBytes,
                         subjectIndex
                     );
+
+                    __syncthreads(); //wait until msa is ready
+            
+                    checkBuiltMSA(
+                        myMsaColumnProperties,
+                        mycounts,
+                        myweights,
+                        msa_weights_row_pitch_floats,
+                        subjectIndex
+                    ); 
+
+                    if(useSmem){
+                        // copy from shared to global
+            
+                        int* const gmemCoverage  = inputcoverages;
+                        for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
+                            for(int k = 0; k < 4; k++){
+                                const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
+                                int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
+            
+                                const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
+                                float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
+            
+                                *destCounts = *srcCounts;
+                                *destWeights = *srcWeights;
+                                //atomicAdd(destCounts ,*srcCounts);
+                                //atomicAdd(destWeights, *srcWeights);
+                            }
+                            gmemCoverage[index] = mycoverages[index];
+                            //atomicAdd(gmemCoverage + index, mycoverage[index]);
+                        }
+            
+                        __syncthreads(); //wait until smem can be reused
+                    }
                 }                
             }
         }
@@ -993,6 +982,182 @@ namespace gpu{
                 }
             }
         }
+    }
+
+
+    template<int BLOCKSIZE, MemoryType addSequencesMemType>
+    __global__
+    void buildMSASingleBlockKernel(
+            MSAColumnProperties* __restrict__ msaColumnProperties,
+            int* __restrict__ coverage,
+            int* __restrict__ counts,
+            float* __restrict__ weights,
+            float* __restrict__ d_support,
+            float* __restrict__ d_origWeights,
+            int* __restrict__ d_origCoverages,
+            char* __restrict__ d_consensus,          
+            const int* __restrict__ overlaps,
+            const int* __restrict__ shifts,
+            const int* __restrict__ nOps,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const int* __restrict__ anchorLengths,
+            const int* __restrict__ candidateLengths,
+            const int* __restrict__ indices,
+            const int* __restrict__ indices_per_subject,
+            const int* __restrict__ candidatesPerSubjectPrefixSum,            
+            const unsigned int* __restrict__ subjectSequencesData,
+            const unsigned int* __restrict__ candidateSequencesTransposedData,
+            const char* __restrict__ subjectQualities,
+            const char* __restrict__ candidateQualities,
+            int n_subjects,
+            int n_candidates,
+            bool canUseQualityScores,
+            int encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msa_row_pitch,
+            size_t msa_weights_row_pitch_floats,
+            const bool* __restrict__ canExecute){
+
+        constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
+
+        extern __shared__ float sharedmem[];
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;            
+
+        if(*canExecute){
+
+            typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
+
+            float* const shared_weights = sharedmem;
+            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
+            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
+
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+                const int myNumGoodCandidates = indices_per_subject[subjectIndex];
+
+                if(myNumGoodCandidates > 0){
+
+                    const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
+
+                    MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
+                    
+                    int* const inputcoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
+                    int* const inputcounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    float* const inputweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
+                    float* const my_support = d_support + subjectIndex * msa_weights_row_pitch_floats;
+                    float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_row_pitch_floats;
+                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_row_pitch_floats;
+                    char* const my_consensus = d_consensus + subjectIndex * msa_row_pitch;
+
+                    int* const mycounts = (useSmemForAddSequences ? shared_counts : inputcounts);
+                    float* const myweights = (useSmemForAddSequences ? shared_weights : inputweights);
+                    int* const mycoverages = (useSmemForAddSequences ? shared_coverages : inputcoverages);  
+
+                    const int* const myOverlaps = overlaps + globalCandidateOffset;
+                    const int* const myShifts = shifts + globalCandidateOffset;
+                    const int* const myNops = nOps + globalCandidateOffset;
+                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalCandidateOffset;
+                    const int subjectLength = anchorLengths[subjectIndex];
+                    const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
+                    const int* const myIndices = indices + globalCandidateOffset;
+
+                    const unsigned int* const myAnchorSequenceData = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                    const unsigned int* const myCandidateSequencesData = candidateSequencesTransposedData + size_t(globalCandidateOffset);
+                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                    const char* const myCandidateQualities = candidateQualities + size_t(globalCandidateOffset) * qualityPitchInBytes;
+
+                    msaInit<BLOCKSIZE>(
+                        *cubTempStorage,
+                        myMsaColumnProperties,
+                        myIndices,
+                        myNumGoodCandidates,
+                        myShifts,
+                        myAlignmentFlags,
+                        subjectLength,
+                        myCandidateLengths
+                    );
+
+                    __syncthreads();
+
+                    const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
+
+                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
+
+                    addSequencesToMSASingleBlock<BLOCKSIZE>(
+                        mycounts,
+                        myweights,
+                        mycoverages,
+                        myMsaColumnProperties,
+                        myShifts,
+                        myOverlaps,
+                        myNops,
+                        myAlignmentFlags,
+                        myAnchorSequenceData,
+                        myAnchorQualityData,
+                        myCandidateSequencesData,
+                        myCandidateQualities,
+                        myCandidateLengths,
+                        myIndices,
+                        myNumGoodCandidates,
+                        n_candidates,
+                        canUseQualityScores, 
+                        msa_weights_row_pitch_floats,
+                        encodedSequencePitchInInts,
+                        qualityPitchInBytes,
+                        subjectIndex
+                    );
+
+                    __syncthreads(); //wait until msa is ready
+            
+                    checkBuiltMSA(
+                        myMsaColumnProperties,
+                        mycounts,
+                        myweights,
+                        msa_weights_row_pitch_floats,
+                        subjectIndex
+                    ); 
+
+                    if(useSmemForAddSequences){
+                        // copy from shared to global
+            
+                        for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
+                            for(int k = 0; k < 4; k++){
+                                const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
+                                int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
+            
+                                const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
+                                float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
+            
+                                *destCounts = *srcCounts;
+                                *destWeights = *srcWeights;
+                            }
+                            inputcoverages[index] = mycoverages[index];
+                        }
+            
+                        __syncthreads(); //wait until smem can be reused
+                    }
+
+                    findConsensusSingleBlock<BLOCKSIZE>(
+                        my_support,
+                        my_orig_weights,
+                        my_orig_coverage,
+                        my_consensus,
+                        myMsaColumnProperties, 
+                        mycounts,
+                        myweights,      
+                        myAnchorSequenceData, 
+                        subjectIndex,
+                        encodedSequencePitchInInts, 
+                        msa_row_pitch,
+                        msa_weights_row_pitch_floats
+                    );
+
+                    __syncthreads();
+
+                } 
+            }
+        }
+
     }
 
 
@@ -1708,33 +1873,6 @@ namespace gpu{
     	dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device), 1, 1);
 
-        // void msa_add_sequences_kernel_singleblock(
-        //     int* __restrict__ coverage,
-        //     MSAColumnProperties* __restrict__ msaColumnProperties,
-        //     int* __restrict__ counts,
-        //     float* __restrict__ weights,
-        //     const int* __restrict__ overlaps,
-        //     const int* __restrict__ shifts,
-        //     const int* __restrict__ nOps,
-        //     const BestAlignment_t* __restrict__ bestAlignmentFlags,
-        //     const unsigned int* __restrict__ subjectSequencesData,
-        //     const unsigned int* __restrict__ candidateSequencesTransposedData,
-        //     const int* __restrict__ subjectSequencesLength,
-        //     const int* __restrict__ candidateSequencesLength,
-        //     const char* __restrict__ subjectQualities,
-        //     const char* __restrict__ candidateQualities,
-        //     const int* __restrict__ d_candidates_per_subject_prefixsum,
-        //     const int* __restrict__ d_indices,
-        //     const int* __restrict__ d_indices_per_subject,
-        //     int n_subjects,
-        //     int n_queries,
-        //     bool canUseQualityScores,
-        //     int encodedSequencePitchInInts,
-        //     size_t qualityPitchInBytes,
-        //     size_t msa_row_pitch,
-        //     size_t msa_weights_row_pitch_floats,
-        //     const bool* __restrict__ canExecute){
-
         msa_add_sequences_kernel_singleblock<blocksize, memType>
                 <<<grid, block, smem, stream>>>(
             d_coverage,
@@ -2304,7 +2442,98 @@ namespace gpu{
 
 
 
+    void callBuildMSASingleBlockKernel_async(
+            MSAColumnProperties* d_msaColumnProperties,
+            int* d_coverage,
+            int* d_counts,
+            float* d_weights,
+            float* d_support,
+            float* d_origWeights,
+            int* d_origCoverages,
+            char* d_consensus,          
+            const int* d_overlaps,
+            const int* d_shifts,
+            const int* d_nOps,
+            const BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_anchorLengths,
+            const int* d_candidateLengths,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_candidatesPerSubjectPrefixSum,            
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesTransposedData,
+            const char* d_subjectQualities,
+            const char* d_candidateQualities,
+            int n_subjects,
+            int n_candidates,
+            bool canUseQualityScores,
+            int encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msa_row_pitch,
+            size_t msa_weights_row_pitch_floats,
+            const bool* d_canExecute,
+            cudaStream_t stream,
+            KernelLaunchHandle& kernelLaunchHandle){
 
+        constexpr MemoryType addSequencesMemType = MemoryType::Shared;
+
+        constexpr bool addSequencesUsesSmem = addSequencesMemType == MemoryType::Shared;
+
+        constexpr int BLOCKSIZE = 128;
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceIntStorage = typename BlockReduceInt::TempStorage;
+
+        const std::size_t smemCub = sizeof(BlockReduceIntStorage);
+        const std::size_t smemAddSequences = (addSequencesUsesSmem ? 
+                                                sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
+                                                    + sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
+                                                    + sizeof(int) * msa_weights_row_pitch_floats // coverages
+                                                : 0);
+
+        const std::size_t smem = std::max(smemCub, smemAddSequences);
+
+        // BlockReduceIntStorage aaa;
+
+        // std::cerr << "BlockReduceIntStorage = " << smem << "\n";
+
+        dim3 block(BLOCKSIZE, 1, 1);
+        dim3 grid(n_subjects, 1, 1);
+        
+        buildMSASingleBlockKernel<BLOCKSIZE, addSequencesMemType><<<grid, block, smem, stream>>>(
+            d_msaColumnProperties,
+            d_coverage,
+            d_counts,
+            d_weights,
+            d_support,
+            d_origWeights,
+            d_origCoverages,
+            d_consensus,          
+            d_overlaps,
+            d_shifts,
+            d_nOps,
+            d_bestAlignmentFlags,
+            d_anchorLengths,
+            d_candidateLengths,
+            d_indices,
+            d_indices_per_subject,
+            d_candidatesPerSubjectPrefixSum,            
+            d_subjectSequencesData,
+            d_candidateSequencesTransposedData,
+            d_subjectQualities,
+            d_candidateQualities,
+            n_subjects,
+            n_candidates,
+            canUseQualityScores,
+            encodedSequencePitchInInts,
+            qualityPitchInBytes,
+            msa_row_pitch,
+            msa_weights_row_pitch_floats,
+            d_canExecute
+        ); CUERR;
+
+
+    
+    }
 
 
 
@@ -2341,7 +2570,7 @@ namespace gpu{
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& kernelLaunchHandle){
-#if 1
+#if 0
 
         call_msa_init_kernel_async_exp(
             d_msaColumnProperties,
@@ -2410,6 +2639,40 @@ namespace gpu{
         );
 
 #else 
+
+        callBuildMSASingleBlockKernel_async(
+            d_msaColumnProperties,
+            d_coverage,
+            d_counts,
+            d_weights,
+            d_support,
+            d_origWeights,
+            d_origCoverages,
+            d_consensus,          
+            d_overlaps,
+            d_shifts,
+            d_nOps,
+            d_bestAlignmentFlags,
+            d_subjectSequencesLength,
+            d_candidateSequencesLength,
+            d_indices,
+            d_indices_per_subject,
+            d_candidatesPerSubjectPrefixSum,            
+            d_subjectSequencesData,
+            d_candidateSequencesTransposedData,
+            d_subjectQualities,
+            d_candidateQualities,
+            n_subjects,
+            n_candidates,
+            canUseQualityScores,
+            encodedSequencePitchInInts,
+            qualityPitchInBytes,
+            msa_row_pitch,
+            msa_weights_row_pitch_floats,
+            d_canExecute,
+            stream,
+            kernelLaunchHandle
+        );
         
 #endif
     }
