@@ -984,8 +984,15 @@ namespace gpu{
         }
     }
 
+    #if __CUDA_ARCH__ >= 610
+        #define buildMSASingleBlockKernel_MIN_BLOCKS   8
+    #else
+        #define buildMSASingleBlockKernel_MIN_BLOCKS   4
+    #endif
+
 
     template<int BLOCKSIZE, MemoryType addSequencesMemType>
+    __launch_bounds__(BLOCKSIZE, buildMSASingleBlockKernel_MIN_BLOCKS)
     __global__
     void buildMSASingleBlockKernel(
             MSAColumnProperties* __restrict__ msaColumnProperties,
