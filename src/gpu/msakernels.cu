@@ -102,7 +102,7 @@ namespace gpu{
         int startindex = 0;
         int endindex = subjectLength;
 
-        for(int k = threadIdx.x; k < numGoodCandidates; k += blockDim.x) {
+        for(int k = threadIdx.x; k < numGoodCandidates; k += BLOCKSIZE) {
             const int localCandidateIndex = goodCandidateIndices[k];
 
             const int shift = shifts[localCandidateIndex];
@@ -216,7 +216,7 @@ namespace gpu{
         }
     }
 
-    template<MemoryType memType>
+    template<int BLOCKSIZE, MemoryType memType>
     __device__ __forceinline__
     void addSequencesToMSASingleBlock(
             float* __restrict__ sharedmem,
@@ -253,12 +253,12 @@ namespace gpu{
         float* const myweights = (useSmem ? shared_weights : inputweights);
         int* const mycoverages = (useSmem ? shared_coverages : inputcoverages);        
 
-        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += blockDim.x){
+        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += BLOCKSIZE){
             mycounts[column] = 0;
             myweights[column] = 0;
         }
 
-        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats; column += blockDim.x){
+        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats; column += BLOCKSIZE){
             mycoverages[column] = 0;
         }   
         
@@ -275,7 +275,7 @@ namespace gpu{
         const unsigned int* const subject = myAnchorSequenceData;
         const char* const subjectQualityScore = myAnchorQualityData;
                         
-        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+        for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
             const int columnIndex = subjectColumnsBegin_incl + i;
             const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
             const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
@@ -286,7 +286,7 @@ namespace gpu{
             atomicAdd(mycoverages + columnIndex, 1);
         }
 
-        for(int indexInList = threadIdx.x; indexInList < numIndices; indexInList += blockDim.x){
+        for(int indexInList = threadIdx.x; indexInList < numIndices; indexInList += BLOCKSIZE){
 
             const int localCandidateIndex = myIndices[indexInList];
             const int shift = myShifts[localCandidateIndex];
@@ -341,7 +341,7 @@ namespace gpu{
             // copy from shared to global
 
             int* const gmemCoverage  = inputcoverages;
-            for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
+            for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                 for(int k = 0; k < 4; k++){
                     const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
                     int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
@@ -485,23 +485,24 @@ namespace gpu{
 
 
             if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                constexpr char A_enc = 0x00;
-                constexpr char C_enc = 0x01;
-                constexpr char G_enc = 0x02;
-                constexpr char T_enc = 0x03;
-                const int localIndex = column - subjectColumnsBegin_incl;
-                const char subjectbase = getEncodedNuc2Bit(subject, subjectLength, localIndex);
+                constexpr unsigned int A_enc = 0x00;
+                constexpr unsigned int C_enc = 0x01;
+                constexpr unsigned int G_enc = 0x02;
+                constexpr unsigned int T_enc = 0x03;
 
-                if(subjectbase == A_enc){
+                const int localIndex = column - subjectColumnsBegin_incl;
+                const unsigned int encNuc = getEncodedNuc2Bit(subject, subjectLength, localIndex);
+
+                if(encNuc == A_enc){
                     my_orig_weights[column] = wa;
                     my_orig_coverage[column] = ca;
-                }else if(subjectbase == C_enc){
+                }else if(encNuc == C_enc){
                     my_orig_weights[column] = wc;
                     my_orig_coverage[column] = cc;
-                }else if(subjectbase == G_enc){
+                }else if(encNuc == G_enc){
                     my_orig_weights[column] = wg;
                     my_orig_coverage[column] = cg;
-                }else if(subjectbase == T_enc){
+                }else if(encNuc == T_enc){
                     my_orig_weights[column] = wt;
                     my_orig_coverage[column] = ct;
                 }
@@ -627,7 +628,7 @@ namespace gpu{
 
 
 
-    template<MemoryType memType>
+    template<int BLOCKSIZE, MemoryType memType>
     __global__
     void msa_add_sequences_kernel_singleblock(
             int* __restrict__ coverage,
@@ -689,7 +690,7 @@ namespace gpu{
 
                     const int* const myIndices = d_indices + globalCandidateOffset;
 
-                    addSequencesToMSASingleBlock<memType>(
+                    addSequencesToMSASingleBlock<BLOCKSIZE, memType>(
                         sharedmem,
                         mycounts,
                         myweights,
@@ -1703,7 +1704,7 @@ namespace gpu{
                     kernelLaunchConfig.smem = smem; \
                     KernelProperties kernelProperties; \
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                        msa_add_sequences_kernel_singleblock<memType>, \
+                        msa_add_sequences_kernel_singleblock<(blocksize), memType>, \
                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                     mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -1761,7 +1762,7 @@ namespace gpu{
         //     size_t msa_weights_row_pitch_floats,
         //     const bool* __restrict__ canExecute){
 
-        msa_add_sequences_kernel_singleblock<memType>
+        msa_add_sequences_kernel_singleblock<blocksize, memType>
                 <<<grid, block, smem, stream>>>(
             d_coverage,
             d_msaColumnProperties,
