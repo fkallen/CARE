@@ -216,7 +216,7 @@ void call_msa_add_sequences_kernel_implicit_async(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_find_consensus_implicit_kernel_async(
+void call_msaFindConsensusSingleBlockKernel_async(
             const MSAColumnProperties* __restrict__ d_msaColumnProperties,
             const int* __restrict__ d_counts,
             const float* __restrict__ d_weights,
