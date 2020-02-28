@@ -1021,6 +1021,7 @@ namespace gpu{
         constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
 
         extern __shared__ float sharedmem[];
+        __shared__ MSAColumnProperties shared_columnProperties;
 
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;            
 
@@ -1038,8 +1039,6 @@ namespace gpu{
                 if(myNumGoodCandidates > 0){
 
                     const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
-
-                    MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
                     
                     int* const inputcoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
                     int* const inputcounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
@@ -1066,9 +1065,11 @@ namespace gpu{
                     const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
                     const char* const myCandidateQualities = candidateQualities + size_t(globalCandidateOffset) * qualityPitchInBytes;
 
+                    MSAColumnProperties columnProperties;
+
                     msaInit<BLOCKSIZE>(
                         *cubTempStorage,
-                        myMsaColumnProperties,
+                        &columnProperties,
                         myIndices,
                         myNumGoodCandidates,
                         myShifts,
@@ -1077,9 +1078,17 @@ namespace gpu{
                         myCandidateLengths
                     );
 
+                    //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
+                    if(threadIdx.x == 0){
+                        msaColumnProperties[subjectIndex] = columnProperties;
+                        shared_columnProperties = columnProperties;
+                    }
+
                     __syncthreads();
 
-                    const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
+                    columnProperties = shared_columnProperties;
+
+                    const int columnsToCheck = columnProperties.lastColumn_excl;
 
                     assert(columnsToCheck <= msa_weights_row_pitch_floats);
 
@@ -1087,7 +1096,7 @@ namespace gpu{
                         mycounts,
                         myweights,
                         mycoverages,
-                        myMsaColumnProperties,
+                        &columnProperties,
                         myShifts,
                         myOverlaps,
                         myNops,
@@ -1110,15 +1119,30 @@ namespace gpu{
                     __syncthreads(); //wait until msa is ready
             
                     checkBuiltMSA(
-                        myMsaColumnProperties,
+                        &columnProperties,
                         mycounts,
                         myweights,
                         msa_weights_row_pitch_floats,
                         subjectIndex
                     ); 
 
+                    findConsensusSingleBlock<BLOCKSIZE>(
+                        my_support,
+                        my_orig_weights,
+                        my_orig_coverage,
+                        my_consensus,
+                        &columnProperties,
+                        mycounts,
+                        myweights,      
+                        myAnchorSequenceData, 
+                        subjectIndex,
+                        encodedSequencePitchInInts, 
+                        msa_row_pitch,
+                        msa_weights_row_pitch_floats
+                    );
+
                     if(useSmemForAddSequences){
-                        // copy from shared to global
+                        // copy from counts and weights and coverages from shared to global
             
                         for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                             for(int k = 0; k < 4; k++){
@@ -1133,27 +1157,9 @@ namespace gpu{
                             }
                             inputcoverages[index] = mycoverages[index];
                         }
-            
-                        __syncthreads(); //wait until smem can be reused
                     }
 
-                    findConsensusSingleBlock<BLOCKSIZE>(
-                        my_support,
-                        my_orig_weights,
-                        my_orig_coverage,
-                        my_consensus,
-                        myMsaColumnProperties, 
-                        mycounts,
-                        myweights,      
-                        myAnchorSequenceData, 
-                        subjectIndex,
-                        encodedSequencePitchInInts, 
-                        msa_row_pitch,
-                        msa_weights_row_pitch_floats
-                    );
-
-                    __syncthreads();
-
+                    __syncthreads(); //wait until data can be reused
                 } 
             }
         }
@@ -2491,10 +2497,6 @@ namespace gpu{
                                                 : 0);
 
         const std::size_t smem = std::max(smemCub, smemAddSequences);
-
-        // BlockReduceIntStorage aaa;
-
-        // std::cerr << "BlockReduceIntStorage = " << smem << "\n";
 
         dim3 block(BLOCKSIZE, 1, 1);
         dim3 grid(n_subjects, 1, 1);

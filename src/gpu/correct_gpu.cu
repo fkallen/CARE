@@ -2071,6 +2071,141 @@ namespace gpu{
         std::cout << std::endl;
 #endif
 
+#if 0
+        cudaDeviceSynchronize(); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_msa_column_properties,
+            dataArrays.d_msa_column_properties,
+            dataArrays.d_msa_column_properties.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_counts,
+            dataArrays.d_counts,
+            dataArrays.d_counts.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_weights,
+            dataArrays.d_weights,
+            dataArrays.d_weights.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_coverage,
+            dataArrays.d_coverage,
+            dataArrays.d_coverage.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_origWeights,
+            dataArrays.d_origWeights,
+            dataArrays.d_origWeights.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_origCoverages,
+            dataArrays.d_origCoverages,
+            dataArrays.d_origCoverages.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_support,
+            dataArrays.d_support,
+            dataArrays.d_support.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_consensus,
+            dataArrays.d_consensus,
+            dataArrays.d_consensus.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
+        cudaDeviceSynchronize();
+
+        std::size_t msa_weights_row_pitch_floats = batch.msa_weights_pitch / sizeof(float);
+        std::size_t msa_row_pitch = batch.msa_pitch;
+
+        for(int i = 0; i < batch.n_subjects; i++){
+            if(dataArrays.h_subject_read_ids[i] == 13){
+                std::cerr << "subjectColumnsBegin_incl = " << dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
+                std::cerr << "subjectColumnsEnd_excl = " << dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
+                std::cerr << "lastColumn_excl = " << dataArrays.h_msa_column_properties[i].lastColumn_excl << "\n";
+                std::cerr << "counts: \n";
+                int* counts = dataArrays.h_counts + i * 4 * msa_weights_row_pitch_floats;
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << counts[0 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << counts[1 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << counts[2 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << counts[3 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+
+                std::cerr << "weights: \n";
+                float* weights = dataArrays.h_weights + i * 4 * msa_weights_row_pitch_floats;
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << weights[0 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << weights[1 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << weights[2 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << weights[3 * msa_weights_row_pitch_floats + k];
+                }
+                std::cerr << "\n";
+
+                std::cerr << "coverage: \n";
+                int* coverage = dataArrays.h_coverage + i * msa_weights_row_pitch_floats;
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << coverage[k];
+                }
+                std::cerr << "\n";
+
+                std::cerr << "support: \n";
+                float* support = dataArrays.h_support + i * msa_weights_row_pitch_floats;
+                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                    std::cerr << support[k];
+                }
+                std::cerr << "\n";
+
+                std::cerr << "consensus: \n";
+                char* consensus = dataArrays.h_consensus + i * msa_row_pitch;
+                for(int k = 0; k < msa_row_pitch; k++){
+                    std::cerr << consensus[k];
+                }
+                std::cerr << "\n";
+            }
+        }
+
+        
+#endif        
+
+
+        
+
         call_msa_correct_subject_implicit_kernel_async(
                     dataArrays.getDeviceMSAPointers(),
                     dataArrays.getDeviceAlignmentResultPointers(),
@@ -2644,8 +2779,8 @@ namespace gpu{
 
                 tmpencoded = tmp.encode();
 
-                // if(readId == 13158000){
-                //     std::cerr << "readid = 13158000, anchor\n";
+                // if(readId == 13){
+                //     std::cerr << "readid = 13, anchor\n";
                 //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << "\n";
                 //     std::cerr << "\nedits: ";
                 //     for(int i = 0; i < int(tmp.edits.size()); i++){
@@ -2728,8 +2863,8 @@ namespace gpu{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                // if(candidate_read_id == 37){
-                //     std::cerr << "readid = 37, as candidate of anchor with id " << subjectReadId << "\n";
+                // if(candidate_read_id == 13){
+                //     std::cerr << "readid = 13, as candidate of anchor with id " << subjectReadId << "\n";
                 //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
                 //     std::cerr << "\nedits: ";
                 //     for(int i = 0; i < int(tmp.edits.size()); i++){
