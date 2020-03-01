@@ -1888,22 +1888,22 @@ namespace gpu{
 
 #else 
 
-        {
-            //Initialize d_shouldBeKept array
+        // {
+        //     //Initialize d_shouldBeKept array
 
-            const int N = batch.n_queries;
-            bool* d_canExecute = dataArrays.d_canExecute.get();
-            generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
-                [=] __device__ (){
-                    if(*d_canExecute){
-                        const int index = threadIdx.x + blockIdx.x * 128;
-                        if(index < N){
-                            d_shouldBeKept[index] = false;
-                        }
-                    }
-                }
-            ); CUERR;
-        }
+        //     const int N = batch.n_queries;
+        //     bool* d_canExecute = dataArrays.d_canExecute.get();
+        //     generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
+        //         [=] __device__ (){
+        //             if(*d_canExecute){
+        //                 const int index = threadIdx.x + blockIdx.x * 128;
+        //                 if(index < N){
+        //                     d_shouldBeKept[index] = false;
+        //                 }
+        //             }
+        //         }
+        //     ); CUERR;
+        // }
 
 
         callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
