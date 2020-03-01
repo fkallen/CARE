@@ -1702,7 +1702,7 @@ namespace gpu{
 
 
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
-
+#if 0
             {
                 //Initialize d_shouldBeKept array
 
@@ -1884,8 +1884,78 @@ namespace gpu{
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle
             );
+
+
+#else 
+
+        {
+            //Initialize d_shouldBeKept array
+
+            const int N = batch.n_queries;
+            bool* d_canExecute = dataArrays.d_canExecute.get();
+            generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
+                [=] __device__ (){
+                    if(*d_canExecute){
+                        const int index = threadIdx.x + blockIdx.x * 128;
+                        if(index < N){
+                            d_shouldBeKept[index] = false;
+                        }
+                    }
+                }
+            ); CUERR;
         }
 
+
+        callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
+            dataArrays.d_indices_tmp.get(),
+            dataArrays.d_indices_per_subject_tmp.get(),
+            dataArrays.d_num_indices_tmp.get(),
+            dataArrays.d_msa_column_properties.get(),
+            dataArrays.d_consensus.get(),
+            dataArrays.d_coverage.get(),
+            dataArrays.d_counts.get(),
+            dataArrays.d_weights.get(),
+            dataArrays.d_support.get(),
+            dataArrays.d_origCoverages.get(),
+            dataArrays.d_origWeights.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_alignment_shifts.get(),
+            dataArrays.d_alignment_nOps.get(),
+            dataArrays.d_alignment_overlaps.get(),
+            dataArrays.d_subject_sequences_data.get(),
+            dataArrays.d_candidate_sequences_data.get(),
+            dataArrays.d_transposedCandidateSequencesData.get(),
+            dataArrays.d_subject_sequences_lengths.get(),
+            dataArrays.d_candidate_sequences_lengths.get(),
+            dataArrays.d_subject_qualities.get(),
+            dataArrays.d_candidate_qualities.get(),
+            d_shouldBeKept,
+            dataArrays.d_candidates_per_subject_prefixsum,
+            batch.n_subjects,
+            batch.n_queries,
+            transFuncData.correctionOptions.useQualityScores,
+            batch.encodedSequencePitchInInts,
+            batch.qualityPitchInBytes,
+            batch.msa_pitch,
+            batch.msa_weights_pitch / sizeof(float),
+            dataArrays.d_indices,
+            dataArrays.d_indices_per_subject,
+            transFuncData.correctionOptions.estimatedCoverage,
+            dataArrays.d_canExecute,
+            iteration,
+            dataArrays.d_subject_read_ids.get(),
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
+
+        std::swap(dataArrays.d_indices, dataArrays.d_indices_tmp);
+        std::swap(dataArrays.d_indices_per_subject, dataArrays.d_indices_per_subject_tmp);
+        std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
+
+    }
+
+
+#endif
         cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
         
         // {

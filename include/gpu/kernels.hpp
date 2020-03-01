@@ -325,7 +325,46 @@ void callBuildMSAKernel_async(
             KernelLaunchHandle& kernelLaunchHandle);
 
 
-
+void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
+            int* d_newIndices,
+            int* d_newNumIndicesPerSubject,
+            int* d_newNumIndices,
+            MSAColumnProperties* d_msaColumnProperties,
+            char* d_consensus,
+            int* d_coverage,
+            int* d_counts,
+            float* d_weights,
+            float* d_support,
+            int* d_origCoverages,
+            float* d_origWeights,
+            const BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_shifts,
+            const int* d_nOps,
+            const int* d_overlaps,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const unsigned int* d_transposedCandidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
+            const char* d_subjectQualities,
+            const char* d_candidateQualities,
+            bool* d_shouldBeKept,
+            const int* d_candidates_per_subject_prefixsum,
+            int n_subjects,
+            int n_candidates,
+            bool canUseQualityScores,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msa_pitch,
+            size_t msa_weights_pitch_floats,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            int dataset_coverage,
+            const bool* d_canExecute,
+            int iteration,
+            const read_number* d_subjectReadIds,
+            cudaStream_t stream,
+            KernelLaunchHandle& kernelLaunchHandle);
 
 // correction kernels
 

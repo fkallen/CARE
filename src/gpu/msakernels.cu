@@ -134,11 +134,65 @@ namespace gpu{
         }
     }
 
+    template<int BLOCKSIZE>
+    __device__ __forceinline__
+    void msaUpdatePropertiesAfterSequenceRemovalSingleBlock(
+            MSAColumnProperties* __restrict__ myMsaColumnProperties,
+            const int* __restrict__ myCoverage){
+
+        const int firstColumn_incl = myMsaColumnProperties->firstColumn_incl;
+        const int lastColumn_excl = myMsaColumnProperties->lastColumn_excl;
+
+        int newFirstColumn_incl = -1;
+        int newLastColumn_excl = -1;
+
+        for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl-1; column += blockDim.x){
+            const int thisCoverage = myCoverage[column];
+            const int nextCoverage = myCoverage[column+1];
+            assert(thisCoverage >= 0);
+            assert(nextCoverage >= 0);
+
+            if(thisCoverage == 0 && nextCoverage > 0){
+                newFirstColumn_incl = column+1;
+            }
+
+            if(thisCoverage > 0 && nextCoverage == 0){
+                newLastColumn_excl = column+1;
+            }
+        }
+
+        __syncthreads();
+
+        __shared__ int checkcount[2];
+        if(threadIdx.x == 0){
+            checkcount[0] = 0;
+            checkcount[1] = 0;
+        }
+        __syncthreads();
+
+        //there can be at most one thread for which this is true
+        if(newFirstColumn_incl != -1){    
+            atomicAdd(&checkcount[0], 1);
+            myMsaColumnProperties->firstColumn_incl = newFirstColumn_incl;
+        }
+        //there can be at most one thread for which this is true
+        if(newLastColumn_excl != -1){
+            atomicAdd(&checkcount[1], 1);
+            myMsaColumnProperties->lastColumn_excl = newLastColumn_excl;
+        }
+        
+        __syncthreads();
+        if(threadIdx.x == 0){
+            assert(checkcount[0] <= 1);
+            assert(checkcount[1] <= 1);
+        }
+    }
 
 
-    template<bool isTransposedSequence>
+
+    template<bool isTransposedSequence, bool doAdd>
     __device__ 
-    void addASequence2BitToMSA(
+    void msaAddOrDeleteASequence2Bit(
             int* __restrict__ counts,
             float* __restrict__ weights,
             int* __restrict__ coverages,
@@ -186,9 +240,9 @@ namespace gpu{
                     const int columnIndex = columnStart 
                             + (isForward ? (intIndex * 16 + posInInt) : sequenceLength - 1 - (intIndex * 16 + posInInt));
                     
-                    atomicAdd(counts + rowOffset + columnIndex, 1);
-                    atomicAdd(weights + rowOffset + columnIndex, weight);
-                    atomicAdd(coverages + columnIndex, 1);
+                    atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
+                    atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
+                    atomicAdd(coverages + columnIndex, doAdd ? 1 : -1);
                 }
             }
         }
@@ -209,12 +263,13 @@ namespace gpu{
                 const int rowOffset = encodedBaseAsInt * rowPitchInElements;
                 const int columnIndex = columnStart 
                     + (isForward ? (fullInts * 16 + posInInt) : sequenceLength - 1 - (fullInts * 16 + posInInt));
-                atomicAdd(counts + rowOffset + columnIndex, 1);
-                atomicAdd(weights + rowOffset + columnIndex, weight);
-                atomicAdd(coverages + columnIndex, 1);
+                    atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
+                    atomicAdd(weights + rowOffset + columnIndex, doAdd ? weight : -weight);
+                    atomicAdd(coverages + columnIndex, doAdd ? 1 : -1);
             } 
         }
     }
+
 
     template<int BLOCKSIZE>
     __device__ __forceinline__
@@ -301,7 +356,7 @@ namespace gpu{
 
             const bool isForward = flag == BestAlignment_t::Forward;
 
-            addASequence2BitToMSA<candidatesAreTransposed>(
+            msaAddOrDeleteASequence2Bit<candidatesAreTransposed, true>(
                 mycounts,
                 myweights,
                 mycoverages,
@@ -317,6 +372,88 @@ namespace gpu{
             );
         }
     }
+
+
+
+    template<int BLOCKSIZE, class Selector>
+    __device__ __forceinline__
+    void removeCandidatesFromMSASingleBlock(
+            Selector shouldBeRemoved,
+            int* __restrict__ inputcounts,
+            float* __restrict__ inputweights,
+            int* __restrict__ inputcoverages,
+            const MSAColumnProperties* __restrict__ myMsaColumnProperties,
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myOverlaps,
+            const int* __restrict__ myNops,
+            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const unsigned int* __restrict__ myTransposedCandidateSequencesData,
+            const char* __restrict__ myCandidateQualities,
+            const int* __restrict__ myCandidateLengths,
+            const int* __restrict__ myIndices,
+            int numIndices,
+            size_t elementOffsetForTransposedCandidates,
+            bool canUseQualityScores, 
+            size_t msa_weights_row_pitch_floats,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            int subjectIndex){  
+
+        constexpr bool candidatesAreTransposed = true;
+
+        int* const mycounts = inputcounts;
+        float* const myweights = inputweights;
+        int* const mycoverages = inputcoverages;        
+
+        const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
+                        
+        for(int indexInList = threadIdx.x; indexInList < numIndices; indexInList += BLOCKSIZE){
+
+            if(shouldBeRemoved(indexInList)){
+
+                const int localCandidateIndex = myIndices[indexInList];
+                const int shift = myShifts[localCandidateIndex];
+                const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+
+                const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                const int queryLength = myCandidateLengths[localCandidateIndex];
+                const unsigned int* const query = myTransposedCandidateSequencesData + localCandidateIndex;
+
+                const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
+
+                const int query_alignment_overlap = myOverlaps[localCandidateIndex];
+                const int query_alignment_nops = myNops[localCandidateIndex];
+
+                const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
+
+                assert(overlapweight <= 1.0f);
+                assert(overlapweight >= 0.0f);
+                assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+
+                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+                const bool isForward = flag == BestAlignment_t::Forward;
+
+                msaAddOrDeleteASequence2Bit<candidatesAreTransposed, false>(
+                    mycounts,
+                    myweights,
+                    mycoverages,
+                    msa_weights_row_pitch_floats,
+                    query, 
+                    queryLength, 
+                    isForward,
+                    defaultcolumnoffset,
+                    overlapweight,
+                    queryQualityScore,
+                    canUseQualityScores,
+                    elementOffsetForTransposedCandidates
+                );
+            }
+        }
+    }
+
+
 
     template<int BLOCKSIZE>
     __device__ __forceinline__
@@ -339,6 +476,12 @@ namespace gpu{
         const int firstColumn_incl = myMsaColumnProperties->firstColumn_incl;
         const int lastColumn_excl = myMsaColumnProperties->lastColumn_excl;
 
+        if(lastColumn_excl > msa_weights_pitch_floats){
+            if(threadIdx.x == 0){
+                printf("%d, %d %lu\n", subjectIndex, lastColumn_excl, msa_weights_pitch_floats);
+            }
+            __syncthreads();
+        }
         assert(lastColumn_excl <= msa_weights_pitch_floats);
 
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
@@ -750,6 +893,10 @@ namespace gpu{
             //no mismatch between consensus and subject
 
             //remove no candidate
+            for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                myShouldBeKept[k] = true;
+            }
+
             for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
                 myNewIndicesPtr[k] = myIndices[k];
             }
@@ -1163,7 +1310,7 @@ namespace gpu{
 
                         const bool isForward = flag == BestAlignment_t::Forward;
 
-                        addASequence2BitToMSA<candidatesAreTransposed>(
+                        msaAddOrDeleteASequence2Bit<candidatesAreTransposed, true>(
                             mycounts,
                             myweights,
                             my_coverage,
@@ -1487,14 +1634,12 @@ namespace gpu{
         the candidate referred to by d_indices[i] should remain in the msa
     */
 
-
     template<int BLOCKSIZE>
     __global__
     void msa_findCandidatesOfDifferentRegion_kernel(
             int* __restrict__ d_newIndices,
             int* __restrict__ d_newNumIndicesPerSubject,
             int* __restrict__ d_newNumIndices,
-
             MSAPointers d_msapointers,
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
@@ -1587,6 +1732,317 @@ namespace gpu{
 
                     if(threadIdx.x == 0){
                         atomicAdd(d_newNumIndices, *myNewNumIndicesPerSubjectPtr);
+                    }
+                }else{
+                    ; //nothing to do if there are no candidates in msa
+                }
+            }
+        }
+    }
+
+
+
+    template<int BLOCKSIZE, MemoryType addSequencesMemType>
+    __global__
+    void msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel(
+            int* __restrict__ d_newIndices,
+            int* __restrict__ d_newNumIndicesPerSubject,
+            int* __restrict__ d_newNumIndices,
+            MSAColumnProperties* __restrict__ msaColumnProperties,
+            char* __restrict__ consensus,
+            int* __restrict__ coverage,
+            int* __restrict__ counts,
+            float* __restrict__ weights,
+            float* __restrict__ support,
+            int* __restrict__ origCoverages,
+            float* __restrict__ origWeights,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const int* __restrict__ shifts,
+            const int* __restrict__ nOps,
+            const int* __restrict__ overlaps,
+            const unsigned int* __restrict__ subjectSequencesData,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const unsigned int* __restrict__ transposedCandidateSequencesData,
+            const int* __restrict__ subjectSequencesLength,
+            const int* __restrict__ candidateSequencesLength,
+            const char* __restrict__ subjectQualities,
+            const char* __restrict__ candidateQualities,
+            bool* __restrict__ d_shouldBeKept,
+            const int* __restrict__ d_candidates_per_subject_prefixsum,
+            int n_subjects,
+            int n_candidates,
+            bool canUseQualityScores,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msa_pitch,
+            size_t msa_weights_pitch_floats,
+            const int* __restrict__ d_indices,
+            const int* __restrict__ d_indices_per_subject,
+            int dataset_coverage,
+            const bool* __restrict__ canExecute,
+            int iteration,
+            const read_number* __restrict__ d_subjectReadIds){
+
+        if(*canExecute){
+
+            using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+            using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
+            using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+            __shared__ union{
+                typename BlockReduceBool::TempStorage boolreduce;
+                typename BlockReduceInt2::TempStorage int2reduce;
+                typename BlockReduceInt::TempStorage intreduce;
+            } temp_storage;
+
+            __shared__ MSAColumnProperties shared_columnProperties;
+
+            extern __shared__ float externsharedmem[];
+
+            constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
+
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){                
+                const int myNumIndices = d_indices_per_subject[subjectIndex];                
+
+                if(myNumIndices > 0){
+
+                    if(threadIdx.x == 0){
+                        shared_columnProperties = msaColumnProperties[subjectIndex];
+                    }
+                    __syncthreads();
+
+                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                    const int* myIndices = d_indices + globalOffset;
+
+                    int* const myNewIndicesPtr = d_newIndices + globalOffset;
+                    int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
+
+                    bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
+
+                    char* const myConsensus = consensus + msa_pitch * subjectIndex;
+                    int* const myCoverages = coverage + msa_weights_pitch_floats * subjectIndex;
+                    int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
+                    float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
+                    float* const mySupport = support + msa_weights_pitch_floats * subjectIndex;
+                    int* const myOrigCoverages = origCoverages + msa_weights_pitch_floats * subjectIndex;
+                    float* const myOrigWeights = origWeights + msa_weights_pitch_floats * subjectIndex;
+
+                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                    const int* const myShifts = shifts + globalOffset;
+                    const int* const myNops = nOps + globalOffset;
+                    const int* const myOverlaps = overlaps + globalOffset;
+
+                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
+                                                                        + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                    const unsigned int* const myCandidateSequencesData = candidateSequencesData 
+                                                                        + std::size_t(globalOffset) * encodedSequencePitchInInts;
+
+                    const unsigned int* const myTransposedCandidateSequencesData = transposedCandidateSequencesData
+                                                                        + std::size_t(globalOffset);
+                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                    const char* const myCandidateQualities = candidateQualities 
+                                                                        + size_t(globalOffset) * qualityPitchInBytes;
+
+                    const int subjectLength = subjectSequencesLength[subjectIndex];
+                    const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
+
+                    findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
+                        (int2*)&temp_storage.int2reduce,
+                        myNewIndicesPtr,
+                        myNewNumIndicesPerSubjectPtr,
+                        &shared_columnProperties,
+                        myConsensus,
+                        myCounts,
+                        myWeights,
+                        myAnchorSequenceData,
+                        subjectLength,
+                        myCandidateSequencesData,
+                        myCandidateLengths,
+                        myAlignmentFlags,
+                        myShifts,
+                        myNops,
+                        myOverlaps,
+                        myShouldBeKept,
+                        subjectIndex,
+                        encodedSequencePitchInInts,
+                        msa_pitch,
+                        msa_weights_pitch_floats,
+                        myIndices,
+                        myNumIndices,
+                        dataset_coverage
+                    );
+
+                    __syncthreads();
+
+                    const int myNewNumIndices = *myNewNumIndicesPerSubjectPtr;
+
+                    if(threadIdx.x == 0){
+                        atomicAdd(d_newNumIndices, myNewNumIndices);
+                    }
+
+                    assert(myNewNumIndices <= myNumIndices);
+                    if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
+#if 1
+                        float* const shared_weights = externsharedmem;
+                        int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_pitch_floats);
+                        int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_pitch_floats);
+
+                        MSAColumnProperties columnProperties;
+
+                        msaInit<BLOCKSIZE>(
+                            temp_storage.intreduce,
+                            &columnProperties,
+                            myNewIndicesPtr,
+                            myNewNumIndices,
+                            myShifts,
+                            myAlignmentFlags,
+                            subjectLength,
+                            myCandidateLengths
+                        );
+
+                        //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
+                        if(threadIdx.x == 0){
+                            msaColumnProperties[subjectIndex] = columnProperties;
+                            shared_columnProperties = columnProperties;
+                        }
+
+                        __syncthreads();
+
+                        columnProperties = shared_columnProperties;
+
+                        const int columnsToCheck = columnProperties.lastColumn_excl;
+
+                        assert(columnsToCheck <= msa_weights_pitch_floats);
+
+                        int* const mycounts_build = (useSmemForAddSequences ? shared_counts : myCounts);
+                        float* const myweights_build = (useSmemForAddSequences ? shared_weights : myWeights);
+                        int* const mycoverages_build = (useSmemForAddSequences ? shared_coverages : myCoverages);  
+
+                        addSequencesToMSASingleBlock<BLOCKSIZE>(
+                            mycounts_build,
+                            myweights_build,
+                            mycoverages_build,
+                            &columnProperties,
+                            myShifts,
+                            myOverlaps,
+                            myNops,
+                            myAlignmentFlags,
+                            myAnchorSequenceData,
+                            myAnchorQualityData,
+                            myTransposedCandidateSequencesData,
+                            myCandidateQualities,
+                            myCandidateLengths,
+                            myNewIndicesPtr,
+                            myNewNumIndices,
+                            n_candidates,
+                            canUseQualityScores, 
+                            msa_weights_pitch_floats,
+                            encodedSequencePitchInInts,
+                            qualityPitchInBytes,
+                            subjectIndex
+                        );
+
+                        __syncthreads(); //wait until msa is ready
+                
+                        checkBuiltMSA(
+                            &columnProperties,
+                            mycounts_build,
+                            myweights_build,
+                            msa_weights_pitch_floats,
+                            subjectIndex
+                        ); 
+
+                        findConsensusSingleBlock<BLOCKSIZE>(
+                            mySupport,
+                            myOrigWeights,
+                            myOrigCoverages,
+                            myConsensus,
+                            &columnProperties,
+                            mycounts_build,
+                            myweights_build,      
+                            myAnchorSequenceData, 
+                            subjectIndex,
+                            encodedSequencePitchInInts, 
+                            msa_pitch,
+                            msa_weights_pitch_floats
+                        );
+
+                        if(useSmemForAddSequences){
+                            // copy from counts and weights and coverages from shared to global
+                
+                            for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
+                                for(int k = 0; k < 4; k++){
+                                    const int* const srcCounts = mycounts_build + k * msa_weights_pitch_floats + index;
+                                    int* const destCounts = myCounts + k * msa_weights_pitch_floats + index;
+                
+                                    const float* const srcWeights = myweights_build + k * msa_weights_pitch_floats + index;
+                                    float* const destWeights = myWeights + k * msa_weights_pitch_floats + index;
+                
+                                    *destCounts = *srcCounts;
+                                    *destWeights = *srcWeights;
+                                }
+                                myCoverages[index] = mycoverages_build[index];
+                            }
+                        }
+
+                        __syncthreads(); //wait until data can be reused
+#else
+                        auto selector = [&](int i){
+                            return !myShouldBeKept[i];
+                        };
+
+                        removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
+                            selector,
+                            myCounts,
+                            myWeights,
+                            myCoverages,
+                            &shared_columnProperties,
+                            myShifts,
+                            myOverlaps,
+                            myNops,
+                            myAlignmentFlags,
+                            myTransposedCandidateSequencesData,
+                            myCandidateQualities,
+                            myCandidateLengths,
+                            myIndices,
+                            myNumIndices,
+                            n_candidates,
+                            canUseQualityScores, 
+                            msa_weights_pitch_floats,
+                            encodedSequencePitchInInts,
+                            qualityPitchInBytes,
+                            subjectIndex
+                        );
+
+                        __syncthreads();
+                        
+                        msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
+                            &shared_columnProperties,
+                            myCoverages
+                        );
+
+                        __syncthreads();
+
+                        assert(shared_columnProperties.firstColumn_incl != -1);
+                        assert(shared_columnProperties.lastColumn_excl != -1);
+
+                        findConsensusSingleBlock<BLOCKSIZE>(
+                            mySupport,
+                            myOrigWeights,
+                            myOrigCoverages,
+                            myConsensus,
+                            &shared_columnProperties,
+                            myCounts,
+                            myWeights,
+                            myAnchorSequenceData, 
+                            subjectIndex,
+                            encodedSequencePitchInInts, 
+                            msa_pitch,
+                            msa_weights_pitch_floats
+                        );
+
+                        __syncthreads();
+#endif                        
                     }
                 }else{
                     ; //nothing to do if there are no candidates in msa
@@ -2423,6 +2879,111 @@ namespace gpu{
     	}
 
     		#undef mycall
+    }
+
+
+
+
+    void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
+            int* d_newIndices,
+            int* d_newNumIndicesPerSubject,
+            int* d_newNumIndices,
+            MSAColumnProperties* d_msaColumnProperties,
+            char* d_consensus,
+            int* d_coverage,
+            int* d_counts,
+            float* d_weights,
+            float* d_support,
+            int* d_origCoverages,
+            float* d_origWeights,
+            const BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_shifts,
+            const int* d_nOps,
+            const int* d_overlaps,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const unsigned int* d_transposedCandidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
+            const char* d_subjectQualities,
+            const char* d_candidateQualities,
+            bool* d_shouldBeKept,
+            const int* d_candidates_per_subject_prefixsum,
+            int n_subjects,
+            int n_candidates,
+            bool canUseQualityScores,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msa_pitch,
+            size_t msa_weights_pitch_floats,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            int dataset_coverage,
+            const bool* d_canExecute,
+            int iteration,
+            const read_number* d_subjectReadIds,
+            cudaStream_t stream,
+            KernelLaunchHandle& kernelLaunchHandle){
+
+        cudaMemsetAsync(d_newNumIndices, 0, sizeof(int), stream); CUERR;
+        cudaMemsetAsync(d_newNumIndicesPerSubject, 0, sizeof(int) * n_subjects, stream); CUERR;
+
+        constexpr int blocksize = 128;
+
+        constexpr MemoryType addSequencesMemType = MemoryType::Shared;
+
+        constexpr bool addSequencesUsesSmem = addSequencesMemType == MemoryType::Shared;
+
+        const std::size_t smemAddSequences = (addSequencesUsesSmem ? 
+                                                sizeof(float) * 4 * msa_weights_pitch_floats // weights
+                                                    + sizeof(int) * 4 * msa_weights_pitch_floats // counts
+                                                    + sizeof(int) * msa_weights_pitch_floats // coverages
+                                                : 0);
+
+        int smem = smemAddSequences;
+
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(n_subjects, 1, 1);
+
+        msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel<blocksize, addSequencesMemType><<<grid, block, smem, stream>>>(
+            d_newIndices,
+            d_newNumIndicesPerSubject,
+            d_newNumIndices,
+            d_msaColumnProperties,
+            d_consensus,
+            d_coverage,
+            d_counts,
+            d_weights,
+            d_support,
+            d_origCoverages,
+            d_origWeights,
+            d_bestAlignmentFlags,
+            d_shifts,
+            d_nOps,
+            d_overlaps,
+            d_subjectSequencesData,
+            d_candidateSequencesData,
+            d_transposedCandidateSequencesData,
+            d_subjectSequencesLength,
+            d_candidateSequencesLength,
+            d_subjectQualities,
+            d_candidateQualities,
+            d_shouldBeKept,
+            d_candidates_per_subject_prefixsum,
+            n_subjects,
+            n_candidates,
+            canUseQualityScores,
+            encodedSequencePitchInInts,
+            qualityPitchInBytes,
+            msa_pitch,
+            msa_weights_pitch_floats,
+            d_indices,
+            d_indices_per_subject,
+            dataset_coverage,
+            d_canExecute,
+            iteration,
+            d_subjectReadIds
+        );
     }
 
 
