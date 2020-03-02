@@ -2205,66 +2205,66 @@ namespace gpu{
         std::size_t msa_row_pitch = batch.msa_pitch;
 
         for(int i = 0; i < batch.n_subjects; i++){
-            if(dataArrays.h_subject_read_ids[i] == 13){
+            if(dataArrays.h_subject_read_ids[i] == 10307280){
                 std::cerr << "subjectColumnsBegin_incl = " << dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
                 std::cerr << "subjectColumnsEnd_excl = " << dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
                 std::cerr << "lastColumn_excl = " << dataArrays.h_msa_column_properties[i].lastColumn_excl << "\n";
                 std::cerr << "counts: \n";
                 int* counts = dataArrays.h_counts + i * 4 * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[0 * msa_weights_row_pitch_floats + k];
+                    std::cerr << counts[0 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[1 * msa_weights_row_pitch_floats + k];
+                    std::cerr << counts[1 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[2 * msa_weights_row_pitch_floats + k];
+                    std::cerr << counts[2 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[3 * msa_weights_row_pitch_floats + k];
+                    std::cerr << counts[3 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "weights: \n";
                 float* weights = dataArrays.h_weights + i * 4 * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[0 * msa_weights_row_pitch_floats + k];
+                    std::cerr << weights[0 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[1 * msa_weights_row_pitch_floats + k];
+                    std::cerr << weights[1 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[2 * msa_weights_row_pitch_floats + k];
+                    std::cerr << weights[2 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[3 * msa_weights_row_pitch_floats + k];
+                    std::cerr << weights[3 * msa_weights_row_pitch_floats + k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "coverage: \n";
                 int* coverage = dataArrays.h_coverage + i * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << coverage[k];
+                    std::cerr << coverage[k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "support: \n";
                 float* support = dataArrays.h_support + i * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << support[k];
+                    std::cerr << support[k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "consensus: \n";
                 char* consensus = dataArrays.h_consensus + i * msa_row_pitch;
                 for(int k = 0; k < msa_row_pitch; k++){
-                    std::cerr << consensus[k];
+                    std::cerr << consensus[k] << ' ';
                 }
                 std::cerr << "\n";
             }
@@ -2297,6 +2297,7 @@ namespace gpu{
                     max_coverage_threshold,
                     transFuncData.correctionOptions.kmerlength,
                     transFuncData.sequenceFileProperties.maxSequenceLength,
+                    dataArrays.d_subject_read_ids.get(),
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
@@ -2849,12 +2850,17 @@ namespace gpu{
 
                 tmpencoded = tmp.encode();
 
-                // if(readId == 13){
-                //     std::cerr << "readid = 13, anchor\n";
-                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence << "\n";
-                //     std::cerr << "\nedits: ";
-                //     for(int i = 0; i < int(tmp.edits.size()); i++){
-                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                // if(readId == 31572835 || readId == 10307280 || readId == 42537816){
+                //     std::cerr << "readid = " << readId << ", anchor\n";
+                //     std::cerr << "hq = " << tmp.hq;
+                //     if(!tmp.useEdits){
+                //         std::cerr << ", sequence = " << tmp.sequence << "\n";
+                //     }else{
+                //         std::cerr << "numEdits = " << tmp.edits.size();
+                //         std::cerr << "\nedits: \n";
+                //         for(int i = 0; i < int(tmp.edits.size()); i++){
+                //             std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                //         }
                 //     }
                 // }
             }
@@ -2933,12 +2939,17 @@ namespace gpu{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                // if(candidate_read_id == 13){
-                //     std::cerr << "readid = 13, as candidate of anchor with id " << subjectReadId << "\n";
-                //     std::cerr << "hq = " << tmp.hq << ", sequence = " << tmp.sequence;
-                //     std::cerr << "\nedits: ";
-                //     for(int i = 0; i < int(tmp.edits.size()); i++){
-                //         std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                // if(candidate_read_id == 31572835){
+                //     std::cerr << "readid = 31572835, as candidate of anchor with id " << subjectReadId << "\n";
+                //     std::cerr << "hq = " << tmp.hq;
+                //     if(!tmp.useEdits){
+                //         std::cerr << ", sequence = " << tmp.sequence << "\n";
+                //     }else{
+                //         std::cerr << "numEdits = " << tmp.edits.size();
+                //         std::cerr << "\nedits: \n";
+                //         for(int i = 0; i < int(tmp.edits.size()); i++){
+                //             std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                //         }
                 //     }
                 // }
             }
