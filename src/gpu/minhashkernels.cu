@@ -20,7 +20,100 @@ namespace care{
 
 
 
+    // HASHING
 
+    __global__
+    void minhashSignaturesKernel(
+            std::uint64_t* __restrict__ signatures,
+            size_t signaturesRowPitchElements,
+            const unsigned int* __restrict__ transposedSequences2Bit,
+            size_t sequenceRowPitchElements,
+            int numSequences,
+            const int* __restrict__ sequenceLengths,
+            int k,
+            int numHashFuncs){
+                
+        //constexpr int blocksize = 128;
+        constexpr int maximum_kmer_length = 32;
+
+        auto murmur3_fmix = [](std::uint64_t x) {
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccd;
+            x ^= x >> 33;
+            x *= 0xc4ceb9fe1a85ec53;
+            x ^= x >> 33;
+            return x;
+        };
+
+        auto make_reverse_complement = [](std::uint64_t s){
+            s = ((s >> 2)  & 0x3333333333333333ull) | ((s & 0x3333333333333333ull) << 2);
+            s = ((s >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((s & 0x0F0F0F0F0F0F0F0Full) << 4);
+            s = ((s >> 8)  & 0x00FF00FF00FF00FFull) | ((s & 0x00FF00FF00FF00FFull) << 8);
+            s = ((s >> 16) & 0x0000FFFF0000FFFFull) | ((s & 0x0000FFFF0000FFFFull) << 16);
+            s = ((s >> 32) & 0x00000000FFFFFFFFull) | ((s & 0x00000000FFFFFFFFull) << 32);
+            return ((std::uint64_t)(-1) - s) >> (8 * sizeof(s) - (32 << 1));
+        };
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+        if(tid < numSequences){
+            const unsigned int* const mySequence = transposedSequences2Bit + tid;
+            const int myLength = sequenceLengths[tid];
+
+            std::uint64_t* const mySignature = signatures + tid * signaturesRowPitchElements;
+
+            auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+                const auto smallest = min(fwd, rc);
+                const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
+                mySignature[numhashfunc] = min(mySignature[numhashfunc], hashvalue);
+            };
+
+            if(myLength >= k){
+                //const int numKmers = myLength - k + 1;
+                const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+                const int rcshiftamount = (maximum_kmer_length - k) * 2;
+
+                std::uint64_t kmer_encoded = mySequence[sequenceRowPitchElements * 0];
+                if(k > 16){
+                    kmer_encoded = (kmer_encoded << 32) | mySequence[sequenceRowPitchElements * 1];
+                }
+                kmer_encoded >>= 2; //k-1 bases, allows easier loop
+
+                std::uint64_t rc_kmer_encoded = make_reverse_complement(kmer_encoded);
+
+                auto addBase = [&](std::uint64_t encBase){
+                    kmer_encoded <<= 2;
+                    rc_kmer_encoded >>= 2;
+
+                    const std::uint64_t revcBase = (~encBase) & 3;
+                    kmer_encoded |= encBase;
+                    rc_kmer_encoded |= revcBase << 62;
+                };
+
+                for(int nextSequencePos = k - 1; nextSequencePos < myLength; nextSequencePos++){
+                    const int nextIntIndex = nextSequencePos / 16;
+                    const int nextPositionInInt = nextSequencePos % 16;
+
+                    const unsigned int nextInt = mySequence[sequenceRowPitchElements * nextIntIndex];
+                    const std::uint64_t nextBase = nextInt >> (30 - 2 * nextPositionInInt);
+
+                    addBase(nextBase);
+
+                    for(int m = 0; m < numHashFuncs; m++){
+                        handlekmer(kmer_encoded & kmer_mask, 
+                                    rc_kmer_encoded >> rcshiftamount, 
+                                    m);
+                    }
+                }
+            }else{
+                for(int i = 0; i < numHashFuncs; i++){
+                    mySignature[i] = std::numeric_limits<std::uint64_t>::max();
+                }
+            }
+        }
+    }
+
+    // SET_UNION
 
 
 
