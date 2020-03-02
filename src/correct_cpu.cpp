@@ -329,15 +329,24 @@ namespace cpu{
                     data.minhashHandle.result().erase(readIdPos);
                 }
 
-                data.candidateReadIds.insert(
-                    data.candidateReadIds.end(),
-                    data.minhashHandle.result().begin(),
-                    data.minhashHandle.result().end()
-                );
+                // auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 31572835);
+                // if(readId != 31572835 && debugit == data.minhashHandle.result().end()){
+                //     const int candidatesPerSubject = 0;
+                //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
+                //     data.candidatesPerSubject[i] = candidatesPerSubject;
+                // }else{
+                //     std::cerr << "found id 31572835 as candidate of read " << readId << "\n";
+                    data.candidateReadIds.insert(
+                        data.candidateReadIds.end(),
+                        data.minhashHandle.result().begin(),
+                        data.minhashHandle.result().end()
+                    );
 
-                const int candidatesPerSubject = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
-                maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
-                data.candidatesPerSubject[i] = candidatesPerSubject;
+                    const int candidatesPerSubject = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
+                    maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
+                    data.candidatesPerSubject[i] = candidatesPerSubject;
+
+                //}
             }
 
             data.forwardAlignments.resize(maxCandidatesPerSubject);
@@ -863,6 +872,66 @@ namespace cpu{
                     }
                 }
             }
+#if 0
+            if(task.subjectReadId == 10307280){
+                std::cerr << "subjectColumnsBegin_incl = " << data.multipleSequenceAlignment.subjectColumnsBegin_incl << "\n";
+                std::cerr << "subjectColumnsEnd_excl = " << data.multipleSequenceAlignment.subjectColumnsEnd_excl << "\n";
+                //std::cerr << "lastColumn_excl = " << dataArrays.h_msa_column_properties[i].lastColumn_excl << "\n";
+                std::cerr << "counts: \n";
+                for(int k = 0; k < data.multipleSequenceAlignment.countsA.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.countsA[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.countsC.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.countsC[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.countsG.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.countsG[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.countsT.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.countsT[k] << ' ';
+                }
+                std::cerr << "\n";
+
+                std::cerr << "weights: \n";
+                for(int k = 0; k < data.multipleSequenceAlignment.weightsA.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.weightsA[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.weightsC.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.weightsC[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.weightsG.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.weightsG[k] << ' ';
+                }
+                std::cerr << "\n";
+                for(int k = 0; k < data.multipleSequenceAlignment.weightsT.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.weightsT[k] << ' ';
+                }
+                std::cerr << "\n";
+
+                std::cerr << "coverage: \n";
+                for(int k = 0; k < data.multipleSequenceAlignment.coverage.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.coverage[k] << ' ';
+                }
+                std::cerr << "\n";
+
+                std::cerr << "support: \n";
+                for(int k = 0; k < data.multipleSequenceAlignment.support.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.support[k] << ' ';
+                }
+                std::cerr << "\n";
+
+                std::cerr << "consensus: \n";
+                for(int k = 0; k < data.multipleSequenceAlignment.consensus.size(); k++){
+                    std::cerr << data.multipleSequenceAlignment.consensus[k] << ' ';
+                }
+                std::cerr << "\n";
+            }
+#endif            
         }
 
         void correctSubject(
@@ -1023,6 +1092,20 @@ namespace cpu{
                     tmp.uncorrectedPositionsNoConsensus = std::move(task.subjectCorrection.uncorrectedPositionsNoConsensus);
                     tmp.readId = task.subjectReadId;
                     tmp.sequence = std::move(correctedSequenceString); 
+
+                    // if(tmp.readId == 31572835 || tmp.readId == 10307280 || tmp.readId == 42537816){
+                    //     std::cerr << "readid = " << tmp.readId << ", anchor\n";
+                    //     std::cerr << "hq = " << tmp.hq;
+                    //     if(!tmp.useEdits){
+                    //         std::cerr << ", sequence = " << tmp.sequence << "\n";
+                    //     }else{
+                    //         std::cerr << "numEdits = " << tmp.edits.size();
+                    //         std::cerr << "\nedits: \n";
+                    //         for(int i = 0; i < int(tmp.edits.size()); i++){
+                    //             std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                    //         }
+                    //     }                           
+                    // }
                     
                     data.outputData.anchorCorrections.emplace_back(std::move(tmp));
                 }
@@ -1106,6 +1189,20 @@ namespace cpu{
                         }else{
                             tmp.useEdits = false;
                         }
+
+                        // if(tmp.readId == 31572835){
+                        //     std::cerr << "readid = 31572835, as candidate of anchor with id " << task.subjectReadId << "\n";
+                        //     std::cerr << "hq = " << tmp.hq;
+                        //     if(!tmp.useEdits){
+                        //         std::cerr << ", sequence = " << tmp.sequence << "\n";
+                        //     }else{
+                        //         std::cerr << "numEdits = " << tmp.edits.size();
+                        //         std::cerr << "\nedits: \n";
+                        //         for(int i = 0; i < int(tmp.edits.size()); i++){
+                        //             std::cerr << tmp.edits[i].base << ' ' << tmp.edits[i].pos << "\n";
+                        //         }
+                        //     }                            
+                        // }
                         
                         data.outputData.candidateCorrections.emplace_back(std::move(tmp));
                     }

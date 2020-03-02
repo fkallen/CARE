@@ -1,11 +1,10 @@
-#ifndef DEVICEFUNCTIONSFORKERNELS_CUH
-#define DEVICEFUNCTIONSFORKERNELS_CUH
+#ifndef CARE_HOSTDEVICE_FUNCTIONS_CUH
+#define CARE_HOSTDEVICE_FUNCTIONS_CUH
 
 #include <hpc_helpers.cuh>
 #include <cmath>
 
 namespace care{
-namespace gpu{
 
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
@@ -29,21 +28,28 @@ namespace gpu{
         return (l > r) || feq(l,r);
     }
 
-
-    __device__
-    __forceinline__
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
     float getQualityWeight(char qualitychar){
         constexpr int ascii_base = 33;
         constexpr float min_weight = 0.001f;
 
-        const int q(qualitychar);
-        const float errorprob = exp10f(-(q-ascii_base)/10.0f);
+        auto base10expf = [](float p){
+            #ifdef __CUDA_ARCH__
+            return exp10f(p);
+            #else
+            return std::pow(10.0f, p);
+            #endif
+        };
 
-        return max(min_weight, 1.0f - errorprob);
+        const int q(qualitychar);
+        const float errorprob = base10expf(-(q-ascii_base)/10.0f);
+
+        return min_weight > 1.0f - errorprob ? min_weight : 1.0f - errorprob;
     }
 
-    __device__
-    __forceinline__
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
     float calculateOverlapWeightnew(int anchorlength, int nOps, int overlapsize){
         constexpr float maxErrorPercentInOverlap = 0.2f;
 
@@ -51,16 +57,14 @@ namespace gpu{
                                                         / (1 + overlapsize * maxErrorPercentInOverlap));
     }
 
-    __device__
-    __forceinline__
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
     float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize){
         constexpr float maxErrorPercentInOverlap = 0.2f;
 
         return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
     }
 
-
-}
 }
 
 #endif

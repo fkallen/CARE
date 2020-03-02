@@ -1,4 +1,5 @@
 #include <msa.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <qualityscoreweights.hpp>
 #include <bestalignment.hpp>
@@ -356,13 +357,13 @@ MSAProperties getMSAProperties2(const float* support,
     msaProperties.max_coverage = *minmax.second;
 
     auto isGoodAvgSupport = [=](float avgsupport){
-        return avgsupport >= avg_support_threshold;
+        return fgeq(avgsupport, avg_support_threshold);
     };
     auto isGoodMinSupport = [=](float minsupport){
-        return minsupport >= min_support_threshold;
+        return fgeq(minsupport, min_support_threshold);
     };
     auto isGoodMinCoverage = [=](float mincoverage){
-        return mincoverage >= min_coverage_threshold;
+        return fgeq(mincoverage, min_coverage_threshold);
     };
 
     // msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
@@ -422,13 +423,13 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                 for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
                     if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
                         avgsupportkregion += support[neighborcolumn];
-                        neighborregioncoverageisgood &= (coverage[neighborcolumn] >= min_coverage_threshold);
+                        neighborregioncoverageisgood &= (fgeq(coverage[neighborcolumn], min_coverage_threshold));
                         c++;
                     }
                 }
 
                 avgsupportkregion /= c;
-                if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-estimatedErrorrate)){
                     result.correctedSequence[column] = consensus[column];
                     foundAColumn = true;
                 }else{
@@ -531,7 +532,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                             if(origBase == candidateBase){
                                 numFoundCandidates++;
 
-                                if(overlapweight >= 0.90f){
+                                if(fgeq(overlapweight, 0.90f)){
                                     canCorrect = false;
                                     //break;
                                 }
@@ -596,7 +597,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                     }
 
                     avgsupportkregion /= c;
-                    if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+                    if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-4*estimatedErrorrate)){
                         result.correctedSequence[column] = consensus[column];
                         foundAColumn = true;
                     }
@@ -648,13 +649,13 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
     auto isGoodAvgSupport = [=](float avgsupport){
-        return avgsupport >= avg_support_threshold;
+        return fgeq(avgsupport, avg_support_threshold);
     };
     auto isGoodMinSupport = [=](float minsupport){
-        return minsupport >= min_support_threshold;
+        return fgeq(minsupport, min_support_threshold);
     };
     auto isGoodMinCoverage = [=](float mincoverage){
-        return mincoverage >= min_coverage_threshold;
+        return fgeq(mincoverage, min_coverage_threshold);
     };
 
     const float avg_support = msaProperties.avg_support;
@@ -679,16 +680,19 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     if(canBeCorrectedByConsensus){
         int smallestErrorrateThatWouldMakeHQ = 100;
 
+
         const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
         for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-            float factor = percent / 100.0f;
-            if(avg_support >= 1.0f - 1.0f * factor && min_support >= 1.0f - 3.0f * factor){
+            const float factor = percent / 100.0f;
+            const float avg_threshold = 1.0f - 1.0f * factor;
+            const float min_threshold = 1.0f - 3.0f * factor;
+            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
                 smallestErrorrateThatWouldMakeHQ = percent;
             }
         }
 
         const bool isHQ = isGoodMinCoverage(min_coverage)
-                            && smallestErrorrateThatWouldMakeHQ <= estimatedErrorratePercent * 0.5f;
+                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
 
         //broadcastbuffer = isHQ;
         result.isHQ = isHQ;
@@ -781,8 +785,8 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
             //     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
             // }
 
-            // if(newColMinSupport >= min_support_threshold
-            //     && newColMinCov >= min_coverage_threshold){
+            // if(fgeq(newColMinSupport, min_support_threshold)
+            //     && fgeq(newColMinCov, min_coverage_threshold)){
 
                 std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
 
@@ -856,18 +860,10 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
                 newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
             }
 
-            candidateShouldBeCorrected = newColMinSupport >= min_support_threshold
-                            && newColMinCov >= min_coverage_threshold;
+            candidateShouldBeCorrected = fgeq(newColMinSupport, min_support_threshold)
+                            && fgeq(newColMinCov, min_coverage_threshold);
 
             candidateShouldBeCorrected = true;
-
-            // if(newColMinSupport >= min_support_threshold
-            //     && newColMinCov >= min_coverage_threshold){
-
-            //     std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-
-            //     result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
-            // }
         }
 
         if(candidateShouldBeCorrected){

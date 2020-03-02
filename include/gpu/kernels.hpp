@@ -390,6 +390,7 @@ void call_msa_correct_subject_implicit_kernel_async(
             float max_coverage_threshold,
             int k_region,
             int maximum_sequence_length,
+            const read_number* readIds,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
