@@ -810,7 +810,7 @@ namespace gpu{
                             assert(overlapweight <= 1.0f);
                             assert(overlapweight >= 0.0f);
 
-                            if(overlapweight >= 0.90f){
+                            if(fgeq(overlapweight, 0.90f)){
                                 veryGoodAlignment = true;
                             }
                         }
@@ -1437,7 +1437,7 @@ namespace gpu{
     }
 
     #if __CUDA_ARCH__ >= 610
-        #define buildMSASingleBlockKernel_MIN_BLOCKS   1
+        #define buildMSASingleBlockKernel_MIN_BLOCKS   8
     #else
         #define buildMSASingleBlockKernel_MIN_BLOCKS   4
     #endif
