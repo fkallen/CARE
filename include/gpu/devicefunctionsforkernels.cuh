@@ -1,12 +1,33 @@
 #ifndef DEVICEFUNCTIONSFORKERNELS_CUH
 #define DEVICEFUNCTIONSFORKERNELS_CUH
 
-
+#include <hpc_helpers.cuh>
+#include <cmath>
 
 namespace care{
 namespace gpu{
 
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
+    constexpr bool feq(float l, float r){
+        constexpr float threshold = 1e-5;
 
+        return abs(l-r) < threshold;
+    }
+
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
+    constexpr bool fleq(float l, float r){
+        
+        return (l < r) || feq(l,r);
+    }
+
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
+    constexpr bool fgeq(float l, float r){
+        
+        return (l > r) || feq(l,r);
+    }
 
 
     __device__
