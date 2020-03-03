@@ -329,13 +329,13 @@ namespace cpu{
                     data.minhashHandle.result().erase(readIdPos);
                 }
 
-                // auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 134);
-                // if(readId != 134 && debugit == data.minhashHandle.result().end()){
+                auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 32141191);
+                // if(readId != 32141191 && debugit == data.minhashHandle.result().end()){
                 //     const int candidatesPerSubject = 0;
                 //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
                 //     data.candidatesPerSubject[i] = candidatesPerSubject;
                 // }else{
-                //    std::cerr << "found id 134 as candidate of read " << readId << "\n";
+                    //std::cerr << "found id 32141191 as candidate of read " << readId << "\n";
                     data.candidateReadIds.insert(
                         data.candidateReadIds.end(),
                         data.minhashHandle.result().begin(),
@@ -346,7 +346,7 @@ namespace cpu{
                     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
                     data.candidatesPerSubject[i] = candidatesPerSubject;
 
-                //}
+                // }
             }
 
             data.forwardAlignments.resize(maxCandidatesPerSubject);
@@ -1094,7 +1094,7 @@ namespace cpu{
                     tmp.readId = task.subjectReadId;
                     tmp.sequence = std::move(correctedSequenceString); 
 
-                    // if(tmp.readId == 134 /* || tmp.readId == 10307280 || tmp.readId == 42537816*/){
+                    // if(tmp.readId == 32141191 /* || tmp.readId == 10307280 || tmp.readId == 42537816*/){
                     //     std::cerr << "readid = " << tmp.readId << ", anchor\n";
                     //     std::cerr << "hq = " << tmp.hq;
                     //     if(!tmp.useEdits){
@@ -1191,7 +1191,7 @@ namespace cpu{
                             tmp.useEdits = false;
                         }
 
-                        // if(tmp.readId == 134){
+                        // if(tmp.readId == 32141191){
                         //     std::cerr << "readid = " << tmp.readId << ", as candidate of anchor with id " << task.subjectReadId << "\n";
                         //     std::cerr << "hq = " << tmp.hq;
                         //     if(!tmp.useEdits){

@@ -2850,7 +2850,7 @@ namespace gpu{
 
                 tmpencoded = tmp.encode();
 
-                // if(readId == 134 /* || readId == 10307280 || readId == 42537816*/){
+                // if(readId == 32141191 /* || readId == 10307280 || readId == 42537816*/){
                 //     std::cerr << "readid = " << readId << ", anchor\n";
                 //     std::cerr << "hq = " << tmp.hq;
                 //     if(!tmp.useEdits){
@@ -2939,8 +2939,8 @@ namespace gpu{
                 tmpencoded = tmp.encode();
                 //TIMERSTOPCPU(encode);
 
-                // if(candidate_read_id == 134){
-                //     std::cerr << "readid = 134, as candidate of anchor with id " << subjectReadId << "\n";
+                // if(candidate_read_id == 32141191){
+                //     std::cerr << "readid = " << candidate_read_id << ", as candidate of anchor with id " << subjectReadId << "\n";
                 //     std::cerr << "hq = " << tmp.hq;
                 //     if(!tmp.useEdits){
                 //         std::cerr << ", sequence = " << tmp.sequence << "\n";
