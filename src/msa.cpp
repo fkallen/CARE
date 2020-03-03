@@ -634,7 +634,8 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     float estimatedErrorrate,
                                     float estimatedCoverage,
                                     float m_coverage,
-                                    int neighborRegionSize){
+                                    int neighborRegionSize,
+                                    read_number readId){
 
     if(nCandidates == 0){
         //cannot be corrected without candidates
@@ -660,7 +661,7 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
 
     const float avg_support = msaProperties.avg_support;
     const float min_support = msaProperties.min_support;
-    const float min_coverage = msaProperties.min_coverage;
+    const int min_coverage = msaProperties.min_coverage;
 
     CorrectionResult result;
     result.isCorrected = false;
@@ -686,6 +687,10 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
             const float factor = percent / 100.0f;
             const float avg_threshold = 1.0f - 1.0f * factor;
             const float min_threshold = 1.0f - 3.0f * factor;
+            // if(readId == 134){
+            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
+            //         avg_support, avg_threshold, min_support, min_threshold);
+            // }
             if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
                 smallestErrorrateThatWouldMakeHQ = percent;
             }
@@ -693,6 +698,11 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
 
         const bool isHQ = isGoodMinCoverage(min_coverage)
                             && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+
+        // if(readId == 134){
+        //     printf("read 134 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
+        //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
+        // }
 
         //broadcastbuffer = isHQ;
         result.isHQ = isHQ;

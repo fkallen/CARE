@@ -540,6 +540,10 @@ namespace gpu{
                             if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
                                 smallestErrorrateThatWouldMakeHQ = percent;
                             }
+                            // if(readId == 134){
+                            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
+                            //     avg_support, avg_threshold, min_support, min_threshold);
+                            // }
                         }
 
                         const bool isHQ = isGoodMinCoverage(min_coverage)
@@ -550,8 +554,8 @@ namespace gpu{
 
                         flag = isHQ ? 2 : 1;
 
-                        // if(readId == 10307280){
-                        //     printf("read 10307280 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
+                        // if(readId == 134){
+                        //     printf("read 134 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
                         //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
                         // }
                     }

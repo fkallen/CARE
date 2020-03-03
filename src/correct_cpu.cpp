@@ -329,13 +329,13 @@ namespace cpu{
                     data.minhashHandle.result().erase(readIdPos);
                 }
 
-                // auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 31572835);
-                // if(readId != 31572835 && debugit == data.minhashHandle.result().end()){
+                // auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 134);
+                // if(readId != 134 && debugit == data.minhashHandle.result().end()){
                 //     const int candidatesPerSubject = 0;
                 //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
                 //     data.candidatesPerSubject[i] = candidatesPerSubject;
                 // }else{
-                //     std::cerr << "found id 31572835 as candidate of read " << readId << "\n";
+                //    std::cerr << "found id 134 as candidate of read " << readId << "\n";
                     data.candidateReadIds.insert(
                         data.candidateReadIds.end(),
                         data.minhashHandle.result().begin(),
@@ -970,7 +970,8 @@ namespace cpu{
                 correctionOptions.estimatedErrorrate,
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage,
-                correctionOptions.kmerlength
+                correctionOptions.kmerlength,
+                task.subjectReadId
             );
 
             //auto it = std::lower_bound(interestingReadIds.begin(), interestingReadIds.end(), task.readId);
@@ -1093,7 +1094,7 @@ namespace cpu{
                     tmp.readId = task.subjectReadId;
                     tmp.sequence = std::move(correctedSequenceString); 
 
-                    // if(tmp.readId == 31572835 || tmp.readId == 10307280 || tmp.readId == 42537816){
+                    // if(tmp.readId == 134 /* || tmp.readId == 10307280 || tmp.readId == 42537816*/){
                     //     std::cerr << "readid = " << tmp.readId << ", anchor\n";
                     //     std::cerr << "hq = " << tmp.hq;
                     //     if(!tmp.useEdits){
@@ -1190,8 +1191,8 @@ namespace cpu{
                             tmp.useEdits = false;
                         }
 
-                        // if(tmp.readId == 31572835){
-                        //     std::cerr << "readid = 31572835, as candidate of anchor with id " << task.subjectReadId << "\n";
+                        // if(tmp.readId == 134){
+                        //     std::cerr << "readid = " << tmp.readId << ", as candidate of anchor with id " << task.subjectReadId << "\n";
                         //     std::cerr << "hq = " << tmp.hq;
                         //     if(!tmp.useEdits){
                         //         std::cerr << ", sequence = " << tmp.sequence << "\n";

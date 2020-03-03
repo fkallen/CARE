@@ -9,9 +9,9 @@ namespace care{
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
     constexpr bool feq(float l, float r){
-        constexpr float threshold = 1e-5;
-
-        return abs(l-r) < threshold;
+        constexpr float threshold = 1e-5f;
+        const float absdiff = l-r < 0 ? -(l-r) : l-r;
+        return absdiff < threshold;
     }
 
     HOSTDEVICEQUALIFIER
