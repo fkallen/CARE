@@ -154,6 +154,11 @@ namespace gpu{
         SimpleAllocationDevice<bool> d_candidateContainsN;
 
         SimpleAllocationDevice<read_number> d_candidate_read_ids_tmp;
+        SimpleAllocationPinnedHost<std::uint64_t> h_minhashSignatures;
+        SimpleAllocationDevice<std::uint64_t> d_minhashSignatures;
+        SimpleAllocationPinnedHost<std::uint64_t> h_minhashSignaturesTransposed;
+        SimpleAllocationDevice<std::uint64_t> d_minhashSignaturesTransposed;
+        SimpleAllocationDevice<unsigned int> d_subject_sequences_data_transposed;
 
         int n_subjects = -1;
         std::atomic<int> n_queries{-1};
@@ -438,6 +443,11 @@ namespace gpu{
         nextData.d_candidates_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
 
         nextData.d_candidate_read_ids_tmp.destroy();
+        nextData.h_minhashSignatures.destroy();
+        nextData.d_minhashSignatures.destroy();
+        nextData.h_minhashSignaturesTransposed.destroy();
+        nextData.d_minhashSignaturesTransposed.destroy();
+        nextData.d_subject_sequences_data_transposed.destroy();
 
         destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
@@ -448,6 +458,7 @@ namespace gpu{
 
         nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.h_subject_sequences_lengths.resize(batchsize);
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
@@ -490,6 +501,15 @@ namespace gpu{
             batchData.deviceId,
             nextData.d_subject_read_ids.get(),
             nextData.n_subjects,            
+            nextData.stream
+        );
+
+        call_transpose_kernel(
+            nextData.d_subject_sequences_data_transposed.get(), 
+            nextData.d_subject_sequences_data.get(), 
+            nextData.n_subjects, 
+            batchData.encodedSequencePitchInInts, 
+            batchData.encodedSequencePitchInInts, 
             nextData.stream
         );
 
@@ -826,7 +846,15 @@ namespace gpu{
 
         auto querySignatures = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
 
-            auto& minhashHandle = batchptr->minhashHandles[threadId];                      
+            auto& minhashHandle = batchptr->minhashHandles[threadId]; 
+            
+            //copy signatures from pinned memory into minhashhandle
+            minhashHandle.multiminhashSignatures.resize((end-begin) * maximum_number_of_maps);
+            std::copy(
+                nextData.h_minhashSignatures.get() + begin * maximum_number_of_maps,
+                nextData.h_minhashSignatures.get() + end * maximum_number_of_maps,
+                minhashHandle.multiminhashSignatures.begin()
+            );
 
             nvtx::push_range("queryPrecalculatedSignatures", 6);
             minhasherPtr->queryPrecalculatedSignatures(
@@ -836,18 +864,44 @@ namespace gpu{
             nvtx::pop_range();
         };
 
+        const int kmerSize = batchData.transFuncData->minhashOptions.k;
+        const int numHashFunctions = minhasherPtr->minparams.maps;
 
-        cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
+        nextData.h_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
+        nextData.d_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
 
-        int numChunksRequired = batchData.threadPool->parallelFor(
-            nextData.pforHandle,
-            0, 
-            nextData.n_subjects, 
-            [=](auto begin, auto end, auto threadId){
-                makeSignatures(begin, end, threadId);
-            }
+        callMinhashSignaturesKernel_async(
+            nextData.d_minhashSignatures.get(),
+            maximum_number_of_maps,
+            nextData.d_subject_sequences_data_transposed.get(),
+            nextData.n_subjects,
+            nextData.n_subjects,
+            nextData.d_subject_sequences_lengths.get(),
+            kmerSize,
+            numHashFunctions,
+            nextData.stream
         );
-        batchData.threadPool->parallelFor(
+
+        cudaMemcpyAsync(
+            nextData.h_minhashSignatures.get(),
+            nextData.d_minhashSignatures.get(),
+            nextData.h_minhashSignatures.sizeInBytes(),
+            H2D,
+            nextData.stream
+        );
+
+
+        cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of signatures anchor data which is required for minhasher
+
+        // int numChunksRequired = batchData.threadPool->parallelFor(
+        //     nextData.pforHandle,
+        //     0, 
+        //     nextData.n_subjects, 
+        //     [=](auto begin, auto end, auto threadId){
+        //         makeSignatures(begin, end, threadId);
+        //     }
+        // );
+        int numChunksRequired = batchData.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
             nextData.n_subjects, 

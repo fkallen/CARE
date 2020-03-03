@@ -1,6 +1,6 @@
 #include <gpu/minhashkernels.hpp>
 #include <gpu/nvtxtimelinemarkers.hpp>
-
+#include <gpu/kernellaunch.hpp>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 
@@ -111,6 +111,35 @@ namespace care{
                 }
             }
         }
+    }
+
+    void callMinhashSignaturesKernel_async(
+            std::uint64_t* d_signatures,
+            size_t signaturesRowPitchElements,
+            const unsigned int* d_transposedSequences2Bit,
+            size_t sequenceRowPitchElements,
+            int numSequences,
+            const int* d_sequenceLengths,
+            int k,
+            int numHashFuncs,
+            cudaStream_t stream){
+
+        constexpr int blocksize = 128;
+
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(SDIV(numSequences, blocksize), 1, 1);
+        size_t smem = 0;
+
+        minhashSignaturesKernel<<<grid, block, smem, stream>>>(
+            d_signatures,
+            signaturesRowPitchElements,
+            d_transposedSequences2Bit,
+            sequenceRowPitchElements,
+            numSequences,
+            d_sequenceLengths,
+            k,
+            numHashFuncs
+        );
     }
 
     // SET_UNION

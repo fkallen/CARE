@@ -998,13 +998,8 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 	}
 
 
-	std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
-        return minhashfunc(sequence.c_str(), sequence.length());
-	}
-
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
+    minhashfunc1(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
         std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
@@ -1012,14 +1007,14 @@ Minhasher::getCandidates_fromHashvalues_any_map(
         std::uint64_t rhVal = 0;
 		bool isForward = false;
 		// calc hash values of first canonical kmer
-		NTMC64(sequence, minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
+		NTMC64(sequence, kmerLength, numHashFuncs, minhashSignature.data(), fhVal, rhVal, isForward);
 
 		//calc hash values of remaining canonical kmers
-		for (int i = 0; i < sequenceLength - minparams.k; ++i) {
-			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, 
+		for (int i = 0; i < sequenceLength - kmerLength; ++i) {
+			NTMC64(fhVal, rhVal, sequence[i], sequence[i + kmerLength], kmerLength, numHashFuncs, 
                     kmerHashValues.data(), isForward);
 
-			for (int j = 0; j < minparams.maps; ++j) {
+			for (int j = 0; j < numHashFuncs; ++j) {
 				if (minhashSignature[j] > kmerHashValues[j]){
 					minhashSignature[j] = kmerHashValues[j];
 				}
@@ -1030,24 +1025,20 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 	}
 
 
-    std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
-        return minhashfunc_other(sequence.c_str(), sequence.length());
-    }
+    
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc_other(const char* sequence, int sequenceLength) const noexcept{
-        assert(minparams.k <= maximum_kmer_length);
+    minhashfunc2(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
 
         const int length = sequenceLength;
 
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
-        std::fill_n(minhashSignature.begin(), minparams.maps, std::numeric_limits<std::uint64_t>::max());
+        std::fill_n(minhashSignature.begin(), numHashFuncs, std::numeric_limits<std::uint64_t>::max());
 
-        if(length < minparams.k) return minhashSignature;
+        if(length < kmerLength) return minhashSignature;
 
-        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - minparams.k) * 2);
-        const int rcshiftamount = (maximum_kmer_length - minparams.k) * 2;
+        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((Minhasher::maximum_kmer_length - kmerLength) * 2);
+        const int rcshiftamount = (Minhasher::maximum_kmer_length - kmerLength) * 2;
         
 
         auto murmur3_fmix = [](std::uint64_t x) {
@@ -1107,14 +1098,14 @@ Minhasher::getCandidates_fromHashvalues_any_map(
             }
         };
 
-        for(int i = 0; i < minparams.k - 1; i++){
+        for(int i = 0; i < kmerLength - 1; i++){
             addBase(sequence[i]);
         }
 
-        for(int i = minparams.k - 1; i < length; i++){
+        for(int i = kmerLength - 1; i < length; i++){
             addBase(sequence[i]);
 
-            for(int m = 0; m < minparams.maps; m++){
+            for(int m = 0; m < numHashFuncs; m++){
                 handlekmer(kmer_encoded & kmer_mask, 
                             rc_kmer_encoded >> rcshiftamount, 
                             m);
@@ -1122,7 +1113,17 @@ Minhasher::getCandidates_fromHashvalues_any_map(
         }
 
         return minhashSignature;
+	}
 
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+        return minhashfunc(sequence.c_str(), sequence.length());
+	}
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
+        return minhashfunc2(sequence, sequenceLength, minparams.k, minparams.maps);
 	}
 
     int Minhasher::getResultsPerMapThreshold() const{
