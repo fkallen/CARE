@@ -26,7 +26,7 @@ namespace care{
     void minhashSignaturesKernel(
             std::uint64_t* __restrict__ signatures,
             size_t signaturesRowPitchElements,
-            const unsigned int* __restrict__ transposedSequences2Bit,
+            const unsigned int* __restrict__ sequences2Bit,
             size_t sequenceRowPitchElements,
             int numSequences,
             const int* __restrict__ sequenceLengths,
@@ -56,16 +56,21 @@ namespace care{
 
         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-        if(tid < numSequences){
-            const unsigned int* const mySequence = transposedSequences2Bit + tid;
-            const int myLength = sequenceLengths[tid];
+        if(tid < numSequences * numHashFuncs){
+            const int mySequenceIndex = tid / numHashFuncs;
+            const int myNumHashFunc = tid % numHashFuncs;
 
-            std::uint64_t* const mySignature = signatures + tid * signaturesRowPitchElements;
+            const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
+            const int myLength = sequenceLengths[mySequenceIndex];
 
-            auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+            std::uint64_t* const mySignature = signatures + mySequenceIndex * signaturesRowPitchElements;
+
+            std::uint64_t minHashValue = std::numeric_limits<std::uint64_t>::max();
+
+            auto handlekmer = [&](auto fwd, auto rc){
                 const auto smallest = min(fwd, rc);
-                const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
-                mySignature[numhashfunc] = min(mySignature[numhashfunc], hashvalue);
+                const auto hashvalue = murmur3_fmix(smallest + myNumHashFunc);
+                minHashValue = min(minHashValue, hashvalue);
             };
 
             if(myLength >= k){
@@ -73,10 +78,14 @@ namespace care{
                 const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
                 const int rcshiftamount = (maximum_kmer_length - k) * 2;
 
-                std::uint64_t kmer_encoded = mySequence[sequenceRowPitchElements * 0];
-                if(k > 16){
-                    kmer_encoded = (kmer_encoded << 32) | mySequence[sequenceRowPitchElements * 1];
+                std::uint64_t kmer_encoded = mySequence[0];
+                if(k <= 16){
+                    kmer_encoded >>= (16 - k) * 2;
+                }else{
+                    kmer_encoded = (kmer_encoded << 32) | mySequence[1];
+                    kmer_encoded >>= (32 - k) * 2;
                 }
+
                 kmer_encoded >>= 2; //k-1 bases, allows easier loop
 
                 std::uint64_t rc_kmer_encoded = make_reverse_complement(kmer_encoded);
@@ -90,33 +99,69 @@ namespace care{
                     rc_kmer_encoded |= revcBase << 62;
                 };
 
-                for(int nextSequencePos = k - 1; nextSequencePos < myLength; nextSequencePos++){
+                const int itersend1 = min(SDIV(k-1, 16) * 16, myLength);
+
+                for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
                     const int nextIntIndex = nextSequencePos / 16;
                     const int nextPositionInInt = nextSequencePos % 16;
 
-                    const unsigned int nextInt = mySequence[sequenceRowPitchElements * nextIntIndex];
-                    const std::uint64_t nextBase = nextInt >> (30 - 2 * nextPositionInInt);
+                    const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
 
                     addBase(nextBase);
 
-                    for(int m = 0; m < numHashFuncs; m++){
-                        handlekmer(kmer_encoded & kmer_mask, 
-                                    rc_kmer_encoded >> rcshiftamount, 
-                                    m);
+                    handlekmer(
+                        kmer_encoded & kmer_mask, 
+                        rc_kmer_encoded >> rcshiftamount
+                    );
+                }
+
+                const int full16Iters = (myLength - itersend1) / 16;
+
+                for(int iter = 0; iter < full16Iters; iter++){
+                    const int intIndex = (itersend1 + iter * 16) / 16;
+                    const unsigned int data = mySequence[intIndex];
+
+                    #pragma unroll
+                    for(int posInInt = 0; posInInt < 16; posInInt++){
+                        const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
+
+                        addBase(nextBase);
+
+                        handlekmer(
+                            kmer_encoded & kmer_mask, 
+                            rc_kmer_encoded >> rcshiftamount
+                        );
                     }
                 }
-            }else{
-                for(int i = 0; i < numHashFuncs; i++){
-                    mySignature[i] = std::numeric_limits<std::uint64_t>::max();
+
+
+                for(int nextSequencePos = full16Iters * 16 + itersend1; nextSequencePos < myLength; nextSequencePos++){
+                    const int nextIntIndex = nextSequencePos / 16;
+                    const int nextPositionInInt = nextSequencePos % 16;
+
+                    const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+
+                    addBase(nextBase);
+
+                    handlekmer(
+                        kmer_encoded & kmer_mask, 
+                        rc_kmer_encoded >> rcshiftamount
+                    );
                 }
+
+                mySignature[myNumHashFunc] = minHashValue;
+
+            }else{
+                mySignature[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
             }
         }
     }
 
+
     void callMinhashSignaturesKernel_async(
             std::uint64_t* d_signatures,
             size_t signaturesRowPitchElements,
-            const unsigned int* d_transposedSequences2Bit,
+            const unsigned int* d_sequences2Bit,
             size_t sequenceRowPitchElements,
             int numSequences,
             const int* d_sequenceLengths,
@@ -127,13 +172,13 @@ namespace care{
         constexpr int blocksize = 128;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(SDIV(numSequences, blocksize), 1, 1);
+        dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
         size_t smem = 0;
 
         minhashSignaturesKernel<<<grid, block, smem, stream>>>(
             d_signatures,
             signaturesRowPitchElements,
-            d_transposedSequences2Bit,
+            d_sequences2Bit,
             sequenceRowPitchElements,
             numSequences,
             d_sequenceLengths,

@@ -458,7 +458,7 @@ namespace gpu{
 
         nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
-        nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
+        //nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.h_subject_sequences_lengths.resize(batchsize);
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
@@ -504,14 +504,14 @@ namespace gpu{
             nextData.stream
         );
 
-        call_transpose_kernel(
-            nextData.d_subject_sequences_data_transposed.get(), 
-            nextData.d_subject_sequences_data.get(), 
-            nextData.n_subjects, 
-            batchData.encodedSequencePitchInInts, 
-            batchData.encodedSequencePitchInInts, 
-            nextData.stream
-        );
+        // call_transpose_kernel(
+        //     nextData.d_subject_sequences_data_transposed.get(), 
+        //     nextData.d_subject_sequences_data.get(), 
+        //     nextData.n_subjects, 
+        //     batchData.encodedSequencePitchInInts, 
+        //     batchData.encodedSequencePitchInInts, 
+        //     nextData.stream
+        // );
 
         cudaMemcpyAsync(
             nextData.h_subject_sequences_data,
@@ -873,8 +873,8 @@ namespace gpu{
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
             maximum_number_of_maps,
-            nextData.d_subject_sequences_data_transposed.get(),
-            nextData.n_subjects,
+            nextData.d_subject_sequences_data.get(),
+            batchData.encodedSequencePitchInInts,
             nextData.n_subjects,
             nextData.d_subject_sequences_lengths.get(),
             kmerSize,
