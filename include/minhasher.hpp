@@ -118,35 +118,41 @@ namespace care{
                 return !(*this == rhs);
             }
 
-			void insert(Key_t key, Index_t value) noexcept{
-				std::uint64_t probes = 0;
-				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
-                //std::uint32_t probes = 1;
-                //std::uint32_t pos = murmur_integer_finalizer_hash_uint32_t(key) % size;
-				while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
-					pos = (pos + 1) % size;
-					probes++;
-				}
-				keyToIndexMap[pos].first = key;
-				keyToIndexMap[pos].second = value;
+            void insert(Key_t key, Index_t value) noexcept{
+                std::uint64_t probes = 0;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
+                }
+                keyToIndexMap[pos].first = key;
+                keyToIndexMap[pos].second = value;
                 //std::cerr << "probes insert: " << probes << "\n";
 
                 maxProbes = std::max(maxProbes, probes);
-			}
+            }
 
-			Index_t get(Key_t key) const noexcept{
+            Index_t get(Key_t key) const noexcept{
                 std::uint64_t probes = 0;
-				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
-				while(keyToIndexMap[pos].first != key){
-					pos = (pos + 1) % size;
-					probes++;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos].first != key){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
                     if(maxProbes < probes){
                         return std::numeric_limits<Index_t>::max();
                     }
-				}
+                }
                 //std::cerr << "probes get: " << probes << "\n";
-				return keyToIndexMap[pos].second;
-			}
+                return keyToIndexMap[pos].second;
+            }
 
             std::size_t numBytes() const{
                 return keyToIndexMap.size() * sizeof(Pair_t);
@@ -182,6 +188,7 @@ namespace care{
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
                 keyToIndexMap.resize(size);
                 instream.read(reinterpret_cast<char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+                //std::cerr << "keyToIndexMap.size = " << size << ", bytes = " << (keyToIndexMap.size() * sizeof(Pair_t)) << '\n';
             }
 		};
 
