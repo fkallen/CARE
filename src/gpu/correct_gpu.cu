@@ -2793,9 +2793,20 @@ void correct_gpu(
     //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
     //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit 
-                                            - readStorage.getMemoryInfo().host
-                                            - minhasher.getMemoryInfo().host;
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
 
     std::unique_ptr<std::atomic_uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::atomic_uint8_t[]>(sequenceFileProperties.nReads);
 
@@ -2806,7 +2817,11 @@ void correct_gpu(
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
-    memoryAvailableBytesHost -= sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads;
+    if(memoryAvailableBytesHost > sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads){
+        memoryAvailableBytesHost -= sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
