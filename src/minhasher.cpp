@@ -1132,7 +1132,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
 
     int calculateResultsPerMapThreshold(int coverage){
-        return coverage * 2.5f;
+        return std::min(int(coverage * 2.5f), int(std::numeric_limits<BucketSize>::max()));
     }
 
 

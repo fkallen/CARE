@@ -166,7 +166,7 @@ namespace care{
                 std::array<Index_t, N> result;
 
                 for(int i = 0; i < N; i++){
-                    while(keyToIndexMap[pos[i]].first != key){
+                    while(keyToIndexMap[pos[i]].first != keys[i]){
                         pos[i]++;
                         //wrap-around
                         if(pos[i] == size){
