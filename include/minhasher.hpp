@@ -154,6 +154,36 @@ namespace care{
                 return keyToIndexMap[pos].second;
             }
 
+            template<int N>
+            std::array<Index_t, N> getN(const Key_t* keys) const noexcept{
+
+                std::array<std::uint64_t, N> pos;
+                for(int i = 0; i < N; i++){
+                    pos[i] = murmur_hash_3_uint64_t(keys[i]) % size;
+                    __builtin_prefetch(&keyToIndexMap[pos], 0, 1);
+                }
+                std::array<std::uint64_t, N> probes{0};
+                std::array<Index_t, N> result;
+
+                for(int i = 0; i < N; i++){
+                    while(keyToIndexMap[pos[i]].first != key){
+                        pos[i]++;
+                        //wrap-around
+                        if(pos[i] == size){
+                            pos[i] = 0;
+                        }
+                        probes[i]++;
+                        if(maxProbes < probes[i]){
+                            result[i] = std::numeric_limits<Index_t>::max();
+                            break;
+                        }
+                    }
+                    result[i] = keyToIndexMap[pos[i]].second;
+                }
+
+                return result;
+            }
+
             std::size_t numBytes() const{
                 return keyToIndexMap.size() * sizeof(Pair_t);
             }
