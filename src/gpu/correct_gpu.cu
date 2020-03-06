@@ -2347,7 +2347,7 @@ namespace gpu{
         cudaEventSynchronize(events[numTotalCorrectedCandidates_event_index]); CUERR;
 
         const int numTotalCorrectedCandidates = *dataArrays.h_num_total_corrected_candidates.get();
-        
+
         cudaEventSynchronize(events[correction_finished_event_index]); CUERR;        
 
         cudaMemcpyAsync(

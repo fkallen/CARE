@@ -2,6 +2,7 @@
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <hpc_helpers.cuh>
+#include <gpu/utility_kernels.cuh>
 #include <config.hpp>
 
 
@@ -216,9 +217,9 @@ void compactDataOfUniqueRanges(
 }
 
 
-template<int blocksize, int numtempregs>
+template<int blocksize, int elemsPerThread>
 __global__
-void makeUniqueRangesKernel(
+void makeUniqueRangesWithOnlyCUBKernel(
         read_number* __restrict__ inoutData, 
         int* __restrict__ sizesOfUniqueRanges, 
         int numSequences,
@@ -226,8 +227,8 @@ void makeUniqueRangesKernel(
         const int* __restrict__ rangesPerSequenceBegins,
         int globalOffset){
 
-    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, numtempregs>;
-    using BlockLoad = cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, elemsPerThread>;
+    using BlockLoad = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
     using BlockDiscontinuity = cub::BlockDiscontinuity<read_number, blocksize>;
     using BlockScan = cub::BlockScan<int, blocksize>; 
 
@@ -242,10 +243,10 @@ void makeUniqueRangesKernel(
 
     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
-        read_number tempregs[numtempregs];   
+        read_number tempregs[elemsPerThread];   
 
         #pragma unroll
-        for(int i = 0; i <numtempregs; i++){
+        for(int i = 0; i <elemsPerThread; i++){
             tempregs[i] = std::numeric_limits<read_number>::max();
         }
 
@@ -258,7 +259,7 @@ void makeUniqueRangesKernel(
         
             read_number* const myRange = inoutData + rangesPerSequenceBegins[sequenceIndex] - globalOffset;
 
-            assert(sizeOfRange <= numtempregs * blocksize);            
+            assert(sizeOfRange <= elemsPerThread * blocksize);            
 
             BlockLoad(temp_storage.load).Load(
                 myRange, 
@@ -276,7 +277,7 @@ void makeUniqueRangesKernel(
 
             __syncthreads();
 
-            int head_flags[numtempregs];
+            int head_flags[elemsPerThread];
 
             BlockDiscontinuity(temp_storage.discontinuity).FlagHeads(
                 head_flags, 
@@ -287,8 +288,8 @@ void makeUniqueRangesKernel(
             __syncthreads();            
 
             #pragma unroll
-            for(int i = 0; i < numtempregs; i++){
-                if(threadIdx.x * numtempregs + i >= sizeOfRange){
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i >= sizeOfRange){
                     head_flags[i] = 0;
                 }else{
                     if(tempregs[i] == anchorId){
@@ -297,7 +298,7 @@ void makeUniqueRangesKernel(
                 }
             }
 
-            int prefixsum[numtempregs];
+            int prefixsum[elemsPerThread];
             int numberOfSetHeadFlags = 0;
 
             BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfSetHeadFlags);
@@ -305,8 +306,8 @@ void makeUniqueRangesKernel(
             __syncthreads();
 
             #pragma unroll
-            for(int i = 0; i < numtempregs; i++){
-                if(threadIdx.x * numtempregs + i < sizeOfRange && head_flags[i] == 1){
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i < sizeOfRange && head_flags[i] == 1){
                     myRange[prefixsum[i]] = tempregs[i];
                 }
             }
@@ -321,23 +322,24 @@ void makeUniqueRangesKernel(
 
 
 
-template<int blocksize, int numtempregs>
+template<int blocksize, int elemsPerThread>
 __device__
 void makeUniqueRangeSingleWarp(
         read_number* __restrict__ myRange, 
         int sizeOfRange, 
         int* __restrict__ sizeOfUniqueRange,
-        typename cub::BlockRadixSort<read_number, blocksize, numtempregs>::TempStorage& sorttemp,
-        typename cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>::TempStorage& loadtemp){
+        read_number anchorId,
+        typename cub::BlockRadixSort<read_number, blocksize, elemsPerThread>::TempStorage& sorttemp,
+        typename cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>::TempStorage& loadtemp){
 
-    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, numtempregs>;
-    using BlockLoad = cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, elemsPerThread>;
+    using BlockLoad = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
 
 
-    read_number tempregs[numtempregs];   
+    read_number tempregs[elemsPerThread];   
 
     #pragma unroll
-    for(int i = 0; i <numtempregs; i++){
+    for(int i = 0; i <elemsPerThread; i++){
         tempregs[i] = std::numeric_limits<read_number>::max();
     }
 
@@ -354,14 +356,14 @@ void makeUniqueRangeSingleWarp(
     int numUniqueElements = 0;
  
     #pragma unroll
-    for(int i = 0; i < numtempregs; i++){
+    for(int i = 0; i < elemsPerThread; i++){
         const read_number curElement = tempregs[i];
 
-        read_number nextElement = threadIdx.x == 0 ? tempregs[(i+1) % numtempregs] : tempregs[i];
+        read_number nextElement = threadIdx.x == 0 ? tempregs[(i+1) % elemsPerThread] : tempregs[i];
         nextElement = __shfl_sync(0xFFFFFFFF, nextElement, threadIdx.x+1);               
 
-        //find elements which are not equal to their right neighbor and not out of range
-        const bool predicate = (curElement != nextElement) && (i * blocksize + threadIdx.x < sizeOfRange);
+        //find elements which are not equal to their right neighbor, not equal to the anchor id and not out of range
+        const bool predicate = (curElement != nextElement) && (curElement != anchorId) && (i * blocksize + threadIdx.x < sizeOfRange);
 
         const uint32_t mask = __ballot_sync(0xFFFFFFFF, predicate);
         const uint32_t count = __popc(mask);
@@ -382,19 +384,20 @@ void makeUniqueRangeSingleWarp(
 }
 
 
-template<int blocksize, int numtempregs>
+template<int blocksize, int elemsPerThread>
 __global__
 void makeUniqueRangesKernelWithIntrinsicsSingleWarp(
         read_number* __restrict__ inoutData, 
         int* __restrict__ sizesOfUniqueRanges, 
         int numSequences,
+        const read_number* __restrict__ anchorIds,
         const int* __restrict__ rangesPerSequenceBegins,
         int globalOffset){
 
     static_assert(blocksize == 32, "blocksize must be 32 for SingleWarp kernel");
 
-    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, numtempregs>;
-    using BlockLoad = cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, elemsPerThread>;
+    using BlockLoad = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
     
     __shared__ union{
         typename BlockRadixSort::TempStorage sort;
@@ -404,7 +407,9 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarp(
     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
         const int sizeOfRange = rangesPerSequenceBegins[sequenceIndex + 1] - rangesPerSequenceBegins[sequenceIndex];
-        assert(sizeOfRange <= numtempregs * blocksize);
+        if(sizeOfRange > elemsPerThread * blocksize){
+            assert(sizeOfRange <= elemsPerThread * blocksize);
+        }
 
         if(sizeOfRange == 0){
             if(threadIdx.x == 0){
@@ -412,12 +417,14 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarp(
             }
         }else{
         
+            const read_number anchorId = anchorIds[sequenceIndex];
             read_number* const myRange = inoutData + rangesPerSequenceBegins[sequenceIndex] - globalOffset;
 
-            makeUniqueRangeSingleWarp<blocksize, numtempregs>(
+            makeUniqueRangeSingleWarp<blocksize, elemsPerThread>(
                 myRange, 
                 sizeOfRange, 
                 &sizesOfUniqueRanges[sequenceIndex],
+                anchorId,
                 temp_storage.sort,
                 temp_storage.load
             );
@@ -430,19 +437,20 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarp(
 
 
 
-template<int blocksize, int numtempregs>
+template<int blocksize, int elemsPerThread>
 __global__
 void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
         read_number* __restrict__ inoutData, 
         int* __restrict__ sizesOfUniqueRanges, 
         int numSequences,
+        const read_number* __restrict__ anchorIds,
         const int* __restrict__ rangesPerSequenceBegins,
         int globalOffset){
 
     static_assert(blocksize == 32, "blocksize must be 32 for SingleWarp kernel");
 
-    using BlockRadixSortFull = cub::BlockRadixSort<read_number, blocksize, numtempregs>;
-    using BlockLoadFull = cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockRadixSortFull = cub::BlockRadixSort<read_number, blocksize, elemsPerThread>;
+    using BlockLoadFull = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
 
     using BlockRadixSort1 = cub::BlockRadixSort<read_number, blocksize, 1>;
     using BlockLoad1 = cub::BlockLoad<read_number, blocksize, 1, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
@@ -494,13 +502,15 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
         const int sizeOfRange = rangesPerSequenceBegins[sequenceIndex + 1] - rangesPerSequenceBegins[sequenceIndex];
-        assert(sizeOfRange <= numtempregs * blocksize);
+        assert(sizeOfRange <= elemsPerThread * blocksize);
 
         if(sizeOfRange == 0){
             if(threadIdx.x == 0){
                 sizesOfUniqueRanges[sequenceIndex] = 0;
             }
         }else{
+            const read_number anchorId = anchorIds[sequenceIndex];
+
             read_number* const myRange = inoutData + rangesPerSequenceBegins[sequenceIndex] - globalOffset;
             int* const sizeOfUniqueRange = sizesOfUniqueRanges + sequenceIndex;
 
@@ -509,6 +519,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort1,
                     temp_storage.load1
                 );
@@ -517,6 +528,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort2,
                     temp_storage.load2
                 );
@@ -525,6 +537,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort4,
                     temp_storage.load4
                 );
@@ -533,6 +546,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort8,
                     temp_storage.load8
                 );
@@ -541,6 +555,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort16,
                     temp_storage.load16
                 );
@@ -549,6 +564,7 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort32,
                     temp_storage.load32
                 );
@@ -557,14 +573,16 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sort64,
                     temp_storage.load64
                 );
             }else{
-                makeUniqueRangeSingleWarp<blocksize, numtempregs>(
+                makeUniqueRangeSingleWarp<blocksize, elemsPerThread>(
                     myRange, 
                     sizeOfRange, 
                     sizeOfUniqueRange,
+                    anchorId,
                     temp_storage.sortFull,
                     temp_storage.loadFull
                 );
@@ -579,17 +597,18 @@ void makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked(
 
 
 
-template<int blocksize, int numtempregs>
+template<int blocksize, int elemsPerThread>
 __global__
 void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
         read_number* __restrict__ inoutData, 
         int* __restrict__ sizesOfUniqueRanges, 
         int numSequences,
+        const read_number* __restrict__ anchorIds,
         const int* __restrict__ rangesPerSequenceBegins,
         int globalOffset){
 
-    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, numtempregs>;
-    using BlockLoad = cub::BlockLoad<read_number, blocksize, numtempregs, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, elemsPerThread>;
+    using BlockLoad = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
     using WarpScan = cub::WarpScan<int>;
     
     constexpr int warpsize = 32;
@@ -611,10 +630,11 @@ void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
 
     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
-        read_number tempregs[numtempregs];   
+        
+        read_number tempregs[elemsPerThread];   
 
         #pragma unroll
-        for(int i = 0; i <numtempregs; i++){
+        for(int i = 0; i <elemsPerThread; i++){
             tempregs[i] = std::numeric_limits<read_number>::max();
         }
 
@@ -624,10 +644,10 @@ void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
                 sizesOfUniqueRanges[sequenceIndex] = 0;
             }
         }else{
-        
+            const read_number anchorId = anchorIds[sequenceIndex];
             read_number* const myRange = inoutData + rangesPerSequenceBegins[sequenceIndex] - globalOffset;
 
-            assert(sizeOfRange <= numtempregs * blocksize);
+            assert(sizeOfRange <= elemsPerThread * blocksize);
 
             BlockLoad(temp_storage.load).Load(
                 myRange, 
@@ -641,12 +661,12 @@ void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
 
             int numUniqueElements = 0;
             #pragma unroll
-            for(int i = 0; i < numtempregs; i++){                
+            for(int i = 0; i < elemsPerThread; i++){                
 
                 //save input for previous warp in shared memory
                 if(laneId == 0){
                     if(warpId == 0){
-                        rightNeighborPerWarp[numWarpsPerBlock-1] = tempregs[(i+1) % numtempregs];
+                        rightNeighborPerWarp[numWarpsPerBlock-1] = tempregs[(i+1) % elemsPerThread];
                     }else{
                         rightNeighborPerWarp[warpId-1] = tempregs[i];
                     }
@@ -659,8 +679,8 @@ void makeUniqueRangesKernelWithIntrinsicsMultiWarp(
                 read_number nextElement = laneId == 0 ? rightNeighborPerWarp[warpId] : tempregs[i];
                 nextElement = __shfl_sync(0xFFFFFFFF, nextElement, laneId+1);               
 
-                //find elements which are not equal to their right neighbor and not out of range
-                const bool predicate = (curElement != nextElement) && (i * blocksize + threadIdx.x < sizeOfRange);
+                //find elements which are not equal to their right neighbor, not equal to anchorId, and not out of range
+                const bool predicate = (curElement != nextElement) && (curElement != anchorId) && (i * blocksize + threadIdx.x < sizeOfRange);
 
                 const uint32_t mask = __ballot_sync(0xFFFFFFFF, predicate);
                 const int count = __popc(mask);
@@ -988,11 +1008,18 @@ void makeCompactUniqueRangesSmem(
                 largestNumElementsPerSequence = std::max(largestNumElementsPerSequence, numElementsForSequence);                
             } 
 
-            #define processData(blocksize, numtempregs) \
+            // read_number* d_candidateIds_tmp;
+            // cudaMalloc(&d_candidateIds_tmp, sizeof(read_number) * totalNumElements); CUERR;
+            // cudaMemcpy(d_candidateIds_tmp, d_candidateIds, sizeof(read_number) * totalNumElements, D2D); CUERR;
+
+            // int* d_candidatesPerAnchor_tmp;
+            // cudaMalloc(&d_candidatesPerAnchor_tmp, sizeof(int) * numSequences);
+
+            #define processData(blocksize, elemsPerThread) \
             { \
                 switch(kernelType){ \
                 case MergeRangesKernelType::allcub: \
-                    makeUniqueRangesKernel<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
+                    makeUniqueRangesWithOnlyCUBKernel<(blocksize), (elemsPerThread)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
                         d_candidateIds + elementOffset,  \
                         d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
@@ -1002,28 +1029,95 @@ void makeCompactUniqueRangesSmem(
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcmultiwarp: \
-                    makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (numtempregs)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
+                    makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (elemsPerThread)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
                         d_candidateIds + elementOffset,  \
                         d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
+                        d_anchorIds, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcsinglewarp: \
-                    makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
+                    makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, (elemsPerThread)><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
                         d_candidateIds + elementOffset,  \
                         d_candidatesPerAnchor + sequenceOffset,  \
                         mynumSequences, \
+                        d_anchorIds, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
                     break; \
                 case MergeRangesKernelType::popcsinglewarpchunked: \
-                    makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, 64><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
-                        d_candidateIds + elementOffset,  \
-                        d_candidatesPerAnchor + sequenceOffset,  \
+                default: std::cerr << "unknown kernel type\n"; \
+                } \
+            }
+
+#if 0
+
+makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, (elemsPerThread)><<<mynumSequences, 32, 0, handle.streams[i]>>>( 
+    d_candidateIds + elementOffset,  
+    d_candidatesPerAnchor + sequenceOffset,  
+    mynumSequences, 
+    d_anchorIds, 
+    handle.d_rangesBeginPerSequence.get() + sequenceOffset, 
+    elementOffset 
+); CUERR; 
+break; 
+
+#endif
+
+            #define processData2(blocksize, elemsPerThread) \
+            { \
+                makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (elemsPerThread)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
+                    d_candidateIds_tmp + elementOffset,  \
+                    d_candidatesPerAnchor_tmp + sequenceOffset,  \
+                    mynumSequences, \
+                    d_anchorIds, \
+                    handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
+                    elementOffset \
+                ); CUERR; \
+            }
+
+            #define processData3(blocksize, elemsPerThread) \
+            { \
+                switch(kernelType){ \
+                case MergeRangesKernelType::allcub: \
+                    makeUniqueRangesWithOnlyCUBKernel<(blocksize), (elemsPerThread)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
+                        d_candidateIds_tmp + elementOffset,  \
+                        d_candidatesPerAnchor_tmp + sequenceOffset,  \
                         mynumSequences, \
+                        d_anchorIds, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
+                        elementOffset \
+                    ); CUERR; \
+                    break; \
+                case MergeRangesKernelType::popcmultiwarp: \
+                    makeUniqueRangesKernelWithIntrinsicsMultiWarp<(blocksize), (elemsPerThread)><<<mynumSequences, (blocksize), 0, handle.streams[i]>>>( \
+                        d_candidateIds_tmp + elementOffset,  \
+                        d_candidatesPerAnchor_tmp + sequenceOffset,  \
+                        mynumSequences, \
+                        d_anchorIds, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
+                        elementOffset \
+                    ); CUERR; \
+                    break; \
+                case MergeRangesKernelType::popcsinglewarp: \
+                    makeUniqueRangesKernelWithIntrinsicsSingleWarp<32, (elemsPerThread)><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
+                        d_candidateIds_tmp + elementOffset,  \
+                        d_candidatesPerAnchor_tmp + sequenceOffset,  \
+                        mynumSequences, \
+                        d_anchorIds, \
+                        handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
+                        elementOffset \
+                    ); CUERR; \
+                    break; \
+                case MergeRangesKernelType::popcsinglewarpchunked: \
+                    makeUniqueRangesKernelWithIntrinsicsSingleWarpChunked<32, (elemsPerThread)><<<mynumSequences, 32, 0, handle.streams[i]>>>( \
+                        d_candidateIds_tmp + elementOffset,  \
+                        d_candidatesPerAnchor_tmp + sequenceOffset,  \
+                        mynumSequences, \
+                        d_anchorIds, \
                         handle.d_rangesBeginPerSequence.get() + sequenceOffset, \
                         elementOffset \
                     ); CUERR; \
@@ -1032,67 +1126,161 @@ void makeCompactUniqueRangesSmem(
                 } \
             }
 
+#if 1            
             if(largestNumElementsPerSequence <= 32){
                 constexpr int blocksize = 32;
-                constexpr int numtempregs = 1;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 1;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 64){
                 constexpr int blocksize = 64;
-                constexpr int numtempregs = 1;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 1;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 96){
                 constexpr int blocksize = 96;
-                constexpr int numtempregs = 1;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 1;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 128){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 1;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 1;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 256){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 2;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 2;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 512){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 4;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 4;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 1024){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 8;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 8;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 2048){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 16;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 16;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else if(largestNumElementsPerSequence <= 4096){
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 32;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 32;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }else{
                 constexpr int blocksize = 128;
-                constexpr int numtempregs = 64;
-                assert(largestNumElementsPerSequence <= blocksize * numtempregs);
+                constexpr int elemsPerThread = 64;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
                 
-                processData(blocksize, numtempregs);
+                processData(blocksize, elemsPerThread);
             }
+#else 
+            if(largestNumElementsPerSequence <= 32){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 1;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 64){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 2;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 96){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 3;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 128){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 4;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 256){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 8;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 512){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 16;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 1024){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 32;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 2048){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 64;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else if(largestNumElementsPerSequence <= 4096){
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 128;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+
+                processData(blocksize, elemsPerThread);
+            }else{
+                constexpr int blocksize = 32;
+                constexpr int elemsPerThread = 256;
+                assert(largestNumElementsPerSequence <= blocksize * elemsPerThread);
+                
+                processData(blocksize, elemsPerThread);
+            }
+
+            // generic_kernel<<<1,1>>>([=]__device__(){
+            //     for(int i = blockIdx.x; i < mynumSequences; i += gridDim.x){
+            //         if(d_candidatesPerAnchor_tmp[i] != d_candidatesPerAnchor[i]){
+            //             if(threadIdx.x == 0){
+            //                 printf("i = %d, d_candidatesPerAnchor_tmp = %d, d_candidatesPerAnchor = %d\n", 
+            //                         i, d_candidatesPerAnchor_tmp[i], d_candidatesPerAnchor[i]);
+            //                 assert(false);
+            //             }
+            //         }
+            //     }
+            // });
+
+            // generic_kernel<<<1,1>>>([=]__device__(){
+            //     for(int i = blockIdx.x; i < mynumSequences; i += gridDim.x){
+            //         for(int k = threadIdx.x; k < d_candidatesPerAnchor[i]; k += blockDim.x){
+            //             if(d_candidateIds_tmp[k] != d_candidateIds[k]){
+            //                 if(threadIdx.x == 0){
+            //                     printf("k = %d, d_candidateIds_tmp = %d, d_candidateIds = %d\n", 
+            //                             k, d_candidateIds_tmp[k], d_candidateIds[k]);
+            //                     assert(false);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // });
+
+            // cudaFree(d_candidatesPerAnchor_tmp); CUERR;
+            // cudaFree(d_candidateIds_tmp); CUERR;
+
+#endif
 
 
             cudaEventRecord(handle.events[i], handle.streams[i]); CUERR;
@@ -1123,7 +1311,7 @@ void makeCompactUniqueRangesSmem(
         numSequences
     ); CUERR;
 
-    //cudaEventRecord(handle.events.back(), stream); CUERR;   
+    //cudaEventRecord(handle.events.back(), stream); CUERR;
 
 }
 
