@@ -2,7 +2,7 @@
 
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
-#include <gpu/devicefunctionsforkernels.cuh>
+#include <hostdevicefunctions.cuh>
 
 // //#include <gpu/bestalignment.hpp>
 // #include <bestalignment.hpp>
@@ -96,13 +96,13 @@ namespace gpu{
         };
 
         auto isGoodAvgSupport = [&](float avgsupport){
-            return avgsupport >= avg_support_threshold;
+            return fgeq(avgsupport, avg_support_threshold);
         };
         auto isGoodMinSupport = [&](float minsupport){
-            return minsupport >= min_support_threshold;
+            return fgeq(minsupport, min_support_threshold);
         };
         auto isGoodMinCoverage = [&](float mincoverage){
-            return mincoverage >= min_coverage_threshold;
+            return fgeq(mincoverage, min_coverage_threshold);
         };
 
         constexpr char A_enc = 0x00;
@@ -258,7 +258,7 @@ namespace gpu{
                                         maxOverlapWeightOrigBase = max(maxOverlapWeightOrigBase, overlapweight);
                                         origBaseCount++;
 
-                                        if(overlapweight >= goodOverlapThreshold){
+                                        if(fgeq(overlapweight, goodOverlapThreshold)){
                                             goodOrigOverlapExists = true;
                                         }
                                     }else{
@@ -312,14 +312,14 @@ namespace gpu{
                                     for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
                                         if(j != i && j >= 0 && j < subjectLength){
                                             avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                            kregioncoverageisgood &= fgeq(my_coverage[subjectColumnsBegin_incl + j], min_coverage_threshold);
                                             //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
                                             c++;
                                         }
                                     }
                                     avgsupportkregion /= c;
 
-                                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate / 2.0f){
+                                    if(kregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-4*estimatedErrorrate / 2.0f)){
 
 
                                         // constexpr float maxOverlapWeightLowerBound = 0.25f;
@@ -450,13 +450,13 @@ namespace gpu{
         };
 
         auto isGoodAvgSupport = [&](float avgsupport){
-            return avgsupport >= avg_support_threshold;
+            return fgeq(avgsupport, avg_support_threshold);
         };
         auto isGoodMinSupport = [&](float minsupport){
-            return minsupport >= min_support_threshold;
+            return fgeq(minsupport, min_support_threshold);
         };
         auto isGoodMinCoverage = [&](float mincoverage){
-            return mincoverage >= min_coverage_threshold;
+            return fgeq(mincoverage, min_coverage_threshold);
         };
 
         constexpr char A_enc = 0x00;
@@ -532,19 +532,30 @@ namespace gpu{
 
                         const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
                         for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-                            float factor = percent / 100.0f;
-                            if(avg_support >= 1.0f - 1.0f * factor && min_support >= 1.0f - 3.0f * factor){
+                            const float factor = percent / 100.0f;
+                            const float avg_threshold = 1.0f - 1.0f * factor;
+                            const float min_threshold = 1.0f - 3.0f * factor;
+                            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
                                 smallestErrorrateThatWouldMakeHQ = percent;
                             }
+                            // if(readId == 134){
+                            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
+                            //     avg_support, avg_threshold, min_support, min_threshold);
+                            // }
                         }
 
                         const bool isHQ = isGoodMinCoverage(min_coverage)
-                                            && smallestErrorrateThatWouldMakeHQ <= estimatedErrorratePercent * 0.5f;
+                                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
 
                         //broadcastbuffer = isHQ;
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
 
                         flag = isHQ ? 2 : 1;
+
+                        // if(readId == 134){
+                        //     printf("read 134 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
+                        //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
+                        // }
                     }else{
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
                     }
@@ -655,16 +666,16 @@ namespace gpu{
             }
             //check new columns right of subject
             for(int columnindex = subjectColumnsEnd_excl;
-                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                && columnindex < lastColumn_excl;
-                columnindex++) {
+                    columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+                        && columnindex < lastColumn_excl;
+                    columnindex++) {
 
                 newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
                 newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
             }
 
-            bool result = newColMinSupport >= min_support_threshold
-                            && newColMinCov >= min_coverage_threshold;
+            bool result = fgeq(newColMinSupport, min_support_threshold)
+                            && fgeq(newColMinCov, min_coverage_threshold);
 
             //return result;
             return true;
@@ -719,16 +730,16 @@ namespace gpu{
             }
             //check new columns right of subject
             for(int columnindex = subjectColumnsEnd_excl;
-                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                && columnindex < lastColumn_excl;
-                columnindex++) {
+                    columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+                        && columnindex < lastColumn_excl;
+                    columnindex++) {
 
                 newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
                 newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
             }
 
-            bool result = newColMinSupport >= min_support_threshold
-                            && newColMinCov >= min_coverage_threshold;
+            bool result = fgeq(newColMinSupport, min_support_threshold)
+                            && fgeq(newColMinCov, min_coverage_threshold);
 
             //return result;
             return true;
@@ -1362,13 +1373,13 @@ namespace gpu{
         };
 
         auto isGoodAvgSupport = [&](float avgsupport){
-            return avgsupport >= avg_support_threshold;
+            return fgeq(avgsupport, avg_support_threshold);
         };
         auto isGoodMinSupport = [&](float minsupport){
-            return minsupport >= min_support_threshold;
+            return fgeq(minsupport, min_support_threshold);
         };
         auto isGoodMinCoverage = [&](float mincoverage){
-            return mincoverage >= min_coverage_threshold;
+            return fgeq(mincoverage, min_coverage_threshold);
         };
 
         constexpr char A_enc = 0x00;
@@ -1451,7 +1462,7 @@ namespace gpu{
                         }
 
                         const bool isHQ = isGoodMinCoverage(min_coverage)
-                                            && smallestErrorrateThatWouldMakeHQ <= estimatedErrorratePercent * 0.5f;
+                                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
 
                         //broadcastbuffer = isHQ;
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
@@ -1723,7 +1734,8 @@ namespace gpu{
                                     min_support_threshold, \
                                     min_coverage_threshold, \
                                     max_coverage_threshold, \
-                                    k_region); CUERR;
+                                    k_region \
+                                ); CUERR;
 
         assert(blocksize > 0 && blocksize <= max_block_size);
 
