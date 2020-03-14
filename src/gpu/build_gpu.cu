@@ -13,6 +13,9 @@
 #include <sequence.hpp>
 #include <threadsafe_buffer.hpp>
 
+#include <gpu/simpleallocation.cuh>
+#include <gpu/minhashkernels.hpp>
+
 #include <threadpool.hpp>
 
 
@@ -52,7 +55,8 @@ namespace gpu{
                                                     int upperBoundSequenceLength,
                                                     int numThreads,
                                                     SequenceProviderFunc&& getSequenceData,
-                                                    SequenceLengthProviderFunc&& getSequenceLength){
+                                                    SequenceLengthProviderFunc&& getSequenceLength,
+                                                    const DistributedReadStorage& readStorage){
 
         constexpr read_number parallelReads = 10000000;
         read_number numReads = numberOfReads;
@@ -164,6 +168,175 @@ namespace gpu{
         return minhashTables;
     }
 
+
+    std::vector<Minhasher::Map_t> constructTablesWithGpuHashing(const Minhasher& minhasher, 
+                                                    int numTables, 
+                                                    int firstTableId,
+                                                    int kmersize,
+                                                    std::int64_t numberOfReads,
+                                                    int upperBoundSequenceLength,
+                                                    int numThreads,
+                                                    const DistributedReadStorage& readStorage){
+
+        constexpr read_number parallelReads = 1000000;
+        read_number numReads = numberOfReads;
+        const int numIters = SDIV(numReads, parallelReads);
+        const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+        const std::size_t encodedSequencePitchInBytes = encodedSequencePitchInInts * sizeof(unsigned int);
+
+        cudaSetDevice(0); CUERR;
+
+        const int numHashFuncs = numTables;
+        const int firstHashFunc = firstTableId;
+        const std::size_t signaturesRowPitchElements = numHashFuncs;
+
+        ThreadPool::ParallelForHandle pforHandle;
+
+        std::vector<Minhasher::Map_t> minhashTables(numTables);
+
+        std::vector<int> tableIds(numTables);                
+        std::vector<int> hashIds(numTables);
+        
+        std::iota(tableIds.begin(), tableIds.end(), 0);
+
+        std::cout << "Constructing maps: ";
+        for(int i = 0; i < numTables; i++){
+            std::cout << (firstTableId + i) << ' ';
+        }
+        std::cout << '\n';
+
+        for(auto& table : minhashTables){
+            Minhasher::Map_t tmp(numReads);
+            table = std::move(tmp);
+        }
+
+        auto showProgress = [&](auto totalCount, auto seconds){
+            std::cerr << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                        << seconds << " seconds." << '\r';
+            if(totalCount == numReads){
+                std::cerr << '\n';
+            }
+        };
+
+        auto updateShowProgressInterval = [](auto duration){
+            return duration;
+        };
+
+        ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+        ThreadPool threadPool(numThreads);
+
+        SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+        SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+
+        SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+        SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+
+        SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+        SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+        auto sequencehandle = readStorage.makeGatherHandleSequences();
+
+
+        for (int iter = 0; iter < numIters; iter++){
+            read_number readIdBegin = iter * parallelReads;
+            read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+            const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+            readStorage.gatherSequenceDataToGpuBufferAsync(
+                &threadPool,
+                sequencehandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_indices,
+                d_indices,
+                curBatchsize,
+                0,
+                stream,
+                numThreads
+            );
+        
+            readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                0,
+                d_indices,
+                curBatchsize,
+                stream
+            );
+
+            callMinhashSignaturesKernel_async(
+                d_signatures,
+                signaturesRowPitchElements,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                curBatchsize,
+                d_lengths,
+                kmersize,
+                numHashFuncs,
+                firstHashFunc,
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_signatures, 
+                d_signatures, 
+                signaturesRowPitchElements * sizeof(std::uint64_t) * curBatchsize, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+
+            auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                std::uint64_t countlimit = 10000;
+                std::uint64_t count = 0;
+                std::uint64_t oldcount = 0;
+
+                for (read_number readId = begin; readId < end; readId++){
+                    read_number localId = readId - readIdBegin;
+
+                    minhasher.insertSequenceIntoExternalTables(h_signatures + signaturesRowPitchElements * localId, 
+                        numHashFuncs,
+                        readId,                                                     
+                        tableIds,
+                        minhashTables
+                    );
+                    
+                    count++;
+                    if(count == countlimit){
+                        progressThread.addProgress(count);
+                        count = 0;                                                         
+                    }
+                }
+                if(count > 0){
+                    progressThread.addProgress(count);
+                }
+            };
+
+            threadPool.parallelFor(
+                pforHandle,
+                readIdBegin,
+                readIdEnd,
+                std::move(lambda));
+
+            //TIMERSTOPCPU(insert);
+        }
+
+        progressThread.finished();
+
+        cudaStreamDestroy(stream); CUERR;
+
+        return minhashTables;
+    }
 
     int loadTablesFromFileAndAssignToMinhasher(const std::string& filename, 
                                             Minhasher& minhasher, 
@@ -1003,15 +1176,28 @@ namespace gpu{
 
                     int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
 
+                    std::vector<Minhasher::Map_t> minhashTables = constructTablesWithGpuHashing(
+                        minhasher, 
+                        currentIterNumTables, 
+                        numConstructedTables,
+                        minhasher.minparams.k,
+                        readStorage.getNumberOfReads(),
+                        readStorage.getSequenceLengthUpperBound(),
+                        runtimeOptions.threads,
+                        readStorage
+                    );
 
-                    std::vector<Minhasher::Map_t> minhashTables = constructTables(minhasher, 
-                                                                                    currentIterNumTables, 
-                                                                                    numConstructedTables,
-                                                                                    readStorage.getNumberOfReads(),
-                                                                                    readStorage.getSequenceLengthUpperBound(),
-                                                                                    runtimeOptions.threads,
-                                                                                    getSequenceData,
-                                                                                    getSequenceLength);
+                    // std::vector<Minhasher::Map_t> minhashTables = constructTables(
+                    //     minhasher, 
+                    //     currentIterNumTables, 
+                    //     numConstructedTables,
+                    //     readStorage.getNumberOfReads(),
+                    //     readStorage.getSequenceLengthUpperBound(),
+                    //     runtimeOptions.threads,
+                    //     getSequenceData,
+                    //     getSequenceLength,
+                    //     readStorage
+                    // );
 
 
                     //check free gpu mem for transformation

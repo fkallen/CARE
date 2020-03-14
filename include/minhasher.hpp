@@ -829,6 +829,12 @@ struct Minhasher {
                                             std::vector<Map_t>& tables,
                                             const std::vector<int>& hashIds) const;
 
+    void insertSequenceIntoExternalTables(const std::uint64_t* hashValues, 
+                                            int numHashValues,
+                                            read_number readnum,                                                     
+                                            const std::vector<int>& tableIds,
+                                            std::vector<Minhasher::Map_t>& tables) const;
+
     void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
 
 	void insertSequence(const std::string& sequence, read_number readnum);

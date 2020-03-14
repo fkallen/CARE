@@ -317,6 +317,25 @@ namespace care{
         }
 	}
 
+    void Minhasher::insertSequenceIntoExternalTables(const std::uint64_t* hashValues, 
+                                                    int numHashValues,
+                                                    read_number readnum,                                                     
+                                                    const std::vector<int>& tableIds,
+                                                    std::vector<Minhasher::Map_t>& tables) const{
+		if(readnum >= nReads)
+			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
+                                    + std::to_string(readnum) + " > " + std::to_string(nReads));
+        assert(tableIds.size() == std::size_t(numHashValues));
+        assert(std::all_of(tableIds.begin(), tableIds.end(), [&](auto id){return id < int(tables.size());}));
+
+        for(int i = 0; i < numHashValues; i++){
+            auto hashValue = hashValues[i];
+            auto tableId = tableIds[i];
+            auto& table = tables[tableId];
+            insertIntoExternalTable(table, hashValue, readnum);
+        }
+	}
+
     void Minhasher::insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds){
         assert(int(mapIds.size()) <= minparams.maps);
 

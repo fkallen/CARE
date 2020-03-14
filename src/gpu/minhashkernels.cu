@@ -32,7 +32,8 @@ namespace care{
             int numSequences,
             const int* __restrict__ sequenceLengths,
             int k,
-            int numHashFuncs){
+            int numHashFuncs,
+            int firstHashFunc){
                 
         //constexpr int blocksize = 128;
         constexpr int maximum_kmer_length = 32;
@@ -60,6 +61,7 @@ namespace care{
         if(tid < numSequences * numHashFuncs){
             const int mySequenceIndex = tid / numHashFuncs;
             const int myNumHashFunc = tid % numHashFuncs;
+            const int hashFuncId = myNumHashFunc + firstHashFunc;
 
             const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
             const int myLength = sequenceLengths[mySequenceIndex];
@@ -70,7 +72,7 @@ namespace care{
 
             auto handlekmer = [&](auto fwd, auto rc){
                 const auto smallest = min(fwd, rc);
-                const auto hashvalue = murmur3_fmix(smallest + myNumHashFunc);
+                const auto hashvalue = murmur3_fmix(smallest + hashFuncId);
                 minHashValue = min(minHashValue, hashvalue);
             };
 
@@ -168,6 +170,7 @@ namespace care{
             const int* d_sequenceLengths,
             int k,
             int numHashFuncs,
+            int firstHashFunc,
             cudaStream_t stream){
 
         constexpr int blocksize = 128;
@@ -184,7 +187,40 @@ namespace care{
             numSequences,
             d_sequenceLengths,
             k,
-            numHashFuncs
+            numHashFuncs,
+            firstHashFunc
+        );
+    }
+
+    void callMinhashSignaturesKernel_async(
+            std::uint64_t* d_signatures,
+            size_t signaturesRowPitchElements,
+            const unsigned int* d_sequences2Bit,
+            size_t sequenceRowPitchElements,
+            int numSequences,
+            const int* d_sequenceLengths,
+            int k,
+            int numHashFuncs,
+            cudaStream_t stream){
+                
+        constexpr int blocksize = 128;
+                
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
+        size_t smem = 0;
+        
+        const int firstHashFunc = 0;
+
+        minhashSignaturesKernel<<<grid, block, smem, stream>>>(
+            d_signatures,
+            signaturesRowPitchElements,
+            d_sequences2Bit,
+            sequenceRowPitchElements,
+            numSequences,
+            d_sequenceLengths,
+            k,
+            numHashFuncs,
+            firstHashFunc
         );
     }
 
