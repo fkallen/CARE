@@ -545,6 +545,8 @@ namespace gpu{
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
 
                         flag = isHQ ? 2 : 1;
+                    }else{
+                        d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
                     }
 
                     broadcastbuffer = flag;
@@ -1697,7 +1699,7 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-        cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
+        //cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device));
