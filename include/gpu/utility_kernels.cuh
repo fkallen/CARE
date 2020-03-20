@@ -155,6 +155,40 @@ void call_transpose_kernel(T* d_output, const T* d_input, int numRows, int numCo
                                                 columnpitchelements); CUERR;
 }
 
+
+
+template<class T>
+__global__
+void memcpy2DKernel(
+        T* __restrict__  output, 
+        const T* __restrict__ input, 
+        const int* __restrict__ d_numRows,
+        size_t rowPitchElements){
+
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(tid < *d_numRows * rowPitchElements){
+        output[tid] = input[tid];
+    }
+}
+
+template<class T>
+void callMemcpy2DKernel(
+        T* output, 
+        const T* input, 
+        const int* d_numRows, 
+        size_t rowPitchElements,
+        int maxNumRows, 
+        cudaStream_t stream){
+
+    dim3 block(256,1,1);
+    dim3 grid(std::max(1ul, SDIV(maxNumRows * rowPitchElements, block.x)),1,1);
+
+    memcpy2DKernel<<<grid, block, 0, stream>>>(output, input, d_numRows, rowPitchElements); CUERR;
+}
+
+
+
+
 #endif
 
 #endif
