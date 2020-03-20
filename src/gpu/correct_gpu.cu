@@ -2316,9 +2316,9 @@ namespace gpu{
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );       
-
+        
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
-                
+        
         cudaMemcpyAsync(
             dataArrays.h_numEditsPerCorrectedCandidate,
             dataArrays.d_numEditsPerCorrectedCandidate,
@@ -2326,14 +2326,58 @@ namespace gpu{
             D2H,
             streams[primary_stream_index]
         ); CUERR;
-
+        
         cudaMemcpyAsync(
             dataArrays.h_indices_of_corrected_candidates,
             dataArrays.d_indices_of_corrected_candidates,
             dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
-        ); CUERR;     
+        ); CUERR;
+
+        // const int resultsToCopy = batch.n_queries * 0.2f;
+
+        // cudaMemcpyAsync(
+        //     dataArrays.h_corrected_candidates,
+        //     dataArrays.d_corrected_candidates,
+        //     batch.decodedSequencePitchInBytes * resultsToCopy,
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+
+        // cudaMemcpyAsync(
+        //     dataArrays.h_editsPerCorrectedCandidate,
+        //     dataArrays.d_editsPerCorrectedCandidate,
+        //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * resultsToCopy,
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+
+        // int* d_remainingResultsToCopy = dataArrays.d_num_high_quality_subject_indices.get(); //reuse
+        // const int* tmpptr = dataArrays.d_num_total_corrected_candidates.get();
+
+        // generic_kernel<<<1,1,0, streams[primary_stream_index]>>>([=] __device__ (){
+        //     *d_remainingResultsToCopy = max(0, *tmpptr - resultsToCopy);
+        // }); CUERR;
+        
+        // callMemcpy2DKernel(
+        //     dataArrays.h_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
+        //     dataArrays.d_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
+        //     d_remainingResultsToCopy,
+        //     batch.decodedSequencePitchInBytes,
+        //     batch.n_queries - resultsToCopy,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+        
+        // callMemcpy2DKernel(
+        //     dataArrays.h_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
+        //     dataArrays.d_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
+        //     d_remainingResultsToCopy,
+        //     batch.maxNumEditsPerSequence,
+        //     batch.n_queries - resultsToCopy,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+        
     }
 
     void copyCorrectedCandidatesToHost(Batch& batch){
@@ -2347,8 +2391,11 @@ namespace gpu{
         cudaEventSynchronize(events[numTotalCorrectedCandidates_event_index]); CUERR;
 
         const int numTotalCorrectedCandidates = *dataArrays.h_num_total_corrected_candidates.get();
+        //std::cerr << numTotalCorrectedCandidates << " / " << batch.n_queries << "\n";
 
         cudaEventSynchronize(events[correction_finished_event_index]); CUERR;        
+
+
 
         cudaMemcpyAsync(
             dataArrays.h_corrected_candidates,
@@ -2369,7 +2416,7 @@ namespace gpu{
         // cubCachingAllocator.DeviceFree(dataArrays.d_compactCorrectedCandidates); CUERR;
         // cubCachingAllocator.DeviceFree(dataArrays.d_compactEditsPerCorrectedCandidate); CUERR;
 
-        cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
 
 
@@ -3013,10 +3060,12 @@ void correct_gpu(
 
             auto pushrange = [&](const std::string& msg, int color){
                 nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+                //std::cerr << "batch "+std::to_string(batchData.id) << msg << "\n";
             };
 
             auto poprange = [&](){
                 nvtx::pop_range();
+                //cudaDeviceSynchronize(); CUERR;
             };
                 
             pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
