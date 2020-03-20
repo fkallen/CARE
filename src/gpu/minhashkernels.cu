@@ -1408,6 +1408,9 @@ void mergeRangesGpuAsync(
     cudaMemsetAsync(handle.d_uniqueRangeLengthsPrefixsum, 0, sizeof(int), stream); CUERR;
 
 
+    cudaMemsetAsync(d_candidatesPerAnchorPrefixSum, 0, sizeof(int), stream); CUERR;
+
+
     //TIMERSTARTCPU(makeCompactUniqueRanges);
 
     if(kernelType == MergeRangesKernelType::devicewide){
