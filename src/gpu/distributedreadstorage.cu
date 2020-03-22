@@ -174,7 +174,7 @@ MemoryUsage DistributedReadStorage::getMemoryInfo() const{
 
     auto lengthstorageMem = gpulengthStorage.getMemoryInfo();
 
-    info.host = lengthstorageMem.host;
+    info.host += lengthstorageMem.host;
     for(const auto& pair : lengthstorageMem.device){
         info.device[pair.first] += pair.second;
     }
