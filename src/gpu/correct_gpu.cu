@@ -265,6 +265,7 @@ namespace gpu{
         TransitionFunctionData* transFuncData;
         BackgroundThread* outputThread;
         BackgroundThread* backgroundWorker;
+        BackgroundThread* unpackWorker;
 
         ThreadPool* threadPool;
         int threadsInThreadPool = 1;
@@ -2998,7 +2999,8 @@ void correct_gpu(
             batchData.candidateQualitiesGatherHandle = readStorage.makeGatherHandleQualities();
             batchData.transFuncData = &transFuncData;
             batchData.outputThread = &outputThread;
-            batchData.backgroundWorker = nullptr;//&backgroundWorkers[i];
+            batchData.backgroundWorker = nullptr;
+            batchData.unpackWorker = nullptr;
             batchData.threadPool = &threadPool;
             batchData.threadsInThreadPool = threadPoolSize;
             batchData.minhashHandles.resize(threadPoolSize);
@@ -3218,9 +3220,9 @@ void correct_gpu(
                 //batchData.hasUnprocessedResults = false;
             };
 
-            func();
+            //func();
             //batchData.backgroundWorker->enqueue(func);
-            
+            batchData.unpackWorker->enqueue(func);            
         };
 
 
@@ -3229,6 +3231,7 @@ void correct_gpu(
                 const int deviceId = deviceIds[deviceIdIndex];
 
                 std::array<BackgroundThread, 2> backgroundWorkerArray;
+                std::array<BackgroundThread, 2> unpackWorkerArray;
 
                 std::array<Batch, 2> batchDataArray;
 
@@ -3236,10 +3239,11 @@ void correct_gpu(
                     initBatchData(batchDataArray[i], deviceId);
                     batchDataArray[i].id = deviceIdIndex * 2 + i;
                     batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
-                }
+                    batchDataArray[i].unpackWorker = &unpackWorkerArray[i];
 
-                backgroundWorkerArray[0].start();
-                backgroundWorkerArray[1].start();
+                    backgroundWorkerArray[i].start();
+                    unpackWorkerArray[i].start();
+                }
 
                 bool isFirstIteration = true;
 
@@ -3315,10 +3319,12 @@ void correct_gpu(
 #endif
                 std::cerr << "batchDataArray[0].max_n_queries: " << batchDataArray[0].max_n_queries << "\n";
                 std::cerr << "batchDataArray[1].max_n_queries: " << batchDataArray[1].max_n_queries << "\n";
-                batchDataArray[0].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
-                batchDataArray[1].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
-                destroyBatchData(batchDataArray[0]);
-                destroyBatchData(batchDataArray[1]);
+
+                for(int i = 0; i < 2; i++){
+                    batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    destroyBatchData(batchDataArray[i]);
+                }
             });
         }
 
