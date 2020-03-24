@@ -11,6 +11,11 @@
 #include <thread>
 #include <atomic>
 
+
+#ifdef __NVCC__
+#include <gpu/nvtxtimelinemarkers.hpp>
+#endif
+
 namespace care{
 
 
@@ -63,7 +68,9 @@ struct BackgroundThread{
     void threadfunc(){
         while(!stop){
             std::unique_lock<std::mutex> mylock(m);
+            //nvtx::push_range("bg thread wait", 7);
             consumer_cv.wait(mylock, [&](){return !tasks.empty() || stop;});
+            //nvtx::pop_range();
 
             if(!tasks.empty()){
                 auto func = std::move(tasks.front());
@@ -157,6 +164,10 @@ struct ThreadPool{
         : pq(std::make_unique<am::parallel_queue>()){
     }
 
+    ThreadPool(int numThreads)
+        : pq(std::make_unique<am::parallel_queue>(numThreads)){
+    }
+
     void enqueue(const task_type& t){
         pq->enqueue(t);
     }
@@ -171,29 +182,31 @@ struct ThreadPool{
         for(Index_t i = begin; i < end; i++){
             doStuff(threadId)
         }
+
+        returns number of chunks used
     */
     template<class Index_t, class Func>
-    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
-        parallelFor(handle, begin, end, std::forward<Func>(loop), getConcurrency());
+    int parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        return parallelFor(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    int parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = true;
 
-        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, true);
+        return parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, true);
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
-        parallelForNoWait(handle, begin, end, std::forward<Func>(loop), getConcurrency());
+    int parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        return parallelForNoWait(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    int parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = false;
 
-        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, false);
+        return parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, false);
     }
 
     void wait(){
@@ -218,12 +231,14 @@ private:
             loop(i)
     */
     template<bool waitForCompletion, class Index_t, class Func>
-    void parallelFor_impl(ParallelForHandle& handle, 
+    int parallelFor_impl(ParallelForHandle& handle, 
                         Index_t firstIndex, 
                         Index_t lastIndex, 
                         Func&& loop, 
                         std::size_t numThreads, 
                         bool selfCanParticipate){
+
+        //selfCanParticipate = false;
 
         //2 debug variables
         // volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
@@ -239,13 +254,13 @@ private:
 
         handle.wait(); //make sure previous parallelfor is finished
 
-        pforData->isDone = false;
-        pforData->finishedWork = 0;
-        //std::size_t startedWork = 0;
-        pforData->enqueuedWork = 0;
-
         Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
+            pforData->isDone = false;
+            pforData->finishedWork = 0;
+            //std::size_t startedWork = 0;
+            pforData->enqueuedWork = 0;
+
             const Index_t chunks = numThreads;
             const Index_t chunksize = totalIterations / chunks;
             const Index_t leftover = totalIterations % chunks;
@@ -257,6 +272,8 @@ private:
 
             std::vector<std::function<void()>> chunkFunctions;
             chunkFunctions.reserve(threadpoolChunks);
+
+            int usedChunks = 0;
 
             for(Index_t c = 0; c < threadpoolChunks; c++){
                 if(c < leftover){
@@ -277,16 +294,19 @@ private:
 
                     begin = end;
                     end += chunksize;
+
+                    usedChunks++;
                 }                
             }
 
             pq->enqueue(chunkFunctions.begin(), chunkFunctions.end());
 
             if(selfCanParticipate && end-begin > 0){
-                loop(begin, end, chunks-1);                
+                loop(begin, end, chunks-1);
+                usedChunks++;
             }
 
-            auto waitUntilThreadPoolChunksAreDone = [pforData](){
+            auto waitUntilThreadPoolChunksAreDoneThenSignal = [pforData](){
                 if(pforData->finishedWork != pforData->enqueuedWork){
                     std::unique_lock<std::mutex> ul(pforData->mProgress);
                     while(pforData->finishedWork != pforData->enqueuedWork){
@@ -301,6 +321,10 @@ private:
             }else{
                 pq->enqueue(std::move(waitUntilThreadPoolChunksAreDoneThenSignal));
             }
+
+            return usedChunks;
+        }else{
+            return 0;
         }
 
         // if(waitForCompletion){
@@ -313,9 +337,32 @@ private:
     // std::atomic_int numUnfinishedParallelForChunks{0};
 };
 
+// mainly exists because of cuda device lambda limitations
+struct ParallelForLoopExecutor{
+    ParallelForLoopExecutor(ThreadPool* tp, ThreadPool::ParallelForHandle* handle)
+        : threadPool(tp), pforHandle(handle){}
+
+    template<class Index_t, class Func>
+    void operator()(Index_t begin, Index_t end, Func&& loopbody){
+        threadPool->parallelFor(
+            *pforHandle, 
+            begin, 
+            end, 
+            std::move(loopbody)
+        );
+    }
+
+    int getNumThreads() const{
+        return threadPool->getConcurrency()+1;
+    }
+
+    ThreadPool* threadPool;
+    ThreadPool::ParallelForHandle* pforHandle;
+};
 
 
-extern ThreadPool threadpool;
+
+//extern ThreadPool threadpool;
 
 }
 

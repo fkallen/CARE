@@ -20,57 +20,7 @@
 #include <queue>
 
 
-#include <unistd.h>
-#include <sys/resource.h>
 
-
-__inline__
-std::size_t getAvailableMemoryInKB_linux(){
-    //https://stackoverflow.com/questions/349889/how-do-you-determine-the-amount-of-linux-system-ram-in-c
-    std::string token;
-    std::ifstream file("/proc/meminfo");
-    assert(bool(file));
-    while(file >> token) {
-        if(token == "MemAvailable:") {
-            std::size_t mem;
-            if(file >> mem) {
-                return mem;
-            } else {
-                return 0;       
-            }
-        }
-        file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    }
-    return 0;
-};
-
-__inline__ 
-std::size_t getCurrentRSS_linux(){
-        std::ifstream in("/proc/self/statm");
-        std::size_t tmp, rss;
-        in >> tmp >> rss;
-        
-        return rss * sysconf(_SC_PAGESIZE);
-}
-
-__inline__
-std::size_t getRSSLimit_linux(){
-    rlimit rlim;
-    int ret = getrlimit(RLIMIT_RSS, &rlim);
-    if(ret != 0){
-        std::perror("Could not get RSS limit!");
-        return 0;
-    }
-    return rlim.rlim_cur;    
-}
-
-
-__inline__
-std::size_t getAvailableMemoryInKB(){
-    //return getAvailableMemoryInKB_linux();
-
-    return std::min(getAvailableMemoryInKB_linux(), (getRSSLimit_linux() - getCurrentRSS_linux()) / 1024);
-};
 
 
 template<class T>
@@ -205,26 +155,37 @@ std::vector<std::string> split(const std::string& str, char c){
 /*
     Performs a set union of multiple ranges into a single output range
 */
-template<class OutputIt, class Iter>
-OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
+template<class T>
+struct SetUnionHandle{
+    std::vector<T> buffer;
+};
+
+template<class T, class OutputIt, class Iter>
+OutputIt k_way_set_union(
+        SetUnionHandle<T>& handle,
+        OutputIt outputbegin, 
+        std::pair<Iter, Iter>* ranges,
+        int numRanges){
+
     using OutputType = typename std::iterator_traits<OutputIt>::value_type;
     using InputType = typename std::iterator_traits<Iter>::value_type;
 
     static_assert(std::is_same<OutputType, InputType>::value, "");
+    static_assert(std::is_same<T, InputType>::value, "");
 
-    using T = InputType;
+    //using T = InputType;
 
     //handle simple cases
 
-    if(ranges.empty()){
+    if(numRanges == 0){
         return outputbegin;
     }
 
-    if(ranges.size() == 1){
+    if(numRanges == 1){
         return std::copy(ranges[0].first, ranges[0].second, outputbegin);
     }
 
-    if(ranges.size() == 2){
+    if(numRanges == 2){
         return std::set_union(ranges[0].first,
                               ranges[0].second,
                               ranges[1].first,
@@ -235,28 +196,30 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
     //handle generic case
 
     //sort ranges by size
-    std::sort(ranges.begin(), ranges.end(), [](const auto& l, const auto& r){
+    std::sort(ranges, ranges + numRanges, [](const auto& l, const auto& r){
         return std::distance(l.first, l.second) < std::distance(r.first, r.second);
     });
 
     int totalElements = 0;
-    for(const auto& range : ranges){
+    for(int i = 0; i < numRanges; i++){
+        const auto& range = ranges[i];
         totalElements += std::distance(range.first, range.second);
     }
 
-    std::vector<T> temp(totalElements);
+    auto& temp = handle.buffer;
+    temp.resize(totalElements);
 
     auto tempbegin = temp.begin();
     auto tempend = tempbegin;
     auto outputend = outputbegin;
 
     //to avoid a final copy from temp to outputrange, both ranges are swapped in the beginning if number of ranges is odd.
-    if(ranges.size() % 2 == 1){
+    if(numRanges % 2 == 1){
         std::swap(tempbegin, outputbegin);
         std::swap(tempend, outputend);
     }
 
-    for(int k = 0; k < int(ranges.size()); k++){
+    for(int k = 0; k < numRanges; k++){
         tempend = std::set_union(ranges[k].first,
                                   ranges[k].second,
                                   outputbegin,
@@ -269,6 +232,29 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
 
     return outputend;
 }
+
+// template<class T, class OutputIt, class Iter>
+// OutputIt k_way_set_union(
+//         SetUnionHandle<T>& handle,
+//         OutputIt outputbegin, 
+//         std::vector<std::pair<const Iter, const Iter>>& ranges){
+
+//     return k_way_set_union(handle, outputbegin, ranges.data(), ranges.size());
+// }
+
+// template<class T, class OutputIt, class Iter>
+// OutputIt k_way_set_union(
+//         OutputIt outputbegin, 
+//         std::vector<std::pair<Iter,Iter>>& ranges){
+
+//     SetUnionHandle<T> handle;
+
+//     return k_way_set_union(
+//         handle,
+//         outputbegin, 
+//         ranges
+//     );
+//}
 
 
 

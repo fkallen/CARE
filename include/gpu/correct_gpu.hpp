@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 #include <options.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <minhasher.hpp>
 #include <readstorage.hpp>
 #include <gpu/distributedreadstorage.hpp>
@@ -22,10 +22,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
+			const MemoryOptions& memoryOptions,
 			const SequenceFileProperties& sequenceFileProperties,
             Minhasher& minhasher,
             DistributedReadStorage& readStorage,
             std::uint64_t maxCandidatesPerRead);
+
 
 }
 }

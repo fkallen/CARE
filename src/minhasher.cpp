@@ -3,6 +3,7 @@
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
+#include <memorymanagement.hpp>
 
 #include <ntHash/nthash.hpp>
 
@@ -72,12 +73,24 @@ namespace care{
         return !(*this == rhs);
     }
 
+
+
     std::size_t Minhasher::numBytes() const{
         //return minhashTables[0]->numBytes() * minhashTables.size();
         std::size_t result = 0;
         for(const auto& m : minhashTables)
             result += m->numBytes();
         return result;
+    }
+
+    MemoryUsage Minhasher::getMemoryInfo() const{
+        MemoryUsage memoryInfo;
+
+        memoryInfo.host = 0;
+        for(const auto& m : minhashTables)
+            memoryInfo.host += m->numBytes();
+            
+        return memoryInfo;
     }
 
 
@@ -362,24 +375,44 @@ namespace care{
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
                                         std::uint64_t) const noexcept{
+        Minhasher::Handle handle;
+        getCandidates_any_map(handle, sequence, 0);
+
+        std::vector<Result_t> result(std::move(handle.result()));
+        return result;
+    }
+
+    void Minhasher::getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const std::string& sequence,
+            std::uint64_t) const noexcept{
+        getCandidates_any_map(handle, sequence.c_str(), sequence.length(), 0);
+    }
+
+    void Minhasher::getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const char* sequence,
+            int sequenceLength,
+            std::uint64_t) const noexcept{
+
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
+        if(sequenceLength < minparams.k){
+            handle.allUniqueResults.clear();
+            return;
+        }
 
         //TIMERSTARTCPU(minhashfunc);
 #ifdef NVTXTIMELINE        
         nvtx::push_range("hashing", 3);
 #endif        
-        auto hashValues = minhashfunc(sequence);
+        auto hashValues = minhashfunc(sequence, sequenceLength);
 #ifdef NVTXTIMELINE        
         nvtx::pop_range("hashing");
 #endif        
         //TIMERSTOPCPU(minhashfunc);
 
-        using Range_t = std::pair<const Value_t*, const Value_t*>;
-        std::vector<Range_t> ranges;
-        ranges.reserve(minparams.maps);
+        handle.ranges.clear();
 
         int maximumResultSize = 0;
 
@@ -449,7 +482,7 @@ namespace care{
             int n_entries = std::distance(entries_range.first, entries_range.second);
             if(n_entries > 0){
                 maximumResultSize += n_entries;
-                ranges.emplace_back(entries_range);
+                handle.ranges.emplace_back(entries_range);
             }
         }
 #ifdef NVTXTIMELINE
@@ -465,10 +498,10 @@ namespace care{
 #endif
 
 #if 1
-        std::vector<Value_t> allUniqueResults(maximumResultSize);
+        handle.allUniqueResults.resize(maximumResultSize);
 
-        auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
-        allUniqueResults.erase(resultEnd, allUniqueResults.end());
+        auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges.data(), handle.ranges.size());
+        handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
 #else 
         std::unordered_set<Value_t> uniqueValues;
         for(const auto& range : ranges){
@@ -492,9 +525,153 @@ namespace care{
 #endif 
 
         //TIMERSTOPCPU(setunion);
-
-        return allUniqueResults;
     }
+
+
+
+    void Minhasher::calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const std::vector<std::string>& sequences) const{
+
+        handle.multiminhashSignatures.resize(maximum_number_of_maps * sequences.size());
+
+        const int numSequences = sequences.size();
+        for(int i = 0; i < numSequences; i++){
+            const char* sequence = sequences[i].c_str();
+            const int length = sequences[i].length();
+            if(length < minparams.k){
+                // handle.allUniqueResults.clear();
+                // return;
+            }else{
+                auto hashValues = minhashfunc(sequence, length);
+                std::copy(
+                    hashValues.begin(), 
+                    hashValues.end(), 
+                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                );
+            }
+        }
+    }
+
+    void Minhasher::calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const char* sequences,
+            int numSequences,
+            const int* sequenceLengths,
+            int sequencesPitch) const{
+
+        handle.multiminhashSignatures.resize(maximum_number_of_maps * numSequences);
+
+        for(int i = 0; i < numSequences; i++){
+            const char* sequence = sequences + i * sequencesPitch;
+            const int length = sequenceLengths[i];
+            if(length < minparams.k){
+                // handle.allUniqueResults.clear();
+                // return;
+            }else{
+                auto hashValues = minhashfunc(sequence, length);
+                std::copy(
+                    hashValues.begin(), 
+                    hashValues.end(), 
+                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                );
+            }
+        }
+    }
+
+    void Minhasher::queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const{
+
+        handle.multiranges.clear();
+        handle.multiranges.reserve(minparams.maps * numSequences);
+        handle.numResultsPerSequence.clear();
+        handle.numResultsPerSequence.resize(numSequences, 0);        
+
+        for(int i = 0; i < numSequences; i++){
+            const std::uint64_t* signature = &handle.multiminhashSignatures[i * maximum_number_of_maps];
+
+            for(int map = 0; map < minparams.maps; ++map){
+                kmer_type key = signature[map] & key_mask;
+                auto entries_range = queryMap(map, key);
+                int n_entries = std::distance(entries_range.first, entries_range.second);
+                if(n_entries > 0){
+                    handle.numResultsPerSequence[i] += n_entries;
+                }
+                handle.multiranges.emplace_back(entries_range);
+            }
+        }      
+    }
+
+    //static bool once = true;
+
+    void Minhasher::makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const{
+        int maxNumResults = 0;
+        for(int i = 0; i < numSequences; i++){
+            maxNumResults += handle.numResultsPerSequence[i];
+        }
+        handle.multiallUniqueResults.resize(maxNumResults);
+        handle.numResultsPerSequencePrefixSum.resize(numSequences + 1);
+
+        handle.numResultsPerSequencePrefixSum[0] = 0;
+
+        // if(once){
+        //     once = false;
+
+        //     std::ofstream stream("queryranges.txt");
+
+        //     for(int i = 0; i < numSequences; i++){
+        //         stream << handle.numResultsPerSequence[i] << "\n";
+        //         auto myranges = &handle.multiranges[i * minparams.maps];
+        //         const int numRangesForSequence = minparams.maps;
+
+        //         for(int k = 0; k < numRangesForSequence; k++){
+        //             auto& range = myranges[k];
+        //             stream << (range.second - range.first) << "\n";
+                    
+        //             for(auto it = range.first; it != range.second; it++){
+        //                 stream << *it << " ";                     
+        //             }
+        //             stream<< "\n";
+        //         } 
+        //     }
+        // }
+
+        handle.contiguousDataOfRanges.resize(maxNumResults);
+
+        // copy the data identified by the ranges, which may be scattered across the whole hash tables, 
+        // into a contiguous chunk of memory
+        {
+            auto currentBegin = handle.contiguousDataOfRanges.begin();
+            auto currentEnd = handle.contiguousDataOfRanges.begin();
+            for(int i = 0; i < numSequences; i++){
+                auto myranges = &handle.multiranges[i * minparams.maps];
+                const int numRangesForSequence = minparams.maps;
+                for(int r = 0; r < numRangesForSequence; r++){
+                    auto& range = myranges[r];
+                    currentEnd = std::copy(range.first, range.second, currentBegin);
+                    range.first = &(*currentBegin);
+                    range.second = &(*currentEnd);
+                    currentBegin = currentEnd;
+                }
+            }
+        }
+
+        //for each queried sequence, perform set union of all its ranges
+        auto currentBegin = handle.multiallUniqueResults.begin();
+        auto currentEnd = handle.multiallUniqueResults.begin();
+        for(int i = 0; i < numSequences; i++){
+            auto myranges = &handle.multiranges[i * minparams.maps];
+            const int numRangesForSequence = minparams.maps;
+            currentBegin = currentEnd;
+            currentEnd = k_way_set_union<Value_t>(handle.suHandle, currentBegin, myranges, numRangesForSequence);
+            handle.numResultsPerSequence[i] = std::distance(currentBegin, currentEnd);
+
+            handle.numResultsPerSequencePrefixSum[i+1] = handle.numResultsPerSequencePrefixSum[i] + handle.numResultsPerSequence[i];
+        }
+
+        handle.multiallUniqueResults.erase(currentEnd, handle.multiallUniqueResults.end());   
+    }
+
+
 
 
 
@@ -663,6 +840,93 @@ namespace care{
         return allUniqueResults;
     }
 
+
+#if 0
+std::vector<Minhasher::Result_t> 
+Minhasher::getCandidates_fromHashvalues_any_map(
+    const std::string& sequence,
+    std::uint64_t* hashValues) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        //TIMERSTARTCPU(minhashfunc);     
+        auto hashValuesOriginal = minhashfunc(sequence);
+ 
+        //TIMERSTOPCPU(minhashfunc);
+
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        std::vector<Range_t> ranges;
+        ranges.reserve(minparams.maps);
+
+        int maximumResultSize = 0;
+
+
+        //TIMERSTARTCPU(query);
+
+#ifdef NVTXTIMELINE
+        nvtx::push_range("map queries", 4);
+#endif
+
+        for(int map = 0; map < minparams.maps; ++map){
+            kmer_type key = hashValues[map] & key_mask;
+            auto entries_range = queryMap(map, key);
+            int n_entries = std::distance(entries_range.first, entries_range.second);
+            if(n_entries > 0){
+                maximumResultSize += n_entries;
+                ranges.emplace_back(entries_range);
+            }
+        }
+#ifdef NVTXTIMELINE
+        nvtx::pop_range("map queries");
+#endif 
+
+        //TIMERSTOPCPU(query);
+
+        //TIMERSTARTCPU(setunion);     
+#ifdef NVTXTIMELINE         
+        nvtx::push_range("setunion", 5);
+#endif
+
+#if 1
+        std::vector<Value_t> allUniqueResults(maximumResultSize);
+
+        auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
+        allUniqueResults.erase(resultEnd, allUniqueResults.end());
+#else 
+        std::unordered_set<Value_t> uniqueValues;
+        for(const auto& range : ranges){
+            uniqueValues.insert(range.first, range.second);
+        }
+        std::vector<Value_t> allUniqueResults(uniqueValues.size());
+        std::copy(uniqueValues.cbegin(), uniqueValues.cend(), allUniqueResults.begin());
+
+#endif
+        // std::vector<Value_t> allUniqueResultsPQ(maximumResultSize);
+        // auto resultEndPQ = k_way_set_union_with_priorityqueue(allUniqueResultsPQ.begin(), ranges);
+        // allUniqueResultsPQ.erase(resultEndPQ, allUniqueResultsPQ.end()); 
+
+        // assert(allUniqueResults.size() == allUniqueResultsPQ.size());
+        // assert(allUniqueResults == allUniqueResultsPQ);
+
+
+
+#ifdef NVTXTIMELINE        
+        nvtx::pop_range("setunion");
+#endif 
+
+        //TIMERSTOPCPU(setunion);
+
+        return allUniqueResults;
+    }
+#endif
+
+
+
+
+    
+
 // #############################
 
 /*
@@ -736,6 +1000,11 @@ namespace care{
 
 	std::array<std::uint64_t, maximum_number_of_maps> 
     Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+        return minhashfunc(sequence.c_str(), sequence.length());
+	}
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
         std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
@@ -743,10 +1012,10 @@ namespace care{
         std::uint64_t rhVal = 0;
 		bool isForward = false;
 		// calc hash values of first canonical kmer
-		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
+		NTMC64(sequence, minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
 
 		//calc hash values of remaining canonical kmers
-		for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
+		for (int i = 0; i < sequenceLength - minparams.k; ++i) {
 			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, 
                     kmerHashValues.data(), isForward);
 
@@ -760,11 +1029,17 @@ namespace care{
         return minhashSignature;
 	}
 
+
     std::array<std::uint64_t, maximum_number_of_maps> 
     Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
+        return minhashfunc_other(sequence.c_str(), sequence.length());
+    }
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc_other(const char* sequence, int sequenceLength) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
 
-        const int length = sequence.length();
+        const int length = sequenceLength;
 
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
         std::fill_n(minhashSignature.begin(), minparams.maps, std::numeric_limits<std::uint64_t>::max());

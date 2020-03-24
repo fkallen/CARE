@@ -2,7 +2,7 @@
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 #include <minhasher.hpp>
 #include <filehelpers.hpp>
 
@@ -31,10 +31,6 @@ namespace args{
     	return result;
     }
 
-    std::string getFileName(std::string filePath){
-        filesys::path path(filePath);
-        return path.filename().string();
-    }
 
 	template<>
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
@@ -133,30 +129,55 @@ namespace args{
 	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
         MemoryOptions result;
 
-        const auto memoryForHashtablesString = pr["memHashtables"].as<std::string>();
-        if(memoryForHashtablesString.length() > 0){
-            switch(memoryForHashtablesString.back()){
-                case 'K':{
-                    const std::size_t factor = std::size_t(1) << 10; 
-                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
-                    result.memoryForHashtables = factor * std::stoull(numberString);
-                }break;
-                case 'M':{
-                    const std::size_t factor = std::size_t(1) << 20; 
-                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
-                    result.memoryForHashtables = factor * std::stoull(numberString);
-                }break;
-                case 'G':{
-                    const std::size_t factor = std::size_t(1) << 30; 
-                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
-                    result.memoryForHashtables = factor * std::stoull(numberString);
-                }break;
-                default:
-                    result.memoryForHashtables = std::stoull(memoryForHashtablesString);
+        auto parseMemoryString = [](const auto& string) -> std::size_t{
+            if(string.length() > 0){
+                std::size_t factor = 1;
+                switch(string.back()){
+                    case 'K':{
+                        factor = std::size_t(1) << 10; 
+                    }break;
+                    case 'M':{
+                        factor = std::size_t(1) << 20;
+                    }break;
+                    case 'G':{
+                        factor = std::size_t(1) << 30;
+                    }break;
+                }
+                const auto numberString = string.substr(0, string.size()-1);
+                return factor * std::stoull(numberString);
+            }else{
+                return 0;
             }
+        };
+
+        if(pr.count("memTotal") > 0){
+            const auto memoryTotalLimitString = pr["memTotal"].as<std::string>();
+            result.memoryTotalLimit = parseMemoryString(memoryTotalLimitString);
         }else{
-            result.memoryForHashtables = 0;
+            std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+            if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
+                availableMemoryInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
+            }
+
+            result.memoryTotalLimit = availableMemoryInBytes;
         }
+
+        if(pr.count("memHashtables") > 0){
+            const auto memoryForHashtablesString = pr["memHashtables"].as<std::string>();
+            result.memoryForHashtables = parseMemoryString(memoryForHashtablesString);
+        }else{
+            std::size_t availableMemoryInBytes = result.memoryTotalLimit;
+            if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+                availableMemoryInBytes = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+            }
+
+            result.memoryForHashtables = availableMemoryInBytes;
+        }
+
+        result.memoryForHashtables = std::min(result.memoryForHashtables, result.memoryTotalLimit);
+        
+
+        
 
         return result;
 	}
@@ -170,7 +191,7 @@ namespace args{
         result.outputfilename = pr["outfile"].as<std::string>();
 
         if(result.outputfilename == "")
-            result.outputfilename = "corrected_" + getFileName(result.inputfile);
+            result.outputfilename = "corrected_" + filehelpers::getFileName(result.inputfile);
 
 		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
@@ -357,7 +378,7 @@ namespace args{
                 valid = false;
                 std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
             }else{
-                removeFile(opt.tempdirectory+"/tmptest");
+                filehelpers::removeFile(opt.tempdirectory+"/tmptest");
             }
         }
         

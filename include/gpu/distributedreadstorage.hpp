@@ -6,13 +6,18 @@
 
 #include <gpu/distributedarray.hpp>
 #include <gpu/gpulengthstorage.hpp>
+#include <gpu/gpubitarray.cuh>
+
+#include <memorymanagement.hpp>
+
 #include <config.hpp>
-#include <sequencefileio.hpp>
+#include <readlibraryio.hpp>
 
 #include <atomic>
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <map>
 
 namespace care{
 namespace gpu{
@@ -20,11 +25,11 @@ namespace gpu{
 struct DistributedReadStorage {
 public:
 
-    struct MemoryInfo{
-        size_t hostSizeInBytes{};
-        std::vector<size_t> deviceSizeInBytes{};
-        std::vector<int> deviceIds{};
-    };
+    // struct MemoryInfo{
+    //     size_t hostSizeInBytes{};
+    //     std::vector<size_t> deviceSizeInBytes{};
+    //     std::vector<int> deviceIds{};
+    // };
 
     struct Statistics{
         int maximumSequenceLength = 0;
@@ -54,7 +59,7 @@ public:
 
         std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
-
+    
     using Length_t = int;
 
     using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
@@ -79,6 +84,8 @@ public:
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
     mutable DistributedArray<char, read_number> distributedQualities;
 
+    std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
+
 
 
     Statistics statistics;
@@ -97,7 +104,7 @@ public:
 
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
-	MemoryInfo getMemoryInfo() const;
+	MemoryUsage getMemoryInfo() const;
 
     Statistics getStatistics() const;
 
@@ -115,11 +122,11 @@ public:
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
     // void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
     // void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
-    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numBytesMustRemainFree) const;
+    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numUsableBytes) const;
     SavedGpuPartitionData saveGpuPartitionData(
             int deviceId,
             std::ofstream& stream, 
-            std::size_t numBytesMustRemainFree) const;
+            std::size_t* numBytesMustRemainFree) const;
 
     void loadGpuPartitionData(int deviceId, 
                                         std::ifstream& stream, 
@@ -131,7 +138,7 @@ public:
     SavedGpuPartitionData saveGpuPartitionDataAndFreeGpuMem(
                     int deviceId,
                     std::ofstream& stream, 
-                    std::size_t numBytesMustRemainFree) const;
+                    std::size_t* numUsableBytes) const;
 
     void allocGpuMemAndLoadGpuPartitionData(int deviceId, 
                                             std::ifstream& stream, 
@@ -139,13 +146,38 @@ public:
 
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
-    void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
-    void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
-    void setReads(const std::vector<read_number>& indices, const Read* reads, int numReads);
-    void setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads);
+    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
+    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
+    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const Read* reads, int numReads);
+    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const std::vector<Read>& reads);
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
+    std::int64_t getNumberOfReadsWithN() const;
+
+    void readsContainN_async(
+        int deviceId,
+        bool* d_result, 
+        const read_number* d_positions, 
+        int nPositions, 
+        cudaStream_t stream) const;
+
+    void readsContainN_async(
+        int deviceId,
+        bool* d_result, 
+        const read_number* d_positions, 
+        const int* d_nPositions,
+        int nPositionsUpperBound, 
+        cudaStream_t stream) const;
+
+    void setReadsContainN_async(
+        int deviceId,
+        bool* d_values, 
+        const read_number* d_positions, 
+        int nPositions,
+        cudaStream_t stream) const;
+    
+    void setGpuBitArraysFromVector();
 
     void constructionIsComplete();
     void allowModifications();
@@ -155,9 +187,10 @@ public:
     GatherHandleQualities makeGatherHandleQualities() const;
 
     void gatherSequenceDataToGpuBufferAsync(
+                                ThreadPool* threadPool,
                                 const GatherHandleSequences& handle,
-                                char* d_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* d_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 const read_number* d_readIds,
                                 int nReadIds,
@@ -166,6 +199,7 @@ public:
                                 int numCpuThreads) const;
 
     void gatherQualitiesToGpuBufferAsync(
+                                ThreadPool* threadPool,
                                 const GatherHandleQualities& handle,
                                 char* d_quality_data,
                                 size_t out_quality_pitch,
@@ -178,8 +212,8 @@ public:
 
     std::future<void> gatherSequenceDataToHostBufferAsync(
                                 const GatherHandleSequences& handle,
-                                char* h_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* h_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 int nReadIds,
                                 int numCpuThreads) const;
@@ -194,8 +228,8 @@ public:
 
     void gatherSequenceDataToHostBuffer(
                                 const GatherHandleSequences& handle,
-                                char* h_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* h_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 int nReadIds,
                                 int numCpuThreads) const;

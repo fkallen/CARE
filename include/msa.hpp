@@ -91,6 +91,15 @@ struct CorrectionResult{
     std::vector<int> uncorrectedPositionsNoConsensus;
     std::vector<float> bestAlignmentWeightOfConsensusBase;
     std::vector<float> bestAlignmentWeightOfAnchorBase;
+
+    void reset(){
+        isCorrected = false;
+        isHQ = false;
+        correctedSequence.clear();
+        uncorrectedPositionsNoConsensus.clear();
+        bestAlignmentWeightOfConsensusBase.clear();
+        bestAlignmentWeightOfAnchorBase.clear();
+    }
 };
 
 struct CorrectedCandidate{
@@ -180,7 +189,8 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     float estimatedErrorrate,
                                     float estimatedCoverage,
                                     float m_coverage,
-                                    int neighborRegionSize);                                    
+                                    int neighborRegionSize,
+                                    read_number readId);                                    
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
                                     const float* support,

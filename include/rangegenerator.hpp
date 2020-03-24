@@ -32,6 +32,17 @@ namespace cpu{
             return isEmpty;
         }
 
+        void skip(Count_t n){
+            std::lock_guard<std::mutex> lm(mutex);
+            Count_t remaining = end - current;
+            Count_t resultsize = std::min(remaining, n);
+            current += resultsize;
+
+            if(current == end){
+                isEmpty = true;
+            }
+        }
+
         std::vector<Count_t> next_n(Count_t n){
             std::lock_guard<std::mutex> lm(mutex);
             if(isEmpty)
@@ -54,7 +65,8 @@ namespace cpu{
 
         //buffer must point to memory location of at least n elements
         //returns past the end iterator
-        Count_t* next_n_into_buffer(Count_t n, Count_t* buffer){
+        template<class Iter>
+        Iter next_n_into_buffer(Count_t n, Iter buffer){
             std::lock_guard<std::mutex> lm(mutex);
             if(isEmpty)
                 return buffer;

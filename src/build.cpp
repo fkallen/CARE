@@ -8,7 +8,7 @@
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
 #include "readstorage.hpp"
-#include "sequencefileio.hpp"
+#include <readlibraryio.hpp>
 #include "sequence.hpp"
 #include "threadsafe_buffer.hpp"
 
@@ -26,8 +26,253 @@
 
 
 
+// #define VALIDATE_READSTORAGE
+// #define VALIDATE_MINHASHER
 
 namespace care{
+
+    void validateReadstorage(const cpu::ContiguousReadStorage& readStorage, const FileOptions& fileOptions){
+        std::cerr << "validating data in readstorage\n";
+
+        std::vector<read_number> indicesBuffer;
+        std::vector<Read> readsBuffer;
+
+        constexpr int batchsize = 16000;
+
+        const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
+        const int sequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+        const int qualityPitchInBytes = (SDIV(maximumSequenceLength, 32) * 32);
+
+        ThreadPool threadPool;
+        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+
+        std::vector<char> h_qualities(qualityPitchInBytes * batchsize);
+        std::vector<read_number> h_readids(batchsize);
+        std::vector<unsigned int> h_sequences(sequencePitchInInts * batchsize);
+        std::vector<int> h_lengths(batchsize);
+
+        bool oneIter = true;
+        const bool withQuality = readStorage.canUseQualityScores();
+
+        auto isValidBase = [](char c){
+            constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
+            return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+        };
+
+        auto validateBatch = [&](){
+
+            std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.data());
+
+            readStorage.gatherSequenceLengths(
+                readStorageGatherHandle,
+                h_readids.data(),
+                indicesBuffer.size(),
+                h_lengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                readStorageGatherHandle,
+                h_readids.data(),
+                indicesBuffer.size(),
+                h_sequences.data(),
+                sequencePitchInInts
+            );
+
+            if(withQuality) { 
+
+                readStorage.gatherSequenceQualities(
+                    readStorageGatherHandle,
+                    h_readids.data(),
+                    indicesBuffer.size(),
+                    h_qualities.data(),
+                    qualityPitchInBytes
+                );
+
+            }
+
+            auto func = [&](int begin, int end, int /*threadId*/){
+                for(int i = begin; i < end; i++){
+                    // std::cerr << indicesBuffer[i] << "\n";
+                    // std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                    // std::cerr << "got      ";
+                    //     for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                    //         std::cerr << h_qualities[qualityPitchInBytes * i + l];
+                    //     }
+                    //     std::cerr << "\n";
+
+                    bool ok = true;
+
+                    if(readsBuffer[i].sequence.length() != h_lengths[i]){
+                        ok = false;
+                        std::cerr << "length error at sequence read " << indicesBuffer[i] << "\n";
+                        std::cerr << "expected " << readsBuffer[i].sequence.length() << "\n";
+                        std::cerr << "got      " << h_lengths[i] << "\n";
+                    } 
+    
+                    const std::string seqstring = get2BitString(h_sequences.data() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+    
+                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){  
+
+                        if(isValidBase(readsBuffer[i].sequence[k]) && readsBuffer[i].sequence[k] != seqstring[k]){
+                            ok = false;
+                            std::cerr << "error at sequence read " << indicesBuffer[i] << " position " << k << "\n";
+                            std::cerr << "expected " << readsBuffer[i].sequence << "\n";
+                            std::cerr << "got      " << seqstring << "\n";
+                        }
+                    }
+                    if(withQuality){
+                        ok = true;
+                        for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){    
+                            if(readsBuffer[i].quality[k] != h_qualities[qualityPitchInBytes * i + k]){
+                                ok = false;
+                                std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
+                                std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                                std::cerr << "got      ";
+                                for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                    std::cerr << h_qualities[qualityPitchInBytes * i + l];
+                                }
+                                std::cerr << "\n";
+                            }
+                        }
+		            }
+                }
+            };
+
+            //func(0, indices.size(), 0);
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func);
+           
+
+            //oneIter = false;
+
+            indicesBuffer.clear();
+            readsBuffer.clear();
+        };
+
+        forEachReadInFile(fileOptions.inputfile,
+                        [&](auto readnum, const auto& read){
+
+            if(oneIter){
+                indicesBuffer.emplace_back(readnum);
+                readsBuffer.emplace_back(read);         
+
+                if(indicesBuffer.size() >= batchsize){
+                    validateBatch();
+                }
+            }
+
+        });
+
+        if(indicesBuffer.size() >= 1){
+            validateBatch();
+        }
+
+        std::cerr << "validated data in readstorage\n";
+    }
+
+
+    void validateMinhasher(const Minhasher& minhasher, const cpu::ContiguousReadStorage& readStorage, const FileOptions& fileOptions){
+        std::cerr << "validating data in minhasher\n";
+
+        std::vector<read_number> indicesBuffer;
+        std::vector<Read> readsBuffer;
+        
+        constexpr std::int64_t batchsize = 16000;
+
+        const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
+        const int sequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+        
+        
+
+        ThreadPool threadPool;
+        
+        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+        std::vector<read_number> h_readids(batchsize);
+        std::vector<unsigned int> h_sequences(sequencePitchInInts * batchsize);
+        std::vector<int> h_lengths(batchsize);
+
+        bool oneIter = true;
+
+        auto validateBatch = [&](){
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.data());
+
+            readStorage.gatherSequenceLengths(
+                readStorageGatherHandle,
+                h_readids.data(),
+                indicesBuffer.size(),
+                h_lengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                readStorageGatherHandle,
+                h_readids.data(),
+                indicesBuffer.size(),
+                h_sequences.data(),
+                sequencePitchInInts
+            );                       
+            
+            auto func1 = [&](int begin, int end, int /*threadId*/){
+                Minhasher::Handle minhashHandle;
+                std::vector<std::string> sequences;
+
+                //should not hit assertion if everything is ok with minhasher
+                for(int i = begin; i < end; i++){               
+                    sequences.emplace_back(get2BitString(h_sequences.data() + i * sequencePitchInInts, h_lengths[i]));
+
+                    minhasher.getCandidates_any_map(
+                        minhashHandle,
+                        sequences.back(),
+                        0
+                    );
+                }
+
+                // check batch hashing too
+                minhasher.calculateMinhashSignatures(
+                    minhashHandle,
+                    sequences
+                );
+
+                minhasher.queryPrecalculatedSignatures(
+                    minhashHandle, 
+                    sequences.size()
+                );
+
+                minhasher.makeUniqueQueryResults(
+                    minhashHandle, 
+                    sequences.size()
+                );
+            };
+
+            //func1(0, int(indicesBuffer.size()), func1);
+            threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func1);
+
+            //oneIter = false;
+
+            indicesBuffer.clear();
+            readsBuffer.clear();
+        };
+
+        const std::int64_t numReads = readStorage.getNumberOfReads();
+        const int iters = SDIV(numReads, batchsize);
+
+        for(int iter = 0; iter < iters; iter++){
+            const std::int64_t begin = iter * batchsize;
+            const std::int64_t end = std::min(numReads, (iter+1) * batchsize);
+
+            std::cerr << begin << " - " << end << "\n";
+            indicesBuffer.resize(end - begin);
+            std::iota(indicesBuffer.begin(), indicesBuffer.end(), begin);
+
+            validateBatch();
+        }
+
+        std::cerr << "validated data in minhasher\n";
+    }
 
 BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
@@ -45,9 +290,9 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             readStorage.loadFromFile(fileOptions.load_binary_reads_from);
             result.builtType = BuiltType::Loaded;
 
-            if(useQualityScores && !readStorage.hasQualityScores())
+            if(useQualityScores && !readStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in compressed sequence file!");
-            if(!useQualityScores && readStorage.hasQualityScores())
+            if(!useQualityScores && readStorage.canUseQualityScores())
                 std::cerr << "Warning. The loaded compressed read file contains quality scores, but program does not use them!\n";
 
             std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
@@ -127,6 +372,8 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::array<std::mutex, numBuffers> mutex;
             std::array<std::condition_variable, numBuffers> cv;
 
+            ThreadPool threadPool(runtimeOptions.threads);
+
             for(int i = 0; i < numBuffers; i++){
                 indicesBuffers[i].reserve(maxbuffersize);
                 readsBuffers[i].reserve(maxbuffersize);
@@ -143,7 +390,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             };
 
             forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
                             [&](auto readnum, const auto& read){
 
                     if(!canBeUsed[bufferindex]){
@@ -174,7 +420,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                         canBeUsed[bufferindex] = false;
 
                         //std::cerr << "launch other thread\n";
-                        threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
                             //std::cerr << "buffer " << bufferindex << " running\n";
                             int nmodcounter = 0;
 
@@ -364,10 +610,11 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
         }else{
             result.builtType = BuiltType::Constructed;
 
-            const int oldnumthreads = omp_get_thread_num();
+            //const int oldnumthreads = omp_get_thread_num();
 
-            omp_set_num_threads(runtimeOptions.threads);
+            //omp_set_num_threads(runtimeOptions.threads);
 
+            ThreadPool threadPool(runtimeOptions.threads);
             ThreadPool::ParallelForHandle pforHandle;
 
             const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
@@ -377,11 +624,10 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             }
             std::size_t writtenTableBytes = 0;
 
-            constexpr std::size_t GB1 = std::size_t(1) << 30;
-            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024 - GB1;
-            if(memoryOptions.memoryForHashtables > 0){
-                maxMemoryForTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTables);
-            }
+            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
+
+            maxMemoryForTables = std::min(maxMemoryForTables, 
+                                    std::min(memoryOptions.memoryForHashtables, memoryOptions.memoryTotalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
             std::size_t availableMemForTables = maxMemoryForTables;
@@ -458,7 +704,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
                         const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
     				    const int sequencelength = readStorage.fetchSequenceLength(readId);
-    				    std::string sequencestring = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+    				    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
 
                         minhasher.insertSequenceIntoExternalTables(sequencestring, 
                                                                     readId, 
@@ -488,7 +734,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                     // }
                 };
 
-                threadpool.parallelFor(
+                threadPool.parallelFor(
                     pforHandle,
                     readIdBegin,
                     readIdEnd,
@@ -552,7 +798,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                             }                        
                         }
     
-                        removeFile(tmpmapsFilename);
+                        filehelpers::removeFile(tmpmapsFilename);
     
                         minhasher.minhashTables.resize(usableNumMaps);
                         std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
@@ -563,7 +809,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
 
 
-            omp_set_num_threads(oldnumthreads);
+            //omp_set_num_threads(oldnumthreads);
         }
 
         
@@ -612,6 +858,10 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::cout << "Saved reads" << std::endl;
         }
 
+#ifdef VALIDATE_READSTORAGE
+        validateReadstorage(readStorage, fileOptions);
+#endif         
+
         sequenceFileProperties.nReads = readStorage.getNumberOfReads();
         sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
         sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
@@ -635,6 +885,12 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
             std::cout << "Saved minhasher" << std::endl;
         }
+
+        const auto& minhasher = result.builtMinhasher.data;
+
+#ifdef VALIDATE_MINHASHER        
+        validateMinhasher(minhasher, readStorage, fileOptions);
+#endif  
 
         return result;
     }

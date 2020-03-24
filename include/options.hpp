@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 
-#include "sequencefileio.hpp"
+#include <readlibraryio.hpp>
 
 #include <string>
 #include <vector>
@@ -72,6 +72,7 @@ namespace care{
 
     struct MemoryOptions{
         std::size_t memoryForHashtables = 0;
+        std::size_t memoryTotalLimit = 0;
     };
 
 	struct FileOptions{

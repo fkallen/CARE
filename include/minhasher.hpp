@@ -6,6 +6,7 @@
 #include "util.hpp"
 
 #include <config.hpp>
+#include <memorymanagement.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -467,6 +468,18 @@ namespace care{
 
                //nvtx::push_range("fetch index",3);
                 const Index_t index = keyIndexMap.get(key);
+
+                if(size_t(index) >=  countsPrefixSum.size() || size_t(index+1) >= countsPrefixSum.size()) {
+                    std::cerr << "\ninvalid index returned by keyIndexMap: key = " << key << ", returned index = " << index << "cPS.size() = " << countsPrefixSum.size() << "\n";
+                    assert(false);
+                }else{
+                    if(size_t(countsPrefixSum[index]) > values.size() || size_t(countsPrefixSum[index+1]) > values.size()){
+                        std::cerr << "\ninvalid prefix sum at index " << index << " or " << (index+1) << ". cPS = " << countsPrefixSum[index] << " " << countsPrefixSum[index+1] << " values.size() = " << values.size() << "\n";
+                        assert(false);
+                    }
+                }
+
+                
                 return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
                 //nvtx::pop_range("fetch index");
 			}
@@ -487,8 +500,32 @@ struct Minhasher {
     static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
     struct Handle{
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        std::vector<Range_t> ranges;
 		std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
+        SetUnionHandle<Value_t> suHandle;
+
+        
+
+        std::vector<Value_t> contiguousDataOfRanges;
+        std::vector<Range_t> multiranges;
+		std::vector<Value_t> multiallUniqueResults;
+        std::vector<std::uint64_t> multiminhashSignatures;
+        std::vector<int> numResultsPerSequence;
+        std::vector<int> numResultsPerSequencePrefixSum;
+
+        std::vector<Value_t>& result() noexcept{
+            return allUniqueResults;
+        }
+
+        std::vector<Value_t>& multiresults() noexcept{
+            return multiallUniqueResults;
+        }
+
+        // int numResultsOfSequence(int i) const{
+        //     assert(i < int(numResultsPerSequence.size()));
+        //     return numResultsPerSequence[i];
+        // }
 	};
 
 	// the actual maps
@@ -514,7 +551,7 @@ struct Minhasher {
 
     std::size_t numBytes() const;
 
-
+    MemoryUsage getMemoryInfo() const;
 
     void saveToFile(const std::string& filename) const;
 
@@ -547,12 +584,41 @@ struct Minhasher {
                                                         Map_t::Key_t key) const noexcept;
 
 
-    std::vector<Result_t> getCandidates(const std::string& sequence,
-                                        int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept;
+
+    void calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const std::vector<std::string>& sequences) const;     
+
+    void calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const char* sequences,
+            int numSequences,
+            const int* sequenceLengths,
+            int sequencesPitch) const;
+
+    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const;   
+
+    void makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const;                                      
+
+
+    std::vector<Result_t> getCandidates(
+        const std::string& sequence,
+        int num_hits,
+        std::uint64_t max_number_candidates) const noexcept;
 
     std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
                                         std::uint64_t max_number_candidates) const noexcept;
+
+    void getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const std::string& sequence,
+            std::uint64_t) const noexcept;
+
+    void getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const char* sequence,
+            int sequenceLength,
+            std::uint64_t) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
@@ -593,8 +659,14 @@ private:
 	std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc(const std::string& sequence) const noexcept;
 
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    minhashfunc(const char* sequence, int sequenceLength) const noexcept;
+
     std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc_other(const std::string& sequence) const noexcept;
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    minhashfunc_other(const char* sequence, int sequenceLength) const noexcept;
 
     void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
     void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;

@@ -1,6 +1,8 @@
 #ifndef NVVPTIMELINEMARKERS_HPP
 #define NVVPTIMELINEMARKERS_HPP
 
+#include <string>
+
 namespace nvtx{
     void push_range(const std::string& name, int cid);
     void pop_range(const std::string& name);

@@ -24,12 +24,6 @@ namespace care{
 
 namespace cpu{
 
-    /*
-        Data structure to store sequences and their quality scores
-    */
-
-   //TODO store read ids of reads which contain a base other than A,C,G,T
-
     struct ContiguousReadStorage{
 
         struct Statistics{
@@ -45,18 +39,25 @@ namespace cpu{
             }
         };
 
+        struct GatherHandle{
+            std::vector<int> permutation;
+        };
+
+        enum class GatherType {Direct, Sorted};
+
         static constexpr bool has_reverse_complement = false;
         static constexpr int serialization_id = 1;
 
         using Length_t = int;
         using LengthStore_t = LengthStore<std::uint32_t>;
 
-        std::unique_ptr<char[]> h_sequence_data = nullptr;
+        std::unique_ptr<unsigned int[]> h_sequence_data = nullptr;
         std::unique_ptr<Length_t[]> h_sequence_lengths = nullptr;
         std::unique_ptr<char[]> h_quality_data = nullptr;
         int sequenceLengthLowerBound = 0;
         int sequenceLengthUpperBound = 0;
-        int maximum_allowed_sequence_bytes = 0;
+        int sequenceDataPitchInInts = 0;
+        int sequenceQualitiesPitchInBytes = 0;
         bool useQualityScores = false;
         read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
@@ -76,29 +77,32 @@ namespace cpu{
         ContiguousReadStorage(read_number nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0, 0){
         }
 
-        ContiguousReadStorage(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length)
-            : sequenceLengthUpperBound(maximum_sequence_length),
-                maximum_allowed_sequence_bytes(getEncodedNumInts2BitHiLo(maximum_sequence_length) * sizeof(unsigned int)),
-                useQualityScores(b),
-                maximumNumberOfSequences(nSequences){
+        ContiguousReadStorage(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length){
+            init(nSequences, b, minimum_sequence_length, maximum_sequence_length);
+        }
 
-            sequenceLengthLowerBound = minimum_sequence_length;
-            sequenceLengthUpperBound = maximum_sequence_length;
-            
+        void init(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length){
+            sequenceLengthLowerBound = minimum_sequence_length,
+            sequenceLengthUpperBound = maximum_sequence_length,
+            sequenceDataPitchInInts = getEncodedNumInts2Bit(maximum_sequence_length),
+            sequenceQualitiesPitchInBytes = maximum_sequence_length,
+            useQualityScores = b,
+            maximumNumberOfSequences = nSequences;
+
             lengthStorage = std::move(LengthStore_t(sequenceLengthLowerBound, sequenceLengthUpperBound, nSequences));
 
-            h_sequence_data.reset(new char[std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes]);
-            sequence_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes;
+            h_sequence_data.reset(new unsigned int[std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts]);
+            sequence_data_bytes = sizeof(unsigned int) * std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts;
 
             //h_sequence_lengths.reset(new Length_t[std::size_t(maximumNumberOfSequences)]);
             sequence_lengths_bytes = sizeof(Length_t) * std::size_t(maximumNumberOfSequences);
 
             if(useQualityScores){
-                h_quality_data.reset(new char[std::size_t(maximumNumberOfSequences) * sequenceLengthUpperBound]);
-                quality_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * sequenceLengthUpperBound;
+                h_quality_data.reset(new char[std::size_t(maximumNumberOfSequences) * sequenceQualitiesPitchInBytes]);
+                quality_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * sequenceQualitiesPitchInBytes;
             }
 
-            std::fill(&h_sequence_data[0], &h_sequence_data[sequence_data_bytes], 0);
+            std::fill_n(&h_sequence_data[0], std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts, 0);
             //std::fill(&h_sequence_lengths[0], &h_sequence_lengths[maximumNumberOfSequences], 0);
             std::fill(&h_quality_data[0], &h_quality_data[quality_data_bytes], 0);
         }
@@ -112,7 +116,8 @@ namespace cpu{
               h_quality_data(std::move(other.h_quality_data)),
               sequenceLengthLowerBound(other.sequenceLengthLowerBound),
               sequenceLengthUpperBound(other.sequenceLengthUpperBound),
-              maximum_allowed_sequence_bytes(other.maximum_allowed_sequence_bytes),
+              sequenceDataPitchInInts(other.sequenceDataPitchInInts),
+              sequenceQualitiesPitchInBytes(other.sequenceQualitiesPitchInBytes),
               useQualityScores(other.useQualityScores),
               maximumNumberOfSequences(other.maximumNumberOfSequences),
               sequence_data_bytes(other.sequence_data_bytes),
@@ -134,7 +139,8 @@ namespace cpu{
             h_quality_data = std::move(other.h_quality_data);
             sequenceLengthLowerBound = other.sequenceLengthLowerBound;
             sequenceLengthUpperBound = other.sequenceLengthUpperBound;
-            maximum_allowed_sequence_bytes = other.maximum_allowed_sequence_bytes;
+            sequenceDataPitchInInts = other.sequenceDataPitchInInts;
+            sequenceQualitiesPitchInBytes = other.sequenceQualitiesPitchInBytes;
             useQualityScores = other.useQualityScores;
             maximumNumberOfSequences = other.maximumNumberOfSequences;
             sequence_data_bytes = other.sequence_data_bytes;
@@ -156,7 +162,9 @@ namespace cpu{
                 return false;
             if(sequenceLengthUpperBound != other.sequenceLengthUpperBound)
                 return false;
-            if(maximum_allowed_sequence_bytes != other.maximum_allowed_sequence_bytes)
+            if(sequenceDataPitchInInts != other.sequenceDataPitchInInts)
+                return false;
+            if(sequenceQualitiesPitchInBytes != other.sequenceQualitiesPitchInBytes)
                 return false;
             if(useQualityScores != other.useQualityScores)
                 return false;
@@ -201,7 +209,7 @@ namespace cpu{
 
             std::size_t result = 0;
             result += sequence_data_bytes;
-            result += sequence_lengths_bytes;
+            result += lengthStorage.getRawSizeInBytes();
 
             if(useQualityScores){
                 //assert(std::size_t(maximumNumberOfSequences) * sequenceLengthUpperBound * sizeof(char) == quality_data_bytes);
@@ -271,11 +279,13 @@ private:
 
             const int sequencelength = sequence.length();
 
-            unsigned int* dest = (unsigned int*)&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
-            encodeSequence2BitHiLo(dest,
-                                    sequence.c_str(),
-                                    sequence.length(),
-                                    identity);
+            unsigned int* dest = &h_sequence_data[std::size_t(readNumber) * sequenceDataPitchInInts];
+            encodeSequence2Bit(
+                dest,
+                sequence.c_str(),
+                sequence.length(),
+                identity
+            );
 
             statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, sequencelength);
             statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, sequencelength);
@@ -324,8 +334,8 @@ public:
             }
         }
 
-        const char* fetchSequenceData_ptr(read_number readNumber) const{
-        	return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
+        const unsigned int* fetchSequenceData_ptr(read_number readNumber) const{
+        	return &h_sequence_data[std::size_t(readNumber) * std::size_t(sequenceDataPitchInInts)];
         }
 
         int fetchSequenceLength(read_number readNumber) const{
@@ -333,7 +343,177 @@ public:
         	//return h_sequence_lengths[readNumber];
         }
 
-        bool hasQualityScores() const{
+        template<class T, class GatherType>
+        void gatherImpl(
+                GatherHandle& handle,
+                GatherType gatherType,
+                const T* source,
+                size_t sourcePitchElements,
+                const read_number* readIds,
+                int numReadIds,
+                T* destination,
+                size_t destinationPitchElements) const noexcept{
+            
+            if(numReadIds == 0){
+                return;
+            }
+
+            if(gatherType == GatherType::Sorted){
+                handle.permutation.resize(numReadIds);
+                //handle.data.resize(sourcePitchElement * sizeof(T) * numReadIds);
+
+                std::iota(
+                    handle.permutation.begin(), 
+                    handle.permutation.end(),
+                    0
+                );
+
+                std::sort(
+                    handle.permutation.begin(), 
+                    handle.permutation.end(),
+                    [&](const auto& l, const auto& r){
+                        return readIds[l] < readIds[r];
+                    }
+                );
+            }
+
+            constexpr int prefetch_distance = 4;
+
+            for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
+                const int index = gatherType == GatherType::Sorted ? handle.permutation[i] : i;
+                const read_number nextReadId = readIds[index];
+                const T* const nextData = source + sourcePitchElements * nextReadId;
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            for(int i = 0; i < numReadIds; i++){
+                if(i + prefetch_distance < numReadIds) {
+                    const int index = gatherType == GatherType::Sorted ? handle.permutation[i + prefetch_distance] : i + prefetch_distance;
+                    const read_number nextReadId = readIds[index];
+                    const T* const nextData = source + sourcePitchElements * nextReadId;
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const int index = gatherType == GatherType::Sorted ? handle.permutation[i] : i;
+                const read_number readId = readIds[index];
+                const T* const data = source + sourcePitchElements * readId;
+
+                T* const destData = destination + destinationPitchElements * index;
+                std::copy_n(data, sourcePitchElements, destData);
+            }
+        }
+
+
+        void gatherSequenceData(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                unsigned int* destination,
+                int destinationPitchElements) const noexcept{
+
+            gatherImpl(
+                handle,
+                GatherType::Direct,
+                &h_sequence_data[0],
+                sequenceDataPitchInInts,
+                readIds,
+                numReadIds,
+                destination,
+                destinationPitchElements
+            );
+        }
+
+        void gatherSequenceDataSpecial(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                unsigned int* destination,
+                int destinationPitchElements) const noexcept{
+
+            gatherImpl(
+                handle,
+                GatherType::Sorted,
+                &h_sequence_data[0],
+                sequenceDataPitchInInts,
+                readIds,
+                numReadIds,
+                destination,
+                destinationPitchElements
+            );
+        }
+
+        void gatherSequenceQualities(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                char* destination,
+                int destinationPitchElements) const noexcept{
+
+            gatherImpl(
+                handle,
+                GatherType::Direct,
+                &h_quality_data[0],
+                sequenceQualitiesPitchInBytes,
+                readIds,
+                numReadIds,
+                destination,
+                destinationPitchElements
+            );
+        }
+
+        void gatherSequenceQualitiesSpecial(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                char* destination,
+                int destinationPitchElements) const noexcept{
+
+            gatherImpl(
+                handle,
+                GatherType::Sorted,
+                &h_quality_data[0],
+                sequenceQualitiesPitchInBytes,
+                readIds,
+                numReadIds,
+                destination,
+                destinationPitchElements
+            );
+        }
+
+        void gatherSequenceLengths(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                int* destination,
+                int destinationPitchElements = 1) const noexcept{
+
+            for(int i = 0; i < numReadIds; i++){
+                int* const destLength = destination + i * destinationPitchElements;
+                *destLength = fetchSequenceLength(readIds[i]);
+            }            
+        }
+
+        void gatherSequenceLengthsSpecial(
+                GatherHandle& handle,
+                const read_number* readIds,
+                int numReadIds,
+                int* destination,
+                int destinationPitchElements = 1) const noexcept{
+
+            gatherSequenceLengths(
+                handle,
+                readIds,
+                numReadIds,
+                destination,
+                destinationPitchElements
+            );
+        }
+
+
+
+
+
+        bool canUseQualityScores() const{
             return useQualityScores;
         }
 
@@ -342,7 +522,15 @@ public:
     	}
 
         int getMaximumAllowedSequenceBytes() const{
-            return maximum_allowed_sequence_bytes;
+            return sequenceDataPitchInInts * sizeof(unsigned int);
+        }
+
+        int getSequenceLengthLowerBound() const{
+            return sequenceLengthLowerBound;
+        }
+
+        int getSequenceLengthUpperBound() const{
+            return sequenceLengthUpperBound;
         }
 
         void saveToFile(const std::string& filename) const{
@@ -350,27 +538,19 @@ public:
 
             read_number inserted = getNumberOfReads();
 
-            //int ser_id = serialization_id;
-            std::size_t lengthsize = sizeof(Length_t);
-            //stream.write(reinterpret_cast<const char*>(&ser_id), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_bytes), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-            stream.write(reinterpret_cast<const char*>(&maximumNumberOfSequences), sizeof(read_number));
-            stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
             stream.write(reinterpret_cast<const char*>(&inserted), sizeof(read_number));
+            stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
+            stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
 
             lengthStorage.writeToStream(stream);
 
-            stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes);
-            //stream.write(reinterpret_cast<const char*>(&h_sequence_lengths[0]), sequence_lengths_bytes);
+            stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes); 
+            stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&h_quality_data[0]), quality_data_bytes);
 
-            //read ids with N
             std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
             stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
             stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
@@ -382,64 +562,34 @@ public:
             if(!stream)
                 throw std::runtime_error("Cannot open file " + filename);
 
-            //int ser_id = serialization_id;
-            std::size_t lengthsize = sizeof(Length_t);
+            destroy();
 
-            //int loaded_serialization_id = 0;
-            std::size_t loaded_lengthsize = 0;
+            read_number loaded_inserted = 0;
+            int loaded_sequenceLengthLowerBound = 0;
             int loaded_sequenceLengthUpperBound = 0;
-            int loaded_maximum_allowed_sequence_bytes = 0;
             bool loaded_useQualityScores = false;
-            read_number loaded_maximumNumberOfSequences = 0;
+
             std::size_t loaded_sequence_data_bytes = 0;
-            std::size_t loaded_sequence_lengths_bytes = 0;
-            std::size_t loaded_quality_data_bytes = 0;
-            read_number inserted = 0;
+            std::size_t loaded_quality_data_bytes = 0;            
 
-            //stream.read(reinterpret_cast<char*>(&loaded_serialization_id), sizeof(int));
-            stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
-            stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_bytes), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&loaded_inserted), sizeof(read_number));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
             stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-            stream.read(reinterpret_cast<char*>(&loaded_maximumNumberOfSequences), sizeof(read_number));
-            stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
-            stream.read(reinterpret_cast<char*>(&inserted), sizeof(read_number));
 
-            numberOfInsertedReads = inserted;
+            init(loaded_inserted, loaded_useQualityScores, loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
+
+            numberOfInsertedReads = loaded_inserted;
+
+            stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
             lengthStorage.readFromStream(stream);
 
-            //if(loaded_serialization_id != ser_id)
-            //    throw std::runtime_error("Wrong serialization id!");
-            if(loaded_lengthsize != lengthsize)
-                throw std::runtime_error("Wrong size of length type!");
-            //if(useQualityScores && !loaded_useQualityScores)
-            //    throw std::runtime_error("Quality scores are required but not present in binary sequence file!");
-            //if(!useQualityScores && loaded_useQualityScores)
-            //    std::cerr << "The loaded compressed read file contains quality scores, but program does not use them!\n";
-
-            destroy();
-
-            h_sequence_data.reset((char*)new char[loaded_sequence_data_bytes]);
-            //h_sequence_lengths.reset((Length_t*)new char[loaded_sequence_lengths_bytes]);
-            h_quality_data.reset((char*)new char[loaded_quality_data_bytes]);
-
+            stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&h_sequence_data[0]), loaded_sequence_data_bytes);
-            //stream.read(reinterpret_cast<char*>(&h_sequence_lengths[0]), loaded_sequence_lengths_bytes);
+            stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));            
             stream.read(reinterpret_cast<char*>(&h_quality_data[0]), loaded_quality_data_bytes);
 
-            sequenceLengthUpperBound = loaded_sequenceLengthUpperBound;
-            maximum_allowed_sequence_bytes = loaded_maximum_allowed_sequence_bytes;
-            maximumNumberOfSequences = loaded_maximumNumberOfSequences;
-            useQualityScores = loaded_useQualityScores;
-            sequence_data_bytes = loaded_sequence_data_bytes;
-            sequence_lengths_bytes = loaded_sequence_lengths_bytes;
-            quality_data_bytes = loaded_quality_data_bytes;
-
-                //read ids with N
             std::size_t numUndeterminedReads = 0;
             stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
             readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);

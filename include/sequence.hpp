@@ -78,7 +78,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    int getEncodedNumInts2Bit(int sequenceLength){
+    constexpr int getEncodedNumInts2Bit(int sequenceLength){
         return SDIV(sequenceLength, basesPerInt2Bit);
     }
 
@@ -95,24 +95,28 @@ namespace care{
 
         for(int nucIndex = 0; nucIndex < sequenceLength; nucIndex++){
             const int intIndex = nucIndex / basesPerInt2Bit;
-            const int pos = nucIndex % basesPerInt2Bit;
             switch(sequence[nucIndex]) {
             case 'A':
-                out[indextrafo(intIndex)] |= encodedbaseA << (2*pos);
+                out[indextrafo(intIndex)] = (out[indextrafo(intIndex)] << 2) | encodedbaseA;
                 break;
             case 'C':
-                out[indextrafo(intIndex)] |= encodedbaseC << (2*pos);
+                out[indextrafo(intIndex)] = (out[indextrafo(intIndex)] << 2) | encodedbaseC;
                 break;
             case 'G':
-                out[indextrafo(intIndex)] |= encodedbaseG << (2*pos);
+                out[indextrafo(intIndex)] = (out[indextrafo(intIndex)] << 2) | encodedbaseG;
                 break;
             case 'T':
-                out[indextrafo(intIndex)] |= encodedbaseT << (2*pos);
+                out[indextrafo(intIndex)] = (out[indextrafo(intIndex)] << 2) | encodedbaseT;
                 break;
             default:
-                out[indextrafo(intIndex)] |= encodedbaseA << (2*pos);
+                out[indextrafo(intIndex)] = (out[indextrafo(intIndex)] << 2) | encodedbaseA;
                 break;
             }
+        }
+        //pack bits of last integer into higher order bits
+        int leftoverbits = 2 * (nInts * basesPerInt2Bit - sequenceLength);
+        if(leftoverbits > 0){
+            out[indextrafo(nInts-1)] <<= leftoverbits;
         }
     }
 
@@ -129,16 +133,16 @@ namespace care{
     unsigned int getEncodedNuc2Bit(const unsigned int* data, int sequenceLength, int i, IndexTransformation indextrafo){
         const int intIndex = i / basesPerInt2Bit;
         const int pos = i % basesPerInt2Bit;
-        return ((data[indextrafo(intIndex)] >> (2*pos)) & 0x00000003);
+        return ((data[indextrafo(intIndex)] >> (30 - 2*pos)) & 0x00000003);
     }
 
     HOSTDEVICEQUALIFIER
     __inline__
-    void getEncodedNuc2Bit(const unsigned int* encodedsequence,
+    unsigned int getEncodedNuc2Bit(const unsigned int* encodedsequence,
                                 int length,
                                 int position){
         auto identity = [](auto i){return i;};
-        getEncodedNuc2Bit(encodedsequence, length, position, identity);
+        return getEncodedNuc2Bit(encodedsequence, length, position, identity);
     }
 
     HD_WARNING_DISABLE
@@ -211,11 +215,11 @@ namespace care{
 
         if(unusedPositions > 0){
             for(int i = 0; i < nInts-1; i++){
-                encodedsequence[indextrafo(i)] = (encodedsequence[indextrafo(i)] >> (2*unusedPositions))
-                                               | (encodedsequence[indextrafo(i+1)] << (2 * (basesPerInt2Bit-unusedPositions)));
+                encodedsequence[indextrafo(i)] = (encodedsequence[indextrafo(i)] << (2*unusedPositions))
+                                               | (encodedsequence[indextrafo(i+1)] >> (2 * (basesPerInt2Bit-unusedPositions)));
 
             }
-    	encodedsequence[indextrafo(nInts-1)] >>= (2*unusedPositions);
+    	    encodedsequence[indextrafo(nInts-1)] <<= (2*unusedPositions);
         }
     }
 
@@ -259,7 +263,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    int getEncodedNumInts2BitHiLo(int sequenceLength){
+    constexpr int getEncodedNumInts2BitHiLo(int sequenceLength){
         return int(2 * SDIV(sequenceLength, sizeof(unsigned int) * 8));
     }
 
@@ -270,7 +274,7 @@ namespace care{
         const int nInts = getEncodedNumInts2BitHiLo(sequenceLength);
 
         for(int i = 0; i < nInts; i++){
-            out[i] = 0;
+            out[indextrafo(i)] = 0;
         }
 
         unsigned int* const hi = out;
@@ -278,31 +282,35 @@ namespace care{
 
         for(int i = 0; i < sequenceLength; i++){
             const int intIndex = i / (8 * sizeof(unsigned int));
-            const int pos = i % (8 * sizeof(unsigned int));
-            const unsigned int mask = 1u << pos;
 
             switch(sequence[i]) {
             case 'A':
-                hi[indextrafo(intIndex)] &= ~mask;
-                lo[indextrafo(intIndex)] &= ~mask;
+                hi[indextrafo(intIndex)] = (hi[indextrafo(intIndex)] << 1) | 0;
+                lo[indextrafo(intIndex)] = (lo[indextrafo(intIndex)] << 1) | 0;
                 break;
             case 'C':
-                hi[indextrafo(intIndex)] &= ~mask;
-                lo[indextrafo(intIndex)] |= mask;
+                hi[indextrafo(intIndex)] = (hi[indextrafo(intIndex)] << 1) | 0;
+                lo[indextrafo(intIndex)] = (lo[indextrafo(intIndex)] << 1) | 1;
                 break;
             case 'G':
-                hi[indextrafo(intIndex)] |= mask;
-                lo[indextrafo(intIndex)] &= ~mask;
+                hi[indextrafo(intIndex)] = (hi[indextrafo(intIndex)] << 1) | 1;
+                lo[indextrafo(intIndex)] = (lo[indextrafo(intIndex)] << 1) | 0;
                 break;
             case 'T':
-                hi[indextrafo(intIndex)] |= mask;
-                lo[indextrafo(intIndex)] |= mask;
+                hi[indextrafo(intIndex)] = (hi[indextrafo(intIndex)] << 1) | 1;
+                lo[indextrafo(intIndex)] = (lo[indextrafo(intIndex)] << 1) | 1;
                 break;
             default:
-                hi[indextrafo(intIndex)] &= ~mask;
-                lo[indextrafo(intIndex)] &= ~mask;
+                hi[indextrafo(intIndex)] = (hi[indextrafo(intIndex)] << 1) | 0;
+                lo[indextrafo(intIndex)] = (lo[indextrafo(intIndex)] << 1) | 0;
                 break;
             }
+        }
+        //pack bits of last hi integer and lo integer into their higher order bits
+        const int leftoverbits = nInts/2 * 8 * sizeof(unsigned int) - sequenceLength;
+        if(leftoverbits > 0){
+            hi[indextrafo(nInts/2-1)] <<= leftoverbits;
+            lo[indextrafo(nInts/2-1)] <<= leftoverbits;
         }
     }
 
@@ -324,8 +332,8 @@ namespace care{
 
         const int intIndex = i / (8 * sizeof(unsigned int));
         const int pos = i % (8 * sizeof(unsigned int));
-        const unsigned int hibit = (hi[indextrafo(intIndex)] >> pos) & 1u;
-        const unsigned int lobit = (lo[indextrafo(intIndex)] >> pos) & 1u;
+        const unsigned int hibit = (hi[indextrafo(intIndex)] >> (31 - pos)) & 1u;
+        const unsigned int lobit = (lo[indextrafo(intIndex)] >> (31 - pos)) & 1u;
         const unsigned int base = (hibit << 1) | lobit;
 
         return base;
@@ -421,12 +429,12 @@ namespace care{
 
         if(unusedBitsInt != 0){
             for(int i = 0; i < intsPerHalf - 1; ++i){
-                hi[indextrafo(i)] = (hi[indextrafo(i)] >> unusedBitsInt) | (hi[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
-                lo[indextrafo(i)] = (lo[indextrafo(i)] >> unusedBitsInt) | (lo[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                hi[indextrafo(i)] = (hi[indextrafo(i)] << unusedBitsInt) | (hi[indextrafo(i+1)] >> (8 * sizeof(unsigned int) - unusedBitsInt));
+                lo[indextrafo(i)] = (lo[indextrafo(i)] << unusedBitsInt) | (lo[indextrafo(i+1)] >> (8 * sizeof(unsigned int) - unusedBitsInt));
             }
 
-            hi[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
-            lo[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
+            hi[indextrafo(intsPerHalf - 1)] <<= unusedBitsInt;
+            lo[indextrafo(intsPerHalf - 1)] <<= unusedBitsInt;
         }
     }
 
@@ -476,7 +484,7 @@ unsigned int extractEvenBits(unsigned int x){
     x = (x | (x >> 8)) & 0x0000FFFF;
     return x;
 }
-
+/*
 HOSTDEVICEQUALIFIER
 __inline__
 unsigned int reverseBits(unsigned int n) {
@@ -540,7 +548,7 @@ void convert2BitTo2BitHiLo(unsigned int* out,
     auto identity = [](auto i){return i;};
     convert2BitTo2BitHiLo(out, in, length, identity, identity);
 }
-
+*/
 HD_WARNING_DISABLE
 template<class InIndexTransformation, class OutIndexTransformation>
 HOSTDEVICEQUALIFIER
@@ -568,11 +576,11 @@ void convert2BitNewTo2BitHiLo(unsigned int* out,
         unsigned int odd16 = extractEvenBits(in[inindex] >> 1);
 
         if(i % 2 == 0){
-            outHi[outindex] = odd16;
-            outLo[outindex] = even16;
+            outHi[outindex] = odd16 << 16;
+            outLo[outindex] = even16 << 16;
         }else{
-            outHi[outindex] = outHi[outindex] | (odd16 << 16);
-            outLo[outindex] = outLo[outindex] | (even16 << 16) ;
+            outHi[outindex] = outHi[outindex] | odd16;
+            outLo[outindex] = outLo[outindex] | even16;
         }
     }
 }
