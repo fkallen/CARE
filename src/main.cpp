@@ -10,6 +10,8 @@
 
 #include <threadpool.hpp>
 
+#include <readlibraryio.hpp>
+
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -202,6 +204,18 @@ int main(int argc, char** argv){
 
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+
+	if(correctionOptions.useQualityScores){
+		const bool fileHasQscores = hasQualityScores(fileOptions.inputfile);
+
+		if(!fileHasQscores){
+			std::cerr << "Quality scores have been disabled because no quality scores were found in the input file.\n";
+			
+			correctionOptions.useQualityScores = false;
+		}
+		
+	}
+		
 
     const int numThreads = parseresults["threads"].as<int>();
 
