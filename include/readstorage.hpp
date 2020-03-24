@@ -314,12 +314,15 @@ public:
         void insertRead(read_number readNumber, const std::string& sequence, const std::string& quality){
             assert(readNumber < getMaximumNumberOfSequences());
             assert(int(sequence.length()) <= sequenceLengthUpperBound);
-            assert(int(quality.length()) <= sequenceLengthUpperBound);
-            assert(sequence.length() == quality.length());
+            
+            
 
     		insertSequence(readNumber, sequence);
 
     		if(useQualityScores){
+                assert(int(quality.length()) <= sequenceLengthUpperBound);
+                assert(sequence.length() == quality.length());
+                
                 std::memcpy(&h_quality_data[std::size_t(readNumber) * std::size_t(sequenceLengthUpperBound)],
                             quality.c_str(),
                             sizeof(char) * quality.length());

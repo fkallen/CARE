@@ -274,7 +274,10 @@ void DistributedReadStorage::setReads(ThreadPool* threadPool,
     assert(numReads == int(indices.size()));
     assert(std::all_of(indices.begin(), indices.end(), [&](auto i){ return i < getMaximumNumberOfReads();}));
     assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return lengthInRange(Length_t(r.sequence.length()));}));
-    assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
+    
+    if(canUseQualityScores()){
+        assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
+    }
 
     auto minmax = std::minmax_element(reads, reads + numReads, [](const auto& r1, const auto& r2){
         return r1.sequence.length() < r2.sequence.length();
