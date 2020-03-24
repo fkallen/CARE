@@ -785,6 +785,11 @@ namespace gpu{
             nvtx::pop_range();
         };
 
+        // batchData.nextIterationData.syncFlag.setBusy();
+        // getDataForNextIteration();
+        // batchData.nextIterationData.syncFlag.wait();
+        // batchData.updateFromIterationData(batchData.nextIterationData); 
+
         if(batchData.isFirstIteration){
             batchData.nextIterationData.syncFlag.setBusy();
 
@@ -3220,9 +3225,9 @@ void correct_gpu(
                 //batchData.hasUnprocessedResults = false;
             };
 
-            //func();
+            func();
             //batchData.backgroundWorker->enqueue(func);
-            batchData.unpackWorker->enqueue(func);            
+            //batchData.unpackWorker->enqueue(func);            
         };
 
 
@@ -3230,14 +3235,14 @@ void correct_gpu(
             batchExecutors.emplace_back([&, deviceIdIndex](){
                 const int deviceId = deviceIds[deviceIdIndex];
 
-                std::array<BackgroundThread, 2> backgroundWorkerArray;
-                std::array<BackgroundThread, 2> unpackWorkerArray;
+                std::array<BackgroundThread, 3> backgroundWorkerArray;
+                std::array<BackgroundThread, 3> unpackWorkerArray;
 
-                std::array<Batch, 2> batchDataArray;
+                std::array<Batch, 3> batchDataArray;
 
-                for(int i = 0; i < 2; i++){
+                for(int i = 0; i < 3; i++){
                     initBatchData(batchDataArray[i], deviceId);
-                    batchDataArray[i].id = deviceIdIndex * 2 + i;
+                    batchDataArray[i].id = deviceIdIndex * 3 + i;
                     batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
                     batchDataArray[i].unpackWorker = &unpackWorkerArray[i];
 
@@ -3245,10 +3250,13 @@ void correct_gpu(
                     unpackWorkerArray[i].start();
                 }
 
-                bool isFirstIteration = true;
 
-                int batchIndex = 0;
+// 1 batch
 #if 0
+
+                bool isFirstIteration = true;
+                int batchIndex = 0;
+
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
@@ -3272,9 +3280,13 @@ void correct_gpu(
                     progressThread.addProgress(batchData.n_subjects);
                     batchData.reset();                   
                 }
+#endif 
 
-                std::cerr << "exit while loop\n";
-#else 
+// 2 batches
+#if 1
+                bool isFirstIteration = true;
+                int batchIndex = 0;
+
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
@@ -3289,11 +3301,8 @@ void correct_gpu(
 
                     if(isFirstIteration){
                         isFirstIteration = false;
-//std::cerr << "\nprocessBatchUntilCandidateCorrectionStarted batch " << currentBatchData.id << "\n";
                         processBatchUntilCandidateCorrectionStarted(currentBatchData);
                     }else{
-
-                        //std::cerr << "\nprocessBatchUntilCandidateCorrectionStarted batch " << nextBatchData.id << "\n";
                         processBatchUntilCandidateCorrectionStarted(nextBatchData);
 
                         if(currentBatchData.n_queries == 0){
@@ -3305,8 +3314,6 @@ void correct_gpu(
                         }
 
                         copyCandidateCorrectionsToHostAndJoinStreams(currentBatchData);
-
-                        //std::cerr << "\processBatchResults batch " << currentBatchData.id << "\n";
                         processBatchResults(currentBatchData);
     
                         progressThread.addProgress(currentBatchData.n_subjects);
@@ -3315,12 +3322,62 @@ void correct_gpu(
                         batchIndex = 1-batchIndex;
                     }                
                 }
-
 #endif
-                std::cerr << "batchDataArray[0].max_n_queries: " << batchDataArray[0].max_n_queries << "\n";
-                std::cerr << "batchDataArray[1].max_n_queries: " << batchDataArray[1].max_n_queries << "\n";
 
-                for(int i = 0; i < 2; i++){
+
+// 3 batches
+#if 0
+                bool isFirstIteration = true;
+                bool isSecondIteration = false;
+
+                int batchIndex = 0;
+
+                while(!(readIdGenerator.empty() 
+                        && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
+                        && batchDataArray[0].nextIterationData.n_subjects == 0
+                        && !batchDataArray[0].waitableOutputData.isBusy()
+                        && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
+                        && batchDataArray[1].nextIterationData.n_subjects == 0
+                        && !batchDataArray[1].waitableOutputData.isBusy()
+                        && !batchDataArray[2].nextIterationData.syncFlag.isBusy()
+                        && batchDataArray[2].nextIterationData.n_subjects == 0
+                        && !batchDataArray[2].waitableOutputData.isBusy())) {
+
+                    const int nextBatchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
+                    const int lastBatchIndex = nextBatchIndex == 2 ? 0 : 1 + nextBatchIndex;
+
+                    auto& currentBatchData = batchDataArray[batchIndex];
+                    auto& nextBatchData = batchDataArray[nextBatchIndex];
+                    auto& lastBatchData = batchDataArray[lastBatchIndex];
+
+                    if(isFirstIteration){
+                        isFirstIteration = false;
+                        processBatchUntilCandidateCorrectionStarted(currentBatchData);
+                        processBatchUntilCandidateCorrectionStarted(nextBatchData);
+                    }else{
+                        processBatchUntilCandidateCorrectionStarted(lastBatchData);
+
+                        if(currentBatchData.n_queries == 0){
+                            currentBatchData.waitableOutputData.signal();
+                            progressThread.addProgress(currentBatchData.n_subjects);
+                            currentBatchData.reset();
+                            batchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
+                            continue;
+                        }
+
+                        copyCandidateCorrectionsToHostAndJoinStreams(currentBatchData);
+                        processBatchResults(currentBatchData);
+    
+                        progressThread.addProgress(currentBatchData.n_subjects);
+                        currentBatchData.reset();
+
+                        batchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
+                    }              
+                }
+#endif
+                
+                for(int i = 0; i < 3; i++){
+                    std::cerr << "batchDataArray[" << i << "].max_n_queries: " << batchDataArray[i].max_n_queries << "\n";
                     batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                     batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                     destroyBatchData(batchDataArray[i]);
