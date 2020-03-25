@@ -12,6 +12,7 @@
 #include <threadpool.hpp>
 //#include <util.hpp>
 #include <memorymanagement.hpp>
+#include <cub/cub.cuh>
 
 #include <algorithm>
 #include <numeric>
@@ -860,6 +861,8 @@ public:
         int deviceIdLocation = -1;
         if(deviceIdIter != deviceIds.end()){
             deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
+        }else{
+            assert(false);
         }
 
 
@@ -893,6 +896,11 @@ public:
                 hitsPerLocation[l] += hitsPerLocationPerThread[threadlocoffset * k + l];
             }
         }
+
+        // if(hitsPerLocation[0] < hitsPerLocation[1]){
+        //     std::cerr << hitsPerLocation[0] << " " << hitsPerLocation[1] << "\n";
+        // }
+
 #else 
 
     for(Index_t i = 0; i < numIds; i++){
@@ -900,8 +908,166 @@ public:
         hitsPerLocation[location]++;
     }
 
-
 #endif
+
+        for(int location = 0; location < numLocations; location++){
+            const int resultDeviceIdLocation = deviceIdLocation;
+
+            if(/*hitsPerLocation[0] < hitsPerLocation[1] && */location != hostLocation){
+                
+                if(elementsPerLocation[location] > 0){
+                    const int mydeviceId = deviceIds[location];
+
+                    const Index_t offsetBegin = elementsPerLocationPS[location];
+                    const Index_t offsetEnd = elementsPerLocationPS[location+1];
+
+                    wrapperCudaSetDevice(resultDeviceId); CUERR;
+                    cudaEventRecord(handle->eventsPerGpu[resultDeviceIdLocation], stream); CUERR;
+
+                    wrapperCudaSetDevice(mydeviceId); CUERR;
+                    cudaStreamWaitEvent(handle->streamsPerGpu[location], handle->eventsPerGpu[resultDeviceIdLocation], 0); CUERR;
+                    
+                    Index_t* d_tmp;
+                    cudaMallocManaged(&d_tmp, sizeof(Index_t) * numIds); CUERR;
+
+                    Index_t* numTmp;
+                    cudaMallocManaged(&numTmp, sizeof(Index_t)); CUERR;
+                    *numTmp = 0;
+
+                    generic_kernel<<<1, 128, 0, handle->streamsPerGpu[location]>>>([=] __device__ (){
+
+                        constexpr int N = 4;
+
+                        using BlockScan = cub::BlockScan<int, 128>;
+                        using BlockLoad = cub::BlockLoad<Index_t, 128, N, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+
+                        __shared__ union{
+                            typename BlockScan::TempStorage scan;
+                            typename BlockLoad::TempStorage load;
+                        } tempstorage;
+
+                        __shared__ int numSelected;
+
+                        if(threadIdx.x == 0){
+                            numSelected = 0;
+                        }
+
+                        __syncthreads();
+
+                        const Index_t iters = SDIV(numIds, N);
+
+                        for(int iter = 0; iter < iters; iter++){
+                            Index_t myelems[N];
+                            int flags[N];
+                            int ps[N];
+                            int block_aggregate;                            
+                            
+                            const Index_t begin = blockDim.x * N * iter;
+                            const Index_t end = min(blockDim.x * N * (iter+1), numIds);
+
+                            BlockLoad(tempstorage.load).Load(
+                                d_indices + begin, 
+                                myelems,
+                                end - begin,
+                                std::numeric_limits<Index_t>::max()
+                            );
+
+                            // #pragma unroll
+                            // for(int i = 0; i < N; i++){
+                            //     const Index_t loadFrom = begin + blockDim.x * i + threadIdx.x;
+                            //     if(loadFrom < end){
+                            //         myelems[i] = d_indices[loadFrom];
+                            //     }else{
+                            //         myelems[i] = std::numeric_limits<Index_t>::max();
+                            //     }
+                            // }
+
+                            #pragma unroll
+                            for(int i = 0; i < N; i++){
+                                flags[i] = 0;
+
+                                if(offsetBegin <= myelems[i] && myelems[i] < offsetEnd){
+                                    flags[i] = 1;
+                                }
+                            }
+
+                            __syncthreads();
+
+                            BlockScan(tempstorage.scan).ExclusiveSum(
+                                flags, 
+                                ps, 
+                                block_aggregate
+                            );
+
+                            #pragma unroll
+                            for(int i = 0; i < N; i++){
+                                if(flags[i] == 1){
+                                    const Index_t destPos = ps[i] + numSelected;
+                                    d_tmp[destPos] = myelems[i];
+                                }
+                            }
+
+                            __syncthreads();
+
+                            if(threadIdx.x == 0){
+                                numSelected += block_aggregate;
+                            }
+
+                            __syncthreads();
+                        }
+
+                        if(threadIdx.x == 0){
+                            *numTmp = numSelected;
+                        }
+                    }); CUERR;
+
+                    cudaStreamSynchronize(handle->streamsPerGpu[location]); CUERR;
+
+                    std::cerr << "location = " << location 
+                        << " : " << indices[0] << " : " << indices[numIds-1]  
+                        << "\n";
+                    std::cerr << "hits cpu = " << hitsPerLocation[location] << " : " << indices[0] << " : " << indices[numIds-1]  << "\n";
+                    std::cerr << "hits gpu = " << *numTmp << " : " << indices[0] << " : " << indices[numIds-1]  << "\n";
+
+                    if(hitsPerLocation[location] > 2){
+                        std::cerr << "on cpu: ";
+
+                        int count = 0;
+                        for(int i = 0; i < numIds; i++){
+                            if(locationsOfIndices[i] == location){
+                                std::cerr << localIndices[i] + elementsPerLocationPS[location] << " ";
+                                count++;
+
+                                if(count > 3) {
+                                    break;
+                                }
+                            }
+                        }
+
+                        std::cerr << "\n";
+
+                        std::cerr << "on gpu: ";
+
+                        for(int i = 0; i < count; i++){
+                            std::cerr << d_tmp[i] << " ";
+                        }
+
+                        std::cerr << "\n";       
+                    }
+
+                    cudaFree(d_tmp); CUERR;
+                    cudaFree(numTmp); CUERR;
+                }else{
+                    //do nothing
+                }
+            }else{
+
+            }
+        }
+
+
+        
+
 //TIMERSTOPCPU(countsHitPerLocation);
 
         if(debug){
