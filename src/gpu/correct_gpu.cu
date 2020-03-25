@@ -457,6 +457,8 @@ namespace gpu{
         NextIterationData& nextData = batchData.nextIterationData;
         const auto& transFuncData = *batchData.transFuncData;
 
+        cudaSetDevice(nextData.deviceId); CUERR;
+
         nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         //nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
@@ -521,6 +523,8 @@ namespace gpu{
 
         NextIterationData& nextData = batchData.nextIterationData;
 
+        cudaSetDevice(nextData.deviceId); CUERR;
+
         //minhash the retrieved anchors to find candidate ids
 
         Batch* batchptr = &batchData;
@@ -573,7 +577,7 @@ namespace gpu{
             nextData.h_minhashSignatures.sizeInBytes(),
             H2D,
             nextData.stream
-        );
+        ); CUERR;
 
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of signatures anchor data which is required for minhasher
