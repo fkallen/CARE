@@ -27,6 +27,25 @@
 #include <condition_variable>
 
 
+template<class Index_t, class Value_t>
+__global__
+void distrArrayGatherKernel(
+        Value_t* __restrict__ result, 
+        const Value_t* __restrict__ sourceData, 
+        const Index_t* __restrict__ indices, 
+        Index_t nIndices,
+        Index_t indexOffset, 
+        size_t resultPitchValueTs,
+        size_t numCols){
+
+    for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+        const Index_t outputrow = i / numCols;
+        const Index_t inputrow = indices[outputrow] + indexOffset;
+        const Index_t col = i % numCols;
+        result[size_t(outputrow) * resultPitchValueTs + col] 
+                = sourceData[size_t(inputrow) * numCols + col];
+    }
+}
 
 enum class DistributedArrayLayout{
     GPUBlock, GPUEqual
@@ -593,7 +612,7 @@ public:
 
                 std::copy_n(indices, numIds, h_indices.get());
                 cudaMemcpyAsync(d_indices.get(), h_indices.get(), sizeof(Index_t) * numIds, H2D, stream); CUERR;
-                copyDataToGpuBufferAsync(d_result.get(), sizeOfElement, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]); CUERR;
+                copyDataToGpuBufferAsync(d_result.get(), sizeOfElement, deviceId, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]); CUERR;
                 cudaMemcpyAsync(h_result.get(), d_result.get(), sizeof(Value_t) * numIds * numColumns, D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
 
@@ -664,7 +683,7 @@ public:
 
                 myResult.resize(numHits * numColumns);
 
-                copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, myLocalIds.get(), numHits, deviceId, stream);
+                copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, deviceId, myLocalIds.get(), numHits, deviceId, stream, 0);
 
                 cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * numColumns,
                                 myResult.get(),
@@ -787,7 +806,7 @@ public:
                 cudaEvent_t myevent = handle->eventsPerGpu[locationId];
 #if 1
                  if(mydeviceId == resultDeviceId){
-                     copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, mydeviceId, stream, -elementsPerLocationPS[locationId]);
+                     copyDataToGpuBufferAsync(d_result, resultPitch, mydeviceId, d_indices, numIds, mydeviceId, stream, -elementsPerLocationPS[locationId]);
 
                      return;
                  }
@@ -824,7 +843,7 @@ public:
                 if(debug) cudaDeviceSynchronize(); CUERR;
 
                 //local gather on device mydeviceId
-                copyDataToGpuBufferAsync(localGatherPtr, resultPitch, localIndicesPtr, numIds, mydeviceId, localGatherStream, -elementsPerLocationPS[locationId]);
+                copyDataToGpuBufferAsync(localGatherPtr, resultPitch, mydeviceId, localIndicesPtr, numIds, mydeviceId, localGatherStream, -elementsPerLocationPS[locationId]);
 
                 if(debug) cudaDeviceSynchronize(); CUERR;           
 
@@ -923,7 +942,7 @@ public:
 
         if(simpleGatherOnSameDevice){
             if(debug) std::cerr << "simpleGatherOnSameDevice " << resultDeviceId << '\n';
-            copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, resultDeviceId, stream, -elementsPerLocationPS[deviceIdLocation]);
+            copyDataToGpuBufferAsync(d_result, resultPitch, resultDeviceId, d_indices, numIds, resultDeviceId, stream, -elementsPerLocationPS[deviceIdLocation]);
             return;
         }
 
@@ -1106,43 +1125,9 @@ public:
         wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
-    //d_result, d_indices must point to memory of device deviceId. d_indices[i] + indexOffset must be a local element index for this device
-    void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, const Index_t* d_indices, Index_t nIndices, int deviceId, cudaStream_t stream, Index_t indexOffset) const{
-        // assert(resultPitch >= sizeOfElement);
-        assert(resultPitch % sizeof(Value_t) == 0);
 
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        wrapperCudaSetDevice(deviceId); CUERR;
-
-        auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
-        assert(it != deviceIds.end());
-
-        int gpu = std::distance(deviceIds.begin(), it);
-        //size_t sizeOfElement_ = sizeOfElement;
-        size_t numCols = numColumns;
-        size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-
-        const Value_t* const gpuData = dataPtrPerLocation[gpu];
-
-        dim3 block(256,1,1);
-        dim3 grid(std::min(320ul, SDIV(nIndices * numCols, block.x)),1,1);
-
-        generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-                const Index_t outputrow = i / numCols;
-                const Index_t inputrow = d_indices[outputrow] + indexOffset;
-                const Index_t col = i % numCols;
-
-                d_result[size_t(outputrow) * resultPitchValueTs + col] 
-                        = gpuData[size_t(inputrow) * numCols + col];
-            }
-        }); CUERR;
-
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
-    //d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. Gathers array elements of sourceDevice to resultDevice
+    // d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. d_indices[i] + indexOffset. 
+    // Gathers array elements of sourceDevice to resultDevice
     // if resultDevice != sourceDevice, peer access must be enabled
     void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, int resultDevice, const Index_t* d_indices, Index_t nIndices, int sourceDevice, cudaStream_t stream, Index_t indexOffset) const{
         //assert(resultPitch >= sizeOfElement);
@@ -1153,10 +1138,10 @@ public:
         auto it = std::find(deviceIds.begin(), deviceIds.end(), sourceDevice);
         assert(it != deviceIds.end());
 
-        int gpu = std::distance(deviceIds.begin(), it);
+        const int gpu = std::distance(deviceIds.begin(), it);
         //size_t sizeOfElement_ = sizeOfElement;
-        size_t numCols = numColumns;
-        size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
+        const size_t numCols = numColumns;
+        const size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
 
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
 
@@ -1165,22 +1150,27 @@ public:
         dim3 block(256,1,1);
         dim3 grid(std::min(320ul, SDIV(nIndices * numCols, block.x)),1,1);
 
-        generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-                const Index_t outputrow = i / numCols;
-                const Index_t inputrow = d_indices[outputrow] + indexOffset;
-                const Index_t col = i % numCols;
-                d_result[size_t(outputrow) * resultPitchValueTs + col] 
-                        = gpuData[size_t(inputrow) * numCols + col];
-            }
-        }); CUERR;
+        // generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+        //     for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+        //         const Index_t outputrow = i / numCols;
+        //         const Index_t inputrow = d_indices[outputrow] + indexOffset;
+        //         const Index_t col = i % numCols;
+        //         d_result[size_t(outputrow) * resultPitchValueTs + col] 
+        //                 = gpuData[size_t(inputrow) * numCols + col];
+        //     }
+        // }); CUERR;
+
+        distrArrayGatherKernel<<<grid, block, 0, stream>>>(
+            d_result,
+            gpuData,
+            d_indices,
+            nIndices,
+            indexOffset,
+            resultPitchValueTs,
+            numCols
+        ); CUERR;
 
         wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
-    //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
-    void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, const Index_t* d_indices, Index_t nIndices, int deviceId, cudaStream_t stream) const{
-        copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, nIndices, deviceId, stream, 0);
     }
 
     std::vector<Index_t> getPartitions() const{
