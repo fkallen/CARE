@@ -220,14 +220,20 @@ namespace detail{
 
 
         //size is number of elements of type T
-		void resize(size_t newsize){
+        //return true if reallocation occured
+		bool resize(size_t newsize){
+            size_ = newsize;
+
 			if(capacity_ < newsize){
 				Allocator alloc;
 				alloc.deallocate(data_);
 				data_ = alloc.allocate(newsize * allocFactor);
-				capacity_ = newsize * allocFactor;
-			}
-			size_ = newsize;
+                capacity_ = newsize * allocFactor;
+
+                return true;
+			}else{
+                return false;
+            }			
 		}
 
 		T* get() const{
