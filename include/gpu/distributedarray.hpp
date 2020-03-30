@@ -415,7 +415,7 @@ namespace distarraykernels{
                 i += size_t(blockDim.x) * gridDim.x){
 
             const Index_t inputrow = i / params->numCols;
-            const Index_t outputrow = params->indices[outputrow] + params->indexOffset;
+            const Index_t outputrow = params->indices[inputrow] + params->indexOffset;
             const Index_t col = i % params->numCols;
             params->result[size_t(outputrow) * params->resultPitchValueTs + col] 
                     = params->sourceData[size_t(inputrow) * params->numCols + col];
@@ -651,8 +651,8 @@ public:
         std::map<int, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
         std::map<int, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
 
-        std::map<int, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Value_t>>> map_d_prefixsumkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Value_t>>> map_h_prefixsumkernelparams;
+        std::map<int, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
+        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
 
         std::map<int, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
         std::map<int, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
@@ -1219,8 +1219,8 @@ public:
             handle->map_d_splitkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
             handle->map_h_splitkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
 
-            handle->map_d_prefixsumkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Value_t>>(1));
-            handle->map_h_prefixsumkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Value_t>>(1));
+            handle->map_d_prefixsumkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_h_prefixsumkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
 
             handle->map_d_gatherkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
             handle->map_h_gatherkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
@@ -1573,7 +1573,7 @@ public:
             if(elementsPerLocation[hostLocation] == 0){
                 nvtx::push_range("nohostGather", 1);
 
-                gatherElementsInGpuMemAsyncNoHostPartition(
+                gatherElementsInGpuMemAsyncNoHostPartitionWithCudaGraph(
                     forLoop,
                     handle,
                     indices,
@@ -2025,7 +2025,6 @@ public:
         const Index_t* const d_numIds = handle->map_d_numIndices[resultDeviceId].get();
 
         auto& h_destination_partitionSplitKernelParams = handle->map_h_splitkernelparams[resultDeviceId][0];
-        //auto& d_destination_partitionSplitKernelParams = handle->map_d_splitkernelparams[resultDeviceId][0];
 
         h_destination_partitionSplitKernelParams.splitIndices = handle->map_d_indicesForLocationsPointers[resultDeviceId].get();
         h_destination_partitionSplitKernelParams.splitDestinationPositions = handle->map_d_destinationPositionsForLocationsPointers[resultDeviceId].get();
@@ -2058,16 +2057,40 @@ public:
 
             auto& h_gpu_gatherKernelParams = handle->map_h_gatherkernelparams[gpu][0];            
             h_gpu_gatherKernelParams.result = handle->d_gatheredElementsOfGpuLocation[gpu].get();
-            h_gpu_gatherKernelParams.sourceData = dataPtrPerLocation[gpu].get();
+            h_gpu_gatherKernelParams.sourceData = dataPtrPerLocation[gpu];
             h_gpu_gatherKernelParams.indices = d_indicesForLocationsVector[location].get();
             h_gpu_gatherKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
-            h_gpu_gatherKernelParams.indexOffset = elementsPerLocationPS[location];
+            h_gpu_gatherKernelParams.indexOffset = -elementsPerLocationPS[location];
             h_gpu_gatherKernelParams.resultPitchValueTs = numColumns;
             h_gpu_gatherKernelParams.numCols = numColumns;
         }
 
 
 
+                // //gather elements of selected indices
+                // {
+
+                //     //const size_t numCols = numColumns;
+                //     const size_t resultPitchValueTs = numColumns;
+
+                //     const Value_t* const sourceArrayDataPtr = dataPtrPerLocation[gpu];
+                //     const Index_t* const myIndicesPtr = d_indicesForLocationsVector[location].get(); //peer access
+                //     const Index_t* const myNumIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+                //     auto indexOffset = elementsPerLocationPS[location];
+                //     Value_t* outputPtr = myGatherResult.get();
+
+                //     distarraykernels::gatherKernel<Index_t, Value_t><<<SDIV(numIds, 256), 256, 0, gpuStream>>>(
+                //         outputPtr,
+                //         sourceArrayDataPtr,
+                //         myIndicesPtr,
+                //         myNumIndicesPtr,
+                //         -elementsPerLocationPS[location],
+                //         resultPitchValueTs,
+                //         numColumns
+                //     ); CUERR;
+
+                //     cudaEventRecord(gpuEvent, gpuStream); CUERR;
+                // }
 
         
 
@@ -2098,8 +2121,8 @@ public:
 
             cudaMemcpyAsync(
                 handle->map_d_splitkernelparams[resultDeviceId].get(),
-                h_destination_partitionSplitKernelParams.get(),
-                h_destination_partitionSplitKernelParams.sizeInbytes(),
+                handle->map_h_splitkernelparams[resultDeviceId].get(),
+                handle->map_h_splitkernelparams[resultDeviceId].sizeInBytes(),
                 H2D,
                 syncstream
             ); CUERR;
@@ -2110,8 +2133,8 @@ public:
 
             cudaMemcpyAsync(
                 handle->map_d_prefixsumkernelparams[resultDeviceId].get(),
-                h_destination_prefixsumKernelParams.get(),
-                h_destination_prefixsumKernelParams.sizeInbytes(),
+                handle->map_h_prefixsumkernelparams[resultDeviceId].get(),
+                handle->map_h_prefixsumkernelparams[resultDeviceId].sizeInBytes(),
                 H2D,
                 syncstream
             ); CUERR;
@@ -2157,12 +2180,14 @@ public:
                     handle->map_h_gatherkernelparams[gpu].get(),
                     handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
                     H2D,
-                    syncstream
+                    gpuStream
                 ); CUERR;
 
                 distarraykernels::gatherKernel<Index_t, Value_t><<<SDIV(numIds, 256), 256, 0, gpuStream>>>(
                     handle->map_d_gatherkernelparams[gpu].get()
                 ); CUERR;
+
+                cudaEventRecord(gpuEvent, gpuStream); CUERR;
 
                 // //gather elements of selected indices
                 // {
@@ -2185,9 +2210,8 @@ public:
                 //         resultPitchValueTs,
                 //         numColumns
                 //     ); CUERR;
-
-                //     cudaEventRecord(gpuEvent, gpuStream); CUERR;
                 // }
+                // cudaEventRecord(gpuEvent, gpuStream); CUERR;
 
                 wrapperCudaSetDevice(resultDeviceId); CUERR;
 
