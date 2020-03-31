@@ -31,7 +31,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                     int minimum_sequence_length, int maximum_sequence_length){
     assert(minimum_sequence_length <= maximum_sequence_length);
 
-    constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUEqual;
+    constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUEqual; //GPUBlock
 
     int oldId; cudaGetDevice(&oldId); CUERR;
 
