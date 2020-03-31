@@ -2528,13 +2528,13 @@ public:
 
         *pinnedNumIndices = numIds;
 
-        cudaMemcpyAsync(
-            handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
-            handle->h_packedpointersAndNumIndicesArg.get(),
-            handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
-            H2D,
-            syncstream
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
+        //     handle->h_packedpointersAndNumIndicesArg.get(),
+        //     handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
+        //     H2D,
+        //     syncstream
+        // ); CUERR;
 
         constexpr size_t paramsoffset = std::max(
             sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
@@ -2634,7 +2634,7 @@ public:
             handle->h_packedKernelParamsPartPref.get(),
             handle->h_packedKernelParamsPartPref.sizeInBytes(),
             H2D,
-            destination_stream
+            syncstream
         ); CUERR;
 
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -2645,7 +2645,7 @@ public:
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
                     handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
                     H2D,
-                    destination_stream
+                    syncstream
                 ); CUERR;
             }
         }
@@ -2666,20 +2666,20 @@ public:
             handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
             numLocations, 
             Index_t(0), 
-            destination_stream
+            syncstream
         ); CUERR;
 
-        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, destination_stream>>>(
+        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
             //handle->map_d_splitkernelparams[resultDeviceId].get()
             d_partitionsplitkernelParams
         ); CUERR;
 
-        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,destination_stream>>>(
+        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
             //handle->map_d_prefixsumkernelparams[resultDeviceId].get()
             d_pskernelParams
         ); CUERR;
 
-        cudaEventRecord(destination_event, destination_stream); CUERR;
+        cudaEventRecord(destination_event, syncstream); CUERR;
 
         //gather data from gpu partitions into memory of the respective gpu, 
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -2707,9 +2707,9 @@ public:
             if(elementsPerLocation[location] > 0){
                 cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
-                cudaStreamWaitEvent(destination_stream, gpuEvent, 0); CUERR;
+                cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
 
-                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, destination_stream>>>(
+                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                     handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
                 ); CUERR;
             }
