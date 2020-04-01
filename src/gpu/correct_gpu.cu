@@ -3157,13 +3157,11 @@ void correct_gpu(
                 poprange();
             }
 
-
             pushrange("getCandidateAlignments", 2);
 
             getCandidateAlignments(batchData);
 
             poprange();
-
             
 
             pushrange("buildMultipleSequenceAlignment", 5);
