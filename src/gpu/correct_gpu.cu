@@ -1267,6 +1267,50 @@ namespace gpu{
 
     }
 
+    void getQualities(Batch& batch){
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+
+        DataArrays& dataArrays = batch.dataArrays;
+
+		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
+
+        const auto* gpuReadStorage = transFuncData.readStorage;
+
+		if(transFuncData.correctionOptions.useQualityScores) {
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.subjectQualitiesGatherHandle,
+                dataArrays.d_subject_qualities,
+                batch.qualityPitchInBytes,
+                dataArrays.h_subject_read_ids,
+                dataArrays.d_subject_read_ids,
+                batch.n_subjects,
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.candidateQualitiesGatherHandle,
+                dataArrays.d_candidate_qualities,
+                batch.qualityPitchInBytes,
+                dataArrays.h_candidate_read_ids.get(),
+                dataArrays.d_candidate_read_ids.get(),
+                batch.n_queries,
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
+        }
+
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+	}
+
 
 	void getCandidateAlignments(Batch& batch){
 
@@ -1277,60 +1321,15 @@ namespace gpu{
 		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-
-        // {
-        //     const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
-        //     int* d_numIndicesPerAnchor = dataArrays.d_indices_per_subject.get();
-        //     int* d_totalNumIndices = dataArrays.d_num_indices.get();
-        //     generic_kernel<<<4, 256, 0, streams[primary_stream_index]>>>([=] __device__(){
-        //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-        //         const int stride = blockDim.x * gridDim.x;
-
-        //         for(int i = tid; i < *numAnchorsPtr; i += stride){
-        //             d_numIndicesPerAnchor[i] = 0;
-        //         }
-
-        //         if(tid == 0){
-        //             *d_totalNumIndices = 0;
-        //         }
-        //     }); CUERR;
-
-        // }
         
         auto& graphwrap = batch.alignmentGraphs[batch.graphindex];
 
-
         auto run0 = [&](){
             {
-                //int n_queries = batch.n_queries;
-                //int n_anchors = batch.n_subjects;
                 const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
                 int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
                 int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
                 int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
-
-                // generic_kernel
-                //     <<<1024, 128, 0, streams[primary_stream_index]>>>
-                // ([=] __device__ {
-                //     for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += 1024){
-                //         const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
-                //         const int numCandidatesOfAnchor = d_candidates_per_subject[anchorIndex];
-                //         int* const beginptr = &d_anchorIndicesOfCandidates[offset];
-
-                //         for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += 128){
-                //             beginptr[localindex] = anchorIndex;
-                //         }
-                //     }
-                    
-                // });
-
-                // setAnchorIndicesOfCandidateskernel<1024, 128>
-                //         <<<1024, 128, 0, streams[primary_stream_index]>>>(
-                //     d_anchorIndicesOfCandidates,
-                //     numAnchorsPtr,
-                //     d_candidates_per_subject,
-                //     d_candidates_per_subject_prefixsum
-                // );
 
                 setAnchorIndicesOfCandidateskernel<1024, 128>
                         <<<1024, 128, 0, streams[primary_stream_index]>>>(
@@ -1411,71 +1410,10 @@ namespace gpu{
         };
 
         auto run = [&](){
-
-            
-            std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
-            
-            call_popcount_shifted_hamming_distance_kernel_async(
-                        dataArrays.d_tempstorage.get(),
-                        tempBytes,
-                        dataArrays.d_alignment_overlaps.get(),
-                        dataArrays.d_alignment_shifts.get(),
-                        dataArrays.d_alignment_nOps.get(),
-                        dataArrays.d_alignment_isValid.get(),
-                        dataArrays.d_alignment_best_alignment_flags.get(),
-                        dataArrays.d_subject_sequences_data.get(),
-                        dataArrays.d_candidate_sequences_data.get(),
-                        dataArrays.d_subject_sequences_lengths.get(),
-                        dataArrays.d_candidate_sequences_lengths.get(),
-                        dataArrays.d_candidates_per_subject_prefixsum.get(),
-                        dataArrays.h_candidates_per_subject.get(),
-                        dataArrays.d_candidates_per_subject.get(),
-                        dataArrays.d_anchorIndicesOfCandidates.get(),
-                        dataArrays.d_numAnchors.get(),
-                        dataArrays.d_numCandidates.get(),
-                        batch.n_subjects,
-                        batch.n_queries,
-                        transFuncData.sequenceFileProperties.maxSequenceLength,
-                        batch.encodedSequencePitchInInts,
-                        transFuncData.goodAlignmentProperties.min_overlap,
-                        transFuncData.goodAlignmentProperties.maxErrorRate,
-                        transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                        transFuncData.correctionOptions.estimatedErrorrate,
-                        //batch.maxSubjectLength,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
-
-            //choose the most appropriate subset of alignments from the good alignments.
-            //This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
-
-            call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                        dataArrays.getDeviceAlignmentResultPointers(),
-                        dataArrays.d_candidates_per_subject_prefixsum.get(),
-                        dataArrays.d_numAnchors.get(),
-                        dataArrays.d_numCandidates.get(),
-                        batch.n_subjects,
-                        batch.n_queries,
-                        transFuncData.correctionOptions.estimatedErrorrate,
-                        transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
-
-
-            callSelectIndicesOfGoodCandidatesKernelAsync(
-                dataArrays.d_indices.get(),
-                dataArrays.d_indices_per_subject.get(),
-                dataArrays.d_num_indices.get(),
-                dataArrays.d_alignment_best_alignment_flags.get(),
-                dataArrays.d_candidates_per_subject.get(),
-                dataArrays.d_candidates_per_subject_prefixsum.get(),
-                dataArrays.d_anchorIndicesOfCandidates.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
-                batch.n_subjects,
-                batch.n_queries,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle
-            );
+            run0();
+            run1();
+            run2();
+            run3();
         };
 
         if(!graphwrap.valid){
@@ -1494,9 +1432,9 @@ namespace gpu{
             cudaStreamBeginCapture(streams[primary_stream_index], cudaStreamCaptureModeRelaxed); CUERR;
 
             run0();
-            // run1();
-            // run2();
-            //run3();
+            run1();
+            run2();
+            run3();
 
             cudaGraph_t graph;
             cudaStreamEndCapture(streams[primary_stream_index], &graph); CUERR;
@@ -1537,10 +1475,10 @@ namespace gpu{
         //run();
         cudaGraphLaunch(graphwrap.execgraph, streams[primary_stream_index]); CUERR;
         //run0();
-        run1();
-        run2();
-        run3();
-        //cudaGraphLaunch(batch.alignmentGraph.execgraph, streams[primary_stream_index]); CUERR;
+        // run1();
+        // run2();
+        // run3();
+
 
 
         // cudaMemcpyAsync(dataArrays.h_num_indices,
@@ -1555,67 +1493,6 @@ namespace gpu{
 	}
 
 
-    void getQualities(Batch& batch){
-
-        cudaSetDevice(batch.deviceId); CUERR;
-
-        const auto& transFuncData = *batch.transFuncData;
-
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-
-        DataArrays& dataArrays = batch.dataArrays;
-
-		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-
-        const auto* gpuReadStorage = transFuncData.readStorage;
-
-		if(transFuncData.correctionOptions.useQualityScores) {
-
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                batch.threadPool,
-                batch.subjectQualitiesGatherHandle,
-                dataArrays.d_subject_qualities,
-                batch.qualityPitchInBytes,
-                dataArrays.h_subject_read_ids,
-                dataArrays.d_subject_read_ids,
-                batch.n_subjects,
-                batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
-
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                batch.threadPool,
-                batch.candidateQualitiesGatherHandle,
-                dataArrays.d_candidate_qualities,
-                batch.qualityPitchInBytes,
-                dataArrays.h_candidate_read_ids.get(),
-                dataArrays.d_candidate_read_ids.get(),
-                batch.n_queries,
-                batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
-
-            cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
-
-            // cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-
-            // cudaMemcpyAsync(dataArrays.h_subject_qualities,
-            //                 dataArrays.d_subject_qualities,
-            //                 dataArrays.d_subject_qualities.sizeInBytes(),
-            //                 D2H,
-            //                 streams[secondary_stream_index]);
-
-            // cudaMemcpyAsync(dataArrays.h_candidate_qualities,
-            //                 dataArrays.d_candidate_qualities,
-            //                 dataArrays.d_candidate_qualities.sizeInBytes(),
-            //                 D2H,
-            //                 streams[secondary_stream_index]);
-        }
-
-        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-	}
-
-
     void buildMultipleSequenceAlignment(Batch& batch){
 
         cudaSetDevice(batch.deviceId); CUERR;
@@ -1626,10 +1503,6 @@ namespace gpu{
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         DataArrays& dataArrays = batch.dataArrays;
-
-        // if(transFuncData.correctionOptions.useQualityScores){
-		//      cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-        // }
 
 		const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
         //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
@@ -1676,7 +1549,6 @@ namespace gpu{
         //batch.dataArrays.copyEverythingToHostForDebugging();
 
         //At this point the msa is built
-        cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 	}
@@ -2017,8 +1889,6 @@ namespace gpu{
 
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
-
-        cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
     }
