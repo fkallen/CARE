@@ -75,6 +75,35 @@
 namespace care{
 namespace gpu{
 
+
+    template<int gridsize, int blocksize>
+    __global__
+    void setAnchorIndicesOfCandidateskernel(
+        int* __restrict__ d_anchorIndicesOfCandidates,
+        const int* __restrict__ numAnchorsPtr,
+        const int* __restrict__ d_candidates_per_subject,
+        const int* __restrict__ d_candidates_per_subject_prefixsum
+    ){
+        for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += gridsize){
+            const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
+            const int numCandidatesOfAnchor = d_candidates_per_subject[anchorIndex];
+            int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+
+            for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += blocksize){
+                beginptr[localindex] = anchorIndex;
+            }
+        }
+    }
+
+
+
+
+
+
+
+
+
+
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
@@ -160,6 +189,8 @@ namespace gpu{
         SimpleAllocationDevice<std::uint64_t> d_minhashSignaturesTransposed;
         SimpleAllocationDevice<unsigned int> d_subject_sequences_data_transposed;
 
+        bool reallocOccurred = false;
+
         int n_subjects = -1;
         std::atomic<int> n_queries{-1};
 
@@ -240,6 +271,17 @@ namespace gpu{
         } 
     };
 
+    struct CudaGraph{
+        bool valid = false;
+        int numAnchors = 0;
+        int numCandidates = 0;
+        cudaGraphExec_t execgraph = nullptr;
+        int* d_anchorIndicesOfCandidates;
+        int* d_numAnchors;
+        int* d_candidates_per_subject;
+        int* d_candidates_per_subject_prefixsum;
+    };
+
 
     struct Batch {
         Batch() = default;
@@ -283,6 +325,9 @@ namespace gpu{
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
 
+        bool reallocResize = false;
+        bool reallocInNextIterationData = false;
+
         int encodedSequencePitchInInts;
         int decodedSequencePitchInBytes;
         int qualityPitchInBytes;
@@ -297,11 +342,16 @@ namespace gpu{
 
         int max_n_queries = 0;
 
+        int graphindex = 0;
+        std::array<CudaGraph,2> alignmentGraphs;
+
 		void reset(){
             combinedStreams = false;
             n_subjects = 0;
             n_queries = 0;
             hasUnprocessedResults = false;
+            reallocResize = false;
+            reallocInNextIterationData = false;
         }
 
         void updateFromIterationData(NextIterationData& data){
@@ -332,6 +382,12 @@ namespace gpu{
             data.n_subjects = 0;
             data.n_queries = 0;
             data.decodedSubjectStrings.clear();
+
+
+            reallocInNextIterationData = data.reallocOccurred;
+            data.reallocOccurred = false;
+
+            graphindex = 1 - graphindex;
         }
 
         void moveResultsToOutputData(OutputData& outputData){
@@ -459,15 +515,15 @@ namespace gpu{
 
         cudaSetDevice(nextData.deviceId); CUERR;
 
-        nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
-        nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
-        //nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
-        nextData.h_subject_sequences_lengths.resize(batchsize);
-        nextData.d_subject_sequences_lengths.resize(batchsize);
-        nextData.h_subject_read_ids.resize(batchsize);
-        nextData.d_subject_read_ids.resize(batchsize);
-        //nextData.h_anchorContainsN.resize(batchsize);
-        nextData.d_anchorContainsN.resize(batchsize);        
+        nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        //nextData.reallocOccurred |= nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.reallocOccurred |= nextData.h_subject_sequences_lengths.resize(batchsize);
+        nextData.reallocOccurred |= nextData.d_subject_sequences_lengths.resize(batchsize);
+        nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
+        nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
+        //nextData.reallocOccurred |= nextData.h_anchorContainsN.resize(batchsize);
+        nextData.reallocOccurred |= nextData.d_anchorContainsN.resize(batchsize);        
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
@@ -556,8 +612,8 @@ namespace gpu{
         const int kmerSize = batchData.transFuncData->minhashOptions.k;
         const int numHashFunctions = minhasherPtr->minparams.maps;
 
-        nextData.h_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
-        nextData.d_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
+        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
+        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
 
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
@@ -609,15 +665,15 @@ namespace gpu{
             idsPerChunkPrefixSum[i+1] = totalNumIds;
         }
 
-        nextData.h_candidate_read_ids.resize(totalNumIds);
-        nextData.d_candidate_read_ids.resize(totalNumIds);
-        nextData.d_candidate_read_ids_tmp.resize(totalNumIds);
-        nextData.h_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.d_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        //nextData.h_candidateContainsN.resize(totalNumIds);
-        nextData.d_candidateContainsN.resize(totalNumIds);
+        nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(totalNumIds);
+        nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(totalNumIds);
+        nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(totalNumIds);
+        nextData.reallocOccurred |= nextData.h_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.reallocOccurred |= nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        //nextData.reallocOccurred |= nextData.h_candidateContainsN.resize(totalNumIds);
+        nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(totalNumIds);
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
             nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
@@ -689,10 +745,10 @@ namespace gpu{
 
         nextData.n_queries = nextData.h_candidates_per_subject_prefixsum[nextData.n_subjects];
 
-        nextData.h_candidate_read_ids.resize(nextData.n_queries);
-        nextData.d_candidate_read_ids.resize(nextData.n_queries);
+        nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(nextData.n_queries);
+        nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(nextData.n_queries);
 
-        nextData.d_candidateContainsN.resize(nextData.n_queries);
+        nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(nextData.n_queries);
 
         cudaMemcpyAsync(
             nextData.h_candidate_read_ids.get(),
@@ -724,7 +780,7 @@ namespace gpu{
 
         
 
-        //nextData.h_candidateContainsN.resize(nextData.n_queries);
+        //nextData.reallocOccurred |= nextData.h_candidateContainsN.resize(nextData.n_queries);
 
         // cudaMemcpyAsync(
         //     nextData.h_candidateContainsN,
@@ -852,142 +908,142 @@ namespace gpu{
         //d_subject_read_ids, d_candidate_read_ids
 
 
-        dataArrays.h_numAnchors.resize(1);
-        dataArrays.h_numCandidates.resize(1);
-        dataArrays.d_numAnchors.resize(1);
-        dataArrays.d_numCandidates.resize(1);
+        batchData.reallocResize |= dataArrays.h_numAnchors.resize(1);
+        batchData.reallocResize |= dataArrays.h_numCandidates.resize(1);
+        batchData.reallocResize |= dataArrays.d_numAnchors.resize(1);
+        batchData.reallocResize |= dataArrays.d_numCandidates.resize(1);
 
 
-        dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
-        dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
-        dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
-        dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
-        dataArrays.h_anchorIndicesOfCandidates.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+        batchData.reallocResize |= dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+        batchData.reallocResize |= dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_anchorIndicesOfCandidates.resize(batchData.n_queries);
 
-        dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
-        dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
-        dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
-        dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
-        dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
-        dataArrays.d_anchorIndicesOfCandidates.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
+        batchData.reallocResize |= dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+        batchData.reallocResize |= dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+        batchData.reallocResize |= dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_anchorIndicesOfCandidates.resize(batchData.n_queries);
 
         
 
         //alignment output
 
-        dataArrays.h_alignment_scores.resize(2*batchData.n_queries);
-        dataArrays.h_alignment_overlaps.resize(2*batchData.n_queries);
-        dataArrays.h_alignment_shifts.resize(2*batchData.n_queries);
-        dataArrays.h_alignment_nOps.resize(2*batchData.n_queries);
-        dataArrays.h_alignment_isValid.resize(2*batchData.n_queries);
-        dataArrays.h_alignment_best_alignment_flags.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_scores.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_overlaps.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_shifts.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_nOps.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_isValid.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_alignment_best_alignment_flags.resize(batchData.n_queries);
 
-        dataArrays.d_alignment_scores.resize(2*batchData.n_queries);
-        dataArrays.d_alignment_overlaps.resize(2*batchData.n_queries);
-        dataArrays.d_alignment_shifts.resize(2*batchData.n_queries);
-        dataArrays.d_alignment_nOps.resize(2*batchData.n_queries);
-        dataArrays.d_alignment_isValid.resize(2*batchData.n_queries);
-        dataArrays.d_alignment_best_alignment_flags.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_scores.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_overlaps.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_shifts.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_nOps.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_isValid.resize(2*batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_alignment_best_alignment_flags.resize(batchData.n_queries);
 
         // candidate indices
 
-        dataArrays.h_indices.resize(batchData.n_queries);
-        dataArrays.h_indices_per_subject.resize(batchData.n_subjects);
-        dataArrays.h_num_indices.resize(1);
+        batchData.reallocResize |= dataArrays.h_indices.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_indices_per_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_num_indices.resize(1);
 
-        dataArrays.d_indices.resize(batchData.n_queries);
-        dataArrays.d_indices_per_subject.resize(batchData.n_subjects);
-        dataArrays.d_num_indices.resize(1);
-        dataArrays.d_indices_tmp.resize(batchData.n_queries);
-        dataArrays.d_indices_per_subject_tmp.resize(batchData.n_subjects);
-        dataArrays.d_num_indices_tmp.resize(1);
+        batchData.reallocResize |= dataArrays.d_indices.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_indices_per_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_indices.resize(1);
+        batchData.reallocResize |= dataArrays.d_indices_tmp.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_indices_per_subject_tmp.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_indices_tmp.resize(1);
 
-        dataArrays.h_indices_of_corrected_subjects.resize(batchData.n_subjects);
-        dataArrays.h_num_indices_of_corrected_subjects.resize(1);
-        dataArrays.d_indices_of_corrected_subjects.resize(batchData.n_subjects);
-        dataArrays.d_num_indices_of_corrected_subjects.resize(1);
+        batchData.reallocResize |= dataArrays.h_indices_of_corrected_subjects.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_num_indices_of_corrected_subjects.resize(1);
+        batchData.reallocResize |= dataArrays.d_indices_of_corrected_subjects.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_indices_of_corrected_subjects.resize(1);
 
-        dataArrays.h_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
-        dataArrays.h_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
-        dataArrays.h_anchorContainsN.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
+        batchData.reallocResize |= dataArrays.h_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_anchorContainsN.resize(batchData.n_subjects);
 
-        dataArrays.d_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
-        dataArrays.d_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
-        dataArrays.d_anchorContainsN.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
+        batchData.reallocResize |= dataArrays.d_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_anchorContainsN.resize(batchData.n_subjects);
 
-        dataArrays.h_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
-        dataArrays.h_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
-        dataArrays.h_candidateContainsN.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
+        batchData.reallocResize |= dataArrays.h_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_candidateContainsN.resize(batchData.n_queries);
 
-        dataArrays.d_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
-        dataArrays.d_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
-        dataArrays.d_candidateContainsN.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
+        batchData.reallocResize |= dataArrays.d_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_candidateContainsN.resize(batchData.n_queries);
      
 
         //qualitiy scores
         if(transFuncData.correctionOptions.useQualityScores) {
-            dataArrays.h_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
-            dataArrays.h_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+            batchData.reallocResize |= dataArrays.h_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
+            batchData.reallocResize |= dataArrays.h_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
 
-            dataArrays.d_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
-            dataArrays.d_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
-            dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+            batchData.reallocResize |= dataArrays.d_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
+            batchData.reallocResize |= dataArrays.d_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+            batchData.reallocResize |= dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * batchData.qualityPitchInBytes);
             
         }
 
 
         //correction results
 
-        dataArrays.h_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
-        dataArrays.h_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
-        dataArrays.h_num_corrected_candidates_per_anchor.resize(batchData.n_subjects);
-        dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.resize(batchData.n_subjects);
-        dataArrays.h_num_total_corrected_candidates.resize(1);
-        dataArrays.h_subject_is_corrected.resize(batchData.n_subjects);
-        dataArrays.h_indices_of_corrected_candidates.resize(batchData.n_queries);
-        dataArrays.h_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
-        dataArrays.h_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
+        batchData.reallocResize |= dataArrays.h_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
+        batchData.reallocResize |= dataArrays.h_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
+        batchData.reallocResize |= dataArrays.h_num_corrected_candidates_per_anchor.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_num_total_corrected_candidates.resize(1);
+        batchData.reallocResize |= dataArrays.h_subject_is_corrected.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_indices_of_corrected_candidates.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.h_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
         
-        dataArrays.d_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
-        dataArrays.d_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
-        dataArrays.d_num_corrected_candidates_per_anchor.resize(batchData.n_subjects);
-        dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.resize(batchData.n_subjects);
-        dataArrays.d_num_total_corrected_candidates.resize(1);
-        dataArrays.d_subject_is_corrected.resize(batchData.n_subjects);
-        dataArrays.d_indices_of_corrected_candidates.resize(batchData.n_queries);
-        dataArrays.d_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
-        dataArrays.d_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
+        batchData.reallocResize |= dataArrays.d_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
+        batchData.reallocResize |= dataArrays.d_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
+        batchData.reallocResize |= dataArrays.d_num_corrected_candidates_per_anchor.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_total_corrected_candidates.resize(1);
+        batchData.reallocResize |= dataArrays.d_subject_is_corrected.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_indices_of_corrected_candidates.resize(batchData.n_queries);
+        batchData.reallocResize |= dataArrays.d_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
 
-        dataArrays.h_is_high_quality_subject.resize(batchData.n_subjects);
-        dataArrays.h_high_quality_subject_indices.resize(batchData.n_subjects);
-        dataArrays.h_num_high_quality_subject_indices.resize(1);
+        batchData.reallocResize |= dataArrays.h_is_high_quality_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_high_quality_subject_indices.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_num_high_quality_subject_indices.resize(1);
 
-        dataArrays.d_is_high_quality_subject.resize(batchData.n_subjects);
-        dataArrays.d_high_quality_subject_indices.resize(batchData.n_subjects);
-        dataArrays.d_num_high_quality_subject_indices.resize(1);
+        batchData.reallocResize |= dataArrays.d_is_high_quality_subject.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_high_quality_subject_indices.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_num_high_quality_subject_indices.resize(1);
 
         //multiple sequence alignment
 
-        dataArrays.h_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
-        dataArrays.h_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.h_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.h_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.h_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.h_msa_column_properties.resize(batchData.n_subjects);
-        dataArrays.h_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
-        dataArrays.h_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
+        batchData.reallocResize |= dataArrays.h_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_msa_column_properties.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.h_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.h_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
 
-        dataArrays.d_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
-        dataArrays.d_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.d_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.d_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.d_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
-        dataArrays.d_msa_column_properties.resize(batchData.n_subjects);
-        dataArrays.d_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
-        dataArrays.d_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
+        batchData.reallocResize |= dataArrays.d_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_msa_column_properties.resize(batchData.n_subjects);
+        batchData.reallocResize |= dataArrays.d_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+        batchData.reallocResize |= dataArrays.d_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
 
 
-        dataArrays.d_canExecute.resize(1);
+        batchData.reallocResize |= dataArrays.d_canExecute.resize(1);
 
         nvtx::pop_range();
 
@@ -1072,7 +1128,30 @@ namespace gpu{
                     streams[primary_stream_index],
                     batchData.kernelLaunchHandle);
         
-        dataArrays.d_tempstorage.resize(popcountShdTempBytes);
+        batchData.reallocResize |= dataArrays.d_tempstorage.resize(popcountShdTempBytes);
+
+        if(batchData.reallocResize){
+            //invalidate all graphs
+            for(int i = 0; i < 2; i++){
+                batchData.alignmentGraphs[i].valid = false;
+            }
+        }else{
+            if(batchData.reallocInNextIterationData){
+                //invalidate current graph
+                batchData.alignmentGraphs[batchData.graphindex].valid = false;
+            }else{
+                ; //all good
+            }
+        }
+
+        // if(batchData.reallocResize){
+        //     auto& graph = batchData.alignmentGraphs[batchData.graphindex];
+
+        //     graph.d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
+        //     graph.d_numAnchors = dataArrays.d_numAnchors.get();
+        //     graph.d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
+        //     graph.d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+        // }
         
         {
             int numAnchors = batchData.n_subjects;
@@ -1199,92 +1278,270 @@ namespace gpu{
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        {
-            //int n_queries = batch.n_queries;
-            int n_anchors = batch.n_subjects;
-            int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
-            int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
-            int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+        // {
+        //     const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
+        //     int* d_numIndicesPerAnchor = dataArrays.d_indices_per_subject.get();
+        //     int* d_totalNumIndices = dataArrays.d_num_indices.get();
+        //     generic_kernel<<<4, 256, 0, streams[primary_stream_index]>>>([=] __device__(){
+        //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        //         const int stride = blockDim.x * gridDim.x;
 
-            generic_kernel
-                <<<1024, 128, 0, streams[primary_stream_index]>>>
-            ([=] __device__ {
-                for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += 1024){
-                    const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
-                    const int numCandidatesOfAnchor = d_candidates_per_subject[anchorIndex];
-                    int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+        //         for(int i = tid; i < *numAnchorsPtr; i += stride){
+        //             d_numIndicesPerAnchor[i] = 0;
+        //         }
 
-                    for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += 128){
-                        beginptr[localindex] = anchorIndex;
-                    }
-                }
-                
-            });
-        }
+        //         if(tid == 0){
+        //             *d_totalNumIndices = 0;
+        //         }
+        //     }); CUERR;
+
+        // }
         
-        std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
-        
-        call_popcount_shifted_hamming_distance_kernel_async(
-                    dataArrays.d_tempstorage.get(),
-                    tempBytes,
-                    dataArrays.d_alignment_overlaps.get(),
-                    dataArrays.d_alignment_shifts.get(),
-                    dataArrays.d_alignment_nOps.get(),
-                    dataArrays.d_alignment_isValid.get(),
-                    dataArrays.d_alignment_best_alignment_flags.get(),
-                    dataArrays.d_subject_sequences_data.get(),
-                    dataArrays.d_candidate_sequences_data.get(),
-                    dataArrays.d_subject_sequences_lengths.get(),
-                    dataArrays.d_candidate_sequences_lengths.get(),
-                    dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    dataArrays.h_candidates_per_subject.get(),
-                    dataArrays.d_candidates_per_subject.get(),
-                    dataArrays.d_anchorIndicesOfCandidates.get(),
+        auto& graphwrap = batch.alignmentGraphs[batch.graphindex];
+
+
+        auto run0 = [&](){
+            {
+                //int n_queries = batch.n_queries;
+                //int n_anchors = batch.n_subjects;
+                const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
+                int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
+                int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
+                int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+
+                // generic_kernel
+                //     <<<1024, 128, 0, streams[primary_stream_index]>>>
+                // ([=] __device__ {
+                //     for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += 1024){
+                //         const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
+                //         const int numCandidatesOfAnchor = d_candidates_per_subject[anchorIndex];
+                //         int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+
+                //         for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += 128){
+                //             beginptr[localindex] = anchorIndex;
+                //         }
+                //     }
+                    
+                // });
+
+                // setAnchorIndicesOfCandidateskernel<1024, 128>
+                //         <<<1024, 128, 0, streams[primary_stream_index]>>>(
+                //     d_anchorIndicesOfCandidates,
+                //     numAnchorsPtr,
+                //     d_candidates_per_subject,
+                //     d_candidates_per_subject_prefixsum
+                // );
+
+                setAnchorIndicesOfCandidateskernel<1024, 128>
+                        <<<1024, 128, 0, streams[primary_stream_index]>>>(
+                            dataArrays.d_anchorIndicesOfCandidates.get(),
                     dataArrays.d_numAnchors.get(),
-                    dataArrays.d_numCandidates.get(),
-                    batch.n_subjects,
-                    batch.n_queries,
-                    transFuncData.sequenceFileProperties.maxSequenceLength,
-                    batch.encodedSequencePitchInInts,
-                    transFuncData.goodAlignmentProperties.min_overlap,
-                    transFuncData.goodAlignmentProperties.maxErrorRate,
-                    transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                    transFuncData.correctionOptions.estimatedErrorrate,
-                    //batch.maxSubjectLength,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
+                    dataArrays.d_candidates_per_subject.get(),
+                    dataArrays.d_candidates_per_subject_prefixsum.get()
+                );
+            }
+        };
 
-		//choose the most appropriate subset of alignments from the good alignments.
-		//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
+        auto run1 = [&](){
+            std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
 
-		call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-					dataArrays.getDeviceAlignmentResultPointers(),
-					dataArrays.d_candidates_per_subject_prefixsum.get(),
-					dataArrays.d_numAnchors.get(),
-                    dataArrays.d_numCandidates.get(),
-                    batch.n_subjects,
-                    batch.n_queries,
-					transFuncData.correctionOptions.estimatedErrorrate,
-					transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
-					streams[primary_stream_index],
-					batch.kernelLaunchHandle);
+            call_popcount_shifted_hamming_distance_kernel_async(
+                dataArrays.d_tempstorage.get(),
+                tempBytes,
+                dataArrays.d_alignment_overlaps.get(),
+                dataArrays.d_alignment_shifts.get(),
+                dataArrays.d_alignment_nOps.get(),
+                dataArrays.d_alignment_isValid.get(),
+                dataArrays.d_alignment_best_alignment_flags.get(),
+                dataArrays.d_subject_sequences_data.get(),
+                dataArrays.d_candidate_sequences_data.get(),
+                dataArrays.d_subject_sequences_lengths.get(),
+                dataArrays.d_candidate_sequences_lengths.get(),
+                dataArrays.d_candidates_per_subject_prefixsum.get(),
+                dataArrays.h_candidates_per_subject.get(),
+                dataArrays.d_candidates_per_subject.get(),
+                dataArrays.d_anchorIndicesOfCandidates.get(),
+                dataArrays.d_numAnchors.get(),
+                dataArrays.d_numCandidates.get(),
+                batch.n_subjects,
+                batch.n_queries,
+                transFuncData.sequenceFileProperties.maxSequenceLength,
+                batch.encodedSequencePitchInInts,
+                transFuncData.goodAlignmentProperties.min_overlap,
+                transFuncData.goodAlignmentProperties.maxErrorRate,
+                transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                transFuncData.correctionOptions.estimatedErrorrate,
+                //batch.maxSubjectLength,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle
+            );
+        };
+
+        auto run2 = [&](){
+            call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                dataArrays.getDeviceAlignmentResultPointers(),
+                dataArrays.d_candidates_per_subject_prefixsum.get(),
+                dataArrays.d_numAnchors.get(),
+                dataArrays.d_numCandidates.get(),
+                batch.n_subjects,
+                batch.n_queries,
+                transFuncData.correctionOptions.estimatedErrorrate,
+                transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle
+            );
+        };
+
+        auto run3 = [&](){
+            callSelectIndicesOfGoodCandidatesKernelAsync(
+                dataArrays.d_indices.get(),
+                dataArrays.d_indices_per_subject.get(),
+                dataArrays.d_num_indices.get(),
+                dataArrays.d_alignment_best_alignment_flags.get(),
+                dataArrays.d_candidates_per_subject.get(),
+                dataArrays.d_candidates_per_subject_prefixsum.get(),
+                dataArrays.d_anchorIndicesOfCandidates.get(),
+                dataArrays.d_numAnchors.get(),
+                dataArrays.d_numCandidates.get(),
+                batch.n_subjects,
+                batch.n_queries,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle
+            );
+        };
+
+        auto run = [&](){
+
+            
+            std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
+            
+            call_popcount_shifted_hamming_distance_kernel_async(
+                        dataArrays.d_tempstorage.get(),
+                        tempBytes,
+                        dataArrays.d_alignment_overlaps.get(),
+                        dataArrays.d_alignment_shifts.get(),
+                        dataArrays.d_alignment_nOps.get(),
+                        dataArrays.d_alignment_isValid.get(),
+                        dataArrays.d_alignment_best_alignment_flags.get(),
+                        dataArrays.d_subject_sequences_data.get(),
+                        dataArrays.d_candidate_sequences_data.get(),
+                        dataArrays.d_subject_sequences_lengths.get(),
+                        dataArrays.d_candidate_sequences_lengths.get(),
+                        dataArrays.d_candidates_per_subject_prefixsum.get(),
+                        dataArrays.h_candidates_per_subject.get(),
+                        dataArrays.d_candidates_per_subject.get(),
+                        dataArrays.d_anchorIndicesOfCandidates.get(),
+                        dataArrays.d_numAnchors.get(),
+                        dataArrays.d_numCandidates.get(),
+                        batch.n_subjects,
+                        batch.n_queries,
+                        transFuncData.sequenceFileProperties.maxSequenceLength,
+                        batch.encodedSequencePitchInInts,
+                        transFuncData.goodAlignmentProperties.min_overlap,
+                        transFuncData.goodAlignmentProperties.maxErrorRate,
+                        transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                        transFuncData.correctionOptions.estimatedErrorrate,
+                        //batch.maxSubjectLength,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
+
+            //choose the most appropriate subset of alignments from the good alignments.
+            //This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
+
+            call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                        dataArrays.getDeviceAlignmentResultPointers(),
+                        dataArrays.d_candidates_per_subject_prefixsum.get(),
+                        dataArrays.d_numAnchors.get(),
+                        dataArrays.d_numCandidates.get(),
+                        batch.n_subjects,
+                        batch.n_queries,
+                        transFuncData.correctionOptions.estimatedErrorrate,
+                        transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
 
 
-        callSelectIndicesOfGoodCandidatesKernelAsync(
-            dataArrays.d_indices.get(),
-            dataArrays.d_indices_per_subject.get(),
-            dataArrays.d_num_indices.get(),
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_candidates_per_subject.get(),
-            dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
-            dataArrays.d_numAnchors.get(),
-            dataArrays.d_numCandidates.get(),
-            batch.n_subjects,
-            batch.n_queries,
-            streams[primary_stream_index],
-			batch.kernelLaunchHandle
-        );
+            callSelectIndicesOfGoodCandidatesKernelAsync(
+                dataArrays.d_indices.get(),
+                dataArrays.d_indices_per_subject.get(),
+                dataArrays.d_num_indices.get(),
+                dataArrays.d_alignment_best_alignment_flags.get(),
+                dataArrays.d_candidates_per_subject.get(),
+                dataArrays.d_candidates_per_subject_prefixsum.get(),
+                dataArrays.d_anchorIndicesOfCandidates.get(),
+                dataArrays.d_numAnchors.get(),
+                dataArrays.d_numCandidates.get(),
+                batch.n_subjects,
+                batch.n_queries,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle
+            );
+        };
+
+        if(!graphwrap.valid){
+            std::cerr << "rebuild alignmentgraph\n";
+
+            graphwrap.d_numAnchors = dataArrays.d_numAnchors.get();
+            graphwrap.d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
+            graphwrap.d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
+            graphwrap.d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+    
+
+            if(graphwrap.execgraph != nullptr){
+                cudaGraphExecDestroy(graphwrap.execgraph); CUERR;
+            }
+            
+            cudaStreamBeginCapture(streams[primary_stream_index], cudaStreamCaptureModeRelaxed); CUERR;
+
+            run0();
+            // run1();
+            // run2();
+            //run3();
+
+            cudaGraph_t graph;
+            cudaStreamEndCapture(streams[primary_stream_index], &graph); CUERR;
+            
+            cudaGraphExec_t execGraph;
+            cudaGraphNode_t errorNode;
+            auto logBuffer = std::make_unique<char[]>(1025);
+            std::fill_n(logBuffer.get(), 1025, 0);
+            cudaError_t status = cudaGraphInstantiate(&execGraph, graph, &errorNode, logBuffer.get(), 1025);
+            if(status != cudaSuccess){
+                if(logBuffer[1024] != '\0'){
+                    std::cerr << "cudaGraphInstantiate: truncated error message: ";
+                    std::copy_n(logBuffer.get(), 1025, std::ostream_iterator<char>(std::cerr, ""));
+                    std::cerr << "\n";
+                }else{
+                    std::cerr << "cudaGraphInstantiate: error message: ";
+                    std::cerr << logBuffer.get();
+                    std::cerr << "\n";
+                }
+                CUERR;
+            }            
+
+            cudaGraphDestroy(graph); CUERR;
+
+            graphwrap.execgraph = execGraph;
+
+            graphwrap.valid = true;
+        }
+
+        assert(graphwrap.valid);
+
+        assert(graphwrap.d_numAnchors == dataArrays.d_numAnchors.get());
+        assert(graphwrap.d_anchorIndicesOfCandidates == dataArrays.d_anchorIndicesOfCandidates.get());
+        assert(graphwrap.d_candidates_per_subject == dataArrays.d_candidates_per_subject.get());
+        assert(graphwrap.d_candidates_per_subject_prefixsum == dataArrays.d_candidates_per_subject_prefixsum.get());
+
+
+        //run();
+        cudaGraphLaunch(graphwrap.execgraph, streams[primary_stream_index]); CUERR;
+        //run0();
+        run1();
+        run2();
+        run3();
+        //cudaGraphLaunch(batch.alignmentGraph.execgraph, streams[primary_stream_index]); CUERR;
+
 
         // cudaMemcpyAsync(dataArrays.h_num_indices,
         //                 dataArrays.d_num_indices,
@@ -3053,6 +3310,12 @@ void correct_gpu(
     
             batchData.dataArrays.reset();
             destroyNextIterationData(batchData.nextIterationData);
+
+            for(int i = 0; i < 2; i++){
+                if(batchData.alignmentGraphs[i].execgraph != nullptr){
+                    cudaGraphExecDestroy(batchData.alignmentGraphs[i].execgraph); CUERR;
+                }
+            }
     
             for(auto& stream : batchData.streams) {
                 cudaStreamDestroy(stream); CUERR;
