@@ -476,7 +476,8 @@ void callConversionKernel2BitTo2BitHiLoNN(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
+    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
+    dim3 grid(max_blocks_per_device, 1, 1);
 
     convert2BitTo2BitHiloKernelNN<groupsize><<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -558,7 +559,8 @@ void callConversionKernel2BitTo2BitHiLoNT(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
+    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(max_blocks_per_device, 1, 1);
 
     convert2BitTo2BitHiloKernelNT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -640,7 +642,8 @@ void callConversionKernel2BitTo2BitHiLoTT(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
+    //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
+    dim3 grid(max_blocks_per_device, 1, 1);
 
     convert2BitTo2BitHiloKernelTT<<<grid, block, 0, stream>>>(
         d_inputdata,
