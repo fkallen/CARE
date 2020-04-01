@@ -1187,7 +1187,8 @@ namespace gpu{
 
         dim3 block(blocksize, 1, 1);
         const int numBlocks = SDIV(maxNumCandidates, blocksize);
-        dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
+        //dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
 
         popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
             <<<grid, block, 0, stream>>>(
@@ -1322,17 +1323,85 @@ namespace gpu{
             handle
         );
 
-        cub::DeviceScan::InclusiveSum(cubtempstorage,
-                    cubBytes,
-                    d_tiles_per_subject,
-                    d_tiles_per_subject_prefixsum+1,
-                    maxNumAnchors,
-                    stream); CUERR;
+        generic_kernel<<<1, 256, 0, stream>>>([=]__device__(){
+            using BlockScan = cub::BlockScan<int, 256>;
 
-        call_set_kernel_async(d_tiles_per_subject_prefixsum,
-                                0,
-                                0,
-                                stream);
+            __shared__ typename BlockScan::TempStorage temp_storage;
+
+            const int numItems = *d_numAnchors;
+
+            constexpr int ITEMS_PER_THREAD = 4;
+
+            int aggregate = 0;
+
+            const int iters = SDIV(numItems, 256 * ITEMS_PER_THREAD);
+
+            const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
+
+            if(threadIdx.x == 0){
+                d_tiles_per_subject_prefixsum[0] = 0;
+            }
+
+            for(int iter = 0; iter < iters; iter++){
+                int thread_data[ITEMS_PER_THREAD];
+
+                const int iteroffset = 256 * ITEMS_PER_THREAD * iter;
+
+                #pragma unroll
+                for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                    if(iteroffset + threadoffset + k < numItems){
+                        thread_data[k] = d_tiles_per_subject[iteroffset + threadoffset + k];
+                    }else{
+                        thread_data[k] = 0;
+                    }
+                }
+
+                int block_aggregate = 0;
+                BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, block_aggregate);
+
+                #pragma unroll
+                for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                    if(iteroffset + threadoffset + k < numItems){
+                        d_tiles_per_subject_prefixsum[1+iteroffset + threadoffset + k] = aggregate + thread_data[k];
+                    }
+                }
+
+                aggregate += block_aggregate;
+
+                __syncthreads();
+            }
+
+            
+
+            // cub::LoadDirectBlocked(
+            //     threadIdx.x,
+            //     d_tiles_per_subject,
+            //     thread_data,
+            //     numItems,
+            //     0
+            // )	
+
+            // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
+
+            // cub::StoreDirectBlocked(
+            //     	int 	linear_tid,
+            //     OutputIteratorT 	block_itr,
+            //     T(&) 	items[ITEMS_PER_THREAD],
+            //     int 	valid_items 
+            //     )	
+        });
+
+        // cub::DeviceScan::InclusiveSum(cubtempstorage,
+        //             cubBytes,
+        //             d_tiles_per_subject,
+        //             d_tiles_per_subject_prefixsum+1,
+        //             maxNumAnchors,
+        //             stream); CUERR;
+
+        // call_set_kernel_async(d_tiles_per_subject_prefixsum,
+        //                         0,
+        //                         0,
+        //                         stream);
 
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
@@ -1411,7 +1480,8 @@ namespace gpu{
                                             estimatedNucleotideErrorRate); CUERR;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
+        //dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
 
         mycall;
 
@@ -1631,7 +1701,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize,1,1);
-    	dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumCandidates, blocksize)), 1, 1);
+        //dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumCandidates, blocksize)), 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
 
     	cuda_find_best_alignment_kernel_exp<<<grid, block, smem, stream>>>(
             		d_alignmentresultpointers,
@@ -1706,7 +1777,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-    	dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
+        //dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
+        dim3 grid(max_blocks_per_device, 1, 1);
 
     	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
     	        <<<grid, block, smem, stream>>>( \
@@ -1812,7 +1884,8 @@ namespace gpu{
         }); CUERR;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
+        //dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
+        dim3 grid(max_blocks_per_device, 1, 1);
 
         selectIndicesOfGoodCandidatesKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
             d_indicesOfGoodCandidates,
