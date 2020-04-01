@@ -1468,8 +1468,8 @@ namespace gpu{
             const unsigned int* __restrict__ candidateSequencesTransposedData,
             const char* __restrict__ subjectQualities,
             const char* __restrict__ candidateQualities,
-            int n_subjects,
-            int n_candidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1486,6 +1486,8 @@ namespace gpu{
 
         if(*canExecute){
 
+            const int n_subjects = *d_numAnchors;
+            const int n_candidates = *d_numCandidates;
             typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
             float* const shared_weights = sharedmem;
@@ -1769,8 +1771,8 @@ namespace gpu{
             const char* __restrict__ candidateQualities,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_candidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1800,6 +1802,9 @@ namespace gpu{
             extern __shared__ float externsharedmem[];
 
             constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
+
+            const int n_subjects = *d_numAnchors;
+            const int n_candidates = *d_numCandidates;
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){                
                 const int myNumIndices = d_indices_per_subject[subjectIndex];                
@@ -3311,8 +3316,10 @@ namespace gpu{
             const char* d_candidateQualities,
             bool* d_shouldBeKept,
             const int* d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -3325,7 +3332,7 @@ namespace gpu{
             int iteration,
             const read_number* d_subjectReadIds,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle){
+            KernelLaunchHandle& handle){
 
         call_fill_kernel_async(
             d_newNumIndices,
@@ -3333,12 +3340,6 @@ namespace gpu{
             0,
             stream
         );
-        // call_fill_kernel_async(
-        //     d_newNumIndicesPerSubject,
-        //     n_subjects,
-        //     0,
-        //     stream
-        // );
 
         constexpr int blocksize = 128;
 
@@ -3352,10 +3353,41 @@ namespace gpu{
                                                     + sizeof(int) * msa_weights_pitch_floats // coverages
                                                 : 0);
 
-        int smem = smemAddSequences;
+        const std::size_t smem = smemAddSequences;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSAFindCandidatesOfDifferentRegionAndRemoveThem);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel<blocksize, addSequencesMemType>,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSAFindCandidatesOfDifferentRegionAndRemoveThem] = std::move(mymap);
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
+        //dim3 grid(maxNumAnchors, 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
+
 
         msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel<blocksize, addSequencesMemType><<<grid, block, smem, stream>>>(
             d_newIndices,
@@ -3382,8 +3414,8 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_subject_prefixsum,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3422,8 +3454,10 @@ namespace gpu{
             const unsigned int* d_candidateSequencesTransposedData,
             const char* d_subjectQualities,
             const char* d_candidateQualities,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -3431,13 +3465,13 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             const bool* d_canExecute,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle){
+            KernelLaunchHandle& handle){
+                
 
         constexpr MemoryType addSequencesMemType = MemoryType::Shared;
-
         constexpr bool addSequencesUsesSmem = addSequencesMemType == MemoryType::Shared;
-
         constexpr int BLOCKSIZE = 128;
+
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
         using BlockReduceIntStorage = typename BlockReduceInt::TempStorage;
 
@@ -3450,8 +3484,38 @@ namespace gpu{
 
         const std::size_t smem = std::max(smemCub, smemAddSequences);
 
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = BLOCKSIZE;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSABuildSingleBlock);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                buildMSASingleBlockKernel<BLOCKSIZE, addSequencesMemType>,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSABuildSingleBlock] = std::move(mymap);
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
         dim3 block(BLOCKSIZE, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
+        //dim3 grid(maxNumAnchors, 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
         
         buildMSASingleBlockKernel<BLOCKSIZE, addSequencesMemType><<<grid, block, smem, stream>>>(
             d_msaColumnProperties,
@@ -3475,8 +3539,8 @@ namespace gpu{
             d_candidateSequencesTransposedData,
             d_subjectQualities,
             d_candidateQualities,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3519,8 +3583,10 @@ namespace gpu{
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_candidatesPerSubjectPrefixSum,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& kernelLaunchHandle){
@@ -3616,8 +3682,10 @@ namespace gpu{
             d_candidateSequencesTransposedData,
             d_subjectQualities,
             d_candidateQualities,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
+            maxNumAnchors,
+            maxNumCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,

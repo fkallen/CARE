@@ -30,6 +30,8 @@ enum class KernelId {
     MSAAddSequencesGlobalMultiBlock,
     MSAAddSequencesSharedSingleBlock,
     MSAAddSequencesSharedMultiBlock,
+    MSABuildSingleBlock,
+    MSAFindCandidatesOfDifferentRegionAndRemoveThem
 };
 
 struct KernelLaunchConfig {
