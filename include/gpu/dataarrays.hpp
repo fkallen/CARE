@@ -371,6 +371,8 @@ struct DataArrays {
         d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
 
         d_canExecute = std::move(SimpleAllocationDevice<bool>{});
+        
+        d_tempstorage.destroy();
 
 		// n_subjects = 0;
 		// n_queries = 0;
@@ -518,6 +520,8 @@ struct DataArrays {
         bytes += f(d_cub_temp_storage);
 
         bytes += f(d_canExecute);
+        
+        bytes += f(d_tempstorage);
 
 
         return bytes;
@@ -655,6 +659,8 @@ struct DataArrays {
         bytes += f(d_cub_temp_storage);
 
         bytes += f(d_canExecute);
+        
+        bytes += f(d_tempstorage);
 
         return bytes;
 	}
@@ -692,6 +698,8 @@ struct DataArrays {
         };
         return pointers;
     }
+    
+    SimpleAllocationDevice<char> d_tempstorage;
 
 	//std::size_t encoded_sequence_pitch = 0;
 

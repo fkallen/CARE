@@ -1029,6 +1029,46 @@ namespace gpu{
         max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
         temp_storage_bytes = max_temp_storage_bytes;
         dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
+        
+        
+        
+        
+        std::size_t popcountShdTempBytes = 0; 
+        
+        call_popcount_shifted_hamming_distance_kernel_async(
+                    nullptr,
+                    popcountShdTempBytes,
+                    dataArrays.d_alignment_overlaps.get(),
+                    dataArrays.d_alignment_shifts.get(),
+                    dataArrays.d_alignment_nOps.get(),
+                    dataArrays.d_alignment_isValid.get(),
+                    dataArrays.d_alignment_best_alignment_flags.get(),
+                    dataArrays.d_subject_sequences_data.get(),
+                    dataArrays.d_candidate_sequences_data.get(),
+                    dataArrays.d_subject_sequences_lengths.get(),
+                    dataArrays.d_candidate_sequences_lengths.get(),
+                    dataArrays.d_candidates_per_subject_prefixsum.get(),
+                    dataArrays.h_candidates_per_subject.get(),
+                    dataArrays.d_candidates_per_subject.get(),
+                    dataArrays.d_anchorIndicesOfCandidates.get(),
+                    batchData.n_subjects,
+                    batchData.n_queries,
+                    transFuncData.sequenceFileProperties.maxSequenceLength,
+                    batchData.encodedSequencePitchInInts,
+                    transFuncData.goodAlignmentProperties.min_overlap,
+                    transFuncData.goodAlignmentProperties.maxErrorRate,
+                    transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                    transFuncData.correctionOptions.estimatedErrorrate,
+                    //batchData.maxSubjectLength,
+                    streams[primary_stream_index],
+                    batchData.kernelLaunchHandle);
+        
+        dataArrays.d_tempstorage.resize(popcountShdTempBytes);
+        
+        
+        
+        
+        
 
         call_fill_kernel_async(
             dataArrays.d_canExecute.get(),
@@ -1174,7 +1214,11 @@ namespace gpu{
             streams[secondary_stream_index]
         ); CUERR;
         
+        std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
+        
         call_popcount_shifted_hamming_distance_kernel_async(
+                    dataArrays.d_tempstorage.get(),
+                    tempBytes,
                     dataArrays.d_alignment_overlaps.get(),
                     dataArrays.d_alignment_shifts.get(),
                     dataArrays.d_alignment_nOps.get(),
@@ -1424,13 +1468,17 @@ namespace gpu{
         const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
         //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
-        bool* d_shouldBeKept = nullptr; //flag per candidate which shows whether the candidate should remain in the msa, or not.
+        /*bool* d_shouldBeKept = nullptr; //flag per candidate which shows whether the candidate should remain in the msa, or not.
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_shouldBeKept, 
             sizeof(bool) * batch.n_queries, 
             streams[primary_stream_index]
-        ); CUERR;
+        ); CUERR;*/
+        
+        assert(batch.dataArrays.d_tempstorage.sizeInBytes() >= sizeof(bool) * batch.n_queries);
+        
+        bool* d_shouldBeKept = (bool*)batch.dataArrays.d_tempstorage.get();
 
 
 
@@ -1698,7 +1746,7 @@ namespace gpu{
 
 
 #endif
-        cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
+        //cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
         
         // {
         //     //std::cerr << "minimization finished\n";
@@ -3245,7 +3293,12 @@ void correct_gpu(
                 std::array<Batch, 3> batchDataArray;
 
                 for(int i = 0; i < 3; i++){
-                    initBatchData(batchDataArray[i], deviceId);
+                    //initBatchData(batchDataArray[i], deviceId);
+                    if(i < int(deviceIds.size())){
+                        initBatchData(batchDataArray[i], deviceIds[i]);
+                    }else{
+                        initBatchData(batchDataArray[i], 0);
+                    }
                     batchDataArray[i].id = deviceIdIndex * 3 + i;
                     batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
                     batchDataArray[i].unpackWorker = &unpackWorkerArray[i];

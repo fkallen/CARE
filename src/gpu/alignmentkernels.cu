@@ -1057,6 +1057,8 @@ namespace gpu{
 
     template<int maxValidIntsPerSequence>
     void call_popcount_shifted_hamming_distance_reg_kernel_async(
+        void* d_tempstorage,
+        size_t& tempstoragebytes,
         int* d_alignment_overlaps,
         int* d_alignment_shifts,
         int* d_alignment_nOps,
@@ -1082,15 +1084,38 @@ namespace gpu{
         KernelLaunchHandle& handle){
 
         const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        
+        
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 512) * 512;
+        const std::size_t d_subjectDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 512) * 512;
+        
+        {
+            
+            const std::size_t requiredTempBytes 
+                = d_candidateDataHiLoTransposedBytes
+                    + d_subjectDataHiLoTransposedBytes;
+            
+            if(d_tempstorage == 0){
+                tempstoragebytes = requiredTempBytes;
+                return;
+            }else{
+                assert(tempstoragebytes >= requiredTempBytes);
+            }
+            
+        }
+        
+        //Alias temp storage 
+        unsigned int* const d_subjectDataHiLoTransposed = (unsigned int*)d_tempstorage;
+        unsigned int* const d_candidateDataHiLoTransposed 
+            = (unsigned int*)(((char*)d_subjectDataHiLoTransposed) 
+            + d_subjectDataHiLoTransposedBytes);
+       
 
-        unsigned int* d_subjectDataHiLoTransposed = nullptr;
-        unsigned int* d_candidateDataHiLoTransposed = nullptr;
-
-        cubCachingAllocator.DeviceAllocate(
+        /*cubCachingAllocator.DeviceAllocate(
             (void**)&d_candidateDataHiLoTransposed, 
             sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
             stream
-        ); CUERR;
+        ); CUERR;*/
 
         callConversionKernel2BitTo2BitHiLoNT(
             d_candidateSequencesData,
@@ -1103,11 +1128,11 @@ namespace gpu{
             handle
         );
         
-        cubCachingAllocator.DeviceAllocate(
+        /*cubCachingAllocator.DeviceAllocate(
             (void**)&d_subjectDataHiLoTransposed, 
             sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
             stream
-        ); CUERR;
+        ); CUERR;*/
 
         callConversionKernel2BitTo2BitHiLoNT(
             d_subjectSequencesData,
@@ -1176,9 +1201,9 @@ namespace gpu{
                 estimatedNucleotideErrorRate
         ); CUERR;
 
-        cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;        
+        /*cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;        
         
-        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
+        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;*/
 
         // cudaDeviceSynchronize();
         // std::exit(0);
@@ -1186,6 +1211,8 @@ namespace gpu{
 
 
     void call_popcount_shifted_hamming_distance_smem_kernel_async(
+            void* d_tempstorage,
+            size_t& tempstoragebytes,
             int* d_alignment_overlaps,
             int* d_alignment_shifts,
             int* d_alignment_nOps,
@@ -1209,17 +1236,72 @@ namespace gpu{
             float estimatedNucleotideErrorRate,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
+        
+        constexpr int tilesize = 16;
+        
+        auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
+            return SDIV(candidates_for_subject, tilesize);
+        };
+        
+        cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
+            d_tiles_per_subject(d_candidates_per_subject,
+                            getTilesPerSubject);
 
         const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
+        
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 512) * 512;
+        const std::size_t d_subjectDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 512) * 512;
+        const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (n_subjects+1), 512) * 512;
+        std::size_t cubBytes = 0;
+        
+        cub::DeviceScan::InclusiveSum(
+            nullptr,
+            cubBytes,
+            d_tiles_per_subject,
+            (int*) nullptr,
+            n_subjects,
+            stream
+        );
+        
+        {
 
-        unsigned int* d_candidateDataHiLoTransposed = nullptr;
+            const std::size_t requiredTempBytes 
+                = d_candidateDataHiLoTransposedBytes
+                    + d_subjectDataHiLoBytes
+                    + d_tiles_per_subject_prefixsumBytes
+                    + cubBytes;
+            
+            if(d_tempstorage == 0){
+                tempstoragebytes = requiredTempBytes;
+                return;
+            }else{
+                assert(tempstoragebytes >= requiredTempBytes);
+            }
+        
+        }
+        
+        //Alias temp storage 
+        unsigned int* const d_candidateDataHiLoTransposed = (unsigned int*)d_tempstorage;
+        unsigned int* const d_subjectDataHiLo 
+            = (unsigned int*)(((char*)d_candidateDataHiLoTransposed) 
+                + d_candidateDataHiLoTransposedBytes);
+        int* const d_tiles_per_subject_prefixsum
+            = (int*)(((char*)d_subjectDataHiLo) 
+                + d_subjectDataHiLoBytes);
+        void* const cubtempstorage 
+            = (void*)(((char*)d_tiles_per_subject_prefixsum) 
+                + d_tiles_per_subject_prefixsumBytes);
+
+        /*unsigned int* d_candidateDataHiLoTransposed = nullptr;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_candidateDataHiLoTransposed, 
             sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
             stream
-        ); CUERR;
+        ); CUERR;*/
+        
+        
 
         callConversionKernel2BitTo2BitHiLoNT(
             d_candidateSequencesData,
@@ -1232,13 +1314,15 @@ namespace gpu{
             handle
         );
         
-        unsigned int* d_subjectDataHiLo = nullptr;
+        /*unsigned int* d_subjectDataHiLo = nullptr;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_subjectDataHiLo, 
             sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
             stream
-        ); CUERR;
+        ); CUERR;*/
+        
+        
 
         callConversionKernel2BitTo2BitHiLoNN(
             d_subjectSequencesData,
@@ -1251,20 +1335,20 @@ namespace gpu{
             handle
         );
 
-        constexpr int tilesize = 16;
+        
 
-        int* d_tiles_per_subject_prefixsum;
-        cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+        //int* d_tiles_per_subject_prefixsum;
+        //cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
 
         // calculate blocks per subject prefixsum
-        auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
+        /*auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
             return SDIV(candidates_for_subject, tilesize);
         };
         cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
             d_tiles_per_subject(d_candidates_per_subject,
-                        getTilesPerSubject);
+                        getTilesPerSubject);*/
 
-        void* tempstorage = nullptr;
+        /*void* tempstorage = nullptr;
         size_t tempstoragesize = 0;
 
         cub::DeviceScan::InclusiveSum(nullptr,
@@ -1274,16 +1358,16 @@ namespace gpu{
                     n_subjects,
                     stream); CUERR;
 
-        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;*/
 
-        cub::DeviceScan::InclusiveSum(tempstorage,
-                    tempstoragesize,
+        cub::DeviceScan::InclusiveSum(cubtempstorage,
+                    cubBytes,
                     d_tiles_per_subject,
                     d_tiles_per_subject_prefixsum+1,
                     n_subjects,
                     stream); CUERR;
 
-        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+        //cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_tiles_per_subject_prefixsum,
                                 0,
@@ -1381,9 +1465,9 @@ namespace gpu{
 
         #undef mycall
 
-        cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+        /*cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
         cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
-        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
+        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;*/
 
         // cudaDeviceSynchronize();
         // std::exit(0);
@@ -1391,6 +1475,8 @@ namespace gpu{
 
 
     void call_popcount_shifted_hamming_distance_kernel_async(
+            void* d_tempstorage,
+            size_t& tempstoragebytes,
             int* d_alignment_overlaps,
             int* d_alignment_shifts,
             int* d_alignment_nOps,
@@ -1417,6 +1503,8 @@ namespace gpu{
 
             #define regKernel(intsPerSequence){ \
                 call_popcount_shifted_hamming_distance_reg_kernel_async<intsPerSequence>( \
+                    d_tempstorage, \
+                    tempstoragebytes, \
                     d_alignment_overlaps, \
                     d_alignment_shifts, \
                     d_alignment_nOps, \
@@ -1442,76 +1530,90 @@ namespace gpu{
                     handle \
                 ); \
             };
+            
+            auto run = [&](){
+                if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
+                    
+                    constexpr int maxValidIntsPerSequence = 2;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(33 <= maximumSequenceLength && maximumSequenceLength <= 64){
+                    
+                    constexpr int maxValidIntsPerSequence = 4;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(65 <= maximumSequenceLength && maximumSequenceLength <= 96){
+                    
+                    constexpr int maxValidIntsPerSequence = 6;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(97 <= maximumSequenceLength && maximumSequenceLength <= 128){
+                    
+                    constexpr int maxValidIntsPerSequence = 8;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(129 <= maximumSequenceLength && maximumSequenceLength <= 160){
+                    
+                    constexpr int maxValidIntsPerSequence = 10;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(161 <= maximumSequenceLength && maximumSequenceLength <= 192){
+                    
+                    constexpr int maxValidIntsPerSequence = 12;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(193 <= maximumSequenceLength && maximumSequenceLength <= 224){
+                    
+                    constexpr int maxValidIntsPerSequence = 14;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else if(225 <= maximumSequenceLength && maximumSequenceLength <= 256){
+                    
+                    constexpr int maxValidIntsPerSequence = 16;
+                    regKernel(maxValidIntsPerSequence);
+                    
+                }else{
+                    
+                    call_popcount_shifted_hamming_distance_smem_kernel_async(
+                        d_tempstorage,
+                        tempstoragebytes,
+                        d_alignment_overlaps,
+                        d_alignment_shifts,
+                        d_alignment_nOps,
+                        d_alignment_isValid,
+                        d_alignment_best_alignment_flags,
+                        d_subjectSequencesData,
+                        d_candidateSequencesData,
+                        d_subjectSequencesLength,
+                        d_candidateSequencesLength,
+                        d_candidates_per_subject_prefixsum,
+                        h_candidates_per_subject,
+                        d_candidates_per_subject,
+                        d_anchorIndicesOfCandidates,
+                        n_subjects,
+                        n_queries,
+                        maximumSequenceLength,
+                        encodedSequencePitchInInts2Bit,
+                        min_overlap,
+                        maxErrorRate,
+                        min_overlap_ratio,
+                        estimatedNucleotideErrorRate,
+                        stream,
+                        handle
+                    );
+                }
+            };
+            
+            if(d_tempstorage == nullptr){
+                tempstoragebytes = 0;
+                
+                run();
+                
+                return;
+            }
 
             
-            if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
-               
-                constexpr int maxValidIntsPerSequence = 2;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(33 <= maximumSequenceLength && maximumSequenceLength <= 64){
-               
-                constexpr int maxValidIntsPerSequence = 4;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(65 <= maximumSequenceLength && maximumSequenceLength <= 96){
-               
-                constexpr int maxValidIntsPerSequence = 6;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(97 <= maximumSequenceLength && maximumSequenceLength <= 128){
-               
-                constexpr int maxValidIntsPerSequence = 8;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(129 <= maximumSequenceLength && maximumSequenceLength <= 160){
-               
-                constexpr int maxValidIntsPerSequence = 10;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(161 <= maximumSequenceLength && maximumSequenceLength <= 192){
-               
-                constexpr int maxValidIntsPerSequence = 12;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(193 <= maximumSequenceLength && maximumSequenceLength <= 224){
-               
-                constexpr int maxValidIntsPerSequence = 14;
-                regKernel(maxValidIntsPerSequence);
-
-            }else if(225 <= maximumSequenceLength && maximumSequenceLength <= 256){
-               
-                constexpr int maxValidIntsPerSequence = 16;
-                regKernel(maxValidIntsPerSequence);
-
-            }else{
-
-                call_popcount_shifted_hamming_distance_smem_kernel_async(
-                    d_alignment_overlaps,
-                    d_alignment_shifts,
-                    d_alignment_nOps,
-                    d_alignment_isValid,
-                    d_alignment_best_alignment_flags,
-                    d_subjectSequencesData,
-                    d_candidateSequencesData,
-                    d_subjectSequencesLength,
-                    d_candidateSequencesLength,
-                    d_candidates_per_subject_prefixsum,
-                    h_candidates_per_subject,
-                    d_candidates_per_subject,
-                    d_anchorIndicesOfCandidates,
-                    n_subjects,
-                    n_queries,
-                    maximumSequenceLength,
-                    encodedSequencePitchInInts2Bit,
-                    min_overlap,
-                    maxErrorRate,
-                    min_overlap_ratio,
-                    estimatedNucleotideErrorRate,
-                    stream,
-                    handle
-                );
-            }
+            run();
 
         #undef regKernel 
     }

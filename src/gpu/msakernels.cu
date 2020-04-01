@@ -1166,7 +1166,7 @@ namespace gpu{
     __global__
     void msa_add_sequences_kernel_multiblock(
             int* __restrict__ coverage,
-            MSAColumnProperties* __restrict__ msaColumnProperties,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
             int* __restrict__ counts,
             float* __restrict__ weights,
             const int* __restrict__ overlaps,
@@ -2689,6 +2689,8 @@ namespace gpu{
 
     template<MemoryType memType>
     void call_msaAddSequencesKernelMultiBlock_async(
+                void* d_tempstorage,
+                size_t tempstoragebytes,
                 const MSAColumnProperties* d_msaColumnProperties,
                 int* d_coverage,
                 int* d_counts,
@@ -2716,6 +2718,50 @@ namespace gpu{
                 const bool* d_canExecute,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
+        
+        constexpr int blocksize = 128;
+        
+        const std::size_t d_blocksPerSubjectPrefixSumBytes = SDIV(sizeof(int) * (n_subjects+1), 512) * 512;
+        std::size_t cubBytes = 0;
+        
+        auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
+            return SDIV(indices_for_subject, blocksize);
+        };
+        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), const int*>
+        d_blocksPerSubject(d_indices_per_subject,
+                           getBlocksPerSubject);
+        
+        cub::DeviceScan::InclusiveSum(
+            nullptr,
+            cubBytes,
+            d_blocksPerSubject,
+            (int*)nullptr,
+            n_subjects,
+            stream
+        ); CUERR;
+    
+        {
+            
+            const std::size_t requiredTempBytes 
+            = d_blocksPerSubjectPrefixSumBytes
+            + cubBytes;
+            
+            if(d_tempstorage == 0){
+                tempstoragebytes = requiredTempBytes;
+                return;
+            }else{
+                assert(tempstoragebytes >= requiredTempBytes);
+            }
+            
+        }
+                
+        //Alias temp storage 
+        int* const d_blocksPerSubjectPrefixSum = (int*)d_tempstorage;
+        void* const cubTempStorage  
+            = (void*)(((char*)d_blocksPerSubjectPrefixSum) 
+                + cubBytes);
+
+        
 
         const KernelId kernelId = (memType == MemoryType::Global
                      ? KernelId::MSAAddSequencesGlobalMultiBlock
@@ -2747,7 +2793,7 @@ namespace gpu{
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
-        constexpr int blocksize = 128;
+        
         
         const std::size_t smem = (memType == MemoryType::Global ? 0
                                     : sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
@@ -2798,18 +2844,18 @@ namespace gpu{
     		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
         }
         
-        int* d_blocksPerSubjectPrefixSum;
-        cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerSubjectPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+        //int* d_blocksPerSubjectPrefixSum;
+        //cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerSubjectPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
 
         // calculate blocks per subject prefixsum
-        auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
+        /*auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
             return SDIV(indices_for_subject, blocksize);
         };
         cub::TransformInputIterator<int,decltype(getBlocksPerSubject), const int*>
             d_blocksPerSubject(d_indices_per_subject,
-                          getBlocksPerSubject);
+                          getBlocksPerSubject);*/
 
-        void* tempstorage = nullptr;
+        /*void* tempstorage = nullptr;
         size_t tempstoragesize = 0;
 
         cub::DeviceScan::InclusiveSum(nullptr,
@@ -2819,16 +2865,18 @@ namespace gpu{
                     n_subjects,
                     stream); CUERR;
 
-        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;*/
 
-        cub::DeviceScan::InclusiveSum(tempstorage,
-                    tempstoragesize,
-                    d_blocksPerSubject,
-                    d_blocksPerSubjectPrefixSum+1,
-                    n_subjects,
-                    stream); CUERR;
+        cub::DeviceScan::InclusiveSum(
+            cubTempStorage,
+            cubBytes,
+            d_blocksPerSubject,
+            d_blocksPerSubjectPrefixSum+1,
+            n_subjects,
+            stream
+        ); CUERR;
 
-        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+        //cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_blocksPerSubjectPrefixSum,
                                 0,
@@ -2868,11 +2916,13 @@ namespace gpu{
             d_canExecute
         ); CUERR;
 
-        cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum);
+        //cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum);
     }
 
 
     void call_msa_add_sequences_kernel_implicit_async(
+                void* d_tempstorage,
+                size_t& tempstoragebytes,
                 const MSAColumnProperties* d_msaColumnProperties,
                 int* d_coverage,
                 int* d_counts,
@@ -2906,9 +2956,13 @@ namespace gpu{
         constexpr MemoryType memType = MemoryType::Shared;
 
 #if 0
-
+        if(d_tempstorage == nullptr){
+            tempstoragebytes = 0;
+        }
 
         call_msaAddSequencesKernelMultiBlock_async<memType>(
+            d_tempstorage,
+            tempstoragebytes,
             d_msaColumnProperties,
             d_coverage,
             d_counts,
@@ -2937,6 +2991,10 @@ namespace gpu{
             stream,
             handle
         );
+        
+        if(d_tempstorage == nullptr){
+            return;
+        }
 
         check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(
             d_msaColumnProperties,
@@ -2949,6 +3007,10 @@ namespace gpu{
         ); CUERR;
 
 #else 
+        if(d_tempstorage == nullptr){
+            tempstoragebytes = 0;
+            return;
+        }
 
         call_msaAddSequencesKernelSingleBlock_async<memType>(
             d_msaColumnProperties,
