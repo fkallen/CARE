@@ -1136,6 +1136,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
+            d_numCandidates,
             maxNumCandidates,
             stream,
             handle
@@ -1147,6 +1148,7 @@ namespace gpu{
             d_subjectDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_subjectSequencesLength,
+            d_numAnchors,
             maxNumAnchors,
             stream,
             handle
@@ -1302,6 +1304,7 @@ namespace gpu{
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
+            d_numCandidates,
             maxNumCandidates,
             stream,
             handle
@@ -1313,6 +1316,7 @@ namespace gpu{
             d_subjectDataHiLo,
             intsPerSequence2BitHiLo,
             d_subjectSequencesLength,
+            d_numAnchors,
             maxNumAnchors,
             stream,
             handle
@@ -1792,8 +1796,20 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-        cudaMemsetAsync(d_numIndicesPerAnchor, 0, maxNumAnchors * sizeof(int), stream); CUERR;
-        cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int), stream); CUERR;
+        // cudaMemsetAsync(d_numIndicesPerAnchor, 0, maxNumAnchors * sizeof(int), stream); CUERR;
+        // cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int), stream); CUERR;
+        generic_kernel<<<4, 256, 0, stream>>>[=] __device__(){
+            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            for(int i = tid; i < *d_numAnchors; i += stride){
+                d_numIndicesPerAnchor[i] = 0;
+            }
+
+            if(tid == 0){
+                *d_totalNumIndices = 0;
+            }
+        }); CUERR;
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
@@ -1808,7 +1824,7 @@ namespace gpu{
             d_anchorIndicesOfCandidates,
             d_numAnchors,
             d_numCandidates
-        );
+        ); CUERR;
     }
 
 

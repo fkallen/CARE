@@ -162,7 +162,9 @@ void convert2BitTo2BitHiloKernelNN(
         unsigned int*  const __restrict__ outputdata,
         size_t outputpitchInInts, // max num ints per output sequence
         const int* const __restrict__ sequenceLengths,
-        int numSequences){
+        const int* __restrict__ numSequencesPtr){
+
+    const int numSequences = *numSequencesPtr;
 
     auto inputStartIndex = [&](auto i){return i * inputpitchInInts;};
     auto outputStartIndex = [&](auto i){return i * outputpitchInInts;};
@@ -245,7 +247,9 @@ void convert2BitTo2BitHiloKernelNT(
         unsigned int*  const __restrict__ outputdata,
         size_t outputpitchInInts, // max num ints per output sequence
         const int* const __restrict__ sequenceLengths,
-        int numSequences){
+        const int* __restrict__ numSequencesPtr){
+
+    const int numSequences = *numSequencesPtr;
 
     auto inputStartIndex = [&](auto i){return i * inputpitchInInts;};
     auto outputStartIndex = [&](auto i){return i;};
@@ -330,7 +334,9 @@ void convert2BitTo2BitHiloKernelTT(
         unsigned int*  const __restrict__ outputdata,
         size_t outputpitchInInts, // max num ints per output sequence
         const int* const __restrict__ sequenceLengths,
-        int numSequences){
+        const int* __restrict__ numSequencesPtr){
+
+    const int numSequences = *numSequencesPtr;
 
     auto inputStartIndex = [&](auto i){return i;};
     auto outputStartIndex = [&](auto i){return i;};
@@ -416,7 +422,8 @@ void callConversionKernel2BitTo2BitHiLoNN(
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
-        int numSequences,
+        const int* d_numSequences,
+        int maxNumSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -469,7 +476,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(numSequences * groupsize, blocksize)), 1, 1);
+    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences * groupsize, blocksize)), 1, 1);
 
     convert2BitTo2BitHiloKernelNN<groupsize><<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -477,7 +484,7 @@ void callConversionKernel2BitTo2BitHiLoNN(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        numSequences); CUERR;
+        d_numSequences); CUERR;
 
 #ifdef DO_CHECK_CONVERSIONS        
 
@@ -499,7 +506,8 @@ void callConversionKernel2BitTo2BitHiLoNT(
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
-        int numSequences,
+        const int* d_numSequences,
+        int maxNumSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -550,7 +558,7 @@ void callConversionKernel2BitTo2BitHiLoNT(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(numSequences, blocksize)), 1, 1);
+    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
 
     convert2BitTo2BitHiloKernelNT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -558,9 +566,9 @@ void callConversionKernel2BitTo2BitHiLoNT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        numSequences); CUERR;
+        d_numSequences); CUERR;
 
-#ifdef DO_CHECK_CONVERSIONS    
+#if 0    
 
     callCheckSequenceConversionKernelNT(d_inputdata,
         inputpitchInInts,
@@ -580,7 +588,8 @@ void callConversionKernel2BitTo2BitHiLoTT(
         unsigned int* d_outputdata,
         size_t outputpitchInInts,
         const int* d_sequenceLengths,
-        int numSequences,
+        const int* d_numSequences,
+        int maxNumSequences,
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
@@ -631,7 +640,7 @@ void callConversionKernel2BitTo2BitHiLoTT(
     }
 
     dim3 block(blocksize,1,1);
-    dim3 grid(std::min(max_blocks_per_device, SDIV(numSequences, blocksize)), 1, 1);
+    dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumSequences, blocksize)), 1, 1);
 
     convert2BitTo2BitHiloKernelTT<<<grid, block, 0, stream>>>(
         d_inputdata,
@@ -639,9 +648,9 @@ void callConversionKernel2BitTo2BitHiLoTT(
         d_outputdata,
         outputpitchInInts,
         d_sequenceLengths,
-        numSequences); CUERR;
+        d_numSequences); CUERR;
 
-#ifdef DO_CHECK_CONVERSIONS            
+#if 0            
 
     callCheckSequenceConversionKernelTT(d_inputdata,
         inputpitchInInts,
