@@ -373,6 +373,10 @@ struct DataArrays {
         d_canExecute = std::move(SimpleAllocationDevice<bool>{});
         
         d_tempstorage.destroy();
+        d_numAnchors.destroy();
+        d_numCandidates.destroy();
+        h_numAnchors.destroy();
+        h_numCandidates.destroy();
 
 		// n_subjects = 0;
 		// n_queries = 0;
@@ -700,6 +704,10 @@ struct DataArrays {
     }
     
     SimpleAllocationDevice<char> d_tempstorage;
+    SimpleAllocationPinnedHost<int> h_numAnchors;
+    SimpleAllocationPinnedHost<int> h_numCandidates;
+    SimpleAllocationDevice<int> d_numAnchors;
+    SimpleAllocationDevice<int> d_numCandidates;
 
 	//std::size_t encoded_sequence_pitch = 0;
 

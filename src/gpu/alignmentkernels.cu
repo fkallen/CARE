@@ -43,13 +43,17 @@ namespace gpu{
             const int* __restrict__ d_candidates_per_subject,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const int* __restrict__ d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates){
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates
+            ){
 
         static_assert(blocksize % tilesize == 0);
         static_assert(tilesize == 32);
 
         constexpr int numTilesPerBlock = blocksize / tilesize;
+
+        const int numAnchors = *d_numAnchors;
+        const int numCandidates = *d_numCandidates;
 
         const int numTiles = (gridDim.x * blocksize) / tilesize;
         const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
@@ -140,13 +144,16 @@ namespace gpu{
                 const int* __restrict__ candidateSequencesLength,
                 const int* __restrict__ candidates_per_subject_prefixsum,
                 const int* __restrict__ tiles_per_subject_prefixsum,
-                int n_subjects,
-                int n_candidates,
+                const int* __restrict__ numAnchorsPtr,
+                const int* __restrict__ numCandidatesPtr,
                 int encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio,
                 float estimatedNucleotideErrorRate){
+
+        const int n_subjects = *numAnchorsPtr;
+        const int n_candidates = *numCandidatesPtr;
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -440,8 +447,8 @@ namespace gpu{
                 int* __restrict__ alignment_nOps,
                 bool* __restrict__ alignment_isValid,
                 const int* __restrict__ d_anchorIndicesOfCandidates,
-                int n_subjects,
-                int n_candidates,
+                const int* __restrict__ numAnchorsPtr,
+                const int* __restrict__ numCandidatesPtr,
                 size_t encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
@@ -449,6 +456,10 @@ namespace gpu{
                 float estimatedNucleotideErrorRate){
 
         static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
+
+
+        const int n_subjects = *numAnchorsPtr;
+        const int n_candidates = *numCandidatesPtr;
 
         auto identity = [](auto logical_index){
             return logical_index;
@@ -828,12 +839,15 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
-                int n_subjects,
-                int n_queries,
+                const int* __restrict__ d_numAnchors,
+                const int* __restrict__ d_numCandidates,
                 float min_overlap_ratio,
                 int min_overlap,
                 float estimatedErrorrate,
                 read_number debugsubjectreadid){
+
+        const int n_subjects = *d_numAnchors;
+        const int n_queries = *d_numCandidates;
 
         auto getSubjectLength = [&] (int subjectIndex){
             const int length = d_sequencePointers.subjectSequencesLength[subjectIndex];
@@ -938,8 +952,8 @@ namespace gpu{
     void cuda_filter_alignments_by_mismatchratio_kernel(
                 AlignmentResultPointers d_alignmentresultpointers,
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
-                int n_subjects,
-                int n_candidates,
+                const int* __restrict__ d_numAnchors,
+                const int* __restrict__ d_numCandidates,
                 float mismatchratioBaseFactor,
                 float goodAlignmentsCountThreshold){
 
@@ -949,6 +963,9 @@ namespace gpu{
             typename BlockReduceInt::TempStorage intreduce;
             int broadcast[3];
         } temp_storage;
+
+        const int n_subjects = *d_numAnchors;
+        const int n_candidates = *d_numCandidates;
 
 
         for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x) {
@@ -1072,8 +1089,10 @@ namespace gpu{
         const int* h_candidates_per_subject,
         const int* d_candidates_per_subject,
         const int* d_anchorIndicesOfCandidates,
-        int n_subjects,
-        int n_queries,
+        const int* d_numAnchors,
+        const int* d_numCandidates,
+        int maxNumAnchors,
+        int maxNumCandidates,
         int maximumSequenceLength,
         int encodedSequencePitchInInts2Bit,
         int min_overlap,
@@ -1086,8 +1105,8 @@ namespace gpu{
         const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
         
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 512) * 512;
-        const std::size_t d_subjectDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 512) * 512;
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
+        const std::size_t d_subjectDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
         
         {
             
@@ -1111,28 +1130,16 @@ namespace gpu{
             + d_subjectDataHiLoTransposedBytes);
        
 
-        /*cubCachingAllocator.DeviceAllocate(
-            (void**)&d_candidateDataHiLoTransposed, 
-            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
-            stream
-        ); CUERR;*/
-
         callConversionKernel2BitTo2BitHiLoNT(
             d_candidateSequencesData,
             encodedSequencePitchInInts2Bit,
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            n_queries,
+            maxNumCandidates,
             stream,
             handle
         );
-        
-        /*cubCachingAllocator.DeviceAllocate(
-            (void**)&d_subjectDataHiLoTransposed, 
-            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
-            stream
-        ); CUERR;*/
 
         callConversionKernel2BitTo2BitHiLoNT(
             d_subjectSequencesData,
@@ -1140,7 +1147,7 @@ namespace gpu{
             d_subjectDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_subjectSequencesLength,
-            n_subjects,
+            maxNumAnchors,
             stream,
             handle
         );
@@ -1177,7 +1184,7 @@ namespace gpu{
         }
 
         dim3 block(blocksize, 1, 1);
-        const int numBlocks = SDIV(n_queries, blocksize);
+        const int numBlocks = SDIV(maxNumCandidates, blocksize);
         dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
         popcount_shifted_hamming_distance_reg_kernel<blocksize, maxValidIntsPerSequence>
@@ -1192,8 +1199,8 @@ namespace gpu{
                 d_alignment_nOps,
                 d_alignment_isValid,
                 d_anchorIndicesOfCandidates,
-                n_subjects,
-                n_queries,
+                d_numAnchors,
+                d_numCandidates,
                 intsPerSequence2BitHiLo, 
                 min_overlap,
                 maxErrorRate,
@@ -1201,12 +1208,6 @@ namespace gpu{
                 estimatedNucleotideErrorRate
         ); CUERR;
 
-        /*cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;        
-        
-        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;*/
-
-        // cudaDeviceSynchronize();
-        // std::exit(0);
     }
 
 
@@ -1226,8 +1227,10 @@ namespace gpu{
             const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
             const int* d_anchorIndicesOfCandidates,
-            int n_subjects,
-            int n_queries,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             int maximumSequenceLength,
             int encodedSequencePitchInInts2Bit,
             int min_overlap,
@@ -1250,9 +1253,9 @@ namespace gpu{
         const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
         
-        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 512) * 512;
-        const std::size_t d_subjectDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 512) * 512;
-        const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (n_subjects+1), 512) * 512;
+        const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
+        const std::size_t d_subjectDataHiLoBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumAnchors, 512) * 512;
+        const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
         std::size_t cubBytes = 0;
         
         cub::DeviceScan::InclusiveSum(
@@ -1260,7 +1263,7 @@ namespace gpu{
             cubBytes,
             d_tiles_per_subject,
             (int*) nullptr,
-            n_subjects,
+            maxNumAnchors,
             stream
         );
         
@@ -1293,36 +1296,16 @@ namespace gpu{
             = (void*)(((char*)d_tiles_per_subject_prefixsum) 
                 + d_tiles_per_subject_prefixsumBytes);
 
-        /*unsigned int* d_candidateDataHiLoTransposed = nullptr;
-
-        cubCachingAllocator.DeviceAllocate(
-            (void**)&d_candidateDataHiLoTransposed, 
-            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
-            stream
-        ); CUERR;*/
-        
-        
-
         callConversionKernel2BitTo2BitHiLoNT(
             d_candidateSequencesData,
             encodedSequencePitchInInts2Bit,
             d_candidateDataHiLoTransposed,
             intsPerSequence2BitHiLo,
             d_candidateSequencesLength,
-            n_queries,
+            maxNumCandidates,
             stream,
             handle
         );
-        
-        /*unsigned int* d_subjectDataHiLo = nullptr;
-
-        cubCachingAllocator.DeviceAllocate(
-            (void**)&d_subjectDataHiLo, 
-            sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
-            stream
-        ); CUERR;*/
-        
-        
 
         callConversionKernel2BitTo2BitHiLoNN(
             d_subjectSequencesData,
@@ -1330,67 +1313,32 @@ namespace gpu{
             d_subjectDataHiLo,
             intsPerSequence2BitHiLo,
             d_subjectSequencesLength,
-            n_subjects,
+            maxNumAnchors,
             stream,
             handle
         );
-
-        
-
-        //int* d_tiles_per_subject_prefixsum;
-        //cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
-
-        // calculate blocks per subject prefixsum
-        /*auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
-            return SDIV(candidates_for_subject, tilesize);
-        };
-        cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
-            d_tiles_per_subject(d_candidates_per_subject,
-                        getTilesPerSubject);*/
-
-        /*void* tempstorage = nullptr;
-        size_t tempstoragesize = 0;
-
-        cub::DeviceScan::InclusiveSum(nullptr,
-                    tempstoragesize,
-                    d_tiles_per_subject,
-                    d_tiles_per_subject_prefixsum+1,
-                    n_subjects,
-                    stream); CUERR;
-
-        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;*/
 
         cub::DeviceScan::InclusiveSum(cubtempstorage,
                     cubBytes,
                     d_tiles_per_subject,
                     d_tiles_per_subject_prefixsum+1,
-                    n_subjects,
+                    maxNumAnchors,
                     stream); CUERR;
-
-        //cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_tiles_per_subject_prefixsum,
                                 0,
                                 0,
                                 stream);
 
-
-
-
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
 
-        //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
-
         int requiredTiles = 0;
-        for(int i = 0; i < n_subjects;i++){
+        for(int i = 0; i < maxNumAnchors;i++){
             requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
         }
 
         const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
-
-        //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
-
 
         const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
@@ -1450,8 +1398,8 @@ namespace gpu{
                                             d_candidateSequencesLength, \
                                             d_candidates_per_subject_prefixsum, \
                                             d_tiles_per_subject_prefixsum, \
-                                            n_subjects, \
-                                            n_queries, \
+                                            d_numAnchors, \
+                                            d_numCandidates, \
                                             intsPerSequence2BitHiLo, \
                                             min_overlap, \
                                             maxErrorRate, \
@@ -1465,12 +1413,6 @@ namespace gpu{
 
         #undef mycall
 
-        /*cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
-        cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
-        cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;*/
-
-        // cudaDeviceSynchronize();
-        // std::exit(0);
     }
 
 
@@ -1490,8 +1432,10 @@ namespace gpu{
             const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
             const int* d_anchorIndicesOfCandidates,
-            int n_subjects,
-            int n_queries,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             int maximumSequenceLength,
             int encodedSequencePitchInInts2Bit,
             int min_overlap,
@@ -1518,8 +1462,10 @@ namespace gpu{
                     h_candidates_per_subject, \
                     d_candidates_per_subject, \
                     d_anchorIndicesOfCandidates, \
-                    n_subjects, \
-                    n_queries, \
+                    d_numAnchors, \
+                    d_numCandidates, \
+                    maxNumAnchors, \
+                    maxNumCandidates, \
                     maximumSequenceLength, \
                     encodedSequencePitchInInts2Bit, \
                     min_overlap, \
@@ -1590,8 +1536,10 @@ namespace gpu{
                         h_candidates_per_subject,
                         d_candidates_per_subject,
                         d_anchorIndicesOfCandidates,
-                        n_subjects,
-                        n_queries,
+                        d_numAnchors,
+                        d_numCandidates,
+                        maxNumAnchors,
+                        maxNumCandidates,
                         maximumSequenceLength,
                         encodedSequencePitchInInts2Bit,
                         min_overlap,
@@ -1622,8 +1570,10 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
     			const int* d_candidates_per_subject_prefixsum,
-    			int n_subjects,
-    			int n_queries,
+    			const int* d_numAnchors,
+                const int* d_numCandidates,
+                int maxNumAnchors,
+                int maxNumCandidates,
     			float min_overlap_ratio,
     			int min_overlap,
                 float estimatedErrorrate,
@@ -1677,14 +1627,14 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize,1,1);
-    	dim3 grid(std::min(max_blocks_per_device, SDIV(n_queries, blocksize)), 1, 1);
+    	dim3 grid(std::min(max_blocks_per_device, SDIV(maxNumCandidates, blocksize)), 1, 1);
 
     	cuda_find_best_alignment_kernel_exp<<<grid, block, smem, stream>>>(
             		d_alignmentresultpointers,
                     d_sequencePointers,
             		d_candidates_per_subject_prefixsum,
-            		n_subjects,
-            		n_queries,
+            		d_numAnchors,
+            		d_numCandidates,
             		min_overlap_ratio,
             		min_overlap,
                     estimatedErrorrate,
@@ -1696,8 +1646,10 @@ namespace gpu{
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
     			AlignmentResultPointers d_alignmentresultpointers,
     			const int* d_candidates_per_subject_prefixsum,
-    			int n_subjects,
-    			int n_candidates,
+    			const int* d_numAnchors,
+                const int* d_numCandidates,
+                int maxNumAnchors,
+                int maxNumCandidates,
     			float mismatchratioBaseFactor,
     			float goodAlignmentsCountThreshold,
     			cudaStream_t stream,
@@ -1750,14 +1702,14 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-    	dim3 grid(std::min(max_blocks_per_device, n_subjects));
+    	dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
 
     	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
     	        <<<grid, block, smem, stream>>>( \
     		d_alignmentresultpointers, \
     		d_candidates_per_subject_prefixsum, \
-    		n_subjects, \
-    		n_candidates, \
+    		d_numAnchors, \
+    		d_numCandidates, \
     		mismatchratioBaseFactor, \
     		goodAlignmentsCountThreshold); CUERR;
 
@@ -1785,8 +1737,10 @@ namespace gpu{
             const int* d_candidates_per_subject,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_anchorIndicesOfCandidates,
-            int numAnchors,
-            int numCandidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
@@ -1838,11 +1792,11 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-        cudaMemsetAsync(d_numIndicesPerAnchor, 0, numAnchors * sizeof(int), stream); CUERR;
+        cudaMemsetAsync(d_numIndicesPerAnchor, 0, maxNumAnchors * sizeof(int), stream); CUERR;
         cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(SDIV(numCandidates, blocksize), max_blocks_per_device));
+        dim3 grid(std::min(SDIV(maxNumCandidates, blocksize), max_blocks_per_device));
 
         selectIndicesOfGoodCandidatesKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
             d_indicesOfGoodCandidates,
@@ -1852,8 +1806,8 @@ namespace gpu{
             d_candidates_per_subject,
             d_candidates_per_subject_prefixsum,
             d_anchorIndicesOfCandidates,
-            numAnchors,
-            numCandidates
+            d_numAnchors,
+            d_numCandidates
         );
     }
 
