@@ -983,10 +983,10 @@ namespace gpu{
             const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
             const int* __restrict__ numCandidatesToBeCorrected,
             const int* __restrict__ anchorIndicesOfCandidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             int doNotUseEditsValue,
-            int numEditsThreshold,
-            int n_subjects,
-            int n_queries,
+            int numEditsThreshold,            
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
@@ -1880,10 +1880,10 @@ namespace gpu{
             const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
             const int* __restrict__ numCandidatesToBeCorrected,
             const int* __restrict__ anchorIndicesOfCandidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             int doNotUseEditsValue,
             int numEditsThreshold,
-            int n_subjects,
-            int n_candidates,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
@@ -1944,7 +1944,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
+        //dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
+        dim3 grid(max_blocks_per_device);
         
         assert(smem % sizeof(int) == 0);
 
@@ -1964,10 +1965,10 @@ namespace gpu{
                     candidateIndicesOfCandidatesToBeCorrected, \
                     numCandidatesToBeCorrected, \
                     anchorIndicesOfCandidates, \
+                    d_numAnchors, \
+                    d_numCandidates, \
                     doNotUseEditsValue, \
                     numEditsThreshold, \
-                    n_subjects, \
-                    n_candidates, \
                     encodedSequencePitchInInts, \
                     sequence_pitch, \
                     msa_pitch, \

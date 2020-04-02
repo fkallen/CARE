@@ -2472,8 +2472,8 @@ namespace gpu{
         bool* const d_candidateCanBeCorrected = dataArrays.d_alignment_isValid.get(); //repurpose
 
         int* const d_num_corrected_candidates_per_anchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
-        int* const d_numAnchors = dataArrays.d_numAnchors.get();
-        int* const d_numCandidates = dataArrays.d_numCandidates.get();
+        const int* const d_numAnchors = dataArrays.d_numAnchors.get();
+        const int* const d_numCandidates = dataArrays.d_numCandidates.get();
         const int batchsize = batch.transFuncData->correctionOptions.batchsize;
 
         generic_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
@@ -2612,10 +2612,10 @@ namespace gpu{
             dataArrays.d_indices_of_corrected_candidates.get(),
             dataArrays.d_num_total_corrected_candidates.get(),
             dataArrays.d_anchorIndicesOfCandidates.get(),
+            d_numAnchors,
+            d_numCandidates,
             doNotUseEditsValue,
             batch.maxNumEditsPerSequence,
-            batch.n_subjects,
-            batch.n_queries,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
             batch.msa_pitch,

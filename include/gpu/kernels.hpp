@@ -486,17 +486,17 @@ void callCorrectCandidatesWithGroupKernel2_async(
             const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
             const int* __restrict__ numCandidatesToBeCorrected,
             const int* __restrict__ anchorIndicesOfCandidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             int doNotUseEditsValue,
             int numEditsThreshold,
-            int n_subjects,
-            int n_queries,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
             size_t msa_weights_pitch,
             int maximum_sequence_length,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);            
+            KernelLaunchHandle& handle);           
 
 
 
