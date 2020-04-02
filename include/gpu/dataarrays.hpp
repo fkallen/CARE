@@ -45,6 +45,13 @@ struct DataArrays {
 	// 	//cudaSetDevice(deviceId);
 	// };
 
+    static constexpr int overprovisioningPercent = 10;
+
+    template<class T>
+    using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+    
+    template<class T>
+    using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
 
 #if 0
@@ -253,124 +260,124 @@ struct DataArrays {
 
 	void reset(){
 
-        h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<unsigned int>{});
-        h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<unsigned int>{});
-        h_transposedCandidateSequencesData = std::move(SimpleAllocationPinnedHost<unsigned int>{});
-        h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
-        h_candidate_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
-        h_candidates_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
-        h_candidates_per_subject_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
-        h_subject_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
-        h_candidate_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
+        h_subject_sequences_data = std::move(PinnedBuffer<unsigned int>{});
+        h_candidate_sequences_data = std::move(PinnedBuffer<unsigned int>{});
+        h_transposedCandidateSequencesData = std::move(PinnedBuffer<unsigned int>{});
+        h_subject_sequences_lengths = std::move(PinnedBuffer<int>{});
+        h_candidate_sequences_lengths = std::move(PinnedBuffer<int>{});
+        h_candidates_per_subject = std::move(PinnedBuffer<int>{});
+        h_candidates_per_subject_prefixsum = std::move(PinnedBuffer<int>{});
+        h_subject_read_ids = std::move(PinnedBuffer<read_number>{});
+        h_candidate_read_ids = std::move(PinnedBuffer<read_number>{});
 
-        d_subject_sequences_data = std::move(SimpleAllocationDevice<unsigned int>{});
-        d_candidate_sequences_data = std::move(SimpleAllocationDevice<unsigned int>{});
-        d_transposedCandidateSequencesData = std::move(SimpleAllocationDevice<unsigned int>{});
-        d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
-        d_candidate_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
-        d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
-        d_candidates_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
-        d_subject_read_ids = std::move(SimpleAllocationDevice<read_number>{});
-        d_candidate_read_ids = std::move(SimpleAllocationDevice<read_number>{});
+        d_subject_sequences_data = std::move(DeviceBuffer<unsigned int>{});
+        d_candidate_sequences_data = std::move(DeviceBuffer<unsigned int>{});
+        d_transposedCandidateSequencesData = std::move(DeviceBuffer<unsigned int>{});
+        d_subject_sequences_lengths = std::move(DeviceBuffer<int>{});
+        d_candidate_sequences_lengths = std::move(DeviceBuffer<int>{});
+        d_candidates_per_subject = std::move(DeviceBuffer<int>{});
+        d_candidates_per_subject_prefixsum = std::move(DeviceBuffer<int>{});
+        d_subject_read_ids = std::move(DeviceBuffer<read_number>{});
+        d_candidate_read_ids = std::move(DeviceBuffer<read_number>{});
 
-        h_subject_qualities = std::move(SimpleAllocationPinnedHost<char>{});
-        h_candidate_qualities = std::move(SimpleAllocationPinnedHost<char>{});
+        h_subject_qualities = std::move(PinnedBuffer<char>{});
+        h_candidate_qualities = std::move(PinnedBuffer<char>{});
 
-        d_subject_qualities = std::move(SimpleAllocationDevice<char>{});
-        d_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
-        d_candidate_qualities_transposed = std::move(SimpleAllocationDevice<char>{});
-        //d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
+        d_subject_qualities = std::move(DeviceBuffer<char>{});
+        d_candidate_qualities = std::move(DeviceBuffer<char>{});
+        d_candidate_qualities_transposed = std::move(DeviceBuffer<char>{});
+        //d_candidate_qualities_tmp = std::move(DeviceBuffer<char>{});
 
-        h_consensus = std::move(SimpleAllocationPinnedHost<char>{});
-        h_support = std::move(SimpleAllocationPinnedHost<float>{});
-        h_coverage = std::move(SimpleAllocationPinnedHost<int>{});
-        h_origWeights = std::move(SimpleAllocationPinnedHost<float>{});
-        h_origCoverages = std::move(SimpleAllocationPinnedHost<int>{});
-        h_msa_column_properties = std::move(SimpleAllocationPinnedHost<MSAColumnProperties>{});
-        h_counts = std::move(SimpleAllocationPinnedHost<int>{});
-        h_weights = std::move(SimpleAllocationPinnedHost<float>{});
+        h_consensus = std::move(PinnedBuffer<char>{});
+        h_support = std::move(PinnedBuffer<float>{});
+        h_coverage = std::move(PinnedBuffer<int>{});
+        h_origWeights = std::move(PinnedBuffer<float>{});
+        h_origCoverages = std::move(PinnedBuffer<int>{});
+        h_msa_column_properties = std::move(PinnedBuffer<MSAColumnProperties>{});
+        h_counts = std::move(PinnedBuffer<int>{});
+        h_weights = std::move(PinnedBuffer<float>{});
 
-        d_consensus = std::move(SimpleAllocationDevice<char>{});
-        d_support = std::move(SimpleAllocationDevice<float>{});
-        d_coverage = std::move(SimpleAllocationDevice<int>{});
-        d_origWeights = std::move(SimpleAllocationDevice<float>{});
-        d_origCoverages = std::move(SimpleAllocationDevice<int>{});
-        d_msa_column_properties = std::move(SimpleAllocationDevice<MSAColumnProperties>{});
-        d_counts = std::move(SimpleAllocationDevice<int>{});
-        d_weights = std::move(SimpleAllocationDevice<float>{});
+        d_consensus = std::move(DeviceBuffer<char>{});
+        d_support = std::move(DeviceBuffer<float>{});
+        d_coverage = std::move(DeviceBuffer<int>{});
+        d_origWeights = std::move(DeviceBuffer<float>{});
+        d_origCoverages = std::move(DeviceBuffer<int>{});
+        d_msa_column_properties = std::move(DeviceBuffer<MSAColumnProperties>{});
+        d_counts = std::move(DeviceBuffer<int>{});
+        d_weights = std::move(DeviceBuffer<float>{});
 
-        h_alignment_scores = std::move(SimpleAllocationPinnedHost<int>{});
-        h_alignment_overlaps = std::move(SimpleAllocationPinnedHost<int>{});
-        h_alignment_shifts = std::move(SimpleAllocationPinnedHost<int>{});
-        h_alignment_nOps = std::move(SimpleAllocationPinnedHost<int>{});
-        h_alignment_isValid = std::move(SimpleAllocationPinnedHost<bool>{});
-        h_alignment_best_alignment_flags = std::move(SimpleAllocationPinnedHost<BestAlignment_t>{});
+        h_alignment_scores = std::move(PinnedBuffer<int>{});
+        h_alignment_overlaps = std::move(PinnedBuffer<int>{});
+        h_alignment_shifts = std::move(PinnedBuffer<int>{});
+        h_alignment_nOps = std::move(PinnedBuffer<int>{});
+        h_alignment_isValid = std::move(PinnedBuffer<bool>{});
+        h_alignment_best_alignment_flags = std::move(PinnedBuffer<BestAlignment_t>{});
 
-        d_alignment_scores = std::move(SimpleAllocationDevice<int>{});
-        d_alignment_overlaps = std::move(SimpleAllocationDevice<int>{});
-        d_alignment_shifts = std::move(SimpleAllocationDevice<int>{});
-        d_alignment_nOps = std::move(SimpleAllocationDevice<int>{});
-        d_alignment_isValid = std::move(SimpleAllocationDevice<bool>{});
-        d_alignment_best_alignment_flags = std::move(SimpleAllocationDevice<BestAlignment_t>{});
+        d_alignment_scores = std::move(DeviceBuffer<int>{});
+        d_alignment_overlaps = std::move(DeviceBuffer<int>{});
+        d_alignment_shifts = std::move(DeviceBuffer<int>{});
+        d_alignment_nOps = std::move(DeviceBuffer<int>{});
+        d_alignment_isValid = std::move(DeviceBuffer<bool>{});
+        d_alignment_best_alignment_flags = std::move(DeviceBuffer<BestAlignment_t>{});
 
-        h_corrected_subjects = std::move(SimpleAllocationPinnedHost<char>{});
-        h_corrected_candidates = std::move(SimpleAllocationPinnedHost<char>{});
-        h_num_corrected_candidates_per_anchor = std::move(SimpleAllocationPinnedHost<int>{});
-        h_num_corrected_candidates_per_anchor_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
-        h_subject_is_corrected = std::move(SimpleAllocationPinnedHost<bool>{});
-        h_indices_of_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
-        h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<AnchorHighQualityFlag>{});
-        h_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
-        h_num_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
-        h_num_uncorrected_positions_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
-        h_uncorrected_positions_per_subject= std::move(SimpleAllocationPinnedHost<int>{});
+        h_corrected_subjects = std::move(PinnedBuffer<char>{});
+        h_corrected_candidates = std::move(PinnedBuffer<char>{});
+        h_num_corrected_candidates_per_anchor = std::move(PinnedBuffer<int>{});
+        h_num_corrected_candidates_per_anchor_prefixsum = std::move(PinnedBuffer<int>{});
+        h_subject_is_corrected = std::move(PinnedBuffer<bool>{});
+        h_indices_of_corrected_candidates = std::move(PinnedBuffer<int>{});
+        h_is_high_quality_subject = std::move(PinnedBuffer<AnchorHighQualityFlag>{});
+        h_high_quality_subject_indices = std::move(PinnedBuffer<int>{});
+        h_num_high_quality_subject_indices = std::move(PinnedBuffer<int>{});
+        h_num_uncorrected_positions_per_subject = std::move(PinnedBuffer<int>{});
+        h_uncorrected_positions_per_subject= std::move(PinnedBuffer<int>{});
 
-        d_corrected_subjects = std::move(SimpleAllocationDevice<char>{});
-        d_corrected_candidates = std::move(SimpleAllocationDevice<char>{});
-        d_num_corrected_candidates_per_anchor = std::move(SimpleAllocationDevice<int>{});
-        d_num_corrected_candidates_per_anchor_prefixsum = std::move(SimpleAllocationDevice<int>{});
-        d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
-        d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
-        d_is_high_quality_subject = std::move(SimpleAllocationDevice<AnchorHighQualityFlag>{});
-        d_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
-        d_num_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
-        d_num_uncorrected_positions_per_subject = std::move(SimpleAllocationDevice<int>{});
-        d_uncorrected_positions_per_subject= std::move(SimpleAllocationDevice<int>{});
+        d_corrected_subjects = std::move(DeviceBuffer<char>{});
+        d_corrected_candidates = std::move(DeviceBuffer<char>{});
+        d_num_corrected_candidates_per_anchor = std::move(DeviceBuffer<int>{});
+        d_num_corrected_candidates_per_anchor_prefixsum = std::move(DeviceBuffer<int>{});
+        d_subject_is_corrected = std::move(DeviceBuffer<bool>{});
+        d_indices_of_corrected_candidates = std::move(DeviceBuffer<int>{});
+        d_is_high_quality_subject = std::move(DeviceBuffer<AnchorHighQualityFlag>{});
+        d_high_quality_subject_indices = std::move(DeviceBuffer<int>{});
+        d_num_high_quality_subject_indices = std::move(DeviceBuffer<int>{});
+        d_num_uncorrected_positions_per_subject = std::move(DeviceBuffer<int>{});
+        d_uncorrected_positions_per_subject= std::move(DeviceBuffer<int>{});
 
-        h_indices = std::move(SimpleAllocationPinnedHost<int>{});
-        h_indices_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
-        h_num_indices = std::move(SimpleAllocationPinnedHost<int>{});
+        h_indices = std::move(PinnedBuffer<int>{});
+        h_indices_per_subject = std::move(PinnedBuffer<int>{});
+        h_num_indices = std::move(PinnedBuffer<int>{});
 
-        d_indices = std::move(SimpleAllocationDevice<int>{});
-        d_indices_per_subject = std::move(SimpleAllocationDevice<int>{});
-        d_num_indices = std::move(SimpleAllocationDevice<int>{});
+        d_indices = std::move(DeviceBuffer<int>{});
+        d_indices_per_subject = std::move(DeviceBuffer<int>{});
+        d_num_indices = std::move(DeviceBuffer<int>{});
 
-        d_indices_tmp = std::move(SimpleAllocationDevice<int>{});
-        d_indices_per_subject_tmp = std::move(SimpleAllocationDevice<int>{});
-        d_num_indices_tmp = std::move(SimpleAllocationDevice<int>{});
+        d_indices_tmp = std::move(DeviceBuffer<int>{});
+        d_indices_per_subject_tmp = std::move(DeviceBuffer<int>{});
+        d_num_indices_tmp = std::move(DeviceBuffer<int>{});
 
-        d_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
-        d_num_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
-
-
-        h_editsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
-        h_numEditsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<int>{});
-        h_editsPerCorrectedCandidate = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
-        h_numEditsPerCorrectedCandidate = std::move(SimpleAllocationPinnedHost<int>{});
-        h_anchorContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
-        h_candidateContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
-
-        d_editsPerCorrectedSubject = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
-        d_numEditsPerCorrectedSubject = std::move(SimpleAllocationDevice<int>{});
-        d_editsPerCorrectedCandidate = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
-        d_numEditsPerCorrectedCandidate = std::move(SimpleAllocationDevice<int>{});
-        d_anchorContainsN = std::move(SimpleAllocationDevice<bool>{});
-        d_candidateContainsN = std::move(SimpleAllocationDevice<bool>{});
+        d_indices_of_corrected_subjects = std::move(DeviceBuffer<int>{});
+        d_num_indices_of_corrected_subjects = std::move(DeviceBuffer<int>{});
 
 
-        d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
+        h_editsPerCorrectedSubject = std::move(PinnedBuffer<TempCorrectedSequence::Edit>{});
+        h_numEditsPerCorrectedSubject = std::move(PinnedBuffer<int>{});
+        h_editsPerCorrectedCandidate = std::move(PinnedBuffer<TempCorrectedSequence::Edit>{});
+        h_numEditsPerCorrectedCandidate = std::move(PinnedBuffer<int>{});
+        h_anchorContainsN = std::move(PinnedBuffer<bool>{});
+        h_candidateContainsN = std::move(PinnedBuffer<bool>{});
 
-        d_canExecute = std::move(SimpleAllocationDevice<bool>{});
+        d_editsPerCorrectedSubject = std::move(DeviceBuffer<TempCorrectedSequence::Edit>{});
+        d_numEditsPerCorrectedSubject = std::move(DeviceBuffer<int>{});
+        d_editsPerCorrectedCandidate = std::move(DeviceBuffer<TempCorrectedSequence::Edit>{});
+        d_numEditsPerCorrectedCandidate = std::move(DeviceBuffer<int>{});
+        d_anchorContainsN = std::move(DeviceBuffer<bool>{});
+        d_candidateContainsN = std::move(DeviceBuffer<bool>{});
+
+
+        d_cub_temp_storage = std::move(DeviceBuffer<char>{});
+
+        d_canExecute = std::move(DeviceBuffer<bool>{});
         
         d_tempstorage.destroy();
         d_numAnchors.destroy();
@@ -703,69 +710,69 @@ struct DataArrays {
         return pointers;
     }
     
-    SimpleAllocationDevice<char> d_tempstorage;
-    SimpleAllocationPinnedHost<int> h_numAnchors;
-    SimpleAllocationPinnedHost<int> h_numCandidates;
-    SimpleAllocationDevice<int> d_numAnchors;
-    SimpleAllocationDevice<int> d_numCandidates;
+    DeviceBuffer<char> d_tempstorage;
+    PinnedBuffer<int> h_numAnchors;
+    PinnedBuffer<int> h_numCandidates;
+    DeviceBuffer<int> d_numAnchors;
+    DeviceBuffer<int> d_numCandidates;
 
 	//std::size_t encoded_sequence_pitch = 0;
 
-    SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
-    SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
-    SimpleAllocationPinnedHost<unsigned int> h_transposedCandidateSequencesData;
-    SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
-    SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
-    SimpleAllocationPinnedHost<int> h_candidates_per_subject;
-    SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
-    SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
-    SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
-    SimpleAllocationPinnedHost<int> h_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
+    PinnedBuffer<unsigned int> h_subject_sequences_data;
+    PinnedBuffer<unsigned int> h_candidate_sequences_data;
+    PinnedBuffer<unsigned int> h_transposedCandidateSequencesData;
+    PinnedBuffer<int> h_subject_sequences_lengths;
+    PinnedBuffer<int> h_candidate_sequences_lengths;
+    PinnedBuffer<int> h_candidates_per_subject;
+    PinnedBuffer<int> h_candidates_per_subject_prefixsum;
+    PinnedBuffer<read_number> h_subject_read_ids;
+    PinnedBuffer<read_number> h_candidate_read_ids;
+    PinnedBuffer<int> h_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
 
-    SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
-    SimpleAllocationDevice<unsigned int> d_candidate_sequences_data;
-    SimpleAllocationDevice<unsigned int> d_transposedCandidateSequencesData;
-    SimpleAllocationDevice<int> d_subject_sequences_lengths;
-    SimpleAllocationDevice<int> d_candidate_sequences_lengths;
-    SimpleAllocationDevice<int> d_candidates_per_subject;
-    SimpleAllocationDevice<int> d_candidates_per_subject_prefixsum;
-    SimpleAllocationDevice<read_number> d_subject_read_ids;
-    SimpleAllocationDevice<read_number> d_candidate_read_ids;
-    SimpleAllocationDevice<int> d_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
+    DeviceBuffer<unsigned int> d_subject_sequences_data;
+    DeviceBuffer<unsigned int> d_candidate_sequences_data;
+    DeviceBuffer<unsigned int> d_transposedCandidateSequencesData;
+    DeviceBuffer<int> d_subject_sequences_lengths;
+    DeviceBuffer<int> d_candidate_sequences_lengths;
+    DeviceBuffer<int> d_candidates_per_subject;
+    DeviceBuffer<int> d_candidates_per_subject_prefixsum;
+    DeviceBuffer<read_number> d_subject_read_ids;
+    DeviceBuffer<read_number> d_candidate_read_ids;
+    DeviceBuffer<int> d_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
 
 	//indices
 
-    SimpleAllocationPinnedHost<int> h_indices;
-    SimpleAllocationPinnedHost<int> h_indices_per_subject;
-    SimpleAllocationPinnedHost<int> h_num_indices;
+    PinnedBuffer<int> h_indices;
+    PinnedBuffer<int> h_indices_per_subject;
+    PinnedBuffer<int> h_num_indices;
 
-    SimpleAllocationDevice<int> d_indices;
-    SimpleAllocationDevice<int> d_indices_per_subject;
-    SimpleAllocationDevice<int> d_num_indices;
-    SimpleAllocationDevice<int> d_indices_tmp;
-    SimpleAllocationDevice<int> d_indices_per_subject_tmp;
-    SimpleAllocationDevice<int> d_num_indices_tmp;
+    DeviceBuffer<int> d_indices;
+    DeviceBuffer<int> d_indices_per_subject;
+    DeviceBuffer<int> d_num_indices;
+    DeviceBuffer<int> d_indices_tmp;
+    DeviceBuffer<int> d_indices_per_subject_tmp;
+    DeviceBuffer<int> d_num_indices_tmp;
 
-    SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;
-    SimpleAllocationPinnedHost<int> h_num_indices_of_corrected_subjects;
+    PinnedBuffer<int> h_indices_of_corrected_subjects;
+    PinnedBuffer<int> h_num_indices_of_corrected_subjects;
 
-    SimpleAllocationDevice<int> d_indices_of_corrected_subjects;
-    SimpleAllocationDevice<int> d_num_indices_of_corrected_subjects;
+    DeviceBuffer<int> d_indices_of_corrected_subjects;
+    DeviceBuffer<int> d_num_indices_of_corrected_subjects;
 
 
-    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
-    SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedSubject;
-    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
-    SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedCandidate;
-    SimpleAllocationPinnedHost<bool> h_anchorContainsN;
-    SimpleAllocationPinnedHost<bool> h_candidateContainsN;
+    PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
+    PinnedBuffer<int> h_numEditsPerCorrectedSubject;
+    PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+    PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
+    PinnedBuffer<bool> h_anchorContainsN;
+    PinnedBuffer<bool> h_candidateContainsN;
 
-    SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
-    SimpleAllocationDevice<int> d_numEditsPerCorrectedSubject;
-    SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedCandidate;
-    SimpleAllocationDevice<int> d_numEditsPerCorrectedCandidate;
-    SimpleAllocationDevice<bool> d_anchorContainsN;
-    SimpleAllocationDevice<bool> d_candidateContainsN;
+    DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
+    DeviceBuffer<int> d_numEditsPerCorrectedSubject;
+    DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedCandidate;
+    DeviceBuffer<int> d_numEditsPerCorrectedCandidate;
+    DeviceBuffer<bool> d_anchorContainsN;
+    DeviceBuffer<bool> d_candidateContainsN;
 
 
     ReadQualitiesPointers getHostQualityPointers() const{
@@ -788,13 +795,13 @@ struct DataArrays {
 
     //std::size_t quality_pitch = 0;
 
-    SimpleAllocationPinnedHost<char> h_subject_qualities;
-    SimpleAllocationPinnedHost<char> h_candidate_qualities;
+    PinnedBuffer<char> h_subject_qualities;
+    PinnedBuffer<char> h_candidate_qualities;
 
-    SimpleAllocationDevice<char> d_subject_qualities;
-    SimpleAllocationDevice<char> d_candidate_qualities;
-    SimpleAllocationDevice<char> d_candidate_qualities_transposed;
-    //SimpleAllocationDevice<char> d_candidate_qualities_tmp;
+    DeviceBuffer<char> d_subject_qualities;
+    DeviceBuffer<char> d_candidate_qualities;
+    DeviceBuffer<char> d_candidate_qualities_transposed;
+    //DeviceBuffer<char> d_candidate_qualities_tmp;
 
 	//correction results output
 
@@ -832,33 +839,33 @@ struct DataArrays {
 
 	//std::size_t sequence_pitch = 0;
 
-    SimpleAllocationPinnedHost<char> h_corrected_subjects;
-    SimpleAllocationPinnedHost<char> h_corrected_candidates;
-    SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor;
-    SimpleAllocationPinnedHost<int> h_num_corrected_candidates_per_anchor_prefixsum;
-    SimpleAllocationPinnedHost<int> h_num_total_corrected_candidates;
-    SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
-    SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
-    SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
-    SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
+    PinnedBuffer<char> h_corrected_subjects;
+    PinnedBuffer<char> h_corrected_candidates;
+    PinnedBuffer<int> h_num_corrected_candidates_per_anchor;
+    PinnedBuffer<int> h_num_corrected_candidates_per_anchor_prefixsum;
+    PinnedBuffer<int> h_num_total_corrected_candidates;
+    PinnedBuffer<bool> h_subject_is_corrected;
+    PinnedBuffer<int> h_indices_of_corrected_candidates;
+    PinnedBuffer<int> h_num_uncorrected_positions_per_subject;
+    PinnedBuffer<int> h_uncorrected_positions_per_subject;
 
-    SimpleAllocationDevice<char> d_corrected_subjects;
-    SimpleAllocationDevice<char> d_corrected_candidates;
-    SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor;
-    SimpleAllocationDevice<int> d_num_corrected_candidates_per_anchor_prefixsum;
-    SimpleAllocationDevice<int> d_num_total_corrected_candidates;
-    SimpleAllocationDevice<bool> d_subject_is_corrected;
-    SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
-    SimpleAllocationDevice<int> d_num_uncorrected_positions_per_subject;
-    SimpleAllocationDevice<int> d_uncorrected_positions_per_subject;
+    DeviceBuffer<char> d_corrected_subjects;
+    DeviceBuffer<char> d_corrected_candidates;
+    DeviceBuffer<int> d_num_corrected_candidates_per_anchor;
+    DeviceBuffer<int> d_num_corrected_candidates_per_anchor_prefixsum;
+    DeviceBuffer<int> d_num_total_corrected_candidates;
+    DeviceBuffer<bool> d_subject_is_corrected;
+    DeviceBuffer<int> d_indices_of_corrected_candidates;
+    DeviceBuffer<int> d_num_uncorrected_positions_per_subject;
+    DeviceBuffer<int> d_uncorrected_positions_per_subject;
 
-    SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
-    SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
-    SimpleAllocationPinnedHost<int> h_num_high_quality_subject_indices;
+    PinnedBuffer<AnchorHighQualityFlag> h_is_high_quality_subject;
+    PinnedBuffer<int> h_high_quality_subject_indices;
+    PinnedBuffer<int> h_num_high_quality_subject_indices;
 
-    SimpleAllocationDevice<AnchorHighQualityFlag> d_is_high_quality_subject;
-    SimpleAllocationDevice<int> d_high_quality_subject_indices;
-    SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
+    DeviceBuffer<AnchorHighQualityFlag> d_is_high_quality_subject;
+    DeviceBuffer<int> d_high_quality_subject_indices;
+    DeviceBuffer<int> d_num_high_quality_subject_indices;
 
     char* d_compactCorrectedCandidates = nullptr;
     TempCorrectedSequence::Edit* d_compactEditsPerCorrectedCandidate = nullptr;
@@ -890,24 +897,24 @@ struct DataArrays {
         return pointers;
     }
 
-    SimpleAllocationPinnedHost<int> h_alignment_scores;
-    SimpleAllocationPinnedHost<int> h_alignment_overlaps;
-    SimpleAllocationPinnedHost<int> h_alignment_shifts;
-    SimpleAllocationPinnedHost<int> h_alignment_nOps;
-    SimpleAllocationPinnedHost<bool> h_alignment_isValid;
-    SimpleAllocationPinnedHost<BestAlignment_t> h_alignment_best_alignment_flags;
+    PinnedBuffer<int> h_alignment_scores;
+    PinnedBuffer<int> h_alignment_overlaps;
+    PinnedBuffer<int> h_alignment_shifts;
+    PinnedBuffer<int> h_alignment_nOps;
+    PinnedBuffer<bool> h_alignment_isValid;
+    PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;
 
-    SimpleAllocationDevice<int> d_alignment_scores;
-    SimpleAllocationDevice<int> d_alignment_overlaps;
-    SimpleAllocationDevice<int> d_alignment_shifts;
-    SimpleAllocationDevice<int> d_alignment_nOps;
-    SimpleAllocationDevice<bool> d_alignment_isValid;
-    SimpleAllocationDevice<BestAlignment_t> d_alignment_best_alignment_flags;
+    DeviceBuffer<int> d_alignment_scores;
+    DeviceBuffer<int> d_alignment_overlaps;
+    DeviceBuffer<int> d_alignment_shifts;
+    DeviceBuffer<int> d_alignment_nOps;
+    DeviceBuffer<bool> d_alignment_isValid;
+    DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags;
 
 	//tmp storage for cub
-    SimpleAllocationDevice<char> d_cub_temp_storage;
+    DeviceBuffer<char> d_cub_temp_storage;
 
-    SimpleAllocationDevice<bool> d_canExecute;
+    DeviceBuffer<bool> d_canExecute;
 
 
 	// multiple sequence alignment
@@ -943,23 +950,23 @@ struct DataArrays {
         return  ptrs;
     }
 
-    SimpleAllocationPinnedHost<char> h_consensus;
-    SimpleAllocationPinnedHost<float> h_support;
-    SimpleAllocationPinnedHost<int> h_coverage;
-    SimpleAllocationPinnedHost<float> h_origWeights;
-    SimpleAllocationPinnedHost<int> h_origCoverages;
-    SimpleAllocationPinnedHost<MSAColumnProperties> h_msa_column_properties;
-    SimpleAllocationPinnedHost<int> h_counts;
-    SimpleAllocationPinnedHost<float> h_weights;
+    PinnedBuffer<char> h_consensus;
+    PinnedBuffer<float> h_support;
+    PinnedBuffer<int> h_coverage;
+    PinnedBuffer<float> h_origWeights;
+    PinnedBuffer<int> h_origCoverages;
+    PinnedBuffer<MSAColumnProperties> h_msa_column_properties;
+    PinnedBuffer<int> h_counts;
+    PinnedBuffer<float> h_weights;
 
-    SimpleAllocationDevice<char> d_consensus;
-    SimpleAllocationDevice<float> d_support;
-    SimpleAllocationDevice<int> d_coverage;
-    SimpleAllocationDevice<float> d_origWeights;
-    SimpleAllocationDevice<int> d_origCoverages;
-    SimpleAllocationDevice<MSAColumnProperties> d_msa_column_properties;
-    SimpleAllocationDevice<int> d_counts;
-    SimpleAllocationDevice<float> d_weights;
+    DeviceBuffer<char> d_consensus;
+    DeviceBuffer<float> d_support;
+    DeviceBuffer<int> d_coverage;
+    DeviceBuffer<float> d_origWeights;
+    DeviceBuffer<int> d_origCoverages;
+    DeviceBuffer<MSAColumnProperties> d_msa_column_properties;
+    DeviceBuffer<int> d_counts;
+    DeviceBuffer<float> d_weights;
 
     void copyEverythingToHostForDebugging(){
         // auto handleArray = [](auto& host, const auto& device){
