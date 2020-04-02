@@ -1124,10 +1124,22 @@ namespace gpu{
                 tgroup.sync();
             }
 
+            
             //copy from smem to global output
-            for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
-                my_corrected_candidate[i] = shared_correctedCandidate[i];
-            }            
+            const int fullInts1 = candidate_length / sizeof(int);
+
+            for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+            }
+
+            for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+                my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                    = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+            } 
+
+            // for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
+            //     my_corrected_candidate[i] = shared_correctedCandidate[i];
+            // }            
 
             //compare corrected candidate with uncorrected candidate, calculate edits   
             

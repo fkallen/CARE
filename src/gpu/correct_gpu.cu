@@ -2598,8 +2598,8 @@ namespace gpu{
         //compute candidate correction in first stream
 
         callCorrectCandidatesWithGroupKernel2_async(
-            dataArrays.d_corrected_candidates.get(),
-            dataArrays.d_editsPerCorrectedCandidate.get(),
+            dataArrays.h_corrected_candidates.get(),
+            dataArrays.h_editsPerCorrectedCandidate.get(),
             dataArrays.d_numEditsPerCorrectedCandidate.get(),
             dataArrays.d_msa_column_properties.get(),
             dataArrays.d_consensus.get(),
@@ -2708,7 +2708,7 @@ namespace gpu{
 
         //             const size_t bytesToCopy1 = numElements * decodedSequencePitchInBytes;
 
-        //             const int fullIntsToCopy1 = SDIV(bytesToCopy1, sizeof(CopyType));
+        //             const int fullIntsToCopy1 = bytesToCopy1 / sizeof(CopyType);
 
         //             for(int index = tid; index < fullIntsToCopy1; index += stride){
         //                 ((CopyType*)h_corrected_candidates)[index] = 
@@ -2724,7 +2724,7 @@ namespace gpu{
 
         //             const size_t bytesToCopy2 = numElements * maxNumEditsPerSequence;
 
-        //             const int fullIntsToCopy2 = SDIV(bytesToCopy2, sizeof(CopyType));
+        //             const int fullIntsToCopy2 = bytesToCopy2 / sizeof(CopyType);
 
         //             for(int index = tid; index < fullIntsToCopy2; index += stride){
         //                 ((CopyType*)h_editsPerCorrectedCandidate)[index] = 
@@ -2767,41 +2767,41 @@ namespace gpu{
 
     void copyCorrectedCandidatesToHost(Batch& batch){
 
-        cudaSetDevice(batch.deviceId); CUERR;
+        // cudaSetDevice(batch.deviceId); CUERR;
 
-        DataArrays& dataArrays = batch.dataArrays;
-        std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+        // DataArrays& dataArrays = batch.dataArrays;
+        // std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
+        // std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        cudaEventSynchronize(events[numTotalCorrectedCandidates_event_index]); CUERR;
+        // cudaEventSynchronize(events[numTotalCorrectedCandidates_event_index]); CUERR;
 
-        const int numTotalCorrectedCandidates = *dataArrays.h_num_total_corrected_candidates.get();
-        //std::cerr << numTotalCorrectedCandidates << " / " << batch.n_queries << "\n";
+        // const int numTotalCorrectedCandidates = *dataArrays.h_num_total_corrected_candidates.get();
+        // //std::cerr << numTotalCorrectedCandidates << " / " << batch.n_queries << "\n";
 
-        cudaEventSynchronize(events[correction_finished_event_index]); CUERR;        
+        // cudaEventSynchronize(events[correction_finished_event_index]); CUERR;        
 
 
 
-        cudaMemcpyAsync(
-            dataArrays.h_corrected_candidates,
-            dataArrays.d_corrected_candidates,
-            batch.decodedSequencePitchInBytes * numTotalCorrectedCandidates,
-            D2H,
-            streams[primary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_corrected_candidates,
+        //     dataArrays.d_corrected_candidates,
+        //     batch.decodedSequencePitchInBytes * numTotalCorrectedCandidates,
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
 
-        cudaMemcpyAsync(
-            dataArrays.h_editsPerCorrectedCandidate,
-            dataArrays.d_editsPerCorrectedCandidate,
-            sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
-            D2H,
-            streams[primary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_editsPerCorrectedCandidate,
+        //     dataArrays.d_editsPerCorrectedCandidate,
+        //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
 
-        // cubCachingAllocator.DeviceFree(dataArrays.d_compactCorrectedCandidates); CUERR;
-        // cubCachingAllocator.DeviceFree(dataArrays.d_compactEditsPerCorrectedCandidate); CUERR;
+        // // cubCachingAllocator.DeviceFree(dataArrays.d_compactCorrectedCandidates); CUERR;
+        // // cubCachingAllocator.DeviceFree(dataArrays.d_compactEditsPerCorrectedCandidate); CUERR;
 
-         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+        //  cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
 
 
