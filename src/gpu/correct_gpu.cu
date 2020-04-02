@@ -1184,90 +1184,48 @@ namespace gpu{
 
         batchData.reallocResize |= dataArrays.d_canExecute.resize(1);
 
-        nvtx::pop_range();
-
-        std::size_t temp_storage_bytes = 0;
-        std::size_t max_temp_storage_bytes = 0;
-        cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
-                    (int*)nullptr, (int*)nullptr,
-                    batchData.n_subjects+1,
-                    (int*)nullptr,
-                    batchData.n_queries,
-                    streams[primary_stream_index]); CUERR;
-
-        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-        cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                    (bool*)nullptr, (int*)nullptr, (int*)nullptr,
-                    batchData.n_queries,
-                    streams[primary_stream_index]); CUERR;
-
-        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-        cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                    (int*)nullptr,
-                    batchData.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
-        cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                    (int*)nullptr,
-                    batchData.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
-        cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
-                                                temp_storage_bytes,
-                                                (const char*) nullptr,
-                                                (char*)nullptr,
-                                                (const int*)nullptr,
-                                                (int*)nullptr,
-                                                batchData.n_queries,
-                                                batchData.n_subjects,
-                                                (const int*)nullptr,
-                                                (const int*)nullptr,
-                                                0,
-                                                3,
-                                                streams[primary_stream_index]);
-
-        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-        temp_storage_bytes = max_temp_storage_bytes;
-        dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
-        
+           
         
         
         
         std::size_t popcountShdTempBytes = 0; 
         
         call_popcount_shifted_hamming_distance_kernel_async(
-                    nullptr,
-                    popcountShdTempBytes,
-                    dataArrays.d_alignment_overlaps.get(),
-                    dataArrays.d_alignment_shifts.get(),
-                    dataArrays.d_alignment_nOps.get(),
-                    dataArrays.d_alignment_isValid.get(),
-                    dataArrays.d_alignment_best_alignment_flags.get(),
-                    dataArrays.d_subject_sequences_data.get(),
-                    dataArrays.d_candidate_sequences_data.get(),
-                    dataArrays.d_subject_sequences_lengths.get(),
-                    dataArrays.d_candidate_sequences_lengths.get(),
-                    dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    dataArrays.h_candidates_per_subject.get(),
-                    dataArrays.d_candidates_per_subject.get(),
-                    dataArrays.d_anchorIndicesOfCandidates.get(),
-                    dataArrays.d_numAnchors.get(),
-                    dataArrays.d_numCandidates.get(),
-                    batchData.n_subjects,
-                    batchData.n_queries,
-                    transFuncData.sequenceFileProperties.maxSequenceLength,
-                    batchData.encodedSequencePitchInInts,
-                    transFuncData.goodAlignmentProperties.min_overlap,
-                    transFuncData.goodAlignmentProperties.maxErrorRate,
-                    transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                    transFuncData.correctionOptions.estimatedErrorrate,
-                    //batchData.maxSubjectLength,
-                    streams[primary_stream_index],
-                    batchData.kernelLaunchHandle);
+            nullptr,
+            popcountShdTempBytes,
+            dataArrays.d_alignment_overlaps.get(),
+            dataArrays.d_alignment_shifts.get(),
+            dataArrays.d_alignment_nOps.get(),
+            dataArrays.d_alignment_isValid.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_subject_sequences_data.get(),
+            dataArrays.d_candidate_sequences_data.get(),
+            dataArrays.d_subject_sequences_lengths.get(),
+            dataArrays.d_candidate_sequences_lengths.get(),
+            dataArrays.d_candidates_per_subject_prefixsum.get(),
+            dataArrays.h_candidates_per_subject.get(),
+            dataArrays.d_candidates_per_subject.get(),
+            dataArrays.d_anchorIndicesOfCandidates.get(),
+            dataArrays.d_numAnchors.get(),
+            dataArrays.d_numCandidates.get(),
+            batchData.n_subjects,
+            batchData.n_queries,
+            transFuncData.sequenceFileProperties.maxSequenceLength,
+            batchData.encodedSequencePitchInInts,
+            transFuncData.goodAlignmentProperties.min_overlap,
+            transFuncData.goodAlignmentProperties.maxErrorRate,
+            transFuncData.goodAlignmentProperties.min_overlap_ratio,
+            transFuncData.correctionOptions.estimatedErrorrate,
+            //batchData.maxSubjectLength,
+            streams[primary_stream_index],
+            batchData.kernelLaunchHandle
+        );
         
+        // this buffer will also serve as temp storage for cub. The required memory for cub 
+        // is less than popcountShdTempBytes.
         batchData.reallocResize |= dataArrays.d_tempstorage.resize(popcountShdTempBytes);
+
+        nvtx::pop_range();   
 
         if(batchData.reallocResize){
             //invalidate all graphs
@@ -2470,8 +2428,6 @@ namespace gpu{
 		if(transFuncData.correctionOptions.correctCandidates) {
             // find subject ids of subjects with high quality multiple sequence alignment
 
-            //size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
             auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
                 return flag.hq();
             };
@@ -2479,15 +2435,6 @@ namespace gpu{
             cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
                 d_isHqSubject(dataArrays.d_is_high_quality_subject,
                                 isHqSubject);
-
-            // cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-            //             cubTempSize,
-            //             cub::CountingInputIterator<int>(0),
-            //             d_isHqSubject,
-            //             dataArrays.d_high_quality_subject_indices.get(),
-            //             dataArrays.d_num_high_quality_subject_indices.get(),
-            //             batch.n_subjects,
-            //             streams[primary_stream_index]); CUERR;
 
             selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
                 dataArrays.d_high_quality_subject_indices.get(),
@@ -2510,14 +2457,6 @@ namespace gpu{
                             dataArrays.d_num_high_quality_subject_indices.sizeInBytes(),
                             D2H,
                             streams[secondary_stream_index]); CUERR;
-
-            //cudaEventRecord(events[highqualityindices_event_index], streams[secondary_stream_index]); CUERR;
-
-            
-
-            //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
-
-            //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 		}
 
         
@@ -2584,10 +2523,10 @@ namespace gpu{
             batch.kernelLaunchHandle
         );
 
-        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+        size_t cubTempSize = dataArrays.d_tempstorage.sizeInBytes();
 
         cub::DeviceSelect::Flagged(
-            dataArrays.d_cub_temp_storage.get(),
+            dataArrays.d_tempstorage.get(),
             cubTempSize,
             cub::CountingInputIterator<int>(0),
             d_candidateCanBeCorrected,
@@ -2615,7 +2554,7 @@ namespace gpu{
         cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[secondary_stream_index]); CUERR;
 
         cub::DeviceScan::ExclusiveSum(
-            dataArrays.d_cub_temp_storage.get(), 
+            dataArrays.d_tempstorage.get(), 
             cubTempSize, 
             dataArrays.d_num_corrected_candidates_per_anchor.get(), 
             dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(), 
