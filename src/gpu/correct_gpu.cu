@@ -2392,18 +2392,25 @@ namespace gpu{
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-        cub::DeviceSelect::Flagged(
-            dataArrays.d_cub_temp_storage.get(),
-            cubTempSize,
-            cub::CountingInputIterator<int>(0),
-            dataArrays.d_subject_is_corrected.get(),
+        selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
             dataArrays.d_indices_of_corrected_subjects.get(),
             dataArrays.d_num_indices_of_corrected_subjects.get(),
-            batch.n_subjects,
-            streams[primary_stream_index]
-        ); CUERR;
+            dataArrays.d_subject_is_corrected.get(),
+            dataArrays.d_numAnchors.get()
+        );
+
+        // size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+        // cub::DeviceSelect::Flagged(
+        //     dataArrays.d_cub_temp_storage.get(),
+        //     cubTempSize,
+        //     cub::CountingInputIterator<int>(0),
+        //     dataArrays.d_subject_is_corrected.get(),
+        //     dataArrays.d_indices_of_corrected_subjects.get(),
+        //     dataArrays.d_num_indices_of_corrected_subjects.get(),
+        //     batch.n_subjects,
+        //     streams[primary_stream_index]
+        // ); CUERR;
 
         callConstructAnchorResultsKernelAsync(
             dataArrays.d_editsPerCorrectedSubject.get(),
