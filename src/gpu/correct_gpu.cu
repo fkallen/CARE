@@ -2685,6 +2685,83 @@ namespace gpu{
         //     batch.n_queries - resultsToCopy,
         //     streams[primary_stream_index]
         // ); CUERR;
+
+        // {
+        //     char* const h_corrected_candidates = dataArrays.h_corrected_candidates.get();
+        //     char* const d_corrected_candidates = dataArrays.d_corrected_candidates.get();
+        //     const int* const d_num_total_corrected_candidates = dataArrays.d_num_total_corrected_candidates.get();
+            
+        //     auto* h_editsPerCorrectedCandidate = dataArrays.h_editsPerCorrectedCandidate.get();
+        //     auto* d_editsPerCorrectedCandidate = dataArrays.d_editsPerCorrectedCandidate.get();
+
+        //     std::size_t decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes;
+        //     std::size_t maxNumEditsPerSequence = batch.maxNumEditsPerSequence;
+            
+        //     generic_kernel<<<640, 256, 0, streams[primary_stream_index]>>>(
+        //         [=] __device__ (){
+        //             using CopyType = int;
+
+        //             const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+        //             const size_t stride = blockDim.x * gridDim.x;
+
+        //             const int numElements = *d_num_total_corrected_candidates;
+
+        //             const size_t bytesToCopy1 = numElements * decodedSequencePitchInBytes;
+
+        //             const int fullIntsToCopy1 = SDIV(bytesToCopy1, sizeof(CopyType));
+
+        //             for(int index = tid; index < fullIntsToCopy1; index += stride){
+        //                 ((CopyType*)h_corrected_candidates)[index] = 
+        //                     ((const CopyType*)d_corrected_candidates)[index];
+        //             }
+
+        //             const int remainingBytes1 = bytesToCopy1 - fullIntsToCopy1 * sizeof(CopyType);
+
+        //             if(tid < remainingBytes1){
+        //                 h_corrected_candidates[fullIntsToCopy1 * sizeof(CopyType) + tid] 
+        //                     = d_corrected_candidates[fullIntsToCopy1 * sizeof(CopyType) + tid];
+        //             }
+
+        //             const size_t bytesToCopy2 = numElements * maxNumEditsPerSequence;
+
+        //             const int fullIntsToCopy2 = SDIV(bytesToCopy2, sizeof(CopyType));
+
+        //             for(int index = tid; index < fullIntsToCopy2; index += stride){
+        //                 ((CopyType*)h_editsPerCorrectedCandidate)[index] = 
+        //                     ((const CopyType*)d_editsPerCorrectedCandidate)[index];
+        //             }
+
+        //             const int remainingBytes2 = bytesToCopy2 - fullIntsToCopy2 * sizeof(CopyType);
+
+        //             if(tid < remainingBytes2){
+        //                 h_editsPerCorrectedCandidate[fullIntsToCopy2 * sizeof(CopyType) + tid] 
+        //                     = d_editsPerCorrectedCandidate[fullIntsToCopy2 * sizeof(CopyType) + tid];
+        //             }
+
+
+                    
+        //         }
+        //     ); CUERR;
+
+        // }
+
+        // callMemcpy2DKernel(
+        //     dataArrays.h_corrected_candidates.get(),
+        //     dataArrays.d_corrected_candidates.get(),
+        //     dataArrays.d_num_total_corrected_candidates.get(),
+        //     batch.decodedSequencePitchInBytes,
+        //     batch.n_queries,
+        //     streams[primary_stream_index]
+        // ); CUERR;
+        
+        // callMemcpy2DKernel(
+        //     dataArrays.h_editsPerCorrectedCandidate.get(),
+        //     dataArrays.d_editsPerCorrectedCandidate.get(),
+        //     dataArrays.d_num_total_corrected_candidates.get(),
+        //     batch.maxNumEditsPerSequence,
+        //     batch.n_queries,
+        //     streams[primary_stream_index]
+        // ); CUERR;
         
     }
 
