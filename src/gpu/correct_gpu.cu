@@ -2470,7 +2470,7 @@ namespace gpu{
 		if(transFuncData.correctionOptions.correctCandidates) {
             // find subject ids of subjects with high quality multiple sequence alignment
 
-            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+            //size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
             auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
                 return flag.hq();
@@ -2480,14 +2480,21 @@ namespace gpu{
                 d_isHqSubject(dataArrays.d_is_high_quality_subject,
                                 isHqSubject);
 
-            cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                        cubTempSize,
-                        cub::CountingInputIterator<int>(0),
-                        d_isHqSubject,
-                        dataArrays.d_high_quality_subject_indices.get(),
-                        dataArrays.d_num_high_quality_subject_indices.get(),
-                        batch.n_subjects,
-                        streams[primary_stream_index]); CUERR;
+            // cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+            //             cubTempSize,
+            //             cub::CountingInputIterator<int>(0),
+            //             d_isHqSubject,
+            //             dataArrays.d_high_quality_subject_indices.get(),
+            //             dataArrays.d_num_high_quality_subject_indices.get(),
+            //             batch.n_subjects,
+            //             streams[primary_stream_index]); CUERR;
+
+            selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
+                dataArrays.d_high_quality_subject_indices.get(),
+                dataArrays.d_num_high_quality_subject_indices.get(),
+                d_isHqSubject,
+                dataArrays.d_numAnchors.get()
+            );
 
             cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
             cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
