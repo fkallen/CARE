@@ -1781,19 +1781,19 @@ namespace gpu{
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
-        cudaMemsetAsync(
-            d_numCorrectedCandidatesPerAnchor, 
-            0, 
-            sizeof(int) * n_subjects, 
-            stream
-        ); CUERR;
+        // cudaMemsetAsync(
+        //     d_numCorrectedCandidatesPerAnchor, 
+        //     0, 
+        //     sizeof(int) * n_subjects, 
+        //     stream
+        // ); CUERR;
 
-        cudaMemsetAsync(
-            d_candidateCanBeCorrected, 
-            0, 
-            sizeof(bool) * n_candidates, 
-            stream
-        ); CUERR;
+        // cudaMemsetAsync(
+        //     d_candidateCanBeCorrected, 
+        //     0, 
+        //     sizeof(bool) * n_candidates, 
+        //     stream
+        // ); CUERR;
 
         constexpr int blocksize = 256;
 

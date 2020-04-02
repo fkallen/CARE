@@ -2357,19 +2357,6 @@ namespace gpu{
             dataArrays.d_numAnchors.get()
         );
 
-        // size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-        // cub::DeviceSelect::Flagged(
-        //     dataArrays.d_cub_temp_storage.get(),
-        //     cubTempSize,
-        //     cub::CountingInputIterator<int>(0),
-        //     dataArrays.d_subject_is_corrected.get(),
-        //     dataArrays.d_indices_of_corrected_subjects.get(),
-        //     dataArrays.d_num_indices_of_corrected_subjects.get(),
-        //     batch.n_subjects,
-        //     streams[primary_stream_index]
-        // ); CUERR;
-
         callConstructAnchorResultsKernelAsync(
             dataArrays.d_editsPerCorrectedSubject.get(),
             dataArrays.d_numEditsPerCorrectedSubject.get(),
@@ -2484,6 +2471,27 @@ namespace gpu{
 
         bool* const d_candidateCanBeCorrected = dataArrays.d_alignment_isValid.get(); //repurpose
 
+        int* const d_num_corrected_candidates_per_anchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
+        int* const d_numAnchors = dataArrays.d_numAnchors.get();
+        int* const d_numCandidates = dataArrays.d_numCandidates.get();
+        const int batchsize = batch.transFuncData->correctionOptions.batchsize;
+
+        generic_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
+            [=] __device__ (){
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
+
+                for(int i = tid; i < batchsize; i += stride){
+                    d_num_corrected_candidates_per_anchor[i] = 0;
+                }
+
+                for(int i = tid; i < *d_numCandidates; i += stride){
+                    d_candidateCanBeCorrected[i] = 0;
+                }
+            }
+        ); CUERR;
+
+
         std::array<int*,2> d_indices_dblbuf{
             dataArrays.d_indices.get(), 
             dataArrays.d_indices_tmp.get()
@@ -2559,7 +2567,7 @@ namespace gpu{
             cubTempSize, 
             dataArrays.d_num_corrected_candidates_per_anchor.get(), 
             dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(), 
-            batch.n_subjects, 
+            batchsize, 
             streams[secondary_stream_index]
         );
 
