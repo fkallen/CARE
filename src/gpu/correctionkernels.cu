@@ -6,7 +6,7 @@
 
 // //#include <gpu/bestalignment.hpp>
 // #include <bestalignment.hpp>
-// #include <gpu/utility_kernels.cuh>
+#include <gpu/utility_kernels.cuh>
 #include <gpu/cubcachingallocator.cuh>
 
 // #include <msa.hpp>
@@ -2012,11 +2012,19 @@ namespace gpu{
             int numEditsThreshold,
             size_t encodedSequencePitchInInts,
             size_t decodedSequencePitchInBytes,
-            int numSubjects,
+            const int* d_numAnchors,
+            int maxNumAnchors,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
-        cudaMemsetAsync(d_editsPerCorrectedSubject, 0, sizeof(TempCorrectedSequence::Edit) * numSubjects, stream);
+        generic_kernel<<<1,256,0,stream>>>(
+            [=]__device__(){
+                for(int i = threadIdx.x; i < *d_numAnchors; i += 256){
+                    memset(&d_editsPerCorrectedSubject[i], 0, sizeof(TempCorrectedSequence::Edit));
+                }
+            }
+        ); CUERR;
+        //cudaMemsetAsync(d_editsPerCorrectedSubject, 0, sizeof(TempCorrectedSequence::Edit) * maxNumAnchors, stream);
 
         const int blocksize = 128;
         const std::size_t smem = 0;
@@ -2065,7 +2073,7 @@ namespace gpu{
         }
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(SDIV(numSubjects, blocksize), max_blocks_per_device));
+        dim3 grid(std::min(SDIV(maxNumAnchors, blocksize), max_blocks_per_device));
 
         #define mycall(blocksize) constructAnchorResultsKernel \
                                 <<<grid, block, 0, stream>>>( \

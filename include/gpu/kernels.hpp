@@ -444,7 +444,8 @@ void callConstructAnchorResultsKernelAsync(
             int numEditsThreshold,
             size_t encodedSequencePitchInInts,
             size_t decodedSequencePitchInBytes,
-            int numSubjects,
+            const int* d_numAnchors,
+            int maxNumAnchors,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 

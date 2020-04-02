@@ -2383,7 +2383,8 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            batch.n_subjects,
+            dataArrays.d_numAnchors.get(),
+            batch.transFuncData->correctionOptions.batchsize,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
