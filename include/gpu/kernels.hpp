@@ -449,28 +449,27 @@ void callConstructAnchorResultsKernelAsync(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-
 void callFlagCandidatesToBeCorrectedKernel_async(
-            bool* __restrict__ d_candidateCanBeCorrected,
-            int* __restrict__ d_numCorrectedCandidatesPerAnchor,
-            const float* __restrict__ d_support,
-            const int* __restrict__ d_coverages,
-            const MSAColumnProperties* __restrict__ d_msaColumnProperties,
-            const int* __restrict__ d_alignmentShifts,
-            const int* __restrict__ d_candidateSequencesLengths,
-            const int* __restrict__ d_anchorIndicesOfCandidates,
-            const AnchorHighQualityFlag* __restrict__ d_hqflags,
-            const int* __restrict__ candidatesPerSubjectPrefixsum,
-            const int* __restrict__ localGoodCandidateIndices,
-            const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
+            bool* d_candidateCanBeCorrected,
+            int* d_numCorrectedCandidatesPerAnchor,
+            const float* d_support,
+            const int* d_coverages,
+            const MSAColumnProperties* d_msaColumnProperties,
+            const int* d_alignmentShifts,
+            const int* d_candidateSequencesLengths,
+            const int* d_anchorIndicesOfCandidates,
+            const AnchorHighQualityFlag* d_hqflags,
+            const int* d_candidatesPerSubjectPrefixsum,
+            const int* d_localGoodCandidateIndices,
+            const int* d_numLocalGoodCandidateIndicesPerSubject,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
-            int n_subjects,
-            int n_candidates,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle); 
 
 void callCorrectCandidatesWithGroupKernel2_async(
             char* __restrict__ correctedCandidates,

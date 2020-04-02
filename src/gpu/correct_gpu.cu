@@ -2522,12 +2522,12 @@ namespace gpu{
             dataArrays.d_candidates_per_subject_prefixsum,
             d_indices,
             d_indices_per_subject,
+            d_numAnchors,
+            d_numCandidates,
             batch.msa_weights_pitch / sizeof(float),
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct,
-            batch.n_subjects,
-            batch.n_queries,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );

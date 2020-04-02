@@ -884,16 +884,18 @@ namespace gpu{
             const int* __restrict__ numCandidatesPerSubjectPrefixsum,
             const int* __restrict__ localGoodCandidateIndices,
             const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
-            int new_columns_to_correct,
-            int n_subjects,
-            int n_candidates){
+            int new_columns_to_correct){
+
+        const int n_subjects = *d_numAnchors;
 
         for(int anchorIndex = blockIdx.x; 
                 anchorIndex < n_subjects; 
-                anchorIndex += blockDim.x * gridDim.x){
+                anchorIndex += gridDim.x){
 
             const bool isHighQualitySubject = hqflags[anchorIndex].hq();
             const int numGoodIndices = numLocalGoodCandidateIndicesPerSubject[anchorIndex];
@@ -1760,24 +1762,24 @@ namespace gpu{
 
 
     void callFlagCandidatesToBeCorrectedKernel_async(
-            bool* __restrict__ d_candidateCanBeCorrected,
-            int* __restrict__ d_numCorrectedCandidatesPerAnchor,
-            const float* __restrict__ d_support,
-            const int* __restrict__ d_coverages,
-            const MSAColumnProperties* __restrict__ d_msaColumnProperties,
-            const int* __restrict__ d_alignmentShifts,
-            const int* __restrict__ d_candidateSequencesLengths,
-            const int* __restrict__ d_anchorIndicesOfCandidates,
-            const AnchorHighQualityFlag* __restrict__ d_hqflags,
-            const int* __restrict__ candidatesPerSubjectPrefixsum,
-            const int* __restrict__ localGoodCandidateIndices,
-            const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
+            bool* d_candidateCanBeCorrected,
+            int* d_numCorrectedCandidatesPerAnchor,
+            const float* d_support,
+            const int* d_coverages,
+            const MSAColumnProperties* d_msaColumnProperties,
+            const int* d_alignmentShifts,
+            const int* d_candidateSequencesLengths,
+            const int* d_anchorIndicesOfCandidates,
+            const AnchorHighQualityFlag* d_hqflags,
+            const int* d_candidatesPerSubjectPrefixsum,
+            const int* d_localGoodCandidateIndices,
+            const int* d_numLocalGoodCandidateIndicesPerSubject,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
-            int n_subjects,
-            int n_candidates,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
@@ -1796,9 +1798,47 @@ namespace gpu{
         // ); CUERR;
 
         constexpr int blocksize = 256;
+        const std::size_t smem = 0;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::FlagCandidatesToBeCorrected);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                flagCandidatesToBeCorrectedKernel,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount 
+                                        * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::FlagCandidatesToBeCorrected] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount 
+                                        * kernelProperties.max_blocks_per_SM;
+        }
+
+
 
         dim3 block(blocksize);
-        dim3 grid(n_subjects);
+        dim3 grid(max_blocks_per_device);
 
         flagCandidatesToBeCorrectedKernel<<<grid, block, 0, stream>>>(
             d_candidateCanBeCorrected,
@@ -1810,15 +1850,15 @@ namespace gpu{
             d_candidateSequencesLengths,
             d_anchorIndicesOfCandidates,
             d_hqflags,
-            candidatesPerSubjectPrefixsum,
-            localGoodCandidateIndices,
-            numLocalGoodCandidateIndicesPerSubject,
+            d_candidatesPerSubjectPrefixsum,
+            d_localGoodCandidateIndices,
+            d_numLocalGoodCandidateIndicesPerSubject,
+            d_numAnchors,
+            d_numCandidates,
             msa_weights_pitch_floats,
             min_support_threshold,
             min_coverage_threshold,
-            new_columns_to_correct,
-            n_subjects,
-            n_candidates
+            new_columns_to_correct
         );
 
     }
