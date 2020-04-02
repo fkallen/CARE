@@ -180,7 +180,7 @@ namespace distarraykernels{
 
         auto atomicAggInc = [](Index_t* counter){
             auto g = cg::coalesced_threads();
-            int warp_res;
+            Index_t warp_res;
             if(g.thread_rank() == 0){
                 warp_res = atomicAdd(counter, Index_t(g.size()));
             }
