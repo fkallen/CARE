@@ -891,7 +891,7 @@ namespace gpu{
 
         for(int anchorIndex = blockIdx.x; 
                 anchorIndex < n_subjects; 
-                anchorIndex += blockDim.x * gridDim.x){
+                anchorIndex += gridDim.x){
 
             const bool isHighQualitySubject = hqflags[anchorIndex].hq();
             const int numGoodIndices = numLocalGoodCandidateIndicesPerSubject[anchorIndex];
