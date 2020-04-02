@@ -400,7 +400,7 @@ namespace gpu{
                             ReadSequencesPointers d_sequencePointers,
                             CorrectionResultPointers d_correctionResultPointers,
                             const int* __restrict__ d_indices_per_subject,
-                            int n_subjects,
+                            const int* __restrict__ numAnchorsPtr,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
                             size_t msa_pitch,
@@ -429,6 +429,8 @@ namespace gpu{
         __shared__ int numUncorrectedPositions;
         __shared__ int uncorrectedPositions[BLOCKSIZE];
         __shared__ float avgCountPerWeight[4];
+
+        const int n_subjects = *numAnchorsPtr;
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
@@ -1646,7 +1648,8 @@ namespace gpu{
                             CorrectionResultPointers d_correctionResultPointers,
                             const int* d_indices,
                             const int* d_indices_per_subject,
-                            int n_subjects,
+                            const int* d_numAnchors,
+                            int maxNumAnchors,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
                             size_t msa_pitch,
@@ -1713,7 +1716,8 @@ namespace gpu{
         //cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(n_subjects, max_blocks_per_device));
+        //dim3 grid(std::min(maxNumAnchors, max_blocks_per_device));
+        dim3 grid(max_blocks_per_device);
 
         #define mycall(blocksize) msa_correct_subject_implicit_kernel2<(blocksize)> \
                                 <<<grid, block, 0, stream>>>( \
@@ -1722,7 +1726,7 @@ namespace gpu{
                                     d_sequencePointers, \
                                     d_correctionResultPointers, \
                                     d_indices_per_subject, \
-                                    n_subjects, \
+                                    d_numAnchors, \
                                     encodedSequencePitchInInts, \
                                     sequence_pitch, \
                                     msa_pitch, \

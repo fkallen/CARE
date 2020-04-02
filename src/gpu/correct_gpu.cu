@@ -2287,28 +2287,30 @@ namespace gpu{
         ); CUERR;
 
         call_msa_correct_subject_implicit_kernel_async(
-                    dataArrays.getDeviceMSAPointers(),
-                    dataArrays.getDeviceAlignmentResultPointers(),
-                    dataArrays.getDeviceSequencePointers(),
-                    dataArrays.getDeviceCorrectionResultPointers(),
-                    d_indices,
-                    d_indices_per_subject,
-                    batch.n_subjects,
-                    batch.encodedSequencePitchInInts,
-                    batch.decodedSequencePitchInBytes,
-                    batch.msa_pitch,
-                    batch.msa_weights_pitch,
-                    transFuncData.sequenceFileProperties.maxSequenceLength,
-                    transFuncData.correctionOptions.estimatedErrorrate,
-                    transFuncData.goodAlignmentProperties.maxErrorRate,
-                    avg_support_threshold,
-                    min_support_threshold,
-                    min_coverage_threshold,
-                    max_coverage_threshold,
-                    transFuncData.correctionOptions.kmerlength,
-                    transFuncData.sequenceFileProperties.maxSequenceLength,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
+            dataArrays.getDeviceMSAPointers(),
+            dataArrays.getDeviceAlignmentResultPointers(),
+            dataArrays.getDeviceSequencePointers(),
+            dataArrays.getDeviceCorrectionResultPointers(),
+            d_indices,
+            d_indices_per_subject,
+            dataArrays.d_numAnchors.get(),
+            batch.n_subjects,
+            batch.encodedSequencePitchInInts,
+            batch.decodedSequencePitchInBytes,
+            batch.msa_pitch,
+            batch.msa_weights_pitch,
+            transFuncData.sequenceFileProperties.maxSequenceLength,
+            transFuncData.correctionOptions.estimatedErrorrate,
+            transFuncData.goodAlignmentProperties.maxErrorRate,
+            avg_support_threshold,
+            min_support_threshold,
+            min_coverage_threshold,
+            max_coverage_threshold,
+            transFuncData.correctionOptions.kmerlength,
+            transFuncData.sequenceFileProperties.maxSequenceLength,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
