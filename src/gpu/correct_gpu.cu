@@ -98,11 +98,60 @@ namespace gpu{
     }
 
 
+    template<int blocksize, class Flags>
+    __global__
+    void selectIndicesOfFlagsOnlyOneBlock(
+        int* __restrict__ selectedIndices,
+        int* __restrict__ numSelectedIndices,
+        const Flags flags,
+        const int* __restrict__ numFlags
+    ){
+        constexpr int ITEMS_PER_THREAD = 4;
 
+        using BlockScan = cub::BlockScan<int, blocksize>;
 
+        __shared__ typename BlockScan::TempStorage temp_storage;
 
+        int aggregate = 0;
+        const int iters = SDIV(*numFlags, blocksize * ITEMS_PER_THREAD);
+        const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
 
+        for(int iter = 0; iter < iters; iter++){
 
+            int data[ITEMS_PER_THREAD];
+            int prefixsum[ITEMS_PER_THREAD];
+
+            const int iteroffset = blocksize * ITEMS_PER_THREAD * iter;
+
+            #pragma unroll
+            for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                if(iteroffset + threadoffset + k < *numFlags){
+                    data[k] = flags[iteroffset + threadoffset + k];
+                }else{
+                    data[k] = 0;
+                }
+            }
+
+            int block_aggregate = 0;
+            BlockScan(temp_storage).ExclusiveSum(data, prefixsum, block_aggregate);
+
+            #pragma unroll
+            for(int k = 0; k < ITEMS_PER_THREAD; k++){
+                if(data[k] == 1){
+                    selectedIndices[prefixsum[k]] = iteroffset + threadoffset + k;
+                }
+            }
+
+            aggregate += block_aggregate;
+
+            __syncthreads();
+        }
+
+        if(threadIdx.x == 0){
+            *numSelectedIndices = aggregate;
+        }
+
+    }
 
 
 
