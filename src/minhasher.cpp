@@ -620,6 +620,29 @@ namespace care{
         }      
     }
 
+    void Minhasher::queryPrecalculatedSignatures(
+        const std::uint64_t* signatures, //maximum_number_of_maps signatures per sequence
+        Minhasher::Range_t* ranges, //maximum_number_of_maps signatures per sequence
+        int* totalNumResultsInRanges, 
+        int numSequences) const{ 
+        
+        int numResults = 0;
+
+        for(int i = 0; i < numSequences; i++){
+            const std::uint64_t* const signature = &signatures[i * maximum_number_of_maps];
+            Minhasher::Range_t* const range = &ranges[i * maximum_number_of_maps];            
+
+            for(int map = 0; map < minparams.maps; ++map){
+                kmer_type key = signature[map] & key_mask;
+                auto entries_range = queryMap(map, key);
+                numResults += std::distance(entries_range.first, entries_range.second);
+                range[map] = entries_range;
+            }
+        }   
+
+        *totalNumResultsInRanges = numResults;   
+    }
+
     //static bool once = true;
 
     void Minhasher::makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const{

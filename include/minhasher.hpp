@@ -748,13 +748,14 @@ struct Minhasher {
     using Result_t = Index_t; // Return value for minhash query
     using Map_t = minhasherdetail::KeyValueMapFixedSize<kmer_type, Value_t, Index_t>; //internal map type
 
+    using Range_t = std::pair<const Value_t*, const Value_t*>;
+
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
     static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
-    struct Handle{
-        using Range_t = std::pair<const Value_t*, const Value_t*>;
+    struct Handle{        
         std::vector<Range_t> ranges;
 		std::vector<Value_t> allUniqueResults;
         SetUnionHandle<Value_t> suHandle;
@@ -856,7 +857,13 @@ struct Minhasher {
             const int* sequenceLengths,
             int sequencesPitch) const;
 
-    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const;   
+    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const; 
+
+    void queryPrecalculatedSignatures(
+        const std::uint64_t* signatures, //maximum_number_of_maps signatures per sequence
+        Minhasher::Range_t* ranges, //maximum_number_of_maps signatures per sequence
+        int* totalNumResultsInRanges, 
+        int numSequences) const;
 
     void makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const;                                      
 
