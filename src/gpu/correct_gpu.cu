@@ -2266,8 +2266,8 @@ namespace gpu{
 
         
 #endif        
-        cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+        // cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+        // cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
         std::array<int*,2> d_indices_dblbuf{
             dataArrays.d_indices.get(), 
@@ -2285,14 +2285,6 @@ namespace gpu{
         const int* d_indices = d_indices_dblbuf[max_num_minimizations % 2];
         const int* d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2];
         const int* d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2];
-
-        cudaMemcpyAsync(
-            dataArrays.h_indices_per_subject,
-            d_indices_per_subject,
-            sizeof(int) * batchsize,
-            D2H,
-            streams[secondary_stream_index]
-        ); CUERR;
 
         call_msa_correct_subject_implicit_kernel_async(
             dataArrays.getDeviceMSAPointers(),
@@ -2323,6 +2315,14 @@ namespace gpu{
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
+        cudaMemcpyAsync(
+            dataArrays.h_indices_per_subject,
+            d_indices_per_subject,
+            sizeof(int) * batchsize,
+            D2H,
+            streams[secondary_stream_index]
+        ); CUERR;
+
         cudaMemcpyAsync(dataArrays.h_corrected_subjects,
                         dataArrays.d_corrected_subjects,
                         batch.decodedSequencePitchInBytes * batchsize,
@@ -2339,17 +2339,17 @@ namespace gpu{
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
-                        dataArrays.d_num_uncorrected_positions_per_subject,
-                        sizeof(int) * batchsize,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
+        //                 dataArrays.d_num_uncorrected_positions_per_subject,
+        //                 sizeof(int) * batchsize,
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
-                        dataArrays.d_uncorrected_positions_per_subject,
-                        sizeof(int) * transFuncData.sequenceFileProperties.maxSequenceLength * batchsize,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
+        // cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
+        //                 dataArrays.d_uncorrected_positions_per_subject,
+        //                 sizeof(int) * transFuncData.sequenceFileProperties.maxSequenceLength * batchsize,
+        //                 D2H,
+        //                 streams[secondary_stream_index]); CUERR;
 
         selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
             dataArrays.d_indices_of_corrected_subjects.get(),
@@ -2396,57 +2396,57 @@ namespace gpu{
             streams[secondary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(
-            dataArrays.h_indices_of_corrected_subjects,
-            dataArrays.d_indices_of_corrected_subjects,
-            sizeof(int) * batchsize,
-            D2H,
-            streams[secondary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_indices_of_corrected_subjects,
+        //     dataArrays.d_indices_of_corrected_subjects,
+        //     sizeof(int) * batchsize,
+        //     D2H,
+        //     streams[secondary_stream_index]
+        // ); CUERR;
 
-        cudaMemcpyAsync(
-            dataArrays.h_num_indices_of_corrected_subjects,
-            dataArrays.d_num_indices_of_corrected_subjects,
-            sizeof(int),
-            D2H,
-            streams[secondary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_num_indices_of_corrected_subjects,
+        //     dataArrays.d_num_indices_of_corrected_subjects,
+        //     sizeof(int),
+        //     D2H,
+        //     streams[secondary_stream_index]
+        // ); CUERR;
 
-		cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+		//cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-		if(transFuncData.correctionOptions.correctCandidates) {
+		//if(transFuncData.correctionOptions.correctCandidates) {
             // find subject ids of subjects with high quality multiple sequence alignment
 
-            auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
-                return flag.hq();
-            };
+            // auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
+            //     return flag.hq();
+            // };
 
-            cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
-                d_isHqSubject(dataArrays.d_is_high_quality_subject,
-                                isHqSubject);
+            // cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
+            //     d_isHqSubject(dataArrays.d_is_high_quality_subject,
+            //                     isHqSubject);
 
-            selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
-                dataArrays.d_high_quality_subject_indices.get(),
-                dataArrays.d_num_high_quality_subject_indices.get(),
-                d_isHqSubject,
-                dataArrays.d_numAnchors.get()
-            );
+            // selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
+            //     dataArrays.d_high_quality_subject_indices.get(),
+            //     dataArrays.d_num_high_quality_subject_indices.get(),
+            //     d_isHqSubject,
+            //     dataArrays.d_numAnchors.get()
+            // );
 
-            cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
+            // cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+            // cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
-                            dataArrays.d_high_quality_subject_indices,
-                            sizeof(int) * batchsize,
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
+            // cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
+            //                 dataArrays.d_high_quality_subject_indices,
+            //                 sizeof(int) * batchsize,
+            //                 D2H,
+            //                 streams[secondary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
-                            dataArrays.d_num_high_quality_subject_indices,
-                            sizeof(int),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
-		}
+            // cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
+            //                 dataArrays.d_num_high_quality_subject_indices,
+            //                 sizeof(int),
+            //                 D2H,
+            //                 streams[secondary_stream_index]); CUERR;
+		//}
 
         
 	}
@@ -2478,6 +2478,36 @@ namespace gpu{
         int* const d_num_corrected_candidates_per_anchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
         const int* const d_numAnchors = dataArrays.d_numAnchors.get();
         const int* const d_numCandidates = dataArrays.d_numCandidates.get();
+
+        auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
+            return flag.hq();
+        };
+
+        cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
+            d_isHqSubject(dataArrays.d_is_high_quality_subject,
+                            isHqSubject);
+
+        selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
+            dataArrays.d_high_quality_subject_indices.get(),
+            dataArrays.d_num_high_quality_subject_indices.get(),
+            d_isHqSubject,
+            dataArrays.d_numAnchors.get()
+        );
+
+        cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
+                        dataArrays.d_high_quality_subject_indices,
+                        sizeof(int) * batchsize,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
+                        dataArrays.d_num_high_quality_subject_indices,
+                        sizeof(int),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
 
         generic_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
             [=] __device__ (){
@@ -3561,8 +3591,8 @@ void correct_gpu(
         };
 
         auto copyCandidateCorrectionsToHostAndJoinStreams = [&](auto& batchData){
-            auto& streams = batchData.streams;
-            auto& events = batchData.events;
+            // auto& streams = batchData.streams;
+            // auto& events = batchData.events;
 
             auto pushrange = [&](const std::string& msg, int color){
                 nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
@@ -3581,8 +3611,8 @@ void correct_gpu(
                 poprange();                
             }
 
-            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
-            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;   
+            // cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+            // cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;   
 
             //cudaDeviceSynchronize(); CUERR;
 
