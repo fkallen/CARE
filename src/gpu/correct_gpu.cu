@@ -3673,22 +3673,24 @@ void correct_gpu(
 
 
         for(int deviceIdIndex = 0; deviceIdIndex < int(deviceIds.size()); ++deviceIdIndex) {
+            constexpr int max_num_batches = 2;
+
             batchExecutors.emplace_back([&, deviceIdIndex](){
                 const int deviceId = deviceIds[deviceIdIndex];
 
-                std::array<BackgroundThread, 3> backgroundWorkerArray;
-                std::array<BackgroundThread, 3> unpackWorkerArray;
+                std::array<BackgroundThread, max_num_batches> backgroundWorkerArray;
+                std::array<BackgroundThread, max_num_batches> unpackWorkerArray;
 
-                std::array<Batch, 3> batchDataArray;
+                std::array<Batch, max_num_batches> batchDataArray;
 
-                for(int i = 0; i < 3; i++){
+                for(int i = 0; i < max_num_batches; i++){
                     initBatchData(batchDataArray[i], deviceId);
                     // if(i < int(deviceIds.size())){
                     //     initBatchData(batchDataArray[i], deviceIds[i]);
                     // }else{
                     //     initBatchData(batchDataArray[i], 0);
                     // }
-                    batchDataArray[i].id = deviceIdIndex * 3 + i;
+                    batchDataArray[i].id = deviceIdIndex * max_num_batches + i;
                     batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
                     batchDataArray[i].unpackWorker = &unpackWorkerArray[i];
 
@@ -3699,6 +3701,7 @@ void correct_gpu(
 
 // 1 batch
 #if 0
+                static_assert(1 <= max_num_batches, "");
 
                 bool isFirstIteration = true;
                 int batchIndex = 0;
@@ -3730,6 +3733,8 @@ void correct_gpu(
 
 // 2 batches
 #if 1
+                static_assert(2 <= max_num_batches, "");
+
                 bool isFirstIteration = true;
                 int batchIndex = 0;
 
@@ -3773,6 +3778,9 @@ void correct_gpu(
 
 // 3 batches
 #if 0
+
+                static_assert(3 <= max_num_batches, "");
+
                 bool isFirstIteration = true;
                 bool isSecondIteration = false;
 
@@ -3822,7 +3830,7 @@ void correct_gpu(
                 }
 #endif
                 
-                for(int i = 0; i < 3; i++){
+                for(int i = 0; i < max_num_batches; i++){
                     std::cerr << "batchDataArray[" << i << "].max_n_queries: " << batchDataArray[i].max_n_queries << "\n";
                     batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                     batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
