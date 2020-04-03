@@ -2282,7 +2282,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_indices_per_subject,
             d_indices_per_subject,
-            dataArrays.d_indices_per_subject.sizeInBytes(),
+            sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2318,29 +2318,29 @@ namespace gpu{
 
         cudaMemcpyAsync(dataArrays.h_corrected_subjects,
                         dataArrays.d_corrected_subjects,
-                        dataArrays.d_corrected_subjects.sizeInBytes(),
+                        batch.decodedSequencePitchInBytes * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_subject_is_corrected,
                         dataArrays.d_subject_is_corrected,
-                        dataArrays.d_subject_is_corrected.sizeInBytes(),
+                        sizeof(bool) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_is_high_quality_subject,
                         dataArrays.d_is_high_quality_subject,
-                        dataArrays.d_is_high_quality_subject.sizeInBytes(),
+                        sizeof(AnchorHighQualityFlag) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
                         dataArrays.d_num_uncorrected_positions_per_subject,
-                        dataArrays.d_num_uncorrected_positions_per_subject.sizeInBytes(),
+                        sizeof(int) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
                         dataArrays.d_uncorrected_positions_per_subject,
-                        dataArrays.d_uncorrected_positions_per_subject.sizeInBytes(),
+                        sizeof(int) * transFuncData.sequenceFileProperties.maxSequenceLength * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
@@ -2376,7 +2376,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_editsPerCorrectedSubject,
             dataArrays.d_editsPerCorrectedSubject,
-            dataArrays.d_editsPerCorrectedSubject.sizeInBytes(),
+            sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2384,7 +2384,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_numEditsPerCorrectedSubject,
             dataArrays.d_numEditsPerCorrectedSubject,
-            dataArrays.d_numEditsPerCorrectedSubject.sizeInBytes(),
+            sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2392,7 +2392,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_indices_of_corrected_subjects,
             dataArrays.d_indices_of_corrected_subjects,
-            dataArrays.d_indices_of_corrected_subjects.sizeInBytes(),
+            sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2400,7 +2400,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_num_indices_of_corrected_subjects,
             dataArrays.d_num_indices_of_corrected_subjects,
-            dataArrays.d_num_indices_of_corrected_subjects.sizeInBytes(),
+            sizeof(int),
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2430,13 +2430,13 @@ namespace gpu{
 
             cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
                             dataArrays.d_high_quality_subject_indices,
-                            dataArrays.d_high_quality_subject_indices.sizeInBytes(),
+                            sizeof(int) * batchsize,
                             D2H,
                             streams[secondary_stream_index]); CUERR;
 
             cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
                             dataArrays.d_num_high_quality_subject_indices,
-                            dataArrays.d_num_high_quality_subject_indices.sizeInBytes(),
+                            sizeof(int),
                             D2H,
                             streams[secondary_stream_index]); CUERR;
 		}
@@ -2537,7 +2537,6 @@ namespace gpu{
             d_candidateCanBeCorrected,
             dataArrays.d_indices_of_corrected_candidates.get(),
             dataArrays.d_num_total_corrected_candidates.get(),
-            //batch.n_queries,
             maxCandidates,
             streams[primary_stream_index]
         ); CUERR;
@@ -2557,7 +2556,7 @@ namespace gpu{
             streams[secondary_stream_index]
         ); CUERR;
 
-        cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[secondary_stream_index]); CUERR;
+        //cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[secondary_stream_index]); CUERR;
 
         cub::DeviceScan::ExclusiveSum(
             dataArrays.d_tempstorage.get(), 
@@ -2571,7 +2570,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_num_corrected_candidates_per_anchor,
             dataArrays.d_num_corrected_candidates_per_anchor,
-            dataArrays.d_num_corrected_candidates_per_anchor.sizeInBytes(),
+            sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2579,7 +2578,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.get(),
             dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(),
-            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.sizeInBytes(),
+            sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2587,7 +2586,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_alignment_shifts,
             dataArrays.d_alignment_shifts,
-            dataArrays.d_alignment_shifts.sizeInBytes() / 2, // divide by 2 because size includes fwd + revc
+            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -2622,12 +2621,12 @@ namespace gpu{
             batch.kernelLaunchHandle
         );       
         
-        cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+        //cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         
         cudaMemcpyAsync(
             dataArrays.h_numEditsPerCorrectedCandidate,
             dataArrays.d_numEditsPerCorrectedCandidate,
-            dataArrays.d_numEditsPerCorrectedCandidate.sizeInBytes(),
+            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
             D2H,
             streams[primary_stream_index]
         ); CUERR;
@@ -2635,7 +2634,7 @@ namespace gpu{
         cudaMemcpyAsync(
             dataArrays.h_indices_of_corrected_candidates,
             dataArrays.d_indices_of_corrected_candidates,
-            dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
+            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
             D2H,
             streams[primary_stream_index]
         ); CUERR;
