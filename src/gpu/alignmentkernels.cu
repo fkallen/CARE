@@ -1261,14 +1261,14 @@ namespace gpu{
         const std::size_t d_tiles_per_subject_prefixsumBytes = SDIV(sizeof(int) * (maxNumAnchors+1), 512) * 512;
         std::size_t cubBytes = 0;
         
-        cub::DeviceScan::InclusiveSum(
-            nullptr,
-            cubBytes,
-            d_tiles_per_subject,
-            (int*) nullptr,
-            maxNumAnchors,
-            stream
-        );
+        // cub::DeviceScan::InclusiveSum(
+        //     nullptr,
+        //     cubBytes,
+        //     d_tiles_per_subject,
+        //     (int*) nullptr,
+        //     maxNumAnchors,
+        //     stream
+        // );
         
         {
 
@@ -1406,12 +1406,12 @@ namespace gpu{
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
 
-        int requiredTiles = 0;
-        for(int i = 0; i < maxNumAnchors;i++){
-            requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
-        }
+        // int requiredTiles = 0;
+        // for(int i = 0; i < maxNumAnchors;i++){
+        //     requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
+        // }
 
-        const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
+        // const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
 
         const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
