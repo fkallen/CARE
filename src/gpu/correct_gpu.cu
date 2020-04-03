@@ -73,6 +73,7 @@ constexpr int max_num_minimizations = 5;
 #endif
 
 
+#define USE_CUDA_GRAPH
 
 namespace care{
 namespace gpu{
@@ -571,6 +572,8 @@ namespace gpu{
     void getCandidateAlignments(Batch& batch);
     void buildMultipleSequenceAlignment(Batch& batch);
     void removeCandidatesOfDifferentRegionFromMSA(Batch& batch);
+    void correctSubjects(Batch& batch);
+    void correctCandidates(Batch& batch);
     
 
 
@@ -600,6 +603,10 @@ namespace gpu{
             #ifdef USE_MSA_MINIMIZATION
             removeCandidatesOfDifferentRegionFromMSA(batch);
             #endif
+            correctSubjects(batch);
+            if(batch.transFuncData->correctionOptions.correctCandidates){
+                correctCandidates(batch);                
+            }
 
             //join forked stream for valid capture
             cudaEventRecord(events[0], streams[secondary_stream_index]); CUERR;
@@ -2583,12 +2590,33 @@ namespace gpu{
             streams[secondary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(
-            dataArrays.h_alignment_shifts,
-            dataArrays.d_alignment_shifts,
-            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
-            D2H,
-            streams[secondary_stream_index]
+        // cudaMemcpyAsync(
+        //     dataArrays.h_alignment_shifts,
+        //     dataArrays.d_alignment_shifts,
+        //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
+        //     D2H,
+        //     streams[secondary_stream_index]
+        // ); CUERR;
+
+        int* h_alignment_shifts = dataArrays.h_alignment_shifts.get();
+        const int* d_alignment_shifts = dataArrays.d_alignment_shifts.get();
+        int* h_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates.get();
+        const int* d_indices_of_corrected_candidates = dataArrays.d_indices_of_corrected_candidates.get();
+
+        generic_kernel<<<320, 256, 0, streams[secondary_stream_index]>>>(
+            [=] __device__ (){
+                using CopyType = int;
+
+                const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const size_t stride = blockDim.x * gridDim.x;
+
+                const int numElements = *d_numCandidates;
+
+                for(int index = tid; index < numElements; index += stride){
+                    h_alignment_shifts[index] = d_alignment_shifts[index];
+                    h_indices_of_corrected_candidates[index] = d_indices_of_corrected_candidates[index];
+                } 
+            }
         ); CUERR;
 
         //compute candidate correction in first stream
@@ -2596,7 +2624,7 @@ namespace gpu{
         callCorrectCandidatesWithGroupKernel2_async(
             dataArrays.h_corrected_candidates.get(),
             dataArrays.h_editsPerCorrectedCandidate.get(),
-            dataArrays.d_numEditsPerCorrectedCandidate.get(),
+            dataArrays.h_numEditsPerCorrectedCandidate.get(),
             dataArrays.d_msa_column_properties.get(),
             dataArrays.d_consensus.get(),
             dataArrays.d_support.get(),
@@ -2623,21 +2651,21 @@ namespace gpu{
         
         //cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         
-        cudaMemcpyAsync(
-            dataArrays.h_numEditsPerCorrectedCandidate,
-            dataArrays.d_numEditsPerCorrectedCandidate,
-            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
-            D2H,
-            streams[primary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_numEditsPerCorrectedCandidate,
+        //     dataArrays.d_numEditsPerCorrectedCandidate,
+        //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
         
-        cudaMemcpyAsync(
-            dataArrays.h_indices_of_corrected_candidates,
-            dataArrays.d_indices_of_corrected_candidates,
-            sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
-            D2H,
-            streams[primary_stream_index]
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     dataArrays.h_indices_of_corrected_candidates,
+        //     dataArrays.d_indices_of_corrected_candidates,
+        //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
+        //     D2H,
+        //     streams[primary_stream_index]
+        // ); CUERR;
 
         // const int resultsToCopy = batch.n_queries * 0.2f;
 
@@ -3486,7 +3514,7 @@ void correct_gpu(
                 poprange();
             }
 
-#if 1
+#ifdef USE_CUDA_GRAPH
             buildGraphViaCapture(batchData);
             executeGraph(batchData);
 #else            
@@ -3512,7 +3540,7 @@ void correct_gpu(
             poprange();
 
         #endif
-#endif
+
 
             pushrange("correctSubjects", 7);
 
@@ -3529,7 +3557,7 @@ void correct_gpu(
                 poprange();
                 
             }
-            
+#endif            
         };
 
         auto copyCandidateCorrectionsToHostAndJoinStreams = [&](auto& batchData){
