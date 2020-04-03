@@ -1995,6 +1995,8 @@ namespace gpu{
 		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto maxCandidates = batch.maxNumCandidatesToReserve;
 
 		const float avg_support_threshold = 1.0f-1.0f*transFuncData.correctionOptions.estimatedErrorrate;
 		const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
@@ -2293,7 +2295,7 @@ namespace gpu{
             d_indices,
             d_indices_per_subject,
             dataArrays.d_numAnchors.get(),
-            batch.n_subjects,
+            batchsize,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
             batch.msa_pitch,
@@ -2454,6 +2456,9 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
+        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto maxCandidates = batch.maxNumCandidatesToReserve;
+
         const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
         // coverage is always >= 1
         const float min_coverage_threshold = std::max(1.0f,
@@ -2466,7 +2471,6 @@ namespace gpu{
         int* const d_num_corrected_candidates_per_anchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
         const int* const d_numAnchors = dataArrays.d_numAnchors.get();
         const int* const d_numCandidates = dataArrays.d_numCandidates.get();
-        const int batchsize = batch.transFuncData->correctionOptions.batchsize;
 
         generic_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
             [=] __device__ (){
@@ -2477,7 +2481,7 @@ namespace gpu{
                     d_num_corrected_candidates_per_anchor[i] = 0;
                 }
 
-                for(int i = tid; i < *d_numCandidates; i += stride){
+                for(int i = tid; i < maxCandidates; i += stride){
                     d_candidateCanBeCorrected[i] = 0;
                 }
             }
@@ -2533,7 +2537,8 @@ namespace gpu{
             d_candidateCanBeCorrected,
             dataArrays.d_indices_of_corrected_candidates.get(),
             dataArrays.d_num_total_corrected_candidates.get(),
-            batch.n_queries,
+            //batch.n_queries,
+            maxCandidates,
             streams[primary_stream_index]
         ); CUERR;
 
