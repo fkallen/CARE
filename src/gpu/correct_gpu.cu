@@ -217,6 +217,16 @@ namespace gpu{
     };
 
     struct NextIterationData{
+        SimpleAllocationPinnedHost<unsigned int> h_new_subject_sequences_data;
+        SimpleAllocationPinnedHost<int> h_new_subject_sequences_lengths;
+        SimpleAllocationPinnedHost<read_number> h_new_subject_read_ids;
+        SimpleAllocationPinnedHost<read_number> h_new_candidate_read_ids;
+        SimpleAllocationDevice<unsigned int> d_new_subject_sequences_data;
+        SimpleAllocationDevice<int> d_new_subject_sequences_lengths;
+        SimpleAllocationDevice<read_number> d_new_subject_read_ids;
+        SimpleAllocationDevice<read_number> d_new_candidate_read_ids;
+        SimpleAllocationDevice<int> d_new_candidates_per_subject;
+
         SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
         SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
         SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
@@ -243,6 +253,7 @@ namespace gpu{
         SimpleAllocationDevice<unsigned int> d_subject_sequences_data_transposed;
 
         SimpleAllocationDevice<int> d_numLeftoverAnchors;
+        SimpleAllocationDevice<int> d_leftoverAnchorLengths;
         SimpleAllocationDevice<read_number> d_leftoverAnchorReadIds;
         SimpleAllocationDevice<int> d_numLeftoverCandidates;
         SimpleAllocationDevice<read_number> d_leftoverCandidateReadIds;
@@ -586,6 +597,7 @@ namespace gpu{
         nextData.d_subject_sequences_data_transposed.destroy();
 
         nextData.d_numLeftoverAnchors.destroy();
+        nextData.d_leftoverAnchorLengths.destroy();
         nextData.d_leftoverAnchorReadIds.destroy();
         nextData.d_numLeftoverCandidates.destroy();
         nextData.d_leftoverCandidateReadIds.destroy();
@@ -593,6 +605,16 @@ namespace gpu{
         nextData.h_numLeftoverAnchors.destroy();
         nextData.h_numLeftoverCandidates.destroy();
         nextData.d_leftoverAnchorSequences.destroy();
+
+        nextData.h_new_subject_sequences_data.destroy();
+        nextData.h_new_subject_sequences_lengths.destroy();
+        nextData.h_new_subject_read_ids.destroy();
+        nextData.h_new_candidate_read_ids.destroy();
+        nextData.d_new_subject_sequences_data.destroy();
+        nextData.d_new_subject_sequences_lengths.destroy();
+        nextData.d_new_subject_read_ids.destroy();
+        nextData.d_new_candidate_read_ids.destroy();
+        nextData.d_new_candidates_per_subject.destroy();
 
         destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
@@ -696,6 +718,14 @@ namespace gpu{
         const auto& transFuncData = *batchData.transFuncData;
 
         cudaSetDevice(nextData.deviceId); CUERR;
+
+        nextData.h_new_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.h_new_subject_sequences_lengths.resize(batchsize);
+        nextData.h_new_subject_read_ids.resize(batchsize);
+
+        nextData.d_new_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.d_new_subject_sequences_lengths.resize(batchsize);
+        nextData.d_new_subject_read_ids.resize(batchsize);
 
         nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
@@ -901,6 +931,10 @@ namespace gpu{
 
         const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
 
+        nextData.h_new_candidate_read_ids.resize(totalNumIds);
+        nextData.d_new_candidate_read_ids.resize(totalNumIds);
+        nextData.d_new_candidates_per_subject.resize(nextData.n_subjects);
+
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(totalNumIds);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(totalNumIds);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(totalNumIds);
@@ -979,11 +1013,13 @@ namespace gpu{
 
 
         nextData.d_leftoverAnchorReadIds.resize(batchsize);
+        nextData.d_leftoverAnchorLengths.resize(batchsize);
         nextData.d_leftoverCandidateReadIds.resize(totalNumIds);
         nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
         nextData.d_leftoverAnchorSequences.resize(batchData.encodedSequencePitchInInts * batchsize);
 
         unsigned int* d_leftoverAnchorSequences = nextData.d_leftoverAnchorSequences.get();
+        int* d_leftoverAnchorLengths = nextData.d_leftoverAnchorLengths.get();
         int* d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
         read_number* d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get();
         int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
@@ -991,6 +1027,7 @@ namespace gpu{
         int* d_leftoverCandidatesPerAnchors = nextData.d_leftoverCandidatesPerAnchors.get();
         
         const read_number* d_subject_read_ids = nextData.d_subject_read_ids.get();
+        const int* d_subject_sequences_lengths = nextData.d_subject_sequences_lengths.get();
         const read_number* d_candidate_read_ids = nextData.d_candidate_read_ids.get();
         const unsigned int* d_subject_sequences_data = nextData.d_subject_sequences_data.get();
         const int* d_candidates_per_subject = nextData.d_candidates_per_subject.get();
@@ -999,7 +1036,7 @@ namespace gpu{
 
         const int encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
 
-        generic_kernel<<<320,128, 0, nextData.stream>>>(
+        generic_kernel<<<320, 256, 0, nextData.stream>>>(
             [=]__device__(){
                 
 
@@ -1043,6 +1080,7 @@ namespace gpu{
                         
                         for(int i = tid; i < numLeftoverAnchors; i += stride){
                             d_leftoverAnchorReadIds[i] = d_subject_read_ids[index + i];
+                            d_leftoverAnchorLengths[i] = d_subject_sequences_lengths[index+i];
                             d_leftoverCandidatesPerAnchors[i] = d_candidates_per_subject[index + i];
                         }
 
