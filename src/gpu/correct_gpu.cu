@@ -735,7 +735,7 @@ namespace gpu{
         nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
         nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
         //nextData.reallocOccurred |= nextData.h_anchorContainsN.resize(batchsize);
-        nextData.reallocOccurred |= nextData.d_anchorContainsN.resize(batchsize);        
+        //nextData.reallocOccurred |= nextData.d_anchorContainsN.resize(batchsize);        
 
 
 
@@ -791,13 +791,7 @@ namespace gpu{
             nextData.stream
         );
 
-        readStorage.readsContainN_async(
-            nextData.deviceId,
-            nextData.d_anchorContainsN.get(), 
-            nextData.d_subject_read_ids.get(),
-            nextData.n_subjects, 
-            nextData.stream
-        );        
+     
     }
 
     void determineCandidateReadIdsOfNextIterationGpu(
@@ -943,7 +937,7 @@ namespace gpu{
         nextData.reallocOccurred |= nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
         //nextData.reallocOccurred |= nextData.h_candidateContainsN.resize(totalNumIds);
-        nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(totalNumIds);
+        //nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(totalNumIds);
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
             nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
@@ -1036,6 +1030,7 @@ namespace gpu{
 
         const int encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
 
+        // kernel to fill leftover data
         generic_kernel<<<320, 256, 0, nextData.stream>>>(
             [=]__device__(){
                 
@@ -1130,7 +1125,7 @@ namespace gpu{
 
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.reserveAndResize(maxNumCandidatesToReserve, nextData.n_queries);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.reserveAndResize(maxNumCandidatesToReserve, nextData.n_queries);
-        nextData.reallocOccurred |= nextData.d_candidateContainsN.reserveAndResize(maxNumCandidatesToReserve, nextData.n_queries);
+        //nextData.reallocOccurred |= nextData.d_candidateContainsN.reserveAndResize(maxNumCandidatesToReserve, nextData.n_queries);
 
         cudaMemcpyAsync(
             nextData.h_candidate_read_ids.get(),
@@ -1147,15 +1142,6 @@ namespace gpu{
             D2H,
             nextData.stream
         ); CUERR; 
-
-        readStorage.readsContainN_async(
-            nextData.deviceId,
-            nextData.d_candidateContainsN.get(), 
-            nextData.d_candidate_read_ids.get(), 
-            //nextData.d_candidates_per_subject_prefixsum.get() + nextData.n_subjects,
-            nextData.n_queries, 
-            nextData.stream
-        );
 
         cudaMemcpyAsync(
             nextData.h_numLeftoverAnchors,
@@ -1555,6 +1541,24 @@ namespace gpu{
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
+
+        readStorage.readsContainN_async(
+            batch.deviceId,
+            dataArrays.d_anchorContainsN.get(), 
+            dataArrays.d_subject_read_ids.get(), 
+            dataArrays.d_numAnchors,
+            batchsize, 
+            streams[primary_stream_index]
+        );
+
+        readStorage.readsContainN_async(
+            batch.deviceId,
+            dataArrays.d_candidateContainsN.get(), 
+            dataArrays.d_candidate_read_ids.get(), 
+            dataArrays.d_numCandidates,
+            maxCandidates, 
+            streams[primary_stream_index]
+        );  
 
         readStorage.gatherSequenceLengthsToGpuBufferAsync(
                                         dataArrays.d_candidate_sequences_lengths.get(),
