@@ -267,6 +267,7 @@ namespace gpu{
         int maxNumCandidatesToReserve = 0;
 
         int n_subjects = -1;
+        int n_new_subjects = -1;
         std::atomic<int> n_queries{-1};
 
         std::vector<std::string> decodedSubjectStrings;
@@ -741,17 +742,19 @@ namespace gpu{
 
 
         const int leftoverAnchors = 0; //*nextData.h_numLeftoverAnchors.get();
-        read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
+        read_number* const readIdsBegin = nextData.h_new_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize - leftoverAnchors, readIdsBegin + leftoverAnchors);
-        nextData.n_subjects = std::distance(readIdsBegin, readIdsEnd);
+        nextData.n_new_subjects = std::distance(readIdsBegin, readIdsEnd);
+        
+        nextData.n_subjects = nextData.n_new_subjects + leftoverAnchors;//debug
 
         if(nextData.n_subjects == 0){
             return;
         };
 
         cudaMemcpyAsync(
-            nextData.d_subject_read_ids,
-            nextData.h_subject_read_ids,
+            nextData.d_new_subject_read_ids,
+            nextData.h_new_subject_read_ids,
             sizeof(read_number) * batchsize,
             H2D,
             nextData.stream
@@ -773,23 +776,24 @@ namespace gpu{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle,
-            nextData.d_subject_sequences_data.get(),
+            nextData.d_new_subject_sequences_data.get(),
             batchData.encodedSequencePitchInInts,
-            nextData.h_subject_read_ids,
-            nextData.d_subject_read_ids,
-            nextData.n_subjects,
+            nextData.h_new_subject_read_ids,
+            nextData.d_new_subject_read_ids,
+            nextData.n_new_subjects,
             batchData.deviceId,
             nextData.stream,
             transFuncData.runtimeOptions.nCorrectorThreads
         );
 
         readStorage.gatherSequenceLengthsToGpuBufferAsync(
-            nextData.d_subject_sequences_lengths.get(),
+            nextData.d_new_subject_sequences_lengths.get(),
             batchData.deviceId,
-            nextData.d_subject_read_ids.get(),
-            nextData.n_subjects,            
+            nextData.d_new_subject_read_ids.get(),
+            nextData.n_new_subjects,            
             nextData.stream
         );
+
 
      
     }
@@ -817,16 +821,16 @@ namespace gpu{
         const int kmerSize = batchData.transFuncData->minhashOptions.k;
         const int numHashFunctions = minhasherPtr->minparams.maps;
 
-        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
-        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(maximum_number_of_maps * nextData.n_subjects);
+        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(maximum_number_of_maps * batchsize);
+        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(maximum_number_of_maps * batchsize);
 
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
             maximum_number_of_maps,
-            nextData.d_subject_sequences_data.get(),
+            nextData.d_new_subject_sequences_data.get(),
             batchData.encodedSequencePitchInInts,
-            nextData.n_subjects,
-            nextData.d_subject_sequences_lengths.get(),
+            nextData.n_new_subjects,
+            nextData.d_new_subject_sequences_lengths.get(),
             kmerSize,
             numHashFunctions,
             nextData.stream
@@ -872,7 +876,7 @@ namespace gpu{
         std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
         std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
 
-        allRanges.resize(maximum_number_of_maps * nextData.n_subjects);
+        allRanges.resize(maximum_number_of_maps * batchsize);
         idsPerChunk.resize(maxNumThreads, 0);   
         numAnchorsPerChunk.resize(maxNumThreads, 0);
         idsPerChunkPrefixSum.resize(maxNumThreads, 0);
@@ -903,14 +907,14 @@ namespace gpu{
         int numChunksRequired = batchData.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
-            nextData.n_subjects, 
+            nextData.n_new_subjects, 
             [=](auto begin, auto end, auto threadId){
                 querySignatures2(begin, end, threadId);
             }
         );
 
         //int numChunksRequired = 1;
-        //querySignatures2(0, nextData.n_subjects, 0);
+        //querySignatures2(0, nextData.n_new_subjects, 0);
 
         //exclusive prefix sum
         idsPerChunkPrefixSum[0] = 0;
@@ -927,15 +931,15 @@ namespace gpu{
 
         nextData.h_new_candidate_read_ids.resize(totalNumIds);
         nextData.d_new_candidate_read_ids.resize(totalNumIds);
-        nextData.d_new_candidates_per_subject.resize(nextData.n_subjects);
+        nextData.d_new_candidates_per_subject.resize(batchsize);
 
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(totalNumIds);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(totalNumIds);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(totalNumIds);
-        nextData.reallocOccurred |= nextData.h_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(nextData.n_subjects);
-        nextData.reallocOccurred |= nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
+        nextData.reallocOccurred |= nextData.h_candidates_per_subject.resize(batchsize);
+        nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(batchsize);
+        nextData.reallocOccurred |= nextData.h_candidates_per_subject_prefixsum.resize(batchsize+1);
+        nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
         //nextData.reallocOccurred |= nextData.h_candidateContainsN.resize(totalNumIds);
         //nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(totalNumIds);
 
@@ -997,7 +1001,7 @@ namespace gpu{
             nextData.d_candidate_read_ids_tmp.get(),
             allRanges.data(), 
             allRanges.size(), 
-            nextData.d_subject_read_ids.get(),
+            nextData.d_new_subject_read_ids.get(),
             minhasherPtr->minparams.maps, 
             nextData.stream,
             MergeRangesKernelType::allcub
@@ -1135,13 +1139,13 @@ namespace gpu{
             nextData.stream
         ); CUERR;
 
-        cudaMemcpyAsync(
-            nextData.h_candidates_per_subject.get(),
-            nextData.d_candidates_per_subject.get(),
-            sizeof(int) * (nextData.n_subjects),
-            D2H,
-            nextData.stream
-        ); CUERR; 
+        // cudaMemcpyAsync(
+        //     nextData.h_candidates_per_subject.get(),
+        //     nextData.d_candidates_per_subject.get(),
+        //     sizeof(int) * (nextData.n_subjects),
+        //     D2H,
+        //     nextData.stream
+        // ); CUERR; 
 
         cudaMemcpyAsync(
             nextData.h_numLeftoverAnchors,
@@ -1160,6 +1164,39 @@ namespace gpu{
         ); CUERR;
 
         cudaStreamSynchronize(nextData.stream); CUERR;
+
+        {
+            const read_number* d_new_subject_read_ids = nextData.d_new_subject_read_ids.get();
+            read_number* d_subject_read_ids = nextData.d_subject_read_ids.get();
+            const int* d_new_subject_sequences_lengths = nextData.d_new_subject_sequences_lengths.get();
+            int* d_subject_sequences_lengths = nextData.d_subject_sequences_lengths.get();
+            const unsigned int* d_new_subject_sequences_data = nextData.d_new_subject_sequences_data.get();
+            unsigned int* d_subject_sequences_data = nextData.d_subject_sequences_data.get();
+            
+            const int encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
+            int n_new_subjects = nextData.n_new_subjects;
+
+            generic_kernel<<<32, 256, 0, nextData.stream>>>(
+                [=]__device__(){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+
+                    for(int i = tid; i < n_new_subjects; i += stride){
+                        d_subject_read_ids[i] = d_new_subject_read_ids[i];
+                        d_subject_sequences_lengths[i] = d_new_subject_sequences_lengths[i];
+                    }
+
+                    for(int i = tid; i < n_new_subjects * encodedSequencePitchInInts; i += stride){
+                        d_subject_sequences_data[i] = d_new_subject_sequences_data[i];
+                    }
+                }
+            ); CUERR; 
+
+            for(int i = 0; i < n_new_subjects; i += 1){
+                nextData.h_subject_read_ids[i] = nextData.h_new_subject_read_ids[i];
+            }
+            
+        }
         nvtx::pop_range();
 
     }
