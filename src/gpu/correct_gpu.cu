@@ -51,8 +51,7 @@
 
 #include <cub/cub.cuh>
 
-#include <thrust/inner_product.h>
-#include <thrust/iterator/counting_iterator.h>
+#include <thrust/binary_search.h>
 
 //#define CARE_GPU_DEBUG
 //#define CARE_GPU_DEBUG_MEMCOPY
@@ -74,6 +73,8 @@ constexpr int max_num_minimizations = 5;
 
 
 #define USE_CUDA_GRAPH
+
+constexpr int batchsizeCandidates = 300000;
 
 namespace care{
 namespace gpu{
@@ -240,6 +241,15 @@ namespace gpu{
         SimpleAllocationPinnedHost<std::uint64_t> h_minhashSignaturesTransposed;
         SimpleAllocationDevice<std::uint64_t> d_minhashSignaturesTransposed;
         SimpleAllocationDevice<unsigned int> d_subject_sequences_data_transposed;
+
+        SimpleAllocationDevice<int> d_numLeftoverAnchors;
+        SimpleAllocationDevice<read_number> d_leftoverAnchorReadIds;
+        SimpleAllocationDevice<int> d_numLeftoverCandidates;
+        SimpleAllocationDevice<read_number> d_leftoverCandidateReadIds;
+        SimpleAllocationDevice<int> d_leftoverCandidatesPerAnchors;
+
+        SimpleAllocationPinnedHost<int> h_numLeftoverAnchors;
+        SimpleAllocationPinnedHost<int> h_numLeftoverCandidates;
 
         bool reallocOccurred = false;
         int maxNumCandidatesToReserve = 0;
@@ -541,6 +551,11 @@ namespace gpu{
         cudaEventCreate(&nextData.event); CUERR;
 
         nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
+
+        nextData.d_numLeftoverAnchors.resize(1);
+        nextData.d_numLeftoverCandidates.resize(1);
+        nextData.h_numLeftoverAnchors.resize(1);
+        nextData.h_numLeftoverCandidates.resize(1);
     }
 
     void destroyNextIterationData(NextIterationData& nextData){
@@ -568,6 +583,14 @@ namespace gpu{
         nextData.h_minhashSignaturesTransposed.destroy();
         nextData.d_minhashSignaturesTransposed.destroy();
         nextData.d_subject_sequences_data_transposed.destroy();
+
+        nextData.d_numLeftoverAnchors.destroy();
+        nextData.d_leftoverAnchorReadIds.destroy();
+        nextData.d_numLeftoverCandidates.destroy();
+        nextData.d_leftoverCandidateReadIds.destroy();
+        nextData.d_leftoverCandidatesPerAnchors.destroy();
+        nextData.h_numLeftoverAnchors.destroy();
+        nextData.h_numLeftoverCandidates.destroy();
 
         destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
@@ -682,15 +705,18 @@ namespace gpu{
         //nextData.reallocOccurred |= nextData.h_anchorContainsN.resize(batchsize);
         nextData.reallocOccurred |= nextData.d_anchorContainsN.resize(batchsize);        
 
+
+
+
+        const int leftoverAnchors = 0; //*nextData.h_numLeftoverAnchors.get();
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
-        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
+        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize - leftoverAnchors, readIdsBegin + leftoverAnchors);
         nextData.n_subjects = std::distance(readIdsBegin, readIdsEnd);
 
         if(nextData.n_subjects == 0){
             return;
         };
 
-        //copy read ids to device. gather sequences + lengths for those ids and copy them back to host
         cudaMemcpyAsync(
             nextData.d_subject_read_ids,
             nextData.h_subject_read_ids,
@@ -698,6 +724,19 @@ namespace gpu{
             H2D,
             nextData.stream
         ); CUERR;
+
+        //copy leftover anchor ids of previous iteration to begin of d_subject_read_ids
+        // const int* const d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
+        // read_number* const d_anchorReadIds = nextData.d_subject_read_ids.get();
+        // const read_number* const d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get();
+        // generic_kernel<<<8, 256, 0, nextData.stream>>>(
+        //     [=]__device__(){
+        //         const int leftoverAnchors = *d_numLeftoverAnchors;
+        //         for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < leftoverAnchors; i += blockDim.x * gridDim.x){
+        //             d_anchorReadIds[i] = d_leftoverAnchorReadIds[i];
+        //         }
+        //     }
+        // ); CUERR;
 
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
@@ -743,6 +782,9 @@ namespace gpu{
         Batch* batchptr = &batchData;
         NextIterationData* nextDataPtr = &nextData;
         const Minhasher* minhasherPtr = &minhasher;
+
+        const auto batchsize = batchData.transFuncData->correctionOptions.batchsize;
+        const int batchsizeCandidates_ = 300000;
 
         nextData.n_queries = 0;
 
@@ -931,6 +973,104 @@ namespace gpu{
             MergeRangesKernelType::allcub
         );
 
+
+                // SimpleAllocationDevice<int> d_numLeftoverAnchors;
+        // SimpleAllocationDevice<read_number> d_leftoverAnchorReadIds;
+        // SimpleAllocationDevice<int> d_numLeftoverCandidates;
+        // SimpleAllocationDevice<read_number> d_leftoverCandidateReadIds;
+        // SimpleAllocationDevice<int> d_leftoverCandidatesPerAnchors;
+
+        // SimpleAllocationPinnedHost<int> h_numLeftoverAnchors;
+        // SimpleAllocationPinnedHost<int> h_numLeftoverCandidates;
+
+        nextData.d_leftoverAnchorReadIds.resize(batchsize);
+        nextData.d_leftoverCandidateReadIds.resize(totalNumIds);
+        nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
+
+        int* d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
+        read_number* d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get();
+        int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
+        read_number* d_leftoverCandidateReadIds = nextData.d_leftoverCandidateReadIds.get();
+        int* d_leftoverCandidatesPerAnchors = nextData.d_leftoverCandidatesPerAnchors.get();
+        
+        const read_number* d_subject_read_ids = nextData.d_subject_read_ids.get();
+        const read_number* d_candidate_read_ids = nextData.d_candidate_read_ids.get();
+        const int* d_candidates_per_subject = nextData.d_candidates_per_subject.get();
+        const int* d_candidates_per_subject_prefixsum = nextData.d_candidates_per_subject_prefixsum.get();
+        const int n_subjects = nextData.n_subjects;
+
+        generic_kernel<<<320,128, 0, nextData.stream>>>(
+            [=]__device__(){
+                
+
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
+
+                const int totalNumCandidates = d_candidates_per_subject_prefixsum[n_subjects];
+
+                if(totalNumCandidates - batchsizeCandidates_ > 0){
+
+                    //find the first anchor index which is left over
+                    auto iter = thrust::lower_bound(
+                        thrust::seq,
+                        d_candidates_per_subject_prefixsum,
+                        d_candidates_per_subject_prefixsum + n_subjects + 1,
+                        batchsizeCandidates_
+                    );
+
+                    const int index = thrust::distance(d_candidates_per_subject_prefixsum, iter) - 1;
+                    // assert(index == n_subjects 
+                    //     || (d_candidates_per_subject_prefixsum[index] <= batchsizeCandidates_ 
+                    //         && d_candidates_per_subject_prefixsum[index+1] > batchsizeCandidates_));
+
+                    const int numLeftoverAnchors = n_subjects - index;
+                    if(tid == 0){
+                        *d_numLeftoverAnchors = numLeftoverAnchors;
+                    }
+
+                    if(index < n_subjects){
+
+                        const int numLeftoverCandidates = totalNumCandidates - d_candidates_per_subject_prefixsum[index];
+                        
+                        if(tid == 0){
+                            *d_numLeftoverCandidates = numLeftoverCandidates;
+                        }
+
+                        // if(tid == 0){
+                        //     printf("totalNumCandidates %d, leftover anchors %d, leftover candidates %d\n", 
+                        //         totalNumCandidates, *d_numLeftoverAnchors, *d_numLeftoverCandidates);
+                        // }
+                        
+                        for(int i = tid; i < numLeftoverAnchors; i += stride){
+                            d_leftoverAnchorReadIds[i] = d_subject_read_ids[index + i];
+                            d_leftoverCandidatesPerAnchors[i] = d_candidates_per_subject[index + i];
+                        }
+
+                        for(int i = tid; i < numLeftoverCandidates; i += stride){
+                            d_leftoverCandidateReadIds[i] = d_candidate_read_ids[d_candidates_per_subject_prefixsum[index] + i];
+                        }
+                    }else{
+                        if(tid == 0){
+                            *d_numLeftoverCandidates = 0;
+                        }
+                    }
+                }else{
+                    if(tid == 0){
+                        *d_numLeftoverAnchors = 0;
+                        *d_numLeftoverCandidates = 0;
+                    }
+                }
+                // if(tid == 0){
+                //     printf("totalNumCandidates %d\n", totalNumCandidates);
+                //     if(index ==)
+                //     if(index < n_subjects){
+                //         printf("%d %d %d\n", index, d_candidates_per_subject_prefixsum[index], d_candidates_per_subject_prefixsum[index+1]);
+                //     }
+                // }
+            }
+        );
+
+
         cudaMemcpyAsync(
             nextData.h_candidates_per_subject_prefixsum.get(),
             nextData.d_candidates_per_subject_prefixsum.get(),
@@ -974,6 +1114,22 @@ namespace gpu{
             nextData.n_queries, 
             nextData.stream
         );
+
+        cudaMemcpyAsync(
+            nextData.h_numLeftoverAnchors,
+            nextData.d_numLeftoverAnchors,
+            sizeof(int),
+            D2H,
+            nextData.stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            nextData.h_numLeftoverAnchors,
+            nextData.d_numLeftoverAnchors,
+            sizeof(int),
+            D2H,
+            nextData.stream
+        ); CUERR;
 
         cudaStreamSynchronize(nextData.stream); CUERR;
         nvtx::pop_range();
