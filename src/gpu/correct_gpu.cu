@@ -247,6 +247,7 @@ namespace gpu{
         SimpleAllocationDevice<int> d_numLeftoverCandidates;
         SimpleAllocationDevice<read_number> d_leftoverCandidateReadIds;
         SimpleAllocationDevice<int> d_leftoverCandidatesPerAnchors;
+        SimpleAllocationDevice<unsigned int> d_leftoverAnchorSequences;
 
         SimpleAllocationPinnedHost<int> h_numLeftoverAnchors;
         SimpleAllocationPinnedHost<int> h_numLeftoverCandidates;
@@ -591,6 +592,7 @@ namespace gpu{
         nextData.d_leftoverCandidatesPerAnchors.destroy();
         nextData.h_numLeftoverAnchors.destroy();
         nextData.h_numLeftoverCandidates.destroy();
+        nextData.d_leftoverAnchorSequences.destroy();
 
         destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
     }
@@ -974,19 +976,14 @@ namespace gpu{
         );
 
 
-                // SimpleAllocationDevice<int> d_numLeftoverAnchors;
-        // SimpleAllocationDevice<read_number> d_leftoverAnchorReadIds;
-        // SimpleAllocationDevice<int> d_numLeftoverCandidates;
-        // SimpleAllocationDevice<read_number> d_leftoverCandidateReadIds;
-        // SimpleAllocationDevice<int> d_leftoverCandidatesPerAnchors;
 
-        // SimpleAllocationPinnedHost<int> h_numLeftoverAnchors;
-        // SimpleAllocationPinnedHost<int> h_numLeftoverCandidates;
 
         nextData.d_leftoverAnchorReadIds.resize(batchsize);
         nextData.d_leftoverCandidateReadIds.resize(totalNumIds);
         nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
+        nextData.d_leftoverAnchorSequences.resize(batchData.encodedSequencePitchInInts * batchsize);
 
+        unsigned int* d_leftoverAnchorSequences = nextData.d_leftoverAnchorSequences.get();
         int* d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
         read_number* d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get();
         int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
@@ -995,9 +992,12 @@ namespace gpu{
         
         const read_number* d_subject_read_ids = nextData.d_subject_read_ids.get();
         const read_number* d_candidate_read_ids = nextData.d_candidate_read_ids.get();
+        const unsigned int* d_subject_sequences_data = nextData.d_subject_sequences_data.get();
         const int* d_candidates_per_subject = nextData.d_candidates_per_subject.get();
         const int* d_candidates_per_subject_prefixsum = nextData.d_candidates_per_subject_prefixsum.get();
         const int n_subjects = nextData.n_subjects;
+
+        const int encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
 
         generic_kernel<<<320,128, 0, nextData.stream>>>(
             [=]__device__(){
@@ -1048,6 +1048,10 @@ namespace gpu{
 
                         for(int i = tid; i < numLeftoverCandidates; i += stride){
                             d_leftoverCandidateReadIds[i] = d_candidate_read_ids[d_candidates_per_subject_prefixsum[index] + i];
+                        }
+
+                        for(int i = tid; i < numLeftoverAnchors * encodedSequencePitchInInts; i += stride){
+                            d_leftoverAnchorSequences[i] = d_subject_sequences_data[index * encodedSequencePitchInInts + i];
                         }
                     }else{
                         if(tid == 0){
@@ -1124,8 +1128,8 @@ namespace gpu{
         ); CUERR;
 
         cudaMemcpyAsync(
-            nextData.h_numLeftoverAnchors,
-            nextData.d_numLeftoverAnchors,
+            nextData.h_numLeftoverCandidates,
+            nextData.d_numLeftoverCandidates,
             sizeof(int),
             D2H,
             nextData.stream
