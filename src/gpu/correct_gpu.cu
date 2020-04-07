@@ -775,7 +775,7 @@ namespace gpu{
             H2D,
             nextData.stream
         ); CUERR;
-
+        // std::cerr << "gather anchors\n";
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle,
@@ -1141,6 +1141,7 @@ namespace gpu{
             nextData.stream
         ); CUERR;
 
+        // std::cerr << "gather anchors\n";
         // get sequence data and length of new anchors.
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
@@ -1306,6 +1307,10 @@ namespace gpu{
             MergeRangesKernelType::allcub
         );
 
+        nvtx::pop_range();
+
+        nvtx::push_range("leftover_calculation", 3);
+
         //fix the prefix sum to include the leftover data
         std::size_t cubTempBytes = sizeof(read_number) * (maxNumIds + batchsizeCandidates_);
         void* cubTemp = nextData.d_candidate_read_ids_tmp.get();
@@ -1469,6 +1474,8 @@ namespace gpu{
             ); CUERR;
         }
 
+        nvtx::pop_range();
+
 
         // cudaMemcpyAsync(
         //     nextData.h_candidates_per_subject_prefixsum.get(),
@@ -1565,7 +1572,7 @@ namespace gpu{
         cudaStreamSynchronize(nextData.stream); CUERR;
 
 
-        nvtx::pop_range();
+        
 
     }
 
@@ -2299,7 +2306,7 @@ namespace gpu{
                                         dataArrays.d_candidate_read_ids.get(),
                                         batch.n_queries,            
                                         streams[primary_stream_index]);
-
+        // std::cerr << "gather candidates\n";
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batch.threadPool,
             batch.candidateSequenceGatherHandle,
@@ -2352,7 +2359,7 @@ namespace gpu{
         const auto* gpuReadStorage = transFuncData.readStorage;
 
 		if(transFuncData.correctionOptions.useQualityScores) {
-
+            // std::cerr << "gather anchor qual\n";
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
                 batch.subjectQualitiesGatherHandle,
@@ -2364,7 +2371,7 @@ namespace gpu{
                 batch.deviceId,
                 streams[primary_stream_index],
                 transFuncData.runtimeOptions.nCorrectorThreads);
-
+            // std::cerr << "gather candidate qual\n";
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
                 batch.candidateQualitiesGatherHandle,
