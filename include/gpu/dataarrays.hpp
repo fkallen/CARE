@@ -45,7 +45,7 @@ struct DataArrays {
 	// 	//cudaSetDevice(deviceId);
 	// };
 
-    static constexpr int overprovisioningPercent = 10;
+    static constexpr int overprovisioningPercent = 0;
 
     template<class T>
     using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
