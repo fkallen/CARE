@@ -1650,7 +1650,6 @@ public:
                 nvtx::push_range("generalGather", 2);
 
                 gatherElementsInGpuMemAsyncGeneral(
-                //gatherElementsInGpuMemAsyncNewBroken(
                     forLoop,
                     handle,
                     indices,
@@ -2964,6 +2963,7 @@ public:
             // std::cerr << "\n";
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
+                nvtx::push_range("generalgather_host", 7);
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
 
@@ -2972,6 +2972,7 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
+                nvtx::pop_range();
             };
 
             forLoop( 
@@ -3247,12 +3248,14 @@ public:
                 0, 
                 numHostIndices, 
                 [&](int begin, int end, int threadId){
+                    nvtx::push_range("generalgather_host", 7);
                     for(int k = begin; k < end; k++){
                         const Index_t localId = handle->indicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
                         const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
                         Value_t* destPtr = myResult + size_t(k) * numColumns;
                         std::copy_n(srcPtr, numColumns, destPtr);
                     }
+                    nvtx::pop_range();
                 }
             );
 
