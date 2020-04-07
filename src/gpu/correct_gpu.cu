@@ -219,24 +219,12 @@ namespace gpu{
     };
 
     struct NextIterationData{
-        SimpleAllocationPinnedHost<unsigned int> h_new_subject_sequences_data;
-        SimpleAllocationPinnedHost<int> h_new_subject_sequences_lengths;
-        SimpleAllocationPinnedHost<read_number> h_new_subject_read_ids;
-        SimpleAllocationPinnedHost<read_number> h_new_candidate_read_ids;
-        SimpleAllocationDevice<unsigned int> d_new_subject_sequences_data;
-        SimpleAllocationDevice<int> d_new_subject_sequences_lengths;
-        SimpleAllocationDevice<read_number> d_new_subject_read_ids;
-        SimpleAllocationDevice<read_number> d_new_candidate_read_ids;
-        SimpleAllocationDevice<int> d_new_candidates_per_subject;
-
         SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
         SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
         SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
         SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
         SimpleAllocationPinnedHost<int> h_candidates_per_subject;
         SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
-        SimpleAllocationPinnedHost<bool> h_anchorContainsN;
-        SimpleAllocationPinnedHost<bool> h_candidateContainsN;
 
         SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
         SimpleAllocationDevice<int> d_subject_sequences_lengths;
@@ -245,18 +233,16 @@ namespace gpu{
         SimpleAllocationDevice<int> d_candidates_per_subject;
         SimpleAllocationDevice<int> d_candidates_per_subject_tmp;
         SimpleAllocationDevice<int> d_candidates_per_subject_prefixsum;
-        SimpleAllocationDevice<bool> d_anchorContainsN;
-        SimpleAllocationDevice<bool> d_candidateContainsN;
 
         SimpleAllocationDevice<read_number> d_candidate_read_ids_tmp;
         SimpleAllocationPinnedHost<std::uint64_t> h_minhashSignatures;
         SimpleAllocationDevice<std::uint64_t> d_minhashSignatures;
-        SimpleAllocationPinnedHost<std::uint64_t> h_minhashSignaturesTransposed;
-        SimpleAllocationDevice<std::uint64_t> d_minhashSignaturesTransposed;
-        SimpleAllocationDevice<unsigned int> d_subject_sequences_data_transposed;
+        SimpleAllocationPinnedHost<int> h_numAnchors;
+        SimpleAllocationPinnedHost<int> h_numCandidates;
+        SimpleAllocationDevice<int> d_numAnchors;
+        SimpleAllocationDevice<int> d_numCandidates;
 
-        SimpleAllocationDevice<int> d_new_numLeftoverAnchors;
-        SimpleAllocationDevice<int> d_new_numLeftoverCandidates;
+        //private buffers
         SimpleAllocationDevice<int> d_numLeftoverAnchors;
         SimpleAllocationDevice<int> d_leftoverAnchorLengths;
         SimpleAllocationDevice<read_number> d_leftoverAnchorReadIds;
@@ -265,14 +251,10 @@ namespace gpu{
         SimpleAllocationDevice<int> d_leftoverCandidatesPerAnchors;
         SimpleAllocationDevice<unsigned int> d_leftoverAnchorSequences;
         SimpleAllocationPinnedHost<read_number> h_leftoverAnchorReadIds;
-
         SimpleAllocationPinnedHost<int> h_numLeftoverAnchors;
         SimpleAllocationPinnedHost<int> h_numLeftoverCandidates;
 
-        SimpleAllocationPinnedHost<int> h_numAnchors;
-        SimpleAllocationPinnedHost<int> h_numCandidates;
-        SimpleAllocationDevice<int> d_numAnchors;
-        SimpleAllocationDevice<int> d_numCandidates;
+
 
         bool reallocOccurred = false;
         int maxNumCandidatesToReserve = 0;
@@ -281,7 +263,6 @@ namespace gpu{
         int n_new_subjects = -1;
         std::atomic<int> n_queries{-1};
 
-        std::vector<std::string> decodedSubjectStrings;
         std::vector<Minhasher::Range_t> allRanges;
         std::vector<int> idsPerChunk;   
         std::vector<int> numAnchorsPerChunk;
@@ -454,9 +435,7 @@ namespace gpu{
             std::swap(dataArrays.h_subject_read_ids, data.h_subject_read_ids);
             std::swap(dataArrays.h_candidate_read_ids, data.h_candidate_read_ids);
             std::swap(dataArrays.h_candidates_per_subject, data.h_candidates_per_subject);
-            std::swap(dataArrays.h_candidates_per_subject_prefixsum, data.h_candidates_per_subject_prefixsum);
-            std::swap(dataArrays.h_anchorContainsN, data.h_anchorContainsN);
-            
+            std::swap(dataArrays.h_candidates_per_subject_prefixsum, data.h_candidates_per_subject_prefixsum);            
 
             std::swap(dataArrays.d_subject_sequences_data, data.d_subject_sequences_data);
             std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
@@ -464,19 +443,12 @@ namespace gpu{
             std::swap(dataArrays.d_candidate_read_ids, data.d_candidate_read_ids);
             std::swap(dataArrays.d_candidates_per_subject, data.d_candidates_per_subject);
             std::swap(dataArrays.d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
-            //std::swap(dataArrays.d_anchorContainsN, data.d_anchorContainsN);
-            //std::swap(dataArrays.d_candidateContainsN, data.d_candidateContainsN);
-
-
-            std::swap(decodedSubjectStrings, data.decodedSubjectStrings);
 
             n_subjects = data.n_subjects;
             n_queries = data.n_queries;  
 
             data.n_subjects = 0;
             data.n_queries = 0;
-            data.decodedSubjectStrings.clear();
-
 
             reallocInNextIterationData = data.reallocOccurred;
             data.reallocOccurred = false;
@@ -580,8 +552,6 @@ namespace gpu{
         nextData.d_numLeftoverCandidates.resize(1);
         nextData.h_numLeftoverAnchors.resize(1);
         nextData.h_numLeftoverCandidates.resize(1);
-        nextData.d_new_numLeftoverAnchors.resize(1);
-        nextData.d_new_numLeftoverCandidates.resize(1);
         nextData.h_numAnchors.resize(1);
         nextData.h_numCandidates.resize(1);
         nextData.d_numAnchors.resize(1);
@@ -589,8 +559,6 @@ namespace gpu{
 
         cudaMemsetAsync(nextData.d_numLeftoverAnchors.get(), 0, sizeof(int), nextData.stream); CUERR;
         cudaMemsetAsync(nextData.d_numLeftoverCandidates.get(), 0, sizeof(int), nextData.stream); CUERR;
-        cudaMemsetAsync(nextData.d_new_numLeftoverAnchors.get(), 0, sizeof(int), nextData.stream); CUERR;
-        cudaMemsetAsync(nextData.d_new_numLeftoverCandidates.get(), 0, sizeof(int), nextData.stream); CUERR;
 
         nextData.h_numLeftoverAnchors[0] = 0;
         nextData.h_numLeftoverCandidates[0] = 0;
@@ -621,9 +589,6 @@ namespace gpu{
         nextData.d_candidate_read_ids_tmp.destroy();
         nextData.h_minhashSignatures.destroy();
         nextData.d_minhashSignatures.destroy();
-        nextData.h_minhashSignaturesTransposed.destroy();
-        nextData.d_minhashSignaturesTransposed.destroy();
-        nextData.d_subject_sequences_data_transposed.destroy();
 
         nextData.d_numLeftoverAnchors.destroy();
         nextData.d_leftoverAnchorLengths.destroy();
@@ -634,16 +599,6 @@ namespace gpu{
         nextData.h_numLeftoverAnchors.destroy();
         nextData.h_numLeftoverCandidates.destroy();
         nextData.d_leftoverAnchorSequences.destroy();
-
-        nextData.h_new_subject_sequences_data.destroy();
-        nextData.h_new_subject_sequences_lengths.destroy();
-        nextData.h_new_subject_read_ids.destroy();
-        nextData.h_new_candidate_read_ids.destroy();
-        nextData.d_new_subject_sequences_data.destroy();
-        nextData.d_new_subject_sequences_lengths.destroy();
-        nextData.d_new_subject_read_ids.destroy();
-        nextData.d_new_candidate_read_ids.destroy();
-        nextData.d_new_candidates_per_subject.destroy();
 
         nextData.h_leftoverAnchorReadIds.destroy();
 
@@ -752,13 +707,10 @@ namespace gpu{
 
         nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
-        //nextData.reallocOccurred |= nextData.d_subject_sequences_data_transposed.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.h_subject_sequences_lengths.resize(batchsize);
         nextData.reallocOccurred |= nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
-        nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
-        //nextData.reallocOccurred |= nextData.h_anchorContainsN.resize(batchsize);
-        nextData.reallocOccurred |= nextData.d_anchorContainsN.resize(batchsize);        
+        nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);   
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
@@ -937,8 +889,6 @@ namespace gpu{
         nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(nextData.n_subjects);
         nextData.reallocOccurred |= nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        //nextData.reallocOccurred |= nextData.h_candidateContainsN.resize(totalNumIds);
-        nextData.reallocOccurred |= nextData.d_candidateContainsN.resize(totalNumIds);
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
             nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
@@ -1051,14 +1001,6 @@ namespace gpu{
 
         const size_t encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
 
-        nextData.h_new_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.h_new_subject_sequences_lengths.resize(batchsize);
-        nextData.h_new_subject_read_ids.resize(batchsize);
-
-        nextData.d_new_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.d_new_subject_sequences_lengths.resize(batchsize);
-        nextData.d_new_subject_read_ids.resize(batchsize);
-
         nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.h_subject_sequences_lengths.resize(batchsize);
@@ -1085,10 +1027,6 @@ namespace gpu{
         const int resultsPerMap = 2.5f * batchData.transFuncData->correctionOptions.estimatedCoverage;
             //minhasher.calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
         const int maxNumIds = resultsPerMap * maximum_number_of_maps * batchsize;
-
-        nextData.h_new_candidate_read_ids.resize(maxNumIds);
-        nextData.d_new_candidate_read_ids.resize(maxNumIds);
-        nextData.d_new_candidates_per_subject.resize(batchsize);
 
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds + batchsizeCandidates_);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + batchsizeCandidates_);
