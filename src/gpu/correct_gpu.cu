@@ -417,6 +417,10 @@ namespace gpu{
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
 
+        int min_overlap = -1;
+        int msa_max_column_count = -1;
+        size_t msa_weights_pitch_floats = 0;
+
         bool reallocResize = false;
         bool reallocInNextIterationData = false;
 
@@ -1256,22 +1260,13 @@ namespace gpu{
         const auto& transFuncData = *(batchData.transFuncData);
         auto& streams = batchData.streams;
 
-        const int min_overlap = std::max(1, std::max(transFuncData.goodAlignmentProperties.min_overlap, 
-            int(transFuncData.sequenceFileProperties.maxSequenceLength 
-                * transFuncData.goodAlignmentProperties.min_overlap_ratio)));
-
-        const int sequence_pitch = batchData.decodedSequencePitchInBytes;
-
-        int msa_max_column_count = (3*transFuncData.sequenceFileProperties.maxSequenceLength - 2*min_overlap);
-        batchData.msa_pitch = SDIV(sizeof(char)*msa_max_column_count, 4) * 4;
-        batchData.msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, 4) * 4;
-        size_t msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
-
+        const auto sequence_pitch = batchData.decodedSequencePitchInBytes;
+        const auto msa_pitch = batchData.msa_pitch;
         const auto maxCandidates = batchData.numCandidatesLimit;
         const auto batchsize = batchData.transFuncData->correctionOptions.batchsize;
         const auto encodedSeqPitchInts = batchData.encodedSequencePitchInInts;
         const auto qualPitchBytes = batchData.qualityPitchInBytes;
-
+        const auto msa_weights_pitch_floats = batchData.msa_weights_pitch_floats;
         const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
                 
         //sequence input data
@@ -1397,7 +1392,7 @@ namespace gpu{
 
         //multiple sequence alignment
 
-        batchData.reallocResize |= dataArrays.h_consensus.resize(batchsize * batchData.msa_pitch);
+        batchData.reallocResize |= dataArrays.h_consensus.resize(batchsize * msa_pitch);
         batchData.reallocResize |= dataArrays.h_support.resize(batchsize * msa_weights_pitch_floats);
         batchData.reallocResize |= dataArrays.h_coverage.resize(batchsize * msa_weights_pitch_floats);
         batchData.reallocResize |= dataArrays.h_origWeights.resize(batchsize * msa_weights_pitch_floats);
@@ -1406,7 +1401,7 @@ namespace gpu{
         batchData.reallocResize |= dataArrays.h_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
         batchData.reallocResize |= dataArrays.h_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
 
-        batchData.reallocResize |= dataArrays.d_consensus.resize(batchsize * batchData.msa_pitch);
+        batchData.reallocResize |= dataArrays.d_consensus.resize(batchsize * msa_pitch);
         batchData.reallocResize |= dataArrays.d_support.resize(batchsize * msa_weights_pitch_floats);
         batchData.reallocResize |= dataArrays.d_coverage.resize(batchsize * msa_weights_pitch_floats);
         batchData.reallocResize |= dataArrays.d_origWeights.resize(batchsize * msa_weights_pitch_floats);
@@ -3346,6 +3341,18 @@ void correct_gpu(
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
             batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
             batchData.maxNumEditsPerSequence = std::max(1,sequenceFileProperties.maxSequenceLength / 7);
+            batchData.min_overlap = std::max(
+                1, 
+                std::max(
+                    goodAlignmentProperties.min_overlap, 
+                    int(sequenceFileProperties.maxSequenceLength * goodAlignmentProperties.min_overlap_ratio)
+                )
+            );
+    
+            batchData.msa_max_column_count = (3*sequenceFileProperties.maxSequenceLength - 2*batchData.min_overlap);
+            batchData.msa_pitch = SDIV(sizeof(char)*batchData.msa_max_column_count, 4) * 4;
+            batchData.msa_weights_pitch = SDIV(sizeof(float)*batchData.msa_max_column_count, 4) * 4;
+            batchData.msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
 
             initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
 
