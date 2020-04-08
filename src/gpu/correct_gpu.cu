@@ -759,10 +759,6 @@ namespace gpu{
 
         nextData.h_numAnchors[0] = nextData.n_new_subjects + numLeftoverAnchors;
 
-        if(nextData.n_new_subjects == 0){
-            std::cerr << "0 new anchors, " << numLeftoverAnchors << " numLeftoverAnchors \n";
-        }
-
         if(nextData.n_subjects == 0){
             return;
         };
@@ -1208,17 +1204,11 @@ namespace gpu{
             nvtx::pop_range();
         };
 
-
-
 #if 0
         batchData.nextIterationData.syncFlag.setBusy();
         getDataForNextIteration();
         batchData.nextIterationData.syncFlag.wait();
         batchData.updateFromIterationData(batchData.nextIterationData); 
-
-        if(batchData.n_queries == 0){
-            return;
-        }
 
 #else
         if(batchData.isFirstIteration){
@@ -1231,15 +1221,7 @@ namespace gpu{
             batchData.nextIterationData.syncFlag.wait(); //wait until data is available
         }
 
-        if(batchptr->nextIterationData.n_queries == 0){
-            return;
-        }
-
-        batchData.updateFromIterationData(batchData.nextIterationData);    
-        
-        if(batchData.n_queries == 0){
-            return;
-        }
+        batchData.updateFromIterationData(batchData.nextIterationData);        
             
         batchData.nextIterationData.syncFlag.setBusy();
 
@@ -1678,163 +1660,85 @@ namespace gpu{
 
 		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
-        const auto maxCandidates = batch.numCandidatesLimit;
-        
-        auto& graphwrap = batch.alignmentGraphs[batch.graphindex];
+        const auto maxCandidates = batch.numCandidatesLimit;        
 
-        auto run0 = [&](){
-            {
-                const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
-                int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
-                int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
-                int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+        {
+            const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
+            int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
+            int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
+            int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
 
-                setAnchorIndicesOfCandidateskernel<1024, 128>
-                        <<<1024, 128, 0, streams[primary_stream_index]>>>(
-                            dataArrays.d_anchorIndicesOfCandidates.get(),
-                    dataArrays.d_numAnchors.get(),
-                    dataArrays.d_candidates_per_subject.get(),
-                    dataArrays.d_candidates_per_subject_prefixsum.get()
-                ); CUERR;
-            }
-        };
-
-        auto run1 = [&](){
-            std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
-
-            call_popcount_shifted_hamming_distance_kernel_async(
-                dataArrays.d_tempstorage.get(),
-                tempBytes,
-                dataArrays.d_alignment_overlaps.get(),
-                dataArrays.d_alignment_shifts.get(),
-                dataArrays.d_alignment_nOps.get(),
-                dataArrays.d_alignment_isValid.get(),
-                dataArrays.d_alignment_best_alignment_flags.get(),
-                dataArrays.d_subject_sequences_data.get(),
-                dataArrays.d_candidate_sequences_data.get(),
-                dataArrays.d_subject_sequences_lengths.get(),
-                dataArrays.d_candidate_sequences_lengths.get(),
-                dataArrays.d_candidates_per_subject_prefixsum.get(),
+            setAnchorIndicesOfCandidateskernel<1024, 128>
+                    <<<1024, 128, 0, streams[primary_stream_index]>>>(
+                        dataArrays.d_anchorIndicesOfCandidates.get(),
+                dataArrays.d_numAnchors.get(),
                 dataArrays.d_candidates_per_subject.get(),
-                dataArrays.d_anchorIndicesOfCandidates.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
-                batchsize,
-                maxCandidates,
-                transFuncData.sequenceFileProperties.maxSequenceLength,
-                batch.encodedSequencePitchInInts,
-                transFuncData.goodAlignmentProperties.min_overlap,
-                transFuncData.goodAlignmentProperties.maxErrorRate,
-                transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                transFuncData.correctionOptions.estimatedErrorrate,
-                //batch.maxSubjectLength,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle
-            );
-        };
+                dataArrays.d_candidates_per_subject_prefixsum.get()
+            ); CUERR;
+        }
 
-        auto run2 = [&](){
-            call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                dataArrays.getDeviceAlignmentResultPointers(),
-                dataArrays.d_candidates_per_subject_prefixsum.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
-                batchsize,
-                maxCandidates,
-                transFuncData.correctionOptions.estimatedErrorrate,
-                transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle
-            );
-        };
+        std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
 
-        auto run3 = [&](){
-            callSelectIndicesOfGoodCandidatesKernelAsync(
-                dataArrays.d_indices.get(),
-                dataArrays.d_indices_per_subject.get(),
-                dataArrays.d_num_indices.get(),
-                dataArrays.d_alignment_best_alignment_flags.get(),
-                dataArrays.d_candidates_per_subject.get(),
-                dataArrays.d_candidates_per_subject_prefixsum.get(),
-                dataArrays.d_anchorIndicesOfCandidates.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
-                batchsize,
-                maxCandidates,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle
-            );
-        };
+        call_popcount_shifted_hamming_distance_kernel_async(
+            dataArrays.d_tempstorage.get(),
+            tempBytes,
+            dataArrays.d_alignment_overlaps.get(),
+            dataArrays.d_alignment_shifts.get(),
+            dataArrays.d_alignment_nOps.get(),
+            dataArrays.d_alignment_isValid.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_subject_sequences_data.get(),
+            dataArrays.d_candidate_sequences_data.get(),
+            dataArrays.d_subject_sequences_lengths.get(),
+            dataArrays.d_candidate_sequences_lengths.get(),
+            dataArrays.d_candidates_per_subject_prefixsum.get(),
+            dataArrays.d_candidates_per_subject.get(),
+            dataArrays.d_anchorIndicesOfCandidates.get(),
+            dataArrays.d_numAnchors.get(),
+            dataArrays.d_numCandidates.get(),
+            batchsize,
+            maxCandidates,
+            transFuncData.sequenceFileProperties.maxSequenceLength,
+            batch.encodedSequencePitchInInts,
+            transFuncData.goodAlignmentProperties.min_overlap,
+            transFuncData.goodAlignmentProperties.maxErrorRate,
+            transFuncData.goodAlignmentProperties.min_overlap_ratio,
+            transFuncData.correctionOptions.estimatedErrorrate,
+            //batch.maxSubjectLength,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
 
-        auto run = [&](){
-            run0();
-            run1();
-            run2();
-            run3();
-        };
+        call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+            dataArrays.getDeviceAlignmentResultPointers(),
+            dataArrays.d_candidates_per_subject_prefixsum.get(),
+            dataArrays.d_numAnchors.get(),
+            dataArrays.d_numCandidates.get(),
+            batchsize,
+            maxCandidates,
+            transFuncData.correctionOptions.estimatedErrorrate,
+            transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
 
-        // if(!graphwrap.valid){
-        //     std::cerr << "rebuild alignmentgraph\n";
-
-        //     graphwrap.d_numAnchors = dataArrays.d_numAnchors.get();
-        //     graphwrap.d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
-        //     graphwrap.d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
-        //     graphwrap.d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
-    
-
-        //     if(graphwrap.execgraph != nullptr){
-        //         cudaGraphExecDestroy(graphwrap.execgraph); CUERR;
-        //     }
-            
-        //     cudaStreamBeginCapture(streams[primary_stream_index], cudaStreamCaptureModeRelaxed); CUERR;
-
-        //     run0();
-        //     run1();
-        //     run2();
-        //     run3();
-
-        //     cudaGraph_t graph;
-        //     cudaStreamEndCapture(streams[primary_stream_index], &graph); CUERR;
-            
-        //     cudaGraphExec_t execGraph;
-        //     cudaGraphNode_t errorNode;
-        //     auto logBuffer = std::make_unique<char[]>(1025);
-        //     std::fill_n(logBuffer.get(), 1025, 0);
-        //     cudaError_t status = cudaGraphInstantiate(&execGraph, graph, &errorNode, logBuffer.get(), 1025);
-        //     if(status != cudaSuccess){
-        //         if(logBuffer[1024] != '\0'){
-        //             std::cerr << "cudaGraphInstantiate: truncated error message: ";
-        //             std::copy_n(logBuffer.get(), 1025, std::ostream_iterator<char>(std::cerr, ""));
-        //             std::cerr << "\n";
-        //         }else{
-        //             std::cerr << "cudaGraphInstantiate: error message: ";
-        //             std::cerr << logBuffer.get();
-        //             std::cerr << "\n";
-        //         }
-        //         CUERR;
-        //     }            
-
-        //     cudaGraphDestroy(graph); CUERR;
-
-        //     graphwrap.execgraph = execGraph;
-
-        //     graphwrap.valid = true;
-        // }
-
-        // assert(graphwrap.valid);
-
-        // assert(graphwrap.d_numAnchors == dataArrays.d_numAnchors.get());
-        // assert(graphwrap.d_anchorIndicesOfCandidates == dataArrays.d_anchorIndicesOfCandidates.get());
-        // assert(graphwrap.d_candidates_per_subject == dataArrays.d_candidates_per_subject.get());
-        // assert(graphwrap.d_candidates_per_subject_prefixsum == dataArrays.d_candidates_per_subject_prefixsum.get());
-
-
-        run();
-        //cudaGraphLaunch(graphwrap.execgraph, streams[primary_stream_index]); CUERR;
-
+        callSelectIndicesOfGoodCandidatesKernelAsync(
+            dataArrays.d_indices.get(),
+            dataArrays.d_indices_per_subject.get(),
+            dataArrays.d_num_indices.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_candidates_per_subject.get(),
+            dataArrays.d_candidates_per_subject_prefixsum.get(),
+            dataArrays.d_anchorIndicesOfCandidates.get(),
+            dataArrays.d_numAnchors.get(),
+            dataArrays.d_numCandidates.get(),
+            batchsize,
+            maxCandidates,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
 
 
         // cudaMemcpyAsync(dataArrays.h_num_indices,
@@ -3598,7 +3502,7 @@ void correct_gpu(
             cudaGetDeviceProperties(&deviceProperties, deviceId); CUERR;
             const int limit = deviceProperties.multiProcessorCount * deviceProperties.maxThreadsPerMultiProcessor;
             numCandidatesLimitPerGpu[deviceId] = limit;
-            std::cerr << "Number of candidates per batch is limited to " << (limit)
+            std::cerr << "Number of candidates per batch is limited to " << limit 
                 << " for device id " << deviceId << "\n";
         }
 
@@ -3791,7 +3695,6 @@ void correct_gpu(
             poprange();
 
             if(batchData.n_queries == 0){
-                std::cerr << "batchData.n_queries == 0\n";
                 return;
             }
 
@@ -4008,17 +3911,13 @@ void correct_gpu(
                 bool isFirstIteration = true;
                 int batchIndex = 0;
 
-                std::array<bool, 2> batchIsFinished{false,false};
-
-                auto isBatchFinished = [](const auto& batch){
-                    return !batch.nextIterationData.syncFlag.isBusy()
-                        && batch.nextIterationData.n_subjects == 0
-                        && !batch.waitableOutputData.isBusy();
-                };
-
                 while(!(readIdGenerator.empty() 
-                        && isBatchFinished(batchDataArray[0])
-                        && isBatchFinished(batchDataArray[1]))) {
+                        && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
+                        && batchDataArray[0].nextIterationData.n_subjects == 0
+                        && !batchDataArray[0].waitableOutputData.isBusy()
+                        && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
+                        && batchDataArray[1].nextIterationData.n_subjects == 0
+                        && !batchDataArray[1].waitableOutputData.isBusy())) {
 
                     const int nextBatchIndex = 1 - batchIndex;
                     auto& currentBatchData = batchDataArray[batchIndex];
