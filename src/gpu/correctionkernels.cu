@@ -38,7 +38,7 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_correct_subject_implicit_kernel(
+    void msa_correct_subject_kernel_old(
                 char* __restrict__ correctedSubjects,
                 bool* __restrict__ subjectIsCorrected,
                 AnchorHighQualityFlag* __restrict__ isHighQualitySubject,
@@ -407,7 +407,7 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_correct_subject_implicit_kernel2(
+    void msaCorrectAnchorsKernel(
             char* __restrict__ correctedSubjects,
             bool* __restrict__ subjectIsCorrected,
             AnchorHighQualityFlag* __restrict__ isHighQualitySubject,
@@ -1675,7 +1675,7 @@ namespace gpu{
 
 
 
-    void call_msa_correct_subject_implicit_kernel_async(
+    void call_msaCorrectAnchorsKernel_async(
                             char* d_correctedSubjects,
                             bool* d_subjectIsCorrected,
                             AnchorHighQualityFlag* d_isHighQualitySubject,
@@ -1727,7 +1727,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    msa_correct_subject_implicit_kernel2<(blocksize)>, \
+                    msaCorrectAnchorsKernel<(blocksize)>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -1759,7 +1759,7 @@ namespace gpu{
         //dim3 grid(std::min(maxNumAnchors, max_blocks_per_device));
         dim3 grid(max_blocks_per_device);
 
-        #define mycall(blocksize) msa_correct_subject_implicit_kernel2<(blocksize)> \
+        #define mycall(blocksize) msaCorrectAnchorsKernel<(blocksize)> \
                                 <<<grid, block, 0, stream>>>( \
                                     d_correctedSubjects, \
                                     d_subjectIsCorrected, \

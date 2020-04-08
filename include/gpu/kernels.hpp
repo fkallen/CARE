@@ -379,7 +379,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
 // correction kernels
 
 
-void call_msa_correct_subject_implicit_kernel_async(
+void call_msaCorrectAnchorsKernel_async(
             char* d_correctedSubjects,
             bool* d_subjectIsCorrected,
             AnchorHighQualityFlag* d_isHighQualitySubject,

@@ -2153,7 +2153,7 @@ namespace gpu{
         const int* d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2];
 
 
-        call_msa_correct_subject_implicit_kernel_async(
+        call_msaCorrectAnchorsKernel_async(
             dataArrays.d_corrected_subjects.get(),
             dataArrays.d_subject_is_corrected.get(),
             dataArrays.d_is_high_quality_subject.get(),
