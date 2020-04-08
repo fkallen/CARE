@@ -8,7 +8,7 @@ namespace care{
 namespace gpu{
 
     // Caching allocator for device memory
-    extern cub::CachingDeviceAllocator cubCachingAllocator;
+    //extern cub::CachingDeviceAllocator cubCachingAllocator;
 
 }
 }

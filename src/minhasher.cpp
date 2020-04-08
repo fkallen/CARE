@@ -552,7 +552,7 @@ namespace care{
             Minhasher::Handle& handle,
             const std::vector<std::string>& sequences) const{
 
-        handle.multiminhashSignatures.resize(maximum_number_of_maps * sequences.size());
+        handle.multiminhashSignatures.resize(getNumberOfMaps() * sequences.size());
 
         const int numSequences = sequences.size();
         for(int i = 0; i < numSequences; i++){
@@ -566,7 +566,7 @@ namespace care{
                 std::copy(
                     hashValues.begin(), 
                     hashValues.end(), 
-                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                    handle.multiminhashSignatures.begin() + getNumberOfMaps() * i
                 );
             }
         }
@@ -579,7 +579,7 @@ namespace care{
             const int* sequenceLengths,
             int sequencesPitch) const{
 
-        handle.multiminhashSignatures.resize(maximum_number_of_maps * numSequences);
+        handle.multiminhashSignatures.resize(getNumberOfMaps() * numSequences);
 
         for(int i = 0; i < numSequences; i++){
             const char* sequence = sequences + i * sequencesPitch;
@@ -592,7 +592,7 @@ namespace care{
                 std::copy(
                     hashValues.begin(), 
                     hashValues.end(), 
-                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                    handle.multiminhashSignatures.begin() + getNumberOfMaps() * i
                 );
             }
         }
@@ -606,7 +606,7 @@ namespace care{
         handle.numResultsPerSequence.resize(numSequences, 0);        
 
         for(int i = 0; i < numSequences; i++){
-            const std::uint64_t* signature = &handle.multiminhashSignatures[i * maximum_number_of_maps];
+            const std::uint64_t* signature = &handle.multiminhashSignatures[i * getNumberOfMaps()];
 
             for(int map = 0; map < minparams.maps; ++map){
                 kmer_type key = signature[map] & key_mask;
@@ -618,6 +618,29 @@ namespace care{
                 handle.multiranges.emplace_back(entries_range);
             }
         }      
+    }
+
+    void Minhasher::queryPrecalculatedSignatures(
+        const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
+        Minhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
+        int* totalNumResultsInRanges, 
+        int numSequences) const{ 
+        
+        int numResults = 0;
+
+        for(int i = 0; i < numSequences; i++){
+            const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
+            Minhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
+
+            for(int map = 0; map < minparams.maps; ++map){
+                kmer_type key = signature[map] & key_mask;
+                auto entries_range = queryMap(map, key);
+                numResults += std::distance(entries_range.first, entries_range.second);
+                range[map] = entries_range;
+            }
+        }   
+
+        *totalNumResultsInRanges = numResults;   
     }
 
     //static bool once = true;

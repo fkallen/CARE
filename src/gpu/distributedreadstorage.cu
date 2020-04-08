@@ -31,7 +31,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                     int minimum_sequence_length, int maximum_sequence_length){
     assert(minimum_sequence_length <= maximum_sequence_length);
 
-    constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUEqual;
+    constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUEqual; //GPUEqual; //GPUBlock
 
     int oldId; cudaGetDevice(&oldId); CUERR;
 
@@ -386,21 +386,25 @@ void DistributedReadStorage::setReadsContainN_async(
     int nPositions,
     cudaStream_t stream) const{
 
-    int oldId = 0;
-    cudaGetDevice(&oldId); CUERR;
-    cudaSetDevice(deviceId); CUERR;
+    if(nPositions > 0){
 
-    dim3 block = 256;
-    dim3 grid = SDIV(nPositions, block.x);
+        int oldId = 0;
+        cudaGetDevice(&oldId); CUERR;
+        cudaSetDevice(deviceId); CUERR;
 
-    setBitarray<<<grid, block, 0, stream>>>(
-        bitArraysUndeterminedBase.at(deviceId), 
-        d_values, 
-        d_positions, 
-        nPositions
-    ); CUERR;
+        dim3 block = 256;
+        dim3 grid = SDIV(nPositions, block.x);
 
-    cudaSetDevice(oldId); CUERR;
+        setBitarray<<<grid, block, 0, stream>>>(
+            bitArraysUndeterminedBase.at(deviceId), 
+            d_values, 
+            d_positions, 
+            nPositions
+        ); CUERR;
+
+        cudaSetDevice(oldId); CUERR;
+
+    }
 }
 
 void DistributedReadStorage::readsContainN_async(
@@ -410,21 +414,25 @@ void DistributedReadStorage::readsContainN_async(
         int nPositions, 
         cudaStream_t stream) const{
 
-    int oldId = 0;
-    cudaGetDevice(&oldId); CUERR;
-    cudaSetDevice(deviceId); CUERR;
+    if(nPositions > 0){
 
-    dim3 block = 256;
-    dim3 grid = SDIV(nPositions, block.x);
+        int oldId = 0;
+        cudaGetDevice(&oldId); CUERR;
+        cudaSetDevice(deviceId); CUERR;
 
-    readBitarray<<<grid, block, 0, stream>>>(
-        d_result, 
-        bitArraysUndeterminedBase.at(deviceId), 
-        d_positions, 
-        nPositions
-    ); CUERR;
+        dim3 block = 256;
+        dim3 grid = SDIV(nPositions, block.x);
 
-    cudaSetDevice(oldId); CUERR;
+        readBitarray<<<grid, block, 0, stream>>>(
+            d_result, 
+            bitArraysUndeterminedBase.at(deviceId), 
+            d_positions, 
+            nPositions
+        ); CUERR;
+
+        cudaSetDevice(oldId); CUERR;
+
+    }
 }
 
 void DistributedReadStorage::readsContainN_async(
@@ -435,21 +443,25 @@ void DistributedReadStorage::readsContainN_async(
         int nPositionsUpperBound, 
         cudaStream_t stream) const{
 
-    int oldId = 0;
-    cudaGetDevice(&oldId); CUERR;
-    cudaSetDevice(deviceId); CUERR;
+    if(nPositionsUpperBound > 0){
 
-    dim3 block = 256;
-    dim3 grid = SDIV(nPositionsUpperBound, block.x);
+        int oldId = 0;
+        cudaGetDevice(&oldId); CUERR;
+        cudaSetDevice(deviceId); CUERR;
 
-    readBitarray<<<grid, block, 0, stream>>>(
-        d_result, 
-        bitArraysUndeterminedBase.at(deviceId), 
-        d_positions, 
-        d_nPositions
-    ); CUERR;
+        dim3 block = 256;
+        dim3 grid = SDIV(nPositionsUpperBound, block.x);
 
-    cudaSetDevice(oldId); CUERR;
+        readBitarray<<<grid, block, 0, stream>>>(
+            d_result, 
+            bitArraysUndeterminedBase.at(deviceId), 
+            d_positions, 
+            d_nPositions
+        ); CUERR;
+
+        cudaSetDevice(oldId); CUERR;
+
+    }
 }
 
 

@@ -175,6 +175,10 @@ namespace care{
 
         constexpr int blocksize = 128;
 
+        if(numSequences <= 0){
+            return;
+        }
+
         dim3 block(blocksize, 1, 1);
         dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
         size_t smem = 0;
@@ -204,6 +208,10 @@ namespace care{
             cudaStream_t stream){
                 
         constexpr int blocksize = 128;
+
+        if(numSequences <= 0){
+            return;
+        }
                 
         dim3 block(blocksize, 1, 1);
         dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);

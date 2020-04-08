@@ -16,7 +16,6 @@ enum class KernelId {
     GetNumCorrectedCandidatesPerAnchor,
     PopcountSHDTiled,
     PopcountSHDTiledPitch8,
-	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
     MSAUpdateProperties,
@@ -30,6 +29,9 @@ enum class KernelId {
     MSAAddSequencesGlobalMultiBlock,
     MSAAddSequencesSharedSingleBlock,
     MSAAddSequencesSharedMultiBlock,
+    MSABuildSingleBlock,
+    MSAFindCandidatesOfDifferentRegionAndRemoveThem,
+    FlagCandidatesToBeCorrected,
 };
 
 struct KernelLaunchConfig {

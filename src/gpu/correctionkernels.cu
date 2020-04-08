@@ -6,7 +6,7 @@
 
 // //#include <gpu/bestalignment.hpp>
 // #include <bestalignment.hpp>
-// #include <gpu/utility_kernels.cuh>
+#include <gpu/utility_kernels.cuh>
 #include <gpu/cubcachingallocator.cuh>
 
 // #include <msa.hpp>
@@ -38,27 +38,40 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_correct_subject_implicit_kernel(
-                            MSAPointers msapointers,
-                            AlignmentResultPointers alignmentresultpointers,
-                            ReadSequencesPointers d_sequencePointers,
-                            CorrectionResultPointers d_correctionResultPointers,
-                            const int* __restrict__ d_indices,
-                            const int* __restrict__ d_indices_per_subject,
-                            const int* __restrict__ d_candidates_per_subject_prefixsum,
-                            int n_subjects,
-                            int encodedSequencePitchInInts,
-                            size_t sequence_pitch,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int maximumSequenceLength,
-                            float estimatedErrorrate,
-                            float desiredAlignmentMaxErrorRate,
-                            float avg_support_threshold,
-                            float min_support_threshold,
-                            float min_coverage_threshold,
-                            float max_coverage_threshold,
-                            int k_region){
+    void msa_correct_subject_kernel_old(
+                char* __restrict__ correctedSubjects,
+                bool* __restrict__ subjectIsCorrected,
+                AnchorHighQualityFlag* __restrict__ isHighQualitySubject,
+                int* __restrict__ uncorrected_positions_per_subject,
+                int* __restrict__ num_uncorrected_positions_per_subject,
+                const MSAColumnProperties* __restrict__ msaColumnProperties,
+                const float* __restrict__ support,
+                const int* __restrict__ coverage,
+                const int* __restrict__ origCoverages,
+                const char* __restrict__ consensus,
+                const int* __restrict__ shifts,
+                const BestAlignment_t* __restrict__ bestAlignmentFlags,
+                const int* __restrict__ nOps,
+                const int* __restrict__ overlaps,
+                const unsigned int* __restrict__ subjectSequencesData,
+                const unsigned int* __restrict__ candidateSequencesData,
+                const int* __restrict__ candidateSequencesLength,
+                const int* __restrict__ d_indices,
+                const int* __restrict__ d_indices_per_subject,
+                const int* __restrict__ d_candidates_per_subject_prefixsum,
+                int n_subjects,
+                int encodedSequencePitchInInts,
+                size_t sequence_pitch,
+                size_t msa_pitch,
+                size_t msa_weights_pitch,
+                int maximumSequenceLength,
+                float estimatedErrorrate,
+                float desiredAlignmentMaxErrorRate,
+                float avg_support_threshold,
+                float min_support_threshold,
+                float min_coverage_threshold,
+                float max_coverage_threshold,
+                int k_region){
 
         using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
@@ -82,17 +95,17 @@ namespace gpu{
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
-            const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+            const unsigned int* result = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
             return result;
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            const unsigned int* result = candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
         auto getCandidateLength = [&](int candidateIndex){
-            return d_sequencePointers.candidateSequencesLength[candidateIndex];
+            return candidateSequencesLength[candidateIndex];
         };
 
         auto isGoodAvgSupport = [&](float avgsupport){
@@ -131,15 +144,15 @@ namespace gpu{
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
 
-                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
-                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
-                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
+                const float* const my_support = support + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_coverage = coverage + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_orig_coverage = origCoverages + msa_weights_pitch_floats * subjectIndex;
+                const char* const my_consensus = consensus + msa_pitch  * subjectIndex;
+                char* const my_corrected_subject = correctedSubjects + subjectIndex * sequence_pitch;
 
-                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+                const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+                const int lastColumn_excl = msaColumnProperties[subjectIndex].lastColumn_excl;
 
                 float avg_support = 0;
                 float min_support = 1.0f;
@@ -173,7 +186,7 @@ namespace gpu{
 
                 if(threadIdx.x == 0){
                     broadcastbuffer = isHQ;
-                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
+                    isHighQualitySubject[subjectIndex].hq(isHQ);
                     //printf("%f %f %d %d\n", avg_support, min_support, min_coverage, isHQ);
                 }
                 __syncthreads();
@@ -186,7 +199,7 @@ namespace gpu{
                         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                     }
                     if(threadIdx.x == 0){
-                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;
+                        subjectIsCorrected[subjectIndex] = true;
                     }
                 }else{
 
@@ -198,8 +211,8 @@ namespace gpu{
                     }
 
                     bool foundAColumn = false;
-                    int* globalUncorrectedPostitionsPtr = d_correctionResultPointers.uncorrected_positions_per_subject + subjectIndex * maximumSequenceLength;
-                    int* const globalNumUncorrectedPositionsPtr = d_correctionResultPointers.num_uncorrected_positions_per_subject + subjectIndex;
+                    int* globalUncorrectedPostitionsPtr = uncorrected_positions_per_subject + subjectIndex * maximumSequenceLength;
+                    int* const globalNumUncorrectedPositionsPtr = num_uncorrected_positions_per_subject + subjectIndex;
 
                     //round up to next multiple of BLOCKSIZE;
                     const int loopIters = SDIV(subjectLength, BLOCKSIZE) * BLOCKSIZE;
@@ -234,11 +247,11 @@ namespace gpu{
 
                                 const unsigned int* candidateptr = getCandidatePtr(arrayindex);
                                 const int candidateLength = getCandidateLength(arrayindex);
-                                const int candidateShift = alignmentresultpointers.shifts[arrayindex];
+                                const int candidateShift = shifts[arrayindex];
                                 const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
                                 if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
                                     char candidateBaseEnc = 0xFF;
-                                    if(alignmentresultpointers.bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
+                                    if(bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
                                         candidateBaseEnc = get((const char*)candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
                                         candidateBaseEnc = (~candidateBaseEnc) & 0x03;
                                     }else{
@@ -246,9 +259,9 @@ namespace gpu{
                                     }
                                     const char candidateBase = to_nuc(candidateBaseEnc);
 
-                                    const int nOps = alignmentresultpointers.nOps[arrayindex];
-                                    const int overlapsize = alignmentresultpointers.overlaps[arrayindex];
-                                    const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                                    const int mynOps = nOps[arrayindex];
+                                    const int overlapsize = overlaps[arrayindex];
+                                    const float overlapweight = calculateOverlapWeight(subjectLength, mynOps, overlapsize);
                                     assert(overlapweight <= 1.0f);
                                     assert(overlapweight >= 0.0f);
 
@@ -381,7 +394,7 @@ namespace gpu{
                     __syncthreads();
 
                     if(threadIdx.x == 0){
-                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;//foundAColumn;
+                        subjectIsCorrected[subjectIndex] = true;//foundAColumn;
                     }
                 }
             }
@@ -394,25 +407,32 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_correct_subject_implicit_kernel2(
-                            MSAPointers msapointers,
-                            AlignmentResultPointers alignmentresultpointers,
-                            ReadSequencesPointers d_sequencePointers,
-                            CorrectionResultPointers d_correctionResultPointers,
-                            const int* __restrict__ d_indices_per_subject,
-                            int n_subjects,
-                            int encodedSequencePitchInInts,
-                            size_t sequence_pitch,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int maximumSequenceLength,
-                            float estimatedErrorrate,
-                            float desiredAlignmentMaxErrorRate,
-                            float avg_support_threshold,
-                            float min_support_threshold,
-                            float min_coverage_threshold,
-                            float max_coverage_threshold,
-                            int k_region){
+    void msaCorrectAnchorsKernel(
+            char* __restrict__ correctedSubjects,
+            bool* __restrict__ subjectIsCorrected,
+            AnchorHighQualityFlag* __restrict__ isHighQualitySubject,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const float* __restrict__ support,
+            const int* __restrict__ coverage,
+            const int* __restrict__ origCoverages,
+            const char* __restrict__ consensus,
+            const unsigned int* __restrict__ subjectSequencesData,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const int* __restrict__ candidateSequencesLength,
+            const int* __restrict__ d_indices_per_subject,
+            const int* __restrict__ numAnchorsPtr,
+            int encodedSequencePitchInInts,
+            size_t sequence_pitch,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            int maximumSequenceLength,
+            float estimatedErrorrate,
+            float desiredAlignmentMaxErrorRate,
+            float avg_support_threshold,
+            float min_support_threshold,
+            float min_coverage_threshold,
+            float max_coverage_threshold,
+            int k_region){
 
         using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
@@ -426,9 +446,11 @@ namespace gpu{
 
         __shared__ int broadcastbuffer;
 
-        __shared__ int numUncorrectedPositions;
-        __shared__ int uncorrectedPositions[BLOCKSIZE];
-        __shared__ float avgCountPerWeight[4];
+        //__shared__ int numUncorrectedPositions;
+        //__shared__ int uncorrectedPositions[BLOCKSIZE];
+        //__shared__ float avgCountPerWeight[4];
+
+        const int n_subjects = *numAnchorsPtr;
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
@@ -436,17 +458,17 @@ namespace gpu{
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
-            const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+            const unsigned int* result = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
             return result;
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            const unsigned int* result = candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
         auto getCandidateLength = [&](int candidateIndex){
-            return d_sequencePointers.candidateSequencesLength[candidateIndex];
+            return candidateSequencesLength[candidateIndex];
         };
 
         auto isGoodAvgSupport = [&](float avgsupport){
@@ -480,15 +502,15 @@ namespace gpu{
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
 
-                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
-                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
-                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
+                const float* const my_support = support + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_coverage = coverage + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_orig_coverage = origCoverages + msa_weights_pitch_floats * subjectIndex;
+                const char* const my_consensus = consensus + msa_pitch  * subjectIndex;
+                char* const my_corrected_subject = correctedSubjects + subjectIndex * sequence_pitch;
 
-                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+                const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+                const int lastColumn_excl = msaColumnProperties[subjectIndex].lastColumn_excl;
 
                 float avg_support = 0;
                 float min_support = 1.0f;
@@ -518,11 +540,11 @@ namespace gpu{
                 avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
 
 
-                const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        		const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+                //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        		//const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
 
                 if(threadIdx.x == 0){
-                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
+                    subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
 
                     const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
                     int flag = 0;
@@ -548,7 +570,7 @@ namespace gpu{
                                             && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
 
                         //broadcastbuffer = isHQ;
-                        d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
+                        isHighQualitySubject[subjectIndex].hq(isHQ);
 
                         flag = isHQ ? 2 : 1;
 
@@ -557,7 +579,7 @@ namespace gpu{
                         //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
                         // }
                     }else{
-                        d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
+                        isHighQualitySubject[subjectIndex].hq(false);
                     }
 
                     broadcastbuffer = flag;
@@ -602,88 +624,14 @@ namespace gpu{
                 }
             }else{
                 if(threadIdx.x == 0){
-                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
-                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = false;
+                    isHighQualitySubject[subjectIndex].hq(false);
+                    subjectIsCorrected[subjectIndex] = false;
                 }
             }
         }
     }
 
 
-
-
-
-
-
-    __device__ __forceinline__
-    bool checkIfCandidateShouldBeCorrected(const MSAPointers& d_msapointers,
-                        const AlignmentResultPointers& d_alignmentresultpointers,
-                        const ReadSequencesPointers& d_sequencePointers,
-                        const CorrectionResultPointers& d_correctionResultPointers,
-                        const int* __restrict__ d_indices,
-                        const int* __restrict__ d_candidates_per_subject_prefixsum,
-                        size_t msa_weights_pitch_floats,
-                        float min_support_threshold,
-                        float min_coverage_threshold,
-                        int new_columns_to_correct,
-                        int subjectIndex,
-                        int local_goodcandidate_index){
-
-        const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
-        const int* const my_coverage = d_msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-
-        const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
-        const int* const my_indices = d_indices + globalOffset;
-
-        const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-        const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-        const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
-
-        const int localCandidateIndex = my_indices[local_goodcandidate_index];
-        const int global_candidate_index = localCandidateIndex + globalOffset;
-
-        const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
-        const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
-        const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
-
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-           && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-           && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
-
-            float newColMinSupport = 1.0f;
-            int newColMinCov = std::numeric_limits<int>::max();
-            //check new columns left of subject
-            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-                columnindex < subjectColumnsBegin_incl;
-                columnindex++) {
-
-                assert(columnindex < lastColumn_excl);
-                if(queryColumnsBegin_incl <= columnindex) {
-                    newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
-                    newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
-                }
-            }
-            //check new columns right of subject
-            for(int columnindex = subjectColumnsEnd_excl;
-                    columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                        && columnindex < lastColumn_excl;
-                    columnindex++) {
-
-                newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
-                newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
-            }
-
-            bool result = fgeq(newColMinSupport, min_support_threshold)
-                            && fgeq(newColMinCov, min_coverage_threshold);
-
-            //return result;
-            return true;
-        }else{
-            return false;
-        }
-
-    }
 
     __device__ __forceinline__
     bool checkIfCandidateShouldBeCorrectedGlobal(
@@ -838,7 +786,7 @@ namespace gpu{
 
         const int numGroups = (gridDim.x * blockDim.x) / groupsize;
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-        const int groupIdInBlock = threadIdx.x / groupsize;
+        //const int groupIdInBlock = threadIdx.x / groupsize;
 
         for(int hqsubjectIndex = groupId;
                 hqsubjectIndex < numHqSubjects;
@@ -882,12 +830,14 @@ namespace gpu{
             const int* __restrict__ numCandidatesPerSubjectPrefixsum,
             const int* __restrict__ localGoodCandidateIndices,
             const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
-            int new_columns_to_correct,
-            int n_subjects,
-            int n_candidates){
+            int new_columns_to_correct){
+
+        const int n_subjects = *d_numAnchors;
 
         for(int anchorIndex = blockIdx.x; 
                 anchorIndex < n_subjects; 
@@ -927,40 +877,8 @@ namespace gpu{
                 
             }
         }
-
-        // for(int candidateIndex = threadIdx.x + blockIdx.x * blockDim.x; 
-        //         candidateIndex < n_candidates; 
-        //         candidateIndex += blockDim.x * gridDim.x){
-            
-        //     const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
-        //     const bool isHighQualitySubject = hqflags[anchorIndex].hq();
-
-        //     if(isHighQualitySubject){
-
-        //         const bool canHandleCandidate = checkIfCandidateShouldBeCorrectedGlobal(
-        //             support,
-        //             coverages,
-        //             msaColumnProperties,
-        //             alignmentShifts,
-        //             candidateSequencesLengths,
-        //             msa_weights_pitch_floats,
-        //             min_support_threshold,
-        //             min_coverage_threshold,
-        //             new_columns_to_correct,
-        //             anchorIndex,
-        //             candidateIndex
-        //         );
-
-        //         candidateCanBeCorrected[candidateIndex] = canHandleCandidate;
-
-        //         if(canHandleCandidate){
-        //             atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
-        //         }
-        //     }else{
-        //         candidateCanBeCorrected[candidateIndex] = false;
-        //     }
-        // }
     }
+
 
     template<int BLOCKSIZE, int groupsize>
     __global__
@@ -979,10 +897,10 @@ namespace gpu{
             const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
             const int* __restrict__ numCandidatesToBeCorrected,
             const int* __restrict__ anchorIndicesOfCandidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             int doNotUseEditsValue,
-            int numEditsThreshold,
-            int n_subjects,
-            int n_queries,
+            int numEditsThreshold,            
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
@@ -1058,7 +976,7 @@ namespace gpu{
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
 
 
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        //const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
         const int loopEnd = *numCandidatesToBeCorrected;
 
         for(int id = groupId;
@@ -1120,10 +1038,22 @@ namespace gpu{
                 tgroup.sync();
             }
 
+            
             //copy from smem to global output
-            for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
-                my_corrected_candidate[i] = shared_correctedCandidate[i];
-            }            
+            const int fullInts1 = candidate_length / sizeof(int);
+
+            for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+            }
+
+            for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+                my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                    = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+            } 
+
+            // for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
+            //     my_corrected_candidate[i] = shared_correctedCandidate[i];
+            // }            
 
             //compare corrected candidate with uncorrected candidate, calculate edits   
             
@@ -1314,248 +1244,6 @@ namespace gpu{
 
 
 
-    template<int BLOCKSIZE>
-    __global__
-    void msaCorrectSubjectKernelWithOrigMismatchPositions(
-                            MSAPointers msapointers,
-                            AlignmentResultPointers alignmentresultpointers,
-                            ReadSequencesPointers d_sequencePointers,
-                            CorrectionResultPointers d_correctionResultPointers,
-                            const int* __restrict__ d_indices,
-                            const int* __restrict__ d_indices_per_subject,
-                            int n_subjects,
-                            int encodedSequencePitchInInts,
-                            size_t sequence_pitch,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int maximumSequenceLength,
-                            float estimatedErrorrate,
-                            float desiredAlignmentMaxErrorRate,
-                            float avg_support_threshold,
-                            float min_support_threshold,
-                            float min_coverage_threshold,
-                            float max_coverage_threshold,
-                            int k_region){
-
-        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
-        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
-        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
-
-        __shared__ union {
-            typename BlockReduceBool::TempStorage boolreduce;
-            typename BlockReduceInt::TempStorage intreduce;
-            typename BlockReduceFloat::TempStorage floatreduce;
-        } temp_storage;
-
-        __shared__ int broadcastbuffer;
-
-        __shared__ int numUncorrectedPositions;
-        __shared__ int uncorrectedPositions[BLOCKSIZE];
-        __shared__ float avgCountPerWeight[4];
-
-        auto get = [] (const char* data, int length, int index){
-            //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
-        };
-
-        auto getSubjectPtr = [&] (int subjectIndex){
-            const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-            return result;
-        };
-
-        auto getCandidatePtr = [&] (int candidateIndex){
-            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
-            return result;
-        };
-
-        auto getCandidateLength = [&](int candidateIndex){
-            return d_sequencePointers.candidateSequencesLength[candidateIndex];
-        };
-
-        auto isGoodAvgSupport = [&](float avgsupport){
-            return fgeq(avgsupport, avg_support_threshold);
-        };
-        auto isGoodMinSupport = [&](float minsupport){
-            return fgeq(minsupport, min_support_threshold);
-        };
-        auto isGoodMinCoverage = [&](float mincoverage){
-            return fgeq(mincoverage, min_coverage_threshold);
-        };
-
-        constexpr char A_enc = 0x00;
-        constexpr char C_enc = 0x01;
-        constexpr char G_enc = 0x02;
-        constexpr char T_enc = 0x03;
-
-        auto to_nuc = [](char c){
-            switch(c){
-            case A_enc: return 'A';
-            case C_enc: return 'C';
-            case G_enc: return 'G';
-            case T_enc: return 'T';
-            default: return 'F';
-            }
-        };
-
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
-        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            const int myNumIndices = d_indices_per_subject[subjectIndex];
-            if(myNumIndices > 0){
-
-                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
-                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
-                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
-
-                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
-
-                float avg_support = 0;
-                float min_support = 1.0f;
-                //int max_coverage = 0;
-                int min_coverage = std::numeric_limits<int>::max();
-
-                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    assert(i < lastColumn_excl);
-
-                    avg_support += my_support[i];
-                    min_support = min(my_support[i], min_support);
-                    //max_coverage = max(my_coverage[i], max_coverage);
-                    min_coverage = min(my_coverage[i], min_coverage);
-                }
-
-                avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
-                __syncthreads();
-
-                min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
-                __syncthreads();
-
-                //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
-
-                min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
-                __syncthreads();
-
-                avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-
-
-                const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        		const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-
-                if(threadIdx.x == 0){
-                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
-
-                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
-                    int flag = 0;
-
-                    if(canBeCorrectedByConsensus){
-                        int smallestErrorrateThatWouldMakeHQ = 100;
-
-                        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-                        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-                            float factor = percent / 100.0f;
-                            if(avg_support >= 1.0f - 1.0f * factor && min_support >= 1.0f - 3.0f * factor){
-                                smallestErrorrateThatWouldMakeHQ = percent;
-                            }
-                        }
-
-                        const bool isHQ = isGoodMinCoverage(min_coverage)
-                                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-
-                        //broadcastbuffer = isHQ;
-                        d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
-
-                        flag = isHQ ? 2 : 1;
-                    }
-
-                    broadcastbuffer = flag;
-                }
-                __syncthreads();
-
-                // for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
-                //     if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
-                //         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
-                //     }else{
-                //         const char* subject = getSubjectPtr(subjectIndex);
-                //         const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
-                //         const char base = to_nuc(encodedBase);
-                //         my_corrected_subject[i - subjectColumnsBegin_incl] = base;
-                //     }
-                // }
-
-                const int flag = broadcastbuffer;
-
-                if(flag > 0){
-                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
-                    }
-                }else{
-                    //correct only positions with high support.
-    #if 1                    
-                    const int iterations = SDIV(subjectColumnsEnd_excl-subjectColumnsBegin_incl, BLOCKSIZE);
-
-                    for(int iter = 0; iter < iterations; iter++){
-                        const int begin = iter * BLOCKSIZE;
-                        const int end = min(subjectColumnsEnd_excl-subjectColumnsBegin_incl, (iter+1) * BLOCKSIZE);
-
-                        char editBase = 'F';
-                        int editPos = -1;
-
-                        if(threadIdx.x < end - begin){
-                            const int i = subjectColumnsBegin_incl + begin + threadIdx.x;
-
-                            const unsigned int* subject = getSubjectPtr(subjectIndex);
-                            const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
-                            const char base = to_nuc(encodedBase);
-
-                            if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
-                                editBase = my_consensus[i];
-                                my_corrected_subject[i - subjectColumnsBegin_incl] = editBase;
-                                if(editBase != base){
-                                    editPos = i - subjectColumnsBegin_incl;
-                                }
-                            }else{                                
-                                my_corrected_subject[i - subjectColumnsBegin_incl] = base;
-                            }
-                        }
-                    }
-    #else 
-
-                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                        //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
-                        if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
-                            my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
-                        }else{
-                            const unsigned int* subject = getSubjectPtr(subjectIndex);
-                            const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
-                            const char base = to_nuc(encodedBase);
-                            my_corrected_subject[i - subjectColumnsBegin_incl] = base;
-                        }
-                    }
-
-
-    #endif
-                }
-            }else{
-                if(threadIdx.x == 0){
-                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
-                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = false;
-                }
-            }
-        }
-    }
-
-
-
-
-
-
-
-
-
 
     //####################   KERNEL DISPATCH   ####################
 
@@ -1639,14 +1327,21 @@ namespace gpu{
 
 
 
-    void call_msa_correct_subject_implicit_kernel_async(
-                            MSAPointers d_msapointers,
-                            AlignmentResultPointers d_alignmentresultpointers,
-                            ReadSequencesPointers d_sequencePointers,
-                            CorrectionResultPointers d_correctionResultPointers,
-                            const int* d_indices,
+    void call_msaCorrectAnchorsKernel_async(
+                            char* d_correctedSubjects,
+                            bool* d_subjectIsCorrected,
+                            AnchorHighQualityFlag* d_isHighQualitySubject,
+                            const MSAColumnProperties* d_msaColumnProperties,
+                            const float* d_support,
+                            const int* d_coverage,
+                            const int* d_origCoverages,
+                            const char* d_consensus,
+                            const unsigned int* d_subjectSequencesData,
+                            const unsigned int* d_candidateSequencesData,
+                            const int* d_candidateSequencesLength,
                             const int* d_indices_per_subject,
-                            int n_subjects,
+                            const int* d_numAnchors,
+                            int maxNumAnchors,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
                             size_t msa_pitch,
@@ -1684,7 +1379,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    msa_correct_subject_implicit_kernel2<(blocksize)>, \
+                    msaCorrectAnchorsKernel<(blocksize)>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -1713,16 +1408,24 @@ namespace gpu{
         //cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(n_subjects, max_blocks_per_device));
+        //dim3 grid(std::min(maxNumAnchors, max_blocks_per_device));
+        dim3 grid(max_blocks_per_device);
 
-        #define mycall(blocksize) msa_correct_subject_implicit_kernel2<(blocksize)> \
+        #define mycall(blocksize) msaCorrectAnchorsKernel<(blocksize)> \
                                 <<<grid, block, 0, stream>>>( \
-                                    d_msapointers, \
-                                    d_alignmentresultpointers, \
-                                    d_sequencePointers, \
-                                    d_correctionResultPointers, \
+                                    d_correctedSubjects, \
+                                    d_subjectIsCorrected, \
+                                    d_isHighQualitySubject, \
+                                    d_msaColumnProperties, \
+                                    d_support, \
+                                    d_coverage, \
+                                    d_origCoverages, \
+                                    d_consensus, \
+                                    d_subjectSequencesData, \
+                                    d_candidateSequencesData, \
+                                    d_candidateSequencesLength, \
                                     d_indices_per_subject, \
-                                    n_subjects, \
+                                    d_numAnchors, \
                                     encodedSequencePitchInInts, \
                                     sequence_pitch, \
                                     msa_pitch, \
@@ -1756,45 +1459,83 @@ namespace gpu{
 
 
     void callFlagCandidatesToBeCorrectedKernel_async(
-            bool* __restrict__ d_candidateCanBeCorrected,
-            int* __restrict__ d_numCorrectedCandidatesPerAnchor,
-            const float* __restrict__ d_support,
-            const int* __restrict__ d_coverages,
-            const MSAColumnProperties* __restrict__ d_msaColumnProperties,
-            const int* __restrict__ d_alignmentShifts,
-            const int* __restrict__ d_candidateSequencesLengths,
-            const int* __restrict__ d_anchorIndicesOfCandidates,
-            const AnchorHighQualityFlag* __restrict__ d_hqflags,
-            const int* __restrict__ candidatesPerSubjectPrefixsum,
-            const int* __restrict__ localGoodCandidateIndices,
-            const int* __restrict__ numLocalGoodCandidateIndicesPerSubject,
+            bool* d_candidateCanBeCorrected,
+            int* d_numCorrectedCandidatesPerAnchor,
+            const float* d_support,
+            const int* d_coverages,
+            const MSAColumnProperties* d_msaColumnProperties,
+            const int* d_alignmentShifts,
+            const int* d_candidateSequencesLengths,
+            const int* d_anchorIndicesOfCandidates,
+            const AnchorHighQualityFlag* d_hqflags,
+            const int* d_candidatesPerSubjectPrefixsum,
+            const int* d_localGoodCandidateIndices,
+            const int* d_numLocalGoodCandidateIndicesPerSubject,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             size_t msa_weights_pitch_floats,
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
-            int n_subjects,
-            int n_candidates,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
-        cudaMemsetAsync(
-            d_numCorrectedCandidatesPerAnchor, 
-            0, 
-            sizeof(int) * n_subjects, 
-            stream
-        ); CUERR;
+        // cudaMemsetAsync(
+        //     d_numCorrectedCandidatesPerAnchor, 
+        //     0, 
+        //     sizeof(int) * n_subjects, 
+        //     stream
+        // ); CUERR;
 
-        cudaMemsetAsync(
-            d_candidateCanBeCorrected, 
-            0, 
-            sizeof(bool) * n_candidates, 
-            stream
-        ); CUERR;
+        // cudaMemsetAsync(
+        //     d_candidateCanBeCorrected, 
+        //     0, 
+        //     sizeof(bool) * n_candidates, 
+        //     stream
+        // ); CUERR;
 
         constexpr int blocksize = 256;
+        const std::size_t smem = 0;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::FlagCandidatesToBeCorrected);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                flagCandidatesToBeCorrectedKernel,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount 
+                                        * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::FlagCandidatesToBeCorrected] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount 
+                                        * kernelProperties.max_blocks_per_SM;
+        }
+
+
 
         dim3 block(blocksize);
-        dim3 grid(n_subjects);
+        dim3 grid(max_blocks_per_device);
 
         flagCandidatesToBeCorrectedKernel<<<grid, block, 0, stream>>>(
             d_candidateCanBeCorrected,
@@ -1806,15 +1547,15 @@ namespace gpu{
             d_candidateSequencesLengths,
             d_anchorIndicesOfCandidates,
             d_hqflags,
-            candidatesPerSubjectPrefixsum,
-            localGoodCandidateIndices,
-            numLocalGoodCandidateIndicesPerSubject,
+            d_candidatesPerSubjectPrefixsum,
+            d_localGoodCandidateIndices,
+            d_numLocalGoodCandidateIndicesPerSubject,
+            d_numAnchors,
+            d_numCandidates,
             msa_weights_pitch_floats,
             min_support_threshold,
             min_coverage_threshold,
-            new_columns_to_correct,
-            n_subjects,
-            n_candidates
+            new_columns_to_correct
         );
 
     }
@@ -1836,10 +1577,10 @@ namespace gpu{
             const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
             const int* __restrict__ numCandidatesToBeCorrected,
             const int* __restrict__ anchorIndicesOfCandidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
             int doNotUseEditsValue,
             int numEditsThreshold,
-            int n_subjects,
-            int n_candidates,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
             size_t msa_pitch,
@@ -1900,7 +1641,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
+        //dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
+        dim3 grid(max_blocks_per_device);
         
         assert(smem % sizeof(int) == 0);
 
@@ -1920,10 +1662,10 @@ namespace gpu{
                     candidateIndicesOfCandidatesToBeCorrected, \
                     numCandidatesToBeCorrected, \
                     anchorIndicesOfCandidates, \
+                    d_numAnchors, \
+                    d_numCandidates, \
                     doNotUseEditsValue, \
                     numEditsThreshold, \
-                    n_subjects, \
-                    n_candidates, \
                     encodedSequencePitchInInts, \
                     sequence_pitch, \
                     msa_pitch, \
@@ -2008,11 +1750,19 @@ namespace gpu{
             int numEditsThreshold,
             size_t encodedSequencePitchInInts,
             size_t decodedSequencePitchInBytes,
-            int numSubjects,
+            const int* d_numAnchors,
+            int maxNumAnchors,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
-        cudaMemsetAsync(d_editsPerCorrectedSubject, 0, sizeof(TempCorrectedSequence::Edit) * numSubjects, stream);
+        generic_kernel<<<1,256,0,stream>>>(
+            [=]__device__(){
+                for(int i = threadIdx.x; i < *d_numAnchors; i += 256){
+                    memset(&d_editsPerCorrectedSubject[i], 0, sizeof(TempCorrectedSequence::Edit));
+                }
+            }
+        ); CUERR;
+        //cudaMemsetAsync(d_editsPerCorrectedSubject, 0, sizeof(TempCorrectedSequence::Edit) * maxNumAnchors, stream);
 
         const int blocksize = 128;
         const std::size_t smem = 0;
@@ -2061,7 +1811,7 @@ namespace gpu{
         }
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(SDIV(numSubjects, blocksize), max_blocks_per_device));
+        dim3 grid(std::min(SDIV(maxNumAnchors, blocksize), max_blocks_per_device));
 
         #define mycall(blocksize) constructAnchorResultsKernel \
                                 <<<grid, block, 0, stream>>>( \

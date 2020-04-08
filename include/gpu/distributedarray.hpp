@@ -180,7 +180,7 @@ namespace distarraykernels{
 
         auto atomicAggInc = [](Index_t* counter){
             auto g = cg::coalesced_threads();
-            int warp_res;
+            Index_t warp_res;
             if(g.thread_rank() == 0){
                 warp_res = atomicAdd(counter, Index_t(g.size()));
             }
@@ -279,22 +279,300 @@ namespace distarraykernels{
         }
     }
 
-    // generic_kernel<<<grid, block, 0, syncstream>>>([=] __device__ (){
 
-                    //     const Index_t nIndices = *myNumIndicesPtr;
+    // kernels with parameter object
+    template<class Index_t>
+    struct PartitionSplitKernelParams{
+        Index_t** __restrict__ splitIndices;
+        Index_t** __restrict__ splitDestinationPositions;
+        Index_t* __restrict__ numSplitIndicesPerLocation;
+        int numLocations;
+        const Index_t* __restrict__ elementsPerLocationPS;
+        const Index_t* __restrict__ numIdsPtr;
+        const Index_t* __restrict__ indices;
+    };
 
-                    //     for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                    //             i < nIndices * numCols; 
-                    //             i += size_t(blockDim.x) * gridDim.x){
+    template<class Index_t, int maxNumGpus = 32>
+    __global__
+    void partitionSplitKernel(
+        const PartitionSplitKernelParams<Index_t>* __restrict__ params
+    ){
 
-                    //         const Index_t inputRow = i / numCols;
-                    //         const Index_t col = i % numCols;
-                    //         const Index_t outputRow = permutIndices[inputRow];
-                            
-                    //         output[size_t(outputRow) * resultPitchValueTs + col] 
-                    //             = input[size_t(inputRow) * numCols + col];
-                    //     }
-                    // }); CUERR;
+        assert(params->numLocations <= maxNumGpus+1);
+
+        auto atomicAggInc = [](Index_t* counter){
+            auto g = cg::coalesced_threads();
+            int warp_res;
+            if(g.thread_rank() == 0){
+                warp_res = atomicAdd(counter, Index_t(g.size()));
+            }
+            return g.shfl(warp_res, 0) + g.thread_rank();
+        };
+
+        __shared__ Index_t shared_elementsPerLocationPS[maxNumGpus + 1 + 1];
+
+        for(int tid = threadIdx.x; tid < params->numLocations+1; tid += blockDim.x){
+            shared_elementsPerLocationPS[tid] = params->elementsPerLocationPS[tid];
+        }
+
+        __syncthreads();
+
+        const Index_t numIds = *params->numIdsPtr;
+        
+        for(Index_t tid = threadIdx.x + blockIdx.x * Index_t(blockDim.x); 
+                tid < numIds; 
+                tid += Index_t(blockDim.x) * gridDim.x){
+
+            const Index_t elementIndex = params->indices[tid];
+            int location = -1;
+
+            for(int i = 0; i < params->numLocations; i++){
+                if(shared_elementsPerLocationPS[i] <= elementIndex && elementIndex < shared_elementsPerLocationPS[i+1]){
+                    location = i;
+                }
+            }
+
+            for(int i = 0; i < params->numLocations; ++i){
+                if(i == location){
+                    const Index_t j = atomicAggInc(&params->numSplitIndicesPerLocation[i]);
+                    params->splitIndices[i][j] = elementIndex;
+                    params->splitDestinationPositions[i][j] = tid;
+                }
+            }
+        }
+    }
+
+    template<class Value_t>
+    struct PrefixSumKernelParams{
+        Value_t* __restrict__ output;
+        const Value_t* __restrict__ input;
+        int numElements;
+    };
+
+    template<class Value_t>
+    __global__
+    void exclPrefixSumSingleThreadKernel(
+        const PrefixSumKernelParams<Value_t>* __restrict__ params
+    ){
+        params->output[0] = 0;
+        for(int i = 0; i < params->numElements-1; i++){
+            params->output[i+1] = params->output[i] + params->input[i];
+        }
+    }
+
+    template<class Index_t, class Value_t>
+    struct GatherParams{
+        Value_t* __restrict__ result;
+        const Value_t* __restrict__ sourceData;
+        const Index_t* __restrict__ indices; 
+        const Index_t* __restrict__ nIndicesPtr;
+        Index_t indexOffset;
+        size_t resultPitchValueTs;
+        size_t numCols;
+    };
+
+    template<class Index_t, class Value_t>
+    __global__
+    void gatherKernel(
+        const GatherParams<Index_t,Value_t>* __restrict__ params
+    ){
+
+        const Index_t nIndices = *params->nIndicesPtr;
+
+        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
+                i < nIndices * params->numCols; 
+                i += size_t(blockDim.x) * gridDim.x){
+
+            const Index_t outputrow = i / params->numCols;
+            const Index_t inputrow = params->indices[outputrow] + params->indexOffset;
+            const Index_t col = i % params->numCols;
+            params->result[size_t(outputrow) * params->resultPitchValueTs + col] 
+                    = params->sourceData[size_t(inputrow) * params->numCols + col];
+        }
+    }
+
+    template<class Index_t, class Value_t>
+    struct ScatterParams{
+        Value_t* __restrict__ result;
+        const Value_t* __restrict__ sourceData;
+        const Index_t* __restrict__ indices;
+        const Index_t* __restrict__ nIndicesPtr;
+        Index_t indexOffset;
+        size_t resultPitchValueTs;
+        size_t numCols;
+    };
+
+    template<class Index_t, class Value_t>
+    __global__
+    void scatterKernel(
+        const ScatterParams<Index_t,Value_t>* __restrict__ params
+    ){
+        const Index_t nIndices = *params->nIndicesPtr;
+
+        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
+                i < nIndices * params->numCols; 
+                i += size_t(blockDim.x) * gridDim.x){
+
+            const Index_t inputrow = i / params->numCols;
+            const Index_t outputrow = params->indices[inputrow] + params->indexOffset;
+            const Index_t col = i % params->numCols;
+            params->result[size_t(outputrow) * params->resultPitchValueTs + col] 
+                    = params->sourceData[size_t(inputrow) * params->numCols + col];
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    // template<class Value_t, class Index_t>
+    // struct RegisteredData{
+    //     Value_t* gatheredResults;        
+    //     Index_t* destinationPositions;
+    //     Index_t* elementsPerLocationPS;
+    //     Index_t* numIndicesPerLocation;
+    //     Index_t* numIndicesPerLocationPS;
+    //     Index_t** indicesForLocations;
+    //     Index_t** destinationPositionsForLocations;
+    //     Index_t* numIndices;
+    // };
+
+    // template<class Value_t, class Index_t, int maxNumGpus = 32>
+    // struct Parameters{
+    //     int numLocations;
+    //     Index_t* inputIndices;
+    //     Value_t* pointersToStoredDataPerLocation[maxNumGpus + 1];
+    //     RegisteredData<Value_t, Index_t> selfRegisteredData;
+    //     RegisteredData<Value_t, Index_t> gpuDataLocationsRegisteredData[maxNumGpus];
+    // };
+
+
+
+    // template<class Value_t, class Index_t, int maxNumGpus = 32>
+    // __global__
+    // void partitionSplitKernel(
+    //     const Parameters<Value_t, Index_t, maxNumGpus>* __restrict__ params
+    // ){
+
+
+    //     auto atomicAggInc = [](Index_t* counter){
+    //         auto g = cg::coalesced_threads();
+    //         int warp_res;
+    //         if(g.thread_rank() == 0){
+    //             warp_res = atomicAdd(counter, Index_t(g.size()));
+    //         }
+    //         return g.shfl(warp_res, 0) + g.thread_rank();
+    //     };
+
+    //     const int numLocations = params->numLocations;
+    //     assert(numLocations <= maxNumGpus+1);
+
+    //     __shared__ Index_t shared_elementsPerLocationPS[maxNumGpus + 1 + 1];
+
+    //     for(int tid = threadIdx.x; tid < numLocations+1; tid += blockDim.x){
+    //         shared_elementsPerLocationPS[tid] = params->selfRegisteredData->elementsPerLocationPS[tid];
+    //     }
+
+    //     __syncthreads();
+
+
+
+    //     const Index_t numIds = *(params->selfRegisteredData->numIndices);
+
+    //     Index_t* const numSplitIndicesPerLocation = params->selfRegisteredData->numIndicesPerLocation;
+    //     Index_t* const splitIndices = params->selfRegisteredData->indicesForLocations;
+    //     Index_t* const splitDestinationPositions = params->selfRegisteredData->destinationPositionsForLocations;
+        
+    //     for(Index_t tid = threadIdx.x + blockIdx.x * Index_t(blockDim.x); 
+    //             tid < numIds; 
+    //             tid += Index_t(blockDim.x) * gridDim.x){
+
+    //         const Index_t elementIndex = params->inputIndices[tid];
+    //         int location = -1;
+
+    //         for(int i = 0; i < numLocations; i++){
+    //             if(shared_elementsPerLocationPS[i] <= elementIndex && elementIndex < shared_elementsPerLocationPS[i+1]){
+    //                 location = i;
+    //             }
+    //         }
+
+    //         for(int i = 0; i < numLocations; ++i){
+    //             if(i == location){
+    //                 const Index_t j = atomicAggInc(&numSplitIndicesPerLocation[i]);
+    //                 splitIndices[i][j] = elementIndex;
+    //                 splitDestinationPositions[i][j] = tid;
+    //             }
+    //         }
+    //     }
+    // }
+
+    // template<class T>
+    // __global__
+    // void exclPrefixSumSingleThreadKernel(
+    //     const SplitParams* __restrict__ params
+    // ){
+    //     params->numSplitIndicesPerLocationPS[0] = 0;
+    //     for(int i = 0; i < params->numLocations-1; i++){
+    //         params->numSplitIndicesPerLocationPS[i+1] 
+    //             = params->numSplitIndicesPerLocationPS[i] + params->numSplitIndicesPerLocation[i];
+    //     }
+    // }
+
+    // template<class Index_t, class Value_t>
+    // __global__
+    // void gatherKernel(
+    //         Value_t* __restrict__ result, 
+    //         const Value_t* __restrict__ sourceData, 
+    //         const Index_t* __restrict__ indices, 
+    //         const Index_t* __restrict__ nIndicesPtr,
+    //         Index_t indexOffset, 
+    //         size_t resultPitchValueTs,
+    //         size_t numCols
+    // ){
+
+    //     const Index_t nIndices = *nIndicesPtr;
+
+    //     for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+    //         const Index_t outputrow = i / numCols;
+    //         const Index_t inputrow = indices[outputrow] + indexOffset;
+    //         const Index_t col = i % numCols;
+    //         result[size_t(outputrow) * resultPitchValueTs + col] 
+    //                 = sourceData[size_t(inputrow) * numCols + col];
+    //     }
+    // }
+
+    // template<class Index_t, class Value_t>
+    // __global__
+    // void scatterKernel(
+    //         Value_t* __restrict__ result, 
+    //         const Value_t* __restrict__ sourceData, 
+    //         const Index_t* __restrict__ indices, 
+    //         const Index_t* __restrict__ nIndicesPtr,
+    //         Index_t indexOffset, 
+    //         size_t resultPitchValueTs,
+    //         size_t numCols
+    // ){
+
+    //     const Index_t nIndices = *nIndicesPtr;
+
+    //     for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+    //         const Index_t inputrow = i / numCols;
+    //         const Index_t outputrow = indices[inputrow] + indexOffset;
+    //         const Index_t col = i % numCols;
+    //         result[size_t(outputrow) * resultPitchValueTs + col] 
+    //                 = sourceData[size_t(inputrow) * numCols + col];
+    //     }
+    // }
 
 }
 
@@ -341,7 +619,8 @@ public:
         std::vector<SimpleAllocationPinnedHost<Index_t>> pinnedIndicesOfGpuLocation; //numGpus
         std::vector<SimpleAllocationDevice<Index_t>> d_indicesOfGpuLocation; //numGpus
 
-        std::vector<Index_t> indicesOfHostLocation;
+        SimpleAllocationPinnedHost<Index_t> indicesOfHostLocation;
+        SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
         std::vector<std::size_t> numIndicesPerLocation; //numLocations
         std::vector<std::size_t> numIndicesPerLocationPS; //numLocations+1
 
@@ -365,6 +644,34 @@ public:
 
         std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndices;
 
+        // std::map<int, SimpleAllocationDevice<distarraykernels::Parameters>> map_d_kernelparams;
+        // std::map<int, SimpleAllocationPinned<distarraykernels::Parameters>> map_h_kernelparams;
+
+        //kernel parameters per device id
+        std::map<int, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
+        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
+
+        std::map<int, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
+        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
+
+        std::map<int, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
+        std::map<int, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
+
+        using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        std::map<int, dscatvec_t> map_d_scatterkernelparams;
+        std::map<int, hscatvec_t> map_h_scatterkernelparams;
+
+
+        std::map<int, SimpleAllocationDevice<char>> map_d_packedpointersAndNumIndicesArg;
+        SimpleAllocationPinnedHost<char> h_packedpointersAndNumIndicesArg;
+
+        std::map<int, SimpleAllocationDevice<char>> map_d_packedKernelParamsPartPref;
+        SimpleAllocationPinnedHost<char> h_packedKernelParamsPartPref;
+
+        //
+        std::map<int, cudaGraphExec_t> map_nohostExecutionGraph;
+
         SimpleAllocationPinnedHost<Index_t*> pinnedPointersForLocations;
         SimpleAllocationPinnedHost<Index_t*> pinnedPointersForLocations2;
         SimpleAllocationPinnedHost<Index_t> pinnedNumIndices;
@@ -375,6 +682,7 @@ public:
 
         std::map<int, cudaStream_t> map_streams;
         std::map<int, cudaEvent_t> map_events;
+        std::map<int, cudaEvent_t> map_d2hevents;
 
         std::vector<int> registeredDeviceIds;
 
@@ -837,12 +1145,15 @@ public:
         for(int gpu = 0; gpu < numGpus; gpu++){
             wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
 
-            cudaMemcpy(          
+            cudaMemcpyAsync(          
                 handle->ptrsToNumIndicesPerLocation[gpu].get(),
                 numPtrs.data(),
                 sizeof(Index_t*) * numLocations,
-                H2D
+                H2D,
+                handle->streamsPerGpu[gpu]
             ); CUERR;
+
+            cudaStreamSynchronize(handle->streamsPerGpu[gpu]); CUERR;
         }
 
 
@@ -863,6 +1174,21 @@ public:
         handle->pinnedPointersForLocations.resize(numLocations);
         handle->pinnedPointersForLocations2.resize(numLocations);
         handle->pinnedNumIndices.resize(1);
+        handle->numIndicesOfHostLocation.resize(1);
+
+        handle->h_packedpointersAndNumIndicesArg.resize(
+            sizeof(Index_t*) * numLocations
+            + sizeof(Index_t*) * numLocations
+            + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t))) // padding
+            + sizeof(Index_t)
+        );
+
+        handle->h_packedKernelParamsPartPref.resize(
+            std::max(
+                sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+                sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+            ) * 2
+        );
 
         handle->streamsPerGpuLocation.resize(numGpus);
         handle->eventsPerGpuLocation.resize(numGpus);
@@ -892,6 +1218,19 @@ public:
             cudaGetDevice(&oldId); CUERR;
             wrapperCudaSetDevice(deviceId); CUERR;
 
+            cudaStream_t stream;
+            cudaStreamCreate(&stream); CUERR;
+            handle->map_streams[deviceId] = std::move(stream);
+
+            cudaEvent_t event;
+            cudaEventCreateWithFlags(&event, cudaEventDisableTiming); CUERR;
+            handle->map_events[deviceId] = std::move(event); 
+
+            cudaEvent_t event2;
+            cudaEventCreateWithFlags(&event2, cudaEventDisableTiming); CUERR;
+            handle->map_d2hevents[deviceId] = std::move(event2); 
+             
+
             handle->map_d_tmpResults.emplace(deviceId, SimpleAllocationDevice<Value_t>{});
             handle->map_d_destinationPositionsOfGpu.emplace(deviceId, SimpleAllocationDevice<Index_t>{});
             handle->map_d_elementsPerLocationPS.emplace(deviceId, SimpleAllocationDevice<Index_t>(numLocations + 1));
@@ -906,12 +1245,14 @@ public:
             std::vector<SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
             handle->map_d_destinationPositionsForLocationsVector.emplace(deviceId, std::move(vec2));
 
-            cudaMemcpy(
+            cudaMemcpyAsync(
                 handle->map_d_elementsPerLocationPS[deviceId].get(),
                 elementsPerLocationPS.data(),
                 sizeof(Index_t) * (numLocations+1),
-                H2D
+                H2D,
+                handle->map_streams[deviceId]
             ); CUERR; 
+            cudaStreamSynchronize(handle->map_streams[deviceId]); CUERR;
 
             handle->map_d_indicesForLocationsPointers.emplace(deviceId, SimpleAllocationDevice<Index_t*>(numLocations + 1));
             handle->map_d_destinationPositionsForLocationsPointers.emplace(deviceId, SimpleAllocationDevice<Index_t*>(numLocations + 1));
@@ -919,13 +1260,36 @@ public:
             handle->map_d_numIndices.emplace(deviceId, SimpleAllocationDevice<Index_t>(1));
 
 
-            cudaStream_t stream;
-            cudaStreamCreate(&stream); CUERR;
-            handle->map_streams[deviceId] = std::move(stream);
+            handle->map_d_splitkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
+            handle->map_h_splitkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
 
-            cudaEvent_t event;
-            cudaEventCreateWithFlags(&event, cudaEventDisableTiming); CUERR;
-            handle->map_events[deviceId] = std::move(event);       
+            handle->map_d_prefixsumkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_h_prefixsumkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+
+            handle->map_d_gatherkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+            handle->map_h_gatherkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+
+            using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+            using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+
+            hscatvec_t hscatvec(numGpus);
+            for(int k = 0; k < numGpus; k++){
+                hscatvec[k].resize(1);
+            }
+            handle->map_h_scatterkernelparams.emplace(deviceId, std::move(hscatvec)); 
+            dscatvec_t dscatvec(numGpus);
+            for(int k = 0; k < numGpus; k++){
+                dscatvec[k].resize(1);
+            }
+            handle->map_d_scatterkernelparams.emplace(deviceId, std::move(dscatvec));
+
+            handle->map_d_packedpointersAndNumIndicesArg.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedpointersAndNumIndicesArg[deviceId].resize(handle->h_packedpointersAndNumIndicesArg.size());
+
+            handle->map_d_packedKernelParamsPartPref.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedKernelParamsPartPref[deviceId].resize(handle->h_packedKernelParamsPartPref.size());
+
+     
 
             handle->registeredDeviceIds.push_back(deviceId);
 
@@ -957,9 +1321,28 @@ public:
             handle->map_d_indicesForLocationsPointers[deviceId].destroy();
             handle->map_d_destinationPositionsForLocationsPointers[deviceId].destroy();
             handle->map_d_numIndices[deviceId].destroy();
+
+            handle->map_d_splitkernelparams[deviceId].destroy();
+            handle->map_d_prefixsumkernelparams[deviceId].destroy();
+            handle->map_d_gatherkernelparams[deviceId].destroy();
+            handle->map_d_scatterkernelparams[deviceId].clear();
+
+            handle->map_h_splitkernelparams[deviceId].destroy();
+            handle->map_h_prefixsumkernelparams[deviceId].destroy();
+            handle->map_h_gatherkernelparams[deviceId].destroy();
+            handle->map_h_scatterkernelparams[deviceId].clear();
+
+            handle->map_d_packedpointersAndNumIndicesArg[deviceId].destroy();
+            handle->map_d_packedKernelParamsPartPref[deviceId].destroy();
+
+            auto git = handle->map_nohostExecutionGraph.find(deviceId);
+            if(git != handle->map_nohostExecutionGraph.end()){
+                cudaGraphExecDestroy(git->second); CUERR;
+            }
             
-            cudaStreamDestroy(handle->map_streams[deviceId]);
-            cudaEventDestroy(handle->map_events[deviceId]);   
+            cudaStreamDestroy(handle->map_streams[deviceId]); CUERR;
+            cudaEventDestroy(handle->map_events[deviceId]); CUERR;
+            cudaEventDestroy(handle->map_d2hevents[deviceId]); CUERR;
 
             handle->registeredDeviceIds.erase(it);
 
@@ -996,6 +1379,11 @@ public:
         }
 
         //    -----------------
+
+
+
+        handle->h_packedpointersAndNumIndicesArg.destroy();
+        handle->h_packedKernelParamsPartPref.destroy();
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
@@ -1222,6 +1610,10 @@ public:
                                     size_t resultPitch, // result element i begins at offset i * resultPitch
                                     cudaStream_t syncstream) const{
 
+        if(numIds <= 0){
+            return;
+        }
+
         if(singlePartitionInfo.isSinglePartition){
             nvtx::push_range("singlePartitionGather", 0);
             gatherElementsInGpuMemAsyncSinglePartitionMode(
@@ -1242,7 +1634,9 @@ public:
             if(elementsPerLocation[hostLocation] == 0){
                 nvtx::push_range("nohostGather", 1);
 
-                gatherElementsInGpuMemAsyncNoHostPartition(
+                gatherElementsInGpuMemAsyncNoHostPartitionWithCudaGraph(
+                //gatherElementsInGpuMemAsyncNoHostPartitionWithCudaGraphManuallaunch(
+                //gatherElementsInGpuMemAsyncNoHostPartition(
                     forLoop,
                     handle,
                     indices,
@@ -1259,9 +1653,7 @@ public:
 
                 nvtx::push_range("generalGather", 2);
 
-                //gatherElementsInGpuMemAsyncDefault(
                 gatherElementsInGpuMemAsyncGeneral(
-                //gatherElementsInGpuMemAsyncNewBroken(
                     forLoop,
                     handle,
                     indices,
@@ -1293,6 +1685,10 @@ public:
             cudaStream_t syncstream) const{
 
         assert(singlePartitionInfo.isSinglePartition);
+
+        if(numIds <= 0){
+            return;
+        }
 
         if(singlePartitionInfo.locationId == hostLocation){
             // if(debug) std::cerr << "single location array fasthpath on host\n";
@@ -1608,7 +2004,171 @@ public:
         }
 
 
-    }                                    
+    }   
+
+    cudaGraphExec_t buildNoHostExecutionGraphByCapture(const GatherHandle& handle, int deviceId) const{
+        int oldDeviceId = 0;
+        cudaGetDevice(&oldDeviceId); CUERR;
+        cudaSetDevice(deviceId); CUERR;
+
+        cudaStream_t capturestream;
+        cudaStreamCreate(&capturestream); CUERR;
+
+        cudaStreamBeginCapture(capturestream, cudaStreamCaptureModeRelaxed);
+
+        auto& destination_event = handle->map_events[deviceId];
+        auto& destination_stream = handle->map_streams[deviceId];
+        
+        cudaEventRecord(destination_event, capturestream); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaSetDevice(gpuDeviceId); CUERR;
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                cudaMemcpyAsync(
+                    handle->map_d_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
+                    H2D,
+                    gpuStream
+                ); CUERR;
+            }
+        }
+
+        cudaSetDevice(deviceId); CUERR;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedKernelParamsPartPref[deviceId].get(),
+            handle->h_packedKernelParamsPartPref.get(),
+            handle->h_packedKernelParamsPartPref.sizeInBytes(),
+            H2D,
+            capturestream
+        ); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaMemcpyAsync(
+                    handle->map_d_scatterkernelparams[deviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[deviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[deviceId][gpu].sizeInBytes(),
+                    H2D,
+                    capturestream
+                ); CUERR;
+            }
+        }
+
+        constexpr std::size_t paramsOffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto d_partitionsplitkernelParams 
+            = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->map_d_packedKernelParamsPartPref[deviceId].get();
+
+        auto d_pskernelParams 
+            = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
+
+        //find indices per location + prefixsum
+        call_fill_kernel_async(
+            handle->map_d_numIndicesPerLocation[deviceId].get(), 
+            numLocations, 
+            Index_t(0), 
+            capturestream
+        ); CUERR;
+
+
+        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, capturestream>>>(
+            d_partitionsplitkernelParams
+        ); CUERR;
+
+        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,capturestream>>>(
+            d_pskernelParams
+        ); CUERR;
+
+        cudaEventRecord(destination_event, capturestream); CUERR;
+
+        //gather data from gpu partitions into memory of the respective gpu, 
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(gpuDeviceId);
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
+                    handle->map_d_gatherkernelparams[gpu].get()
+                ); CUERR;
+
+                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+            }
+        }
+        // then scatter its gathered data to destination array via peer access
+        wrapperCudaSetDevice(deviceId); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(deviceId); CUERR;
+
+                cudaStreamWaitEvent(capturestream, gpuEvent, 0); CUERR;
+
+                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, capturestream>>>(
+                    handle->map_d_scatterkernelparams[deviceId][gpu].get()
+                ); CUERR;
+            }
+        }
+
+        cudaGraph_t graph;
+        cudaStreamEndCapture(capturestream, &graph); CUERR;
+        
+        cudaGraphExec_t execGraph;
+        cudaGraphNode_t errorNode;
+        auto logBuffer = std::make_unique<char[]>(1025);
+        std::fill_n(logBuffer.get(), 1025, 0);
+        cudaError_t status = cudaGraphInstantiate(&execGraph, graph, &errorNode, logBuffer.get(), 1025);
+        if(status != cudaSuccess){
+            if(logBuffer[1024] != '\0'){
+                std::cerr << "cudaGraphInstantiate: truncated error message: ";
+                std::copy_n(logBuffer.get(), 1025, std::ostream_iterator<char>(std::cerr, ""));
+                std::cerr << "\n";
+            }else{
+                std::cerr << "cudaGraphInstantiate: error message: ";
+                std::cerr << logBuffer.get();
+                std::cerr << "\n";
+            }
+            CUERR;
+        }            
+
+        cudaGraphDestroy(graph); CUERR;
+
+        cudaStreamDestroy(capturestream); CUERR;
+
+        cudaSetDevice(oldDeviceId); CUERR;
+
+        return execGraph;
+    }
+
+    cudaGraphExec_t getNoHostExecutionGraph(const GatherHandle& handle, int deviceId) const{
+        auto it = handle->map_nohostExecutionGraph.find(deviceId);
+
+        if(it != handle->map_nohostExecutionGraph.end()){
+            return it->second;
+        }else{
+            cudaGraphExec_t execGraph = buildNoHostExecutionGraphByCapture(handle, deviceId);
+            handle->map_nohostExecutionGraph[deviceId] = execGraph;
+            return execGraph;
+        }
+    }                                 
 
 
     template<class ParallelFor>
@@ -1628,6 +2188,534 @@ public:
         }
 
         assert(elementsPerLocation[hostLocation] == 0);
+        assert(!singlePartitionInfo.isSinglePartition); //there is a dedicated function for this case
+
+        int oldId = 0;
+        cudaGetDevice(&oldId); CUERR;
+
+        registerDeviceIdForHandlenew(handle, resultDeviceId);
+
+        
+        auto& d_destination_elementsPerLocationPS = handle->map_d_elementsPerLocationPS[resultDeviceId];
+        auto& d_destination_numIndicesPerLocation = handle->map_d_numIndicesPerLocation[resultDeviceId];
+        auto& d_destination_numIndicesPerLocationPS = handle->map_d_numIndicesPerLocationPS[resultDeviceId];
+
+        auto& d_indicesForLocationsVector = handle->map_d_indicesForLocationsVector[resultDeviceId];
+        auto& d_destinationPositionsForLocationsVector = handle->map_d_destinationPositionsForLocationsVector[resultDeviceId];
+
+        // auto& d_destination_gatheredElementsForLocation = handle->map_d_gatheredElementsForLocation[resultDeviceId];
+        // auto& d_destination_posIndexPairsForLocation = handle->map_d_positionIndexPairsForLocation[resultDeviceId];
+        // auto& d_destination_cubTemp = handle->map_d_cubTemp[resultDeviceId];
+
+        auto& destination_event = handle->map_events[resultDeviceId];
+        auto& destination_stream = handle->map_streams[resultDeviceId];
+
+        wrapperCudaSetDevice(resultDeviceId);
+        cudaEventRecord(destination_event, syncstream); CUERR;
+
+        for(int i = 0; i < numLocations; i++){
+            d_indicesForLocationsVector[i].resize(numIds);
+            d_destinationPositionsForLocationsVector[i].resize(numIds);
+        }
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
+        }
+
+        // for(int i = 0; i < numLocations; i++){
+        //     handle->pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
+        // }
+
+        // cudaMemcpyAsync(
+        //     handle->map_d_indicesForLocationsPointers[resultDeviceId].get(),
+        //     handle->pinnedPointersForLocations.get(),
+        //     sizeof(Index_t*) * numLocations,
+        //     H2D,
+        //     syncstream
+        // ); CUERR;
+
+        // for(int i = 0; i < numLocations; i++){
+        //     handle->pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
+        // }
+
+        // cudaMemcpyAsync(
+        //     handle->map_d_destinationPositionsForLocationsPointers[resultDeviceId].get(),
+        //     handle->pinnedPointersForLocations2.get(),
+        //     sizeof(Index_t*) * numLocations,
+        //     H2D,
+        //     syncstream
+        // ); CUERR;
+
+        // handle->pinnedNumIndices[0] = numIds;
+
+        // cudaMemcpyAsync(
+        //     handle->map_d_numIndices[resultDeviceId].get(),
+        //     handle->pinnedNumIndices.get(),
+        //     sizeof(Index_t),
+        //     H2D,
+        //     syncstream
+        // ); CUERR;
+
+        Index_t** const pinnedPointersForLocations = (Index_t**)handle->h_packedpointersAndNumIndicesArg.get();
+        Index_t** const pinnedPointersForLocations2 = pinnedPointersForLocations + numLocations;
+        Index_t* const pinnedNumIndices = (Index_t*)(((char*)(pinnedPointersForLocations2 + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
+
+        Index_t** const d_indicesForLocationsPointers = (Index_t**)handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get();
+        Index_t** const d_destinationPositionsForLocationsPointers = d_indicesForLocationsPointers + numLocations;
+        Index_t* const d_destination_numIndices = (Index_t*)(((char*)(d_destinationPositionsForLocationsPointers + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
+
+        for(int i = 0; i < numLocations; i++){
+            pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
+            pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
+        }
+
+        *pinnedNumIndices = numIds;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
+            handle->h_packedpointersAndNumIndicesArg.get(),
+            handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
+            H2D,
+            syncstream
+        ); CUERR;
+
+        constexpr size_t paramsoffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto h_destination_partitionSplitKernelParams 
+                = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->h_packedKernelParamsPartPref.get();
+
+        h_destination_partitionSplitKernelParams->splitIndices = d_indicesForLocationsPointers;
+        h_destination_partitionSplitKernelParams->splitDestinationPositions = d_destinationPositionsForLocationsPointers;
+        h_destination_partitionSplitKernelParams->numSplitIndicesPerLocation = d_destination_numIndicesPerLocation.get();
+        h_destination_partitionSplitKernelParams->numLocations = numLocations;
+        h_destination_partitionSplitKernelParams->elementsPerLocationPS = d_destination_elementsPerLocationPS.get();
+        h_destination_partitionSplitKernelParams->numIdsPtr = d_destination_numIndices;
+        h_destination_partitionSplitKernelParams->indices = d_indices;
+
+        auto h_destination_prefixsumKernelParams 
+                = (distarraykernels::PrefixSumKernelParams<Index_t>*)
+                    (((char*)h_destination_partitionSplitKernelParams) + paramsoffset);
+
+        h_destination_prefixsumKernelParams->output = d_destination_numIndicesPerLocationPS.get();
+        h_destination_prefixsumKernelParams->input = d_destination_numIndicesPerLocation.get();
+        h_destination_prefixsumKernelParams->numElements = numLocations;
+
+        
+
+        // auto& h_destination_partitionSplitKernelParams = handle->map_h_splitkernelparams[resultDeviceId][0];
+
+        // h_destination_partitionSplitKernelParams.splitIndices = d_indicesForLocationsPointers;
+        // h_destination_partitionSplitKernelParams.splitDestinationPositions = d_destinationPositionsForLocationsPointers;
+        // h_destination_partitionSplitKernelParams.numSplitIndicesPerLocation = d_destination_numIndicesPerLocation.get();
+        // h_destination_partitionSplitKernelParams.numLocations = numLocations;
+        // h_destination_partitionSplitKernelParams.elementsPerLocationPS = d_destination_elementsPerLocationPS.get();
+        // h_destination_partitionSplitKernelParams.numIdsPtr = d_destination_numIndices;
+        // h_destination_partitionSplitKernelParams.indices = d_indices;
+
+        // auto& h_destination_prefixsumKernelParams = handle->map_h_prefixsumkernelparams[resultDeviceId][0];
+
+        // h_destination_prefixsumKernelParams.output = d_destination_numIndicesPerLocationPS.get();
+        // h_destination_prefixsumKernelParams.input = d_destination_numIndicesPerLocation.get();
+        // h_destination_prefixsumKernelParams.numElements = numLocations;
+
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+
+            //handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
+
+            auto& h_destination_scatterKernelParams = handle->map_h_scatterkernelparams[resultDeviceId][gpu][0];
+            h_destination_scatterKernelParams.result = d_result;
+            h_destination_scatterKernelParams.sourceData = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_destination_scatterKernelParams.indices = d_destinationPositionsForLocationsVector[gpu].get();
+            h_destination_scatterKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_destination_scatterKernelParams.indexOffset = 0;
+            h_destination_scatterKernelParams.resultPitchValueTs = resultPitch / sizeof(Value_t);
+            h_destination_scatterKernelParams.numCols = numColumns;
+
+            auto& h_gpu_gatherKernelParams = handle->map_h_gatherkernelparams[gpu][0];            
+            h_gpu_gatherKernelParams.result = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_gpu_gatherKernelParams.sourceData = dataPtrPerLocation[gpu];
+            h_gpu_gatherKernelParams.indices = d_indicesForLocationsVector[location].get();
+            h_gpu_gatherKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_gpu_gatherKernelParams.indexOffset = -elementsPerLocationPS[location];
+            h_gpu_gatherKernelParams.resultPitchValueTs = numColumns;
+            h_gpu_gatherKernelParams.numCols = numColumns;
+        }
+
+#if 1
+
+        cudaGraphExec_t execGraph = getNoHostExecutionGraph(handle, resultDeviceId);
+        cudaGraphLaunch(execGraph, syncstream); CUERR;
+
+ #else 
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaSetDevice(gpuDeviceId); CUERR;
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                cudaMemcpyAsync(
+                    handle->map_d_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
+                    H2D,
+                    gpuStream
+                ); CUERR;
+            }
+        }
+
+        cudaSetDevice(resultDeviceId); CUERR;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedKernelParamsPartPref[resultDeviceId].get(),
+            handle->h_packedKernelParamsPartPref.get(),
+            handle->h_packedKernelParamsPartPref.sizeInBytes(),
+            H2D,
+            syncstream
+        ); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaMemcpyAsync(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
+                    H2D,
+                    syncstream
+                ); CUERR;
+            }
+        }
+
+        constexpr std::size_t paramsOffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto d_partitionsplitkernelParams 
+            = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->map_d_packedKernelParamsPartPref[resultDeviceId].get();
+
+        auto d_pskernelParams 
+            = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
+
+        //find indices per location + prefixsum
+        call_fill_kernel_async(
+            handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
+            numLocations, 
+            Index_t(0), 
+            syncstream
+        ); CUERR;
+
+
+        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
+            d_partitionsplitkernelParams
+        ); CUERR;
+
+        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
+            d_pskernelParams
+        ); CUERR;
+
+        cudaEventRecord(destination_event, syncstream); CUERR;
+
+        //gather data from gpu partitions into memory of the respective gpu, 
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(gpuDeviceId);
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
+                    handle->map_d_gatherkernelparams[gpu].get()
+                ); CUERR;
+
+                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+            }
+        }
+        // then scatter its gathered data to destination array via peer access
+        wrapperCudaSetDevice(resultDeviceId); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(resultDeviceId); CUERR;
+
+                cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
+
+                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
+                ); CUERR;
+            }
+        }
+
+#endif
+        cudaSetDevice(oldId); CUERR;
+
+    }    
+
+    template<class ParallelFor>
+    void gatherElementsInGpuMemAsyncNoHostPartitionWithCudaGraphManuallaunch(
+            ParallelFor&& forLoop,
+            const GatherHandle& handle,
+            const Index_t* indices,
+            const Index_t* d_indices,
+            Index_t numIds,
+            int resultDeviceId,
+            Value_t* d_result,
+            size_t resultPitch, // result element i begins at offset i * resultPitch
+            cudaStream_t syncstream) const{
+
+        if(numIds == 0){
+            return;
+        }
+
+        assert(elementsPerLocation[hostLocation] == 0);
+        assert(!singlePartitionInfo.isSinglePartition); //there is a dedicated function for this case
+
+        int oldId = 0;
+        cudaGetDevice(&oldId); CUERR;
+
+        registerDeviceIdForHandlenew(handle, resultDeviceId);
+
+        
+        auto& d_destination_elementsPerLocationPS = handle->map_d_elementsPerLocationPS[resultDeviceId];
+        auto& d_destination_numIndicesPerLocation = handle->map_d_numIndicesPerLocation[resultDeviceId];
+        auto& d_destination_numIndicesPerLocationPS = handle->map_d_numIndicesPerLocationPS[resultDeviceId];
+
+        auto& d_indicesForLocationsVector = handle->map_d_indicesForLocationsVector[resultDeviceId];
+        auto& d_destinationPositionsForLocationsVector = handle->map_d_destinationPositionsForLocationsVector[resultDeviceId];
+
+        // auto& d_destination_gatheredElementsForLocation = handle->map_d_gatheredElementsForLocation[resultDeviceId];
+        // auto& d_destination_posIndexPairsForLocation = handle->map_d_positionIndexPairsForLocation[resultDeviceId];
+        // auto& d_destination_cubTemp = handle->map_d_cubTemp[resultDeviceId];
+
+        auto& destination_event = handle->map_events[resultDeviceId];
+        auto& destination_stream = handle->map_streams[resultDeviceId];
+
+        wrapperCudaSetDevice(resultDeviceId);
+        cudaEventRecord(destination_event, syncstream); CUERR;
+
+        for(int i = 0; i < numLocations; i++){
+            d_indicesForLocationsVector[i].resize(numIds);
+            d_destinationPositionsForLocationsVector[i].resize(numIds);
+        }
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
+        }
+
+        Index_t** const pinnedPointersForLocations = (Index_t**)handle->h_packedpointersAndNumIndicesArg.get();
+        Index_t** const pinnedPointersForLocations2 = pinnedPointersForLocations + numLocations;
+        Index_t* const pinnedNumIndices = (Index_t*)(((char*)(pinnedPointersForLocations2 + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
+
+        Index_t** const d_indicesForLocationsPointers = (Index_t**)handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get();
+        Index_t** const d_destinationPositionsForLocationsPointers = d_indicesForLocationsPointers + numLocations;
+        Index_t* const d_destination_numIndices = (Index_t*)(((char*)(d_destinationPositionsForLocationsPointers + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
+
+        for(int i = 0; i < numLocations; i++){
+            pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
+            pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
+        }
+
+        *pinnedNumIndices = numIds;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
+            handle->h_packedpointersAndNumIndicesArg.get(),
+            handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
+            H2D,
+            syncstream
+        ); CUERR;
+
+        constexpr size_t paramsoffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto h_destination_partitionSplitKernelParams 
+                = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->h_packedKernelParamsPartPref.get();
+
+        h_destination_partitionSplitKernelParams->splitIndices = d_indicesForLocationsPointers;
+        h_destination_partitionSplitKernelParams->splitDestinationPositions = d_destinationPositionsForLocationsPointers;
+        h_destination_partitionSplitKernelParams->numSplitIndicesPerLocation = d_destination_numIndicesPerLocation.get();
+        h_destination_partitionSplitKernelParams->numLocations = numLocations;
+        h_destination_partitionSplitKernelParams->elementsPerLocationPS = d_destination_elementsPerLocationPS.get();
+        h_destination_partitionSplitKernelParams->numIdsPtr = d_destination_numIndices;
+        h_destination_partitionSplitKernelParams->indices = d_indices;
+
+        auto h_destination_prefixsumKernelParams 
+                = (distarraykernels::PrefixSumKernelParams<Index_t>*)
+                    (((char*)h_destination_partitionSplitKernelParams) + paramsoffset);
+
+        h_destination_prefixsumKernelParams->output = d_destination_numIndicesPerLocationPS.get();
+        h_destination_prefixsumKernelParams->input = d_destination_numIndicesPerLocation.get();
+        h_destination_prefixsumKernelParams->numElements = numLocations;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+
+            auto& h_destination_scatterKernelParams = handle->map_h_scatterkernelparams[resultDeviceId][gpu][0];
+            h_destination_scatterKernelParams.result = d_result;
+            h_destination_scatterKernelParams.sourceData = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_destination_scatterKernelParams.indices = d_destinationPositionsForLocationsVector[gpu].get();
+            h_destination_scatterKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_destination_scatterKernelParams.indexOffset = 0;
+            h_destination_scatterKernelParams.resultPitchValueTs = resultPitch / sizeof(Value_t);
+            h_destination_scatterKernelParams.numCols = numColumns;
+
+            auto& h_gpu_gatherKernelParams = handle->map_h_gatherkernelparams[gpu][0];            
+            h_gpu_gatherKernelParams.result = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_gpu_gatherKernelParams.sourceData = dataPtrPerLocation[gpu];
+            h_gpu_gatherKernelParams.indices = d_indicesForLocationsVector[location].get();
+            h_gpu_gatherKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_gpu_gatherKernelParams.indexOffset = -elementsPerLocationPS[location];
+            h_gpu_gatherKernelParams.resultPitchValueTs = numColumns;
+            h_gpu_gatherKernelParams.numCols = numColumns;
+        }
+
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaSetDevice(gpuDeviceId); CUERR;
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                cudaMemcpyAsync(
+                    handle->map_d_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
+                    H2D,
+                    gpuStream
+                ); CUERR;
+            }
+        }
+
+        cudaSetDevice(resultDeviceId); CUERR;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedKernelParamsPartPref[resultDeviceId].get(),
+            handle->h_packedKernelParamsPartPref.get(),
+            handle->h_packedKernelParamsPartPref.sizeInBytes(),
+            H2D,
+            syncstream
+        ); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaMemcpyAsync(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
+                    H2D,
+                    syncstream
+                ); CUERR;
+            }
+        }
+
+        constexpr std::size_t paramsOffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto d_partitionsplitkernelParams 
+            = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->map_d_packedKernelParamsPartPref[resultDeviceId].get();
+
+        auto d_pskernelParams 
+            = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
+
+        //find indices per location + prefixsum
+        call_fill_kernel_async(
+            handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
+            numLocations, 
+            Index_t(0), 
+            syncstream
+        ); CUERR;
+
+
+        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
+            d_partitionsplitkernelParams
+        ); CUERR;
+
+        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
+            d_pskernelParams
+        ); CUERR;
+
+        cudaEventRecord(destination_event, syncstream); CUERR;
+
+        //gather data from gpu partitions into memory of the respective gpu, 
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(gpuDeviceId);
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
+                    handle->map_d_gatherkernelparams[gpu].get()
+                ); CUERR;
+
+                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+            }
+        }
+        // then scatter its gathered data to destination array via peer access
+        wrapperCudaSetDevice(resultDeviceId); CUERR;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
+
+                wrapperCudaSetDevice(resultDeviceId); CUERR;
+
+                cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
+
+                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
+                ); CUERR;
+            }
+        }
+
+        cudaSetDevice(oldId); CUERR;
+
+    }    
+
+
+    //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
+    template<class ParallelFor>
+    void gatherElementsInGpuMemAsyncGeneral(ParallelFor&& forLoop,
+                                    const GatherHandle& handle,
+                                    const Index_t* d_indices,
+                                    Index_t numIds,
+                                    int resultDeviceId,
+                                    Value_t* d_result,
+                                    size_t resultPitch, // result element i begins at offset i * resultPitch
+                                    cudaStream_t syncstream) const{
+        if(numIds == 0){
+            return;
+        }
+
         assert(!singlePartitionInfo.isSinglePartition); //there is a dedicated function for this case
 
 
@@ -1650,95 +2738,177 @@ public:
 
         wrapperCudaSetDevice(resultDeviceId);
         cudaEventRecord(destination_event, syncstream); CUERR;
-        //cudaStreamWaitEvent(destination_stream, destination_event, 0); CUERR;
 
         for(int i = 0; i < numLocations; i++){
             d_indicesForLocationsVector[i].resize(numIds);
             d_destinationPositionsForLocationsVector[i].resize(numIds);
         }
 
-        for(int i = 0; i < numLocations; i++){
-            handle->pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
         }
 
-        cudaMemcpyAsync(
-            handle->map_d_indicesForLocationsPointers[resultDeviceId].get(),
-            handle->pinnedPointersForLocations.get(),
-            sizeof(Index_t*) * numLocations,
-            H2D,
-            syncstream
-        ); CUERR;
+        handle->indicesOfHostLocation.resize(numIds);
+        handle->pinnedGatheredElementsOfLocation[hostLocation].resize(numIds * numColumns);
+
+        Index_t** const pinnedPointersForLocations = (Index_t**)handle->h_packedpointersAndNumIndicesArg.get();
+        Index_t** const pinnedPointersForLocations2 = pinnedPointersForLocations + numLocations;
+        Index_t* const pinnedNumIndices = (Index_t*)(((char*)(pinnedPointersForLocations2 + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
+
+        Index_t** const d_indicesForLocationsPointers = (Index_t**)handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get();
+        Index_t** const d_destinationPositionsForLocationsPointers = d_indicesForLocationsPointers + numLocations;
+        Index_t* const d_destination_numIndices = (Index_t*)(((char*)(d_destinationPositionsForLocationsPointers + numLocations))
+                        + std::abs(int(sizeof(Index_t*)) - int(sizeof(Index_t)))); //proper pointer alignment
 
         for(int i = 0; i < numLocations; i++){
-            handle->pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
+            pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
+            pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
+        }
+        //fix indicesptr for host indices. kernel will write to it via pcie
+        pinnedPointersForLocations[hostLocation] = handle->indicesOfHostLocation.get();
+
+        *pinnedNumIndices = numIds;
+
+        cudaMemcpyAsync(
+            handle->map_d_packedpointersAndNumIndicesArg[resultDeviceId].get(),
+            handle->h_packedpointersAndNumIndicesArg.get(),
+            handle->h_packedpointersAndNumIndicesArg.sizeInBytes(),
+            H2D,
+            syncstream
+        ); CUERR;
+
+        constexpr size_t paramsoffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
+
+        auto h_destination_partitionSplitKernelParams 
+                = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->h_packedKernelParamsPartPref.get();
+
+        h_destination_partitionSplitKernelParams->splitIndices = d_indicesForLocationsPointers;
+        h_destination_partitionSplitKernelParams->splitDestinationPositions = d_destinationPositionsForLocationsPointers;
+        h_destination_partitionSplitKernelParams->numSplitIndicesPerLocation = d_destination_numIndicesPerLocation.get();
+        h_destination_partitionSplitKernelParams->numLocations = numLocations;
+        h_destination_partitionSplitKernelParams->elementsPerLocationPS = d_destination_elementsPerLocationPS.get();
+        h_destination_partitionSplitKernelParams->numIdsPtr = d_destination_numIndices;
+        h_destination_partitionSplitKernelParams->indices = d_indices;
+
+        auto h_destination_prefixsumKernelParams 
+                = (distarraykernels::PrefixSumKernelParams<Index_t>*)
+                    (((char*)h_destination_partitionSplitKernelParams) + paramsoffset);
+
+        h_destination_prefixsumKernelParams->output = d_destination_numIndicesPerLocationPS.get();
+        h_destination_prefixsumKernelParams->input = d_destination_numIndicesPerLocation.get();
+        h_destination_prefixsumKernelParams->numElements = numLocations;
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+
+            auto& h_destination_scatterKernelParams = handle->map_h_scatterkernelparams[resultDeviceId][gpu][0];
+            h_destination_scatterKernelParams.result = d_result;
+            h_destination_scatterKernelParams.sourceData = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_destination_scatterKernelParams.indices = d_destinationPositionsForLocationsVector[gpu].get();
+            h_destination_scatterKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_destination_scatterKernelParams.indexOffset = 0;
+            h_destination_scatterKernelParams.resultPitchValueTs = resultPitch / sizeof(Value_t);
+            h_destination_scatterKernelParams.numCols = numColumns;
+
+            auto& h_gpu_gatherKernelParams = handle->map_h_gatherkernelparams[gpu][0];            
+            h_gpu_gatherKernelParams.result = handle->d_gatheredElementsOfGpuLocation[gpu].get();
+            h_gpu_gatherKernelParams.sourceData = dataPtrPerLocation[gpu];
+            h_gpu_gatherKernelParams.indices = d_indicesForLocationsVector[location].get();
+            h_gpu_gatherKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
+            h_gpu_gatherKernelParams.indexOffset = -elementsPerLocationPS[location];
+            h_gpu_gatherKernelParams.resultPitchValueTs = numColumns;
+            h_gpu_gatherKernelParams.numCols = numColumns;
         }
 
+
+
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                const int gpuDeviceId = deviceIds[gpu];
+                cudaStream_t gpuStream = handle->streamsPerGpuLocation[location];
+                cudaSetDevice(gpuDeviceId); CUERR;
+                cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
+
+                cudaMemcpyAsync(
+                    handle->map_d_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].get(),
+                    handle->map_h_gatherkernelparams[gpu].sizeInBytes(),
+                    H2D,
+                    gpuStream
+                ); CUERR;
+            }
+        }
+
+        cudaSetDevice(resultDeviceId); CUERR;
+
         cudaMemcpyAsync(
-            handle->map_d_destinationPositionsForLocationsPointers[resultDeviceId].get(),
-            handle->pinnedPointersForLocations2.get(),
-            sizeof(Index_t*) * numLocations,
+            handle->map_d_packedKernelParamsPartPref[resultDeviceId].get(),
+            handle->h_packedKernelParamsPartPref.get(),
+            handle->h_packedKernelParamsPartPref.sizeInBytes(),
             H2D,
             syncstream
         ); CUERR;
 
-        handle->pinnedNumIndices[0] = numIds;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaMemcpyAsync(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].get(),
+                    handle->map_h_scatterkernelparams[resultDeviceId][gpu].sizeInBytes(),
+                    H2D,
+                    syncstream
+                ); CUERR;
+            }
+        }
 
-        cudaMemcpyAsync(
-            handle->map_d_numIndices[resultDeviceId].get(),
-            handle->pinnedNumIndices.get(),
-            sizeof(Index_t),
-            H2D,
-            syncstream
-        ); CUERR;
+        constexpr std::size_t paramsOffset = std::max(
+            sizeof(distarraykernels::PartitionSplitKernelParams<Index_t>),
+            sizeof(distarraykernels::PrefixSumKernelParams<Index_t>)
+        );
 
-        const Index_t* const d_numIds = handle->map_d_numIndices[resultDeviceId].get();
+        auto d_partitionsplitkernelParams 
+            = (distarraykernels::PartitionSplitKernelParams<Index_t>*)handle->map_d_packedKernelParamsPartPref[resultDeviceId].get();
 
-        
+        auto d_pskernelParams 
+            = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        {
-            //int numLocs = numLocations;
-            auto* d_elementsPerLocationPSPtr = d_destination_elementsPerLocationPS.get();
-            auto* d_indicesPerLocationPtr = d_destination_numIndicesPerLocation.get();
-            auto* d_indicesPerLocationPSPtr = d_destination_numIndicesPerLocationPS.get();
+        call_fill_kernel_async(
+            handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
+            numLocations, 
+            Index_t(0), 
+            syncstream
+        ); CUERR;
 
-            auto* splitIndices = handle->map_d_indicesForLocationsPointers[resultDeviceId].get();
-            auto* splitDestinationPositions = handle->map_d_destinationPositionsForLocationsPointers[resultDeviceId].get();
 
-            // cudaDeviceSynchronize(); CUERR;
+        distarraykernels::partitionSplitKernel<Index_t, 32><<<1000, 256, 0, syncstream>>>(
+            d_partitionsplitkernelParams
+        ); CUERR;
 
-            // wrapperCudaSetDevice(resultDeviceId);
-            // std::cerr << "cudamemsetasync resultDeviceId = " << resultDeviceId 
-            //             << "(" << (void*)d_indicesPerLocationPtr << "\n"
-            //             << "0\n"
-            //             << sizeof(Index_t) * numIds << "\n"
-            //             << (void*) syncstream << "\n";
-            cudaMemsetAsync(
-                d_indicesPerLocationPtr, 
-                0, 
-                sizeof(Index_t) * numLocations, 
-                syncstream
-            ); CUERR;
+        distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
+            d_pskernelParams
+        ); CUERR;
 
-            distarraykernels::partitionSplitKernel<Index_t, 32><<<SDIV(numIds, 256), 256, 0, syncstream>>>(
-                splitIndices,
-                splitDestinationPositions,
-                d_indicesPerLocationPtr,
-                numGpus,
-                d_elementsPerLocationPSPtr,
-                d_numIds,
-                d_indices
-            ); CUERR;
+        cudaEventRecord(destination_event, syncstream); CUERR;
 
-            distarraykernels::exclPrefixSumSingleThreadKernel<Index_t><<<1,1,0,syncstream>>>(
-                d_indicesPerLocationPSPtr,
-                d_indicesPerLocationPtr,
-                numLocations
-            ); CUERR;
+        cudaMemcpyAsync(
+            handle->numIndicesOfHostLocation.get(),
+            d_destination_numIndicesPerLocation.get() + hostLocation,
+            sizeof(Index_t),
+            D2H,
+            syncstream
+        );
 
-            cudaEventRecord(destination_event, syncstream); CUERR;
-        }
+        //event record d2h
+        cudaEventRecord(handle->map_d2hevents[resultDeviceId], syncstream); CUERR;
 
+        //gather data from gpu partitions into memory of the respective gpu, 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
             if(elementsPerLocation[location] > 0){
@@ -1749,66 +2919,111 @@ public:
                 wrapperCudaSetDevice(gpuDeviceId);
                 cudaStreamWaitEvent(gpuStream, destination_event, 0); CUERR;
 
-                auto& myGatherResult = handle->d_gatheredElementsOfGpuLocation[gpu];
-                myGatherResult.resize(numIds * numColumns);
+                distarraykernels::gatherKernel<Index_t, Value_t><<<1000, 256, 0, gpuStream>>>(
+                    handle->map_d_gatherkernelparams[gpu].get()
+                ); CUERR;
 
-                //gather elements of selected indices
-                {
+                cudaEventRecord(gpuEvent, gpuStream); CUERR;
+            }
+        }
+        // then scatter its gathered data to destination array via peer access
+        wrapperCudaSetDevice(resultDeviceId); CUERR;
 
-                    //const size_t numCols = numColumns;
-                    const size_t resultPitchValueTs = numColumns;
-
-                    const Value_t* const sourceArrayDataPtr = dataPtrPerLocation[gpu];
-                    const Index_t* const myIndicesPtr = d_indicesForLocationsVector[location].get(); //peer access
-                    const Index_t* const myNumIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
-                    auto indexOffset = elementsPerLocationPS[location];
-                    Value_t* outputPtr = myGatherResult.get();
-
-                    distarraykernels::gatherKernel<Index_t, Value_t><<<SDIV(numIds, 256), 256, 0, gpuStream>>>(
-                        outputPtr,
-                        sourceArrayDataPtr,
-                        myIndicesPtr,
-                        myNumIndicesPtr,
-                        -elementsPerLocationPS[location],
-                        resultPitchValueTs,
-                        numColumns
-                    ); CUERR;
-
-                    cudaEventRecord(gpuEvent, gpuStream); CUERR;
-                }
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const int location = gpu;
+            if(elementsPerLocation[location] > 0){
+                cudaEvent_t gpuEvent = handle->eventsPerGpuLocation[location];
 
                 wrapperCudaSetDevice(resultDeviceId); CUERR;
 
                 cudaStreamWaitEvent(syncstream, gpuEvent, 0); CUERR;
 
-                //scatter to result array (may be peer access)
-                {
-                    assert(resultPitch % sizeof(Value_t) == 0);
-                    //size_t numCols = numColumns;
-                    size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-
-                    const Value_t* const input = myGatherResult.get();
-                    const Index_t* const permutIndices = d_destinationPositionsForLocationsVector[gpu].get();
-                    const Index_t* const myNumIndicesPtr = d_destination_numIndicesPerLocation.get() + location;
-                    Value_t* const output = d_result;
-
-
-                    distarraykernels::scatterKernel<Index_t, Value_t><<<SDIV(numIds, 256), 256, 0, syncstream>>>(
-                        output,
-                        input,
-                        permutIndices,
-                        myNumIndicesPtr,
-                        0,
-                        resultPitchValueTs,
-                        numColumns
-                    ); CUERR;
-                }
+                distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
+                    handle->map_d_scatterkernelparams[resultDeviceId][gpu].get()
+                ); CUERR;
             }
         }
 
+        cudaEventSynchronize(handle->map_d2hevents[resultDeviceId]); CUERR;
 
-    }    
+        const Index_t numIndicesForHost = *handle->numIndicesOfHostLocation.get();
+        //std::cerr << "array type " << sizeof(Value_t) << ": numIndicesForHost = " << numIndicesForHost << "\n";
+        if(numIndicesForHost > 0){
+            wrapperCudaSetDevice(resultDeviceId); CUERR;
 
+            
+
+            Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();
+            const Index_t* const myIndices = handle->indicesOfHostLocation.get();
+
+            // std::vector<Index_t> tmpvec(myIndices, myIndices + numIndicesForHost);
+            // std::sort(tmpvec.begin(), tmpvec.end());
+            // std::cerr << "first 3 host indices: ";
+            // for(int i = 0; i < std::min(Index_t(3), numIndicesForHost); i++){
+            //     std::cerr << tmpvec[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "last 3 host indices: ";
+            // for(int i = std::max(Index_t(0), numIndicesForHost-3); i < numIndicesForHost; i++){
+            //     std::cerr << tmpvec[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
+                nvtx::push_range("generalgather_host", 7);
+                for(Index_t k = begin; k < end; k++){
+                    const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
+
+                    const Value_t* const srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                    Value_t* const destPtr = myResult + size_t(k) * numColumns;
+
+                    std::copy_n(srcPtr, numColumns, destPtr);
+                }
+                nvtx::pop_range();
+            };
+
+            forLoop( 
+                Index_t(0), 
+                numIndicesForHost, 
+                gather
+            );
+
+            // forLoop(
+            //     0, 
+            //     numHostIndices, 
+            //     [&](int begin, int end, int threadId){
+            //         for(int k = begin; k < end; k++){
+            //             const Index_t localId = handle->indicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
+            //             const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+            //             Value_t* destPtr = myResult + size_t(k) * numColumns;
+            //             std::copy_n(srcPtr, numColumns, destPtr);
+            //         }
+            //     }
+            // );
+
+            auto& h_destination_scatterKernelParams = handle->map_h_scatterkernelparams[resultDeviceId][0][0];
+            h_destination_scatterKernelParams.result = d_result;
+            h_destination_scatterKernelParams.sourceData = myResult;
+            h_destination_scatterKernelParams.indices = d_destinationPositionsForLocationsVector[hostLocation].get();;
+            h_destination_scatterKernelParams.nIndicesPtr = d_destination_numIndicesPerLocation.get() + hostLocation;
+            h_destination_scatterKernelParams.indexOffset = 0;
+            h_destination_scatterKernelParams.resultPitchValueTs = resultPitch / sizeof(Value_t);
+            h_destination_scatterKernelParams.numCols = numColumns;
+
+            cudaMemcpyAsync(
+                handle->map_d_scatterkernelparams[resultDeviceId][0].get(),
+                handle->map_h_scatterkernelparams[resultDeviceId][0].get(),
+                handle->map_h_scatterkernelparams[resultDeviceId][0].sizeInBytes(),
+                H2D,
+                syncstream
+            ); CUERR;
+
+            distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
+                handle->map_d_scatterkernelparams[resultDeviceId][0].get()
+            ); CUERR;
+        }
+    }
 
 
     //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
@@ -1998,6 +3213,8 @@ public:
 
         //cudaDeviceSynchronize(); CUERR;
 
+        //std::cerr << "array type " << sizeof(Value_t) << ": numIndicesForHost = " << handle->numIndicesPerLocation[hostLocation] << "\n";
+
         //handle host gathering
         if(handle->numIndicesPerLocation[hostLocation] > 0){
             const int numHostIndices = handle->numIndicesPerLocation[hostLocation];
@@ -2021,16 +3238,32 @@ public:
 
             Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();   
 
+            // std::vector<Index_t> tmpvec(handle->indicesOfHostLocation.get(), handle->indicesOfHostLocation.get() + numHostIndices);
+            // std::sort(tmpvec.begin(), tmpvec.end());
+            // std::cerr << "first 3 host indices: ";
+            // for(int i = 0; i < std::min(3, numHostIndices); i++){
+            //     std::cerr << tmpvec[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "last 3 host indices: ";
+            // for(int i = std::max(0, numHostIndices-3); i < numHostIndices; i++){
+            //     std::cerr << tmpvec[i] << " ";
+            // }
+            // std::cerr << "\n";
+
             forLoop(
                 0, 
                 numHostIndices, 
                 [&](int begin, int end, int threadId){
+                    nvtx::push_range("generalgather_host", 7);
                     for(int k = begin; k < end; k++){
                         const Index_t localId = handle->indicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
                         const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
                         Value_t* destPtr = myResult + size_t(k) * numColumns;
                         std::copy_n(srcPtr, numColumns, destPtr);
                     }
+                    nvtx::pop_range();
                 }
             );
 
@@ -2075,1462 +3308,6 @@ public:
 
         wrapperCudaSetDevice(oldDevice); CUERR;
     }
-
-
-
-    template<class ParallelFor>
-    void gatherElementsInGpuMemAsyncNewBroken(ParallelFor&& forLoop,
-                                    const GatherHandle& handle,
-                                    const Index_t* indices,
-                                    const Index_t* d_indices,
-                                    Index_t numIds,
-                                    int resultDeviceId,
-                                    Value_t* d_result,
-                                    size_t resultPitch, // result element i begins at offset i * resultPitch
-                                    cudaStream_t stream) const{
-        if(numIds == 0) return;
-
-        assert(resultPitch % sizeof(Value_t) == 0);
-
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        //const int numCpuThreads = care::threadpool.getConcurrency();
-
-        //fastpath, if all elements of distributed array reside in a single partition
-        if(singlePartitionInfo.isSinglePartition){
-            if(singlePartitionInfo.locationId == hostLocation){
-                if(debug) std::cerr << "single location array fasthpath on host\n";
-
-                auto& h_result = handle->pinnedResultData;
-                h_result.resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
-
-                auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                    for(Index_t k = begin; k < end; k++){
-                        const Index_t localId = indices[k];
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                        //Value_t* destPtr = offsetPtr(h_result.get(), k);
-                        Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + resultPitch * k);
-                        
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                };
-
-                forLoop( 
-                    Index_t(0), 
-                    numIds, 
-                    gather
-                );
-
-                int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-                cudaMemcpyAsync(d_result, h_result.get(), numIds * resultPitch, H2D, stream); CUERR;
-
-                wrapperCudaSetDevice(oldDevice); CUERR;
-
-                return;
-            }else{
-                //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
-
-                const int locationId = singlePartitionInfo.locationId;
-                const int mydeviceId = deviceIds[locationId];
-                cudaStream_t mystream = handle->streamsPerGpu[locationId];
-                cudaEvent_t myevent = handle->eventsPerGpu[locationId];
-            #if 1
-                 if(mydeviceId == resultDeviceId){
-                     copyDataToGpuBufferAsync(d_result, resultPitch, mydeviceId, d_indices, numIds, mydeviceId, stream, -elementsPerLocationPS[locationId]);
-
-                     return;
-                 }
-            #else
-
-                wrapperCudaSetDevice(mydeviceId); CUERR;
-
-                Value_t* destptr = d_result;
-
-                Value_t* localGatherPtr = nullptr;
-                Index_t* localIndicesPtr = nullptr;
-                cudaStream_t localGatherStream = cudaStream_t(0);
-
-                if(resultDeviceId == mydeviceId){
-                    localGatherPtr = destptr;
-                    localIndicesPtr = const_cast<Index_t*>(d_indices);
-                    localGatherStream = stream;
-                }else{
-                    handle->dataPerGpu[locationId].resize(numIds * numColumns);
-                    localGatherPtr = handle->dataPerGpu[locationId].get();
-
-                    handle->deviceLocalIndicesPerLocation[locationId].resize(numIds);
-                    localIndicesPtr = handle->deviceLocalIndicesPerLocation[locationId].get();
-                    cudaMemcpyPeerAsync(localIndicesPtr,
-                                        mydeviceId,
-                                        d_indices,
-                                        resultDeviceId,
-                                        sizeof(Index_t) * numIds,
-                                        localGatherStream); CUERR;
-
-                    localGatherStream = mystream;
-                }
-
-                if(debug) cudaDeviceSynchronize(); CUERR;
-
-                //local gather on device mydeviceId
-                copyDataToGpuBufferAsync(localGatherPtr, resultPitch, mydeviceId, localIndicesPtr, numIds, mydeviceId, localGatherStream, -elementsPerLocationPS[locationId]);
-
-                if(debug) cudaDeviceSynchronize(); CUERR;           
-
-                //send partial results to destination gpu
-                
-                if(resultDeviceId != mydeviceId){
-
-                    cudaEventRecord(myevent, localGatherStream); CUERR;
-                    wrapperCudaSetDevice(resultDeviceId); CUERR;
-                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
-                    
-                    cudaMemcpyPeerAsync(destptr,
-                                        resultDeviceId,
-                                        localGatherPtr,
-                                        mydeviceId,
-                                        sizeOfElement * numIds,
-                                        stream); CUERR;
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-                } 
-
-                return;
-            #endif
-               
-            }
-        }
-
-        //cudaDeviceSynchronize(); CUERR;
-
-        cudaStream_t syncStream = stream;
-
-        registerDeviceIdForHandlenew(handle, resultDeviceId);
-
-        wrapperCudaSetDevice(resultDeviceId);
-        cudaEventRecord(handle->map_events[resultDeviceId], syncStream); CUERR;
-
-        auto& tmpResultsOnResultDevice = handle->map_d_tmpResults[resultDeviceId];
-        auto& d_destinationPositionsOnResultDevice = handle->map_d_destinationPositionsOfGpu[resultDeviceId];
-        d_destinationPositionsOnResultDevice.resize(numIds);
-        tmpResultsOnResultDevice.resize(numIds * numColumns);
-
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            const int loc = gpu;
-            if(elementsPerLocation[loc] > 0){
-                handle->pinnedIndicesOfGpuLocation[gpu].resize(numIds);
-                handle->pinnedDestinationPositionsOfLocation[gpu].resize(numIds);
-            }
-        }
-
-        std::fill(handle->numIndicesPerLocation.begin(), handle->numIndicesPerLocation.end(), 0);
-
-        for(Index_t i = 0; i < numIds; i++){
-            const Index_t index = indices[i];
-            const int loc = getLocation(index);
-
-            auto& num = handle->numIndicesPerLocation[loc];
-            handle->pinnedDestinationPositionsOfLocation[loc][num] = i;
-
-            if(loc != hostLocation){
-                const int gpu = loc;
-                handle->pinnedIndicesOfGpuLocation[gpu][num] = index;
-            }else{
-                handle->indicesOfHostLocation[num] = index;
-            }
-
-            num++;
-        }
-
-        handle->numIndicesPerLocationPS[0] = 0;
-        std::partial_sum(
-            handle->numIndicesPerLocation.begin(), 
-            handle->numIndicesPerLocation.end(), 
-            handle->numIndicesPerLocationPS.begin()+1
-        );      
-
-        //cudaDeviceSynchronize(); CUERR;
-
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            const int loc = gpu;
-            const int numForLoc = handle->numIndicesPerLocation[loc];
-            if(numForLoc > 0){
-                Index_t* const myDestinationPositionsOnResultDevice
-                    = d_destinationPositionsOnResultDevice + handle->numIndicesPerLocationPS[loc];
-
-                Value_t* const myTmpResultsOnResultDevice 
-                    = tmpResultsOnResultDevice + handle->numIndicesPerLocationPS[loc];
-
-                wrapperCudaSetDevice(resultDeviceId);
-                cudaMemcpyAsync(
-                    myDestinationPositionsOnResultDevice, 
-                    handle->pinnedDestinationPositionsOfLocation[loc].get(),
-                    sizeof(Index_t) * numForLoc,
-                    H2D,
-                    syncStream
-                ); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
-
-                const int myDeviceId = deviceIds[gpu];
-                wrapperCudaSetDevice(myDeviceId);
-
-                //cudaStreamWaitEvent(handle->streamsPerGpu[gpu], map_events[resultDeviceId], 0); CUERR;
-
-                handle->d_indicesOfGpuLocation[gpu].resize(numForLoc);
-
-                cudaMemcpyAsync(
-                    handle->d_indicesOfGpuLocation[gpu].get(),
-                    handle->pinnedIndicesOfGpuLocation[gpu].get(),
-                    sizeof(Index_t) * numForLoc,
-                    H2D,
-                    handle->streamsPerGpu[gpu]
-                ); CUERR;                
-
-
-                //cudaDeviceSynchronize(); CUERR;
-
-                auto& myGatherResult = handle->d_gatheredElementsOfGpuLocation[gpu];
-                myGatherResult.resize(numForLoc * numColumns);
-
-                //gather elements of selected indices
-                {
-                    const size_t numCols = numColumns;
-                    const size_t resultPitchValueTs = numColumns;
-
-                    const Value_t* const sourceArrayDataPtr = dataPtrPerLocation[gpu];
-                    const Index_t* const myIndicesPtr = handle->d_indicesOfGpuLocation[gpu].get();
-                    auto indexOffset = elementsPerLocationPS[loc];
-                    Value_t* outputPtr = myGatherResult.get();
-
-                    generic_kernel<<<SDIV(numIds, 256), 256, 0, handle->streamsPerGpu[gpu]>>>(
-                        [=] __device__ (){
-
-                            const Index_t nIndices = numForLoc;
-
-                            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                    i < nIndices * numCols; 
-                                    i += size_t(blockDim.x) * gridDim.x){
-
-                                const Index_t outputrow = i / numCols;
-                                const Index_t col = i % numCols;
-                                const Index_t inputrow = myIndicesPtr[outputrow] - indexOffset;
-
-                                outputPtr[size_t(outputrow) * resultPitchValueTs + col] 
-                                        = sourceArrayDataPtr[size_t(inputrow) * numCols + col];
-                            }
-                        }
-                    ); CUERR;
-                }
-
-                //copy my gathered elements to result device
-                cudaMemcpyPeerAsync(myTmpResultsOnResultDevice,
-                    resultDeviceId,
-                    myGatherResult.get(),
-                    myDeviceId,
-                    sizeOfElement * numForLoc,
-                    handle->streamsPerGpu[gpu]
-                ); CUERR;
-
-                //cudaStreamSynchronize(syncStream); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
-                
-                cudaEventRecord(handle->eventsPerGpu[gpu], handle->streamsPerGpu[gpu]); CUERR;
-
-                //scatter to destination array on resultdevice
-                wrapperCudaSetDevice(resultDeviceId);
-                cudaStreamWaitEvent(syncStream, handle->eventsPerGpu[gpu], 0); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
-
-                //on resultgpu scatter the copied data to the correct positions in final output array
-                {
-                    assert(resultPitch % sizeof(Value_t) == 0);
-
-                    size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-                    size_t numCols = numColumns;
-
-                    const Value_t* const input = myTmpResultsOnResultDevice;
-                    const Index_t* const permutIndices = myDestinationPositionsOnResultDevice;
-                    Value_t* const output = d_result;
-
-                    dim3 block(256,1,1);
-                    dim3 grid(std::min(320ul, SDIV(numForLoc * numCols, block.x)),1,1);
-
-                    generic_kernel<<<grid, block, 0, syncStream>>>([=] __device__ (){
-
-                        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                i < numForLoc * numCols; 
-                                i += size_t(blockDim.x) * gridDim.x){
-
-                            const Index_t inputRow = i / numCols;
-                            const Index_t col = i % numCols;
-                            const Index_t outputRow = permutIndices[inputRow];
-                            
-                            output[size_t(outputRow) * resultPitchValueTs + col] 
-                                = input[size_t(inputRow) * numCols + col];
-                        }
-                    }); CUERR;
-                }
-
-                //cudaDeviceSynchronize(); CUERR;
-            }
-        }
-
-        //cudaDeviceSynchronize(); CUERR;
-
-        //handle host gathering
-        if(handle->numIndicesPerLocation[hostLocation] > 0){
-            const int numHostIndices = handle->numIndicesPerLocation[hostLocation];
-
-            Index_t* const myDestinationPositionsOnResultDevice
-                    = d_destinationPositionsOnResultDevice + handle->numIndicesPerLocationPS[hostLocation];
-
-            Value_t* const myTmpResultsOnResultDevice 
-                = tmpResultsOnResultDevice + handle->numIndicesPerLocationPS[hostLocation];
-
-            wrapperCudaSetDevice(resultDeviceId);
-            cudaMemcpyAsync(
-                myDestinationPositionsOnResultDevice, 
-                handle->pinnedDestinationPositionsOfLocation[hostLocation].get(),
-                sizeof(Index_t) * numHostIndices,
-                H2D,
-                syncStream
-            ); CUERR;
-
-            Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();   
-
-            forLoop(
-                0, 
-                numHostIndices, 
-                [&](int begin, int end, int threadId){
-                    for(int k = begin; k < end; k++){
-                        const Index_t localId = handle->indicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                        Value_t* destPtr = myResult + size_t(k) * numColumns;
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                }
-            );
-
-            cudaMemcpyAsync(
-                myTmpResultsOnResultDevice,
-                myResult,
-                sizeof(Value_t) * numColumns * numHostIndices,
-                H2D,
-                syncStream
-            ); CUERR;
-
-            //on resultgpu scatter the copied data to the correct positions in final output array
-            {
-                assert(resultPitch % sizeof(Value_t) == 0);
-
-                size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-                size_t numCols = numColumns;
-
-                const Value_t* const input = myTmpResultsOnResultDevice;
-                const Index_t* const permutIndices = myDestinationPositionsOnResultDevice;
-                Value_t* const output = d_result;
-
-                dim3 block(256,1,1);
-                dim3 grid(std::min(320ul, SDIV(numHostIndices * numCols, block.x)),1,1);
-
-                generic_kernel<<<grid, block, 0, syncStream>>>([=] __device__ (){
-
-                    for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                            i < numHostIndices * numCols; 
-                            i += size_t(blockDim.x) * gridDim.x){
-
-                        const Index_t inputRow = i / numCols;
-                        const Index_t col = i % numCols;
-                        const Index_t outputRow = permutIndices[inputRow];
-                        
-                        output[size_t(outputRow) * resultPitchValueTs + col] 
-                            = input[size_t(inputRow) * numCols + col];
-                    }
-                }); CUERR;
-            }
-        }
-
-        wrapperCudaSetDevice(oldDevice); CUERR;
-
-    }
-
-
-
-
-
-        //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
-    template<class ParallelFor>
-    void gatherElementsInGpuMemAsyncDefault(ParallelFor&& forLoop,
-                                    const GatherHandle& handle,
-                                    const Index_t* indices,
-                                    const Index_t* d_indices,
-                                    Index_t numIds,
-                                    int resultDeviceId,
-                                    Value_t* d_result,
-                                    size_t resultPitch, // result element i begins at offset i * resultPitch
-                                    cudaStream_t stream) const{
-        if(numIds == 0) return;
-
-        assert(resultPitch % sizeof(Value_t) == 0);
-
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        //const int numCpuThreads = care::threadpool.getConcurrency();
-
-        //fastpath, if all elements of distributed array reside in a single partition
-        if(singlePartitionInfo.isSinglePartition){
-            if(singlePartitionInfo.locationId == hostLocation){
-                if(debug) std::cerr << "single location array fasthpath on host\n";
-
-                auto& h_result = handle->pinnedResultData;
-                h_result.resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
-
-                auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                    for(Index_t k = begin; k < end; k++){
-                        const Index_t localId = indices[k];
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                        //Value_t* destPtr = offsetPtr(h_result.get(), k);
-                        Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + resultPitch * k);
-                        
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                };
-
-                forLoop( 
-                    Index_t(0), 
-                    numIds, 
-                    gather
-                );
-
-                int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-                cudaMemcpyAsync(d_result, h_result.get(), numIds * resultPitch, H2D, stream); CUERR;
-
-                wrapperCudaSetDevice(oldDevice); CUERR;
-
-                return;
-            }else{
-                //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
-
-                const int locationId = singlePartitionInfo.locationId;
-                const int mydeviceId = deviceIds[locationId];
-                cudaStream_t mystream = handle->streamsPerGpu[locationId];
-                cudaEvent_t myevent = handle->eventsPerGpu[locationId];
-                #if 1
-                if(mydeviceId == resultDeviceId){
-                    copyDataToGpuBufferAsync(d_result, resultPitch, mydeviceId, d_indices, numIds, mydeviceId, stream, -elementsPerLocationPS[locationId]);
-
-                    return;
-                }
-                #else
-
-                wrapperCudaSetDevice(mydeviceId); CUERR;
-
-                Value_t* destptr = d_result;
-
-                Value_t* localGatherPtr = nullptr;
-                Index_t* localIndicesPtr = nullptr;
-                cudaStream_t localGatherStream = cudaStream_t(0);
-
-                if(resultDeviceId == mydeviceId){
-                    localGatherPtr = destptr;
-                    localIndicesPtr = const_cast<Index_t*>(d_indices);
-                    localGatherStream = stream;
-                }else{
-                    handle->dataPerGpu[locationId].resize(numIds * numColumns);
-                    localGatherPtr = handle->dataPerGpu[locationId].get();
-
-                    handle->deviceLocalIndicesPerLocation[locationId].resize(numIds);
-                    localIndicesPtr = handle->deviceLocalIndicesPerLocation[locationId].get();
-                    cudaMemcpyPeerAsync(localIndicesPtr,
-                                        mydeviceId,
-                                        d_indices,
-                                        resultDeviceId,
-                                        sizeof(Index_t) * numIds,
-                                        localGatherStream); CUERR;
-
-                    localGatherStream = mystream;
-                }
-
-                if(debug) cudaDeviceSynchronize(); CUERR;
-
-                //local gather on device mydeviceId
-                copyDataToGpuBufferAsync(localGatherPtr, resultPitch, mydeviceId, localIndicesPtr, numIds, mydeviceId, localGatherStream, -elementsPerLocationPS[locationId]);
-
-                if(debug) cudaDeviceSynchronize(); CUERR;           
-
-                //send partial results to destination gpu
-                
-                if(resultDeviceId != mydeviceId){
-
-                    cudaEventRecord(myevent, localGatherStream); CUERR;
-                    wrapperCudaSetDevice(resultDeviceId); CUERR;
-                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
-                    
-                    cudaMemcpyPeerAsync(destptr,
-                                        resultDeviceId,
-                                        localGatherPtr,
-                                        mydeviceId,
-                                        sizeOfElement * numIds,
-                                        stream); CUERR;
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-                } 
-
-                return;
-                #endif
-               
-            }
-        }
-
-
-//TIMERSTARTCPU(countHitsPerLocation);
-        //int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
-        int deviceIdLocation = -1;
-        if(deviceIdIter != deviceIds.end()){
-            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
-        }else{
-            assert(false);
-        }
-
-
-
-
-
-
-
-
-
-
-        
-        std::vector<Index_t> hitsPerLocation(numLocations, 0);
-        std::vector<int> locationsOfIndices(numIds);
-        std::vector<Index_t> localIndices(numIds);
-
-        #if 1   
-        const int threadlocoffset = SDIV(numLocations,32) * 32;     
-        const int numThreads = forLoop.getNumThreads();
-        std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numThreads, 0);
-
-        forLoop(
-            Index_t(0), 
-            numIds, 
-            [&](Index_t begin, Index_t end, int threadId){                
-                Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * threadId;
-                for(Index_t i = begin; i < end; i++){
-                    const int location = getLocation(indices[i]);
-                    locationsOfIndices[i] = location;
-                    const Index_t localIndex = indices[i] - elementsPerLocationPS[location];
-                    localIndices[i] = localIndex;
-                    hitsptr[location]++;
-                }
-            }
-        );
-
-        for(int k = 0; k < numThreads; k++){
-            for(int l = 0; l < numLocations; l++){
-                hitsPerLocation[l] += hitsPerLocationPerThread[threadlocoffset * k + l];
-            }
-        }
-
-        // if(hitsPerLocation[0] < hitsPerLocation[1]){
-        //     std::cerr << hitsPerLocation[0] << " " << hitsPerLocation[1] << "\n";
-        // }
-
-        #else 
-
-        for(Index_t i = 0; i < numIds; i++){
-            int location = getLocation(indices[i]);
-            hitsPerLocation[location]++;
-        }
-
-        #endif
-
-
-//TIMERSTOPCPU(countsHitPerLocation);
-
-        if(debug){
-            std::cerr << "hitsPerLocation: ";
-            std::copy(hitsPerLocation.begin(), hitsPerLocation.end(), std::ostream_iterator<Index_t>(std::cerr, " "));
-            std::cerr << "\n";
-        }
-
-        //shortcut. if all elements reside on the gpu with device id deviceId, perform a simple gather on the gpu, avoiding copies to host and from host.
-        bool simpleGatherOnSameDevice = true;
-
-        if(deviceIdLocation != -1){
-            for(int i = 0; i < numLocations && simpleGatherOnSameDevice; i++){
-                if(i != deviceIdLocation && hitsPerLocation[i] > 0){
-                    simpleGatherOnSameDevice = false;
-                }
-            }
-        }
-
-        if(simpleGatherOnSameDevice){
-            if(debug) std::cerr << "simpleGatherOnSameDevice " << resultDeviceId << '\n';
-            copyDataToGpuBufferAsync(d_result, resultPitch, resultDeviceId, d_indices, numIds, resultDeviceId, stream, -elementsPerLocationPS[deviceIdLocation]);
-            return;
-        }
-
-//TIMERSTARTCPU(makenewindices);
-    	std::vector<Index_t> hitsPerLocationPrefixSum(numLocations+1,0);
-    	std::partial_sum(hitsPerLocation.begin(), hitsPerLocation.end(), hitsPerLocationPrefixSum.begin()+1);
-        std::fill(hitsPerLocation.begin(), hitsPerLocation.end(), 0);
-
-        handle->pinnedLocalIndices.resize(numIds);
-        handle->pinnedPermutationIndices.resize(numIds);
-        for(Index_t i = 0; i < numIds; i++){
-    		const int location = locationsOfIndices[i]; //getLocation(indices[i]);
-            const Index_t localIndex = localIndices[i]; //indices[i] - elementsPerLocationPS[location];
-            const Index_t tmpresultindex = hitsPerLocationPrefixSum[location] + hitsPerLocation[location];
-            handle->pinnedPermutationIndices[i] = tmpresultindex;
-
-            handle->pinnedLocalIndices[tmpresultindex] = localIndex;
-            //std::cerr << "read id " << readIds[i] << ", location " << location << ", localReadId " << localReadId << ", index " << index << "\n";
-    		hitsPerLocation[location]++;
-    	}
-//TIMERSTOPCPU(makenewindices);
-
-//TIMERSTARTCPU(resizedevicevectors)
-        handle->pinnedResultData.resize(numIds * numColumns);
-
-        wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-        handle->tmpResultsOfDevice[resultDeviceId].resize(numIds * numColumns);
-
-        handle->permutationIndicesOfDevice[resultDeviceId].resize(numIds);
-
-        cudaMemcpyAsync(handle->permutationIndicesOfDevice[resultDeviceId],
-                        handle->pinnedPermutationIndices.get(),
-                        sizeof(Index_t) * numIds,
-                        H2D,
-                        stream); CUERR;
-
-        if(debug) cudaDeviceSynchronize(); CUERR;
-
-//TIMERSTOPCPU(resizedevicevectors);
-
-        //gather from gpus to host
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            Index_t numHits = hitsPerLocation[gpu];
-            if(numHits > 0){
-                int mydeviceId = deviceIds[gpu];
-                cudaStream_t mystream = handle->streamsPerGpu[gpu];
-                cudaEvent_t myevent = handle->eventsPerGpu[gpu];
-             
-                wrapperCudaSetDevice(mydeviceId); CUERR;
-
-                Value_t* destptr = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
-
-                Value_t* localGatherPtr = nullptr;
-                cudaStream_t localGatherStream = cudaStream_t(0);
-
-                if(resultDeviceId == mydeviceId){
-                    localGatherPtr = destptr;
-                    localGatherStream = stream;
-                }else{
-                    handle->dataPerGpu[gpu].resize(numHits * numColumns);
-                    localGatherPtr = handle->dataPerGpu[gpu].get();
-                    localGatherStream = mystream;
-                }
-                
-                auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
-
-                myLocalIds.resize(numHits);
-                Index_t* localIdsPtr = myLocalIds.get();
-                cudaMemcpyAsync(localIdsPtr,
-                                handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
-                                sizeof(Index_t) * numHits,
-                                H2D,
-                                localGatherStream); CUERR;
-
-                if(debug) cudaDeviceSynchronize(); CUERR;
-
-                //local gather on device mydeviceId
-                copyDataToGpuBufferAsync(localGatherPtr, sizeOfElement, mydeviceId, localIdsPtr, numHits, mydeviceId, localGatherStream, 0);
-
-                if(debug) cudaDeviceSynchronize(); CUERR;
-
-                //send partial results to destination gpu
-                if(resultDeviceId != mydeviceId){
-                    cudaEventRecord(myevent, mystream); CUERR;
-                    wrapperCudaSetDevice(resultDeviceId); CUERR;
-                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
-                    
-                    cudaMemcpyPeerAsync(destptr,
-                                        resultDeviceId,
-                                        localGatherPtr,
-                                        mydeviceId,
-                                        sizeOfElement * numHits,
-                                        stream); CUERR;
-
-                    if(debug){ cudaDeviceSynchronize(); CUERR;}
-                }                       
-            }
-    	}
-
-        //gather from host to host
-        if(hitsPerLocation[hostLocation] > 0){
-            const Index_t numHits = hitsPerLocation[hostLocation];
-            const auto hitsOffset = hitsPerLocationPrefixSum[hostLocation];
-            const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsOffset;            
-
-            forLoop(
-                Index_t(0), 
-                numHits, 
-                [&](Index_t begin, Index_t end, int threadId){
-                    for(Index_t k = begin; k < end; k++){
-                        const Index_t localId = hostLocalIds[k];
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                        Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                }
-            );
-        }
-
-        wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-        cudaMemcpyAsync(offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[hostLocation]),
-                        offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[hostLocation]),
-                        hitsPerLocation[hostLocation] * sizeOfElement,
-                        H2D,
-                        stream); CUERR;
-
-        if(debug) cudaDeviceSynchronize(); CUERR;
-
-        {
-            assert(resultPitch % sizeof(Value_t) == 0);
-
-            size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-            size_t numCols = numColumns;
-            const Index_t* indices = handle->permutationIndicesOfDevice[resultDeviceId].get();
-            const Value_t* src = handle->tmpResultsOfDevice[resultDeviceId].get();
-            Value_t* dest = d_result;
-            Index_t n = numIds;
-
-            dim3 block(256,1,1);
-            dim3 grid(std::min(320ul, SDIV(n * numCols, block.x)),1,1);
-
-            generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-                for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < n * numCols; i += size_t(blockDim.x) * gridDim.x){
-                    const Index_t outputrow = i / numCols;
-                    const Index_t inputrow = indices[outputrow];
-                    const Index_t col = i % numCols;
-                    dest[size_t(outputrow) * resultPitchValueTs + col] = src[size_t(inputrow) * numCols + col];
-                }
-            }); CUERR;
-
-        }
-
-        if(debug) cudaDeviceSynchronize(); CUERR;
-
-        // cudaStreamSynchronize(stream); CUERR;
-        
-        // std::cerr << "permutationIndices: ";
-        // std::copy(handle->pinnedPermutationIndices.get(), handle->pinnedPermutationIndices.get() + numIds, std::ostream_iterator<int>(std::cerr, " "));
-        // std::cerr << "\n";
-        
-        // // std::vector<int> hostResultPermuted(numIds);
-        // // for(int i = 0; i < numIds; i++){
-        // //     hostResultPermuted[i] = handle->pinnedResultData[permutationIndices[i]];
-        // // }
-        
-        // std::cerr << "pinnedLocalIndices: ";
-        // std::copy(handle->pinnedLocalIndices.get(), handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum.back(), std::ostream_iterator<int>(std::cerr, " "));
-        // std::cerr << "\n";
-        
-        // // std::cerr << "pinnedResultData: ";
-        // // std::copy(handle->pinnedResultData.get(), handle->pinnedResultData.get() + hitsPerLocationPrefixSum.back(), std::ostream_iterator<int>(std::cerr, " "));
-        // // std::cerr << "\n";
-        
-        // // std::cerr << "permutedResultData: ";
-        // // std::copy(hostResultPermuted.begin(), hostResultPermuted.end(), std::ostream_iterator<int>(std::cerr, " "));
-        // // std::cerr << "\n";
-
-        // std::exit(0);
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
-
-
-
-
-
-
-
-
-
-
-    struct GatherHandleStruct2{
-        using PositionIndexPair = typename cub::ArgIndexInputIterator<Index_t*>::value_type;
-        SimpleAllocationPinnedHost<Value_t> pinnedResultData;
-        SimpleAllocationPinnedHost<PositionIndexPair> pinnedPositionIndexPairsForLocation;
-        SimpleAllocationPinnedHost<Index_t> pinnedNumIndicesForHost;
-        SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostIndices;
-
-        std::vector<Index_t> indicesForHost;
-
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_destinationPositionsOfHostIndices;
-
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_elementsPerLocationPS;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocation;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocationPS;
-        std::map<int, SimpleAllocationDevice<PositionIndexPair>> map_d_positionIndexPairsForLocation;    
-        std::map<int, SimpleAllocationDevice<Value_t>> map_d_gatheredElementsForLocation;
-        std::map<int, cudaStream_t> map_cudastreams;
-        std::map<int, cudaEvent_t> map_cudaevents;
-        std::map<int, cudaEvent_t> map_cudaeventsForHostComm;
-
-        std::vector<int> registeredDeviceIds;
-
-        //cudaEvent_t readyEvent;
-        care::ThreadPool::ParallelForHandle pforHandle;
-    };
-
-    using GatherHandle2 = std::unique_ptr<GatherHandleStruct2>;
-
-    GatherHandle2 makeGatherHandle2() const{
-        auto handle = std::make_unique<GatherHandleStruct2>();
-
-        handle->pinnedNumIndicesForHost.resize(1);
-
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            registerDeviceIdForHandle(handle, deviceIds[gpu]);
-        }
-
-        return handle;
-    }
-
-    void destroyGatherHandle2(const GatherHandle2& handle) const{
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        handle->pinnedResultData.destroy();
-        handle->pinnedPositionIndexPairsForLocation.destroy();
-        handle->pinnedNumIndicesForHost.destroy();
-        handle->pinnedDestinationPositionsOfHostIndices.destroy();
-
-        for(int deviceId : handle->registeredDeviceIds){
-            wrapperCudaSetDevice(deviceId); CUERR;
-
-            handle->map_d_elementsPerLocationPS[deviceId].destroy();
-            handle->map_d_numIndicesPerLocation[deviceId].destroy();
-            handle->map_d_numIndicesPerLocationPS[deviceId].destroy();
-            handle->map_d_indicesForLocation[deviceId].destroy();
-            handle->map_d_gatheredElementsForLocation[deviceId].destroy();
-            handle->map_d_destinationPositionsOfHostIndices[deviceId].destroy();
-
-            cudaStreamDestroy(handle->map_cudastreams[deviceId]); CUERR;
-            cudaEventDestroy(handle->map_cudaevents[deviceId]); CUERR;
-            cudaEventDestroy(handle->map_cudaeventsForHostComm[deviceId]); CUERR;
-        }
-
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
-
-    void registerDeviceIdForHandle(GatherHandle2& handle, int deviceId){
-        using PositionIndexPair = typename cub::ArgIndexInputIterator<Index_t*>::value_type;
-
-        auto it = std::find(
-            handle->registeredDeviceIds.begin(), 
-            handle->registeredDeviceIds.end(), 
-            deviceId
-        );
-
-        if(it == handle->registeredDeviceIds.end()){
-            int oldId = 0;
-            cudaGetDevice(&oldId); CUERR;
-            wrapperCudaSetDevice(deviceId); CUERR;
-
-            SimpleAllocationDevice<Index_t> d_ps(numLocations+1);
-            cudaMemcpy(
-                d_ps.get(),
-                elementsPerLocationPS.data(),
-                sizeof(Index_t) * (numLocations+1),
-                H2D
-            ); CUERR;  
-
-            handle->map_d_elementsPerLocationPS[deviceId] = std::move(d_ps);
-
-            SimpleAllocationDevice<Index_t> d_iPerL(numLocations);
-            handle->map_d_numIndicesPerLocation[deviceId] = std::move(d_iPerL);
-
-            SimpleAllocationDevice<Index_t> d_iPerLPS(numLocations+1);
-            handle->map_d_numIndicesPerLocationPS[deviceId] = std::move(d_iPerLPS);
-
-            SimpleAllocationDevice<PositionIndexPair> d_posIndexPairsForLocation(numLocations);
-            handle->map_d_positionIndexPairsForLocation[deviceId] = std::move(d_posIndexPairsForLocation);
-
-            SimpleAllocationDevice<Value_t> d_gatheredElements;
-            handle->map_d_gatheredElementsForLocation[deviceId] = std::move(d_gatheredElements);
-
-            SimpleAllocationDevice<Index_t> d_destpos;
-            handle->map_d_destinationPositionsOfHostIndices[deviceId] = std::move(d_destpos);
-                    
-            cudaStream_t stream;
-            cudaStreamCreate(&stream); CUERR;
-            handle->map_cudastreams[deviceId] = std::move(stream);
-
-            cudaEvent_t event;
-            cudaEventCreateWithFlags(&event, cudaEventDisableTiming); CUERR;
-            handle->map_cudaevents[deviceId] = std::move(event);
-            
-            cudaEvent_t event2;
-            cudaEventCreateWithFlags(&event2, cudaEventDisableTiming); CUERR;
-            handle->map_cudaeventsForHostComm[deviceId] = std::move(event2);            
-
-            handle->registeredDeviceIds.push_back(deviceId);
-
-            wrapperCudaSetDevice(oldId); CUERR;
-        }
-    }
-
-
-    //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
-    template<class ParallelFor>
-    void gatherElementsInGpuMemAsync2(ParallelFor&& forLoop,
-                                    GatherHandle2& handle,
-                                    const Index_t* indices,
-                                    const Index_t* d_indices,
-                                    Index_t numIds,
-                                    int resultDeviceId,
-                                    Value_t* d_result,
-                                    size_t resultPitch, // result element i begins at offset i * resultPitch
-                                    cudaStream_t syncstream //must be on device resutlDeviceId
-                                    ) const{
-        if(numIds == 0) return;
-
-        using PositionIndexPair = typename cub::ArgIndexInputIterator<Index_t*>::value_type;
-
-        assert(resultPitch % sizeof(Value_t) == 0);
-
-        //const int numCpuThreads = care::threadpool.getConcurrency();
-
-        //fastpath, if all elements of distributed array reside in a single partition
-        if(singlePartitionInfo.isSinglePartition){
-            if(singlePartitionInfo.locationId == hostLocation){
-                if(debug) std::cerr << "single location array fasthpath on host\n";
-
-                auto& h_result = handle->pinnedResultData;
-                h_result.resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
-
-                auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                    for(Index_t k = begin; k < end; k++){
-                        const Index_t localId = indices[k];
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                        //Value_t* destPtr = offsetPtr(h_result.get(), k);
-                        Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + resultPitch * k);
-                        
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                };
-
-                forLoop( 
-                    Index_t(0), 
-                    numIds, 
-                    gather
-                );
-
-                int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-                wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-                cudaMemcpyAsync(d_result, h_result.get(), numIds * resultPitch, H2D, syncstream); CUERR;
-
-                wrapperCudaSetDevice(oldDevice); CUERR;
-
-                return;
-            }else{
-                //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
-
-                const int locationId = singlePartitionInfo.locationId;
-                const int mydeviceId = deviceIds[locationId];
-
-                if(mydeviceId == resultDeviceId){
-                    copyDataToGpuBufferAsync(
-                        d_result, 
-                        resultPitch, 
-                        mydeviceId, 
-                        d_indices, 
-                        numIds, 
-                        mydeviceId, 
-                        syncstream, 
-                        -elementsPerLocationPS[locationId]
-                    );
-
-                    return;
-                }               
-            }
-        }
-
-
-//TIMERSTARTCPU(countHitsPerLocation);
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
-        int deviceIdLocation = -1;
-        if(deviceIdIter != deviceIds.end()){
-            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
-        }else{
-            assert(false);
-        }
-
-        registerDeviceIdForHandle(handle, resultDeviceId);
-        
-
-        auto& d_destination_elementsPerLocationPS = handle->map_d_elementsPerLocationPS[resultDeviceId];
-        auto& d_destination_numIndicesPerLocation = handle->map_d_numIndicesPerLocation[resultDeviceId];
-        auto& d_destination_numIndicesPerLocationPS = handle->map_d_numIndicesPerLocationPS[resultDeviceId];
-        auto& d_destination_gatheredElementsForLocation = handle->map_d_gatheredElementsForLocation[resultDeviceId];
-        auto& d_destination_posIndexPairsForLocation = handle->map_d_positionIndexPairsForLocation[resultDeviceId];
-        auto& d_destination_cubTemp = handle->map_d_cubTemp[resultDeviceId];
-
-        auto& destination_cudaevent = handle->map_cudaevents[resultDeviceId];
-        auto& destination_stream = handle->map_cudastreams[resultDeviceId];
-
-        cudaEventRecord(destination_cudaevent, syncstream); CUERR;
-        cudaStreamWaitEvent(destination_stream, destination_cudaevent, 0); CUERR;
-
-        //find indices per location + prefixsum
-        {
-            int numLocs = numLocations;
-            auto* d_elementsPerLocationPSPtr = d_destination_elementsPerLocationPS.get();
-            auto* d_indicesPerLocationPtr = d_destination_numIndicesPerLocation.get();
-            auto* d_indicesPerLocationPSPtr = d_destination_numIndicesPerLocationPS.get();
-
-            cudaMemsetAsync(
-                d_indicesPerLocationPtr, 
-                0, 
-                sizeof(Index_t) * numIds, 
-                destination_stream
-            ); CUERR;
-
-            assert(maxNumGpus <= 32);
-            generic_kernel<<<SDIV(numIds, 256), 256, 0, destination_stream>>>([=] __device__ (){
-
-                __shared__ Index_t shared_elementsPerLocationPS[34]; //maxnumGpus + 2
-                __shared__ Index_t shared_numHitsPerLocation[33]; //maxnumGpus + 1
-
-                for(int tid = threadIdx.x; tid < numLocs; tid += blockDim.x){
-                    shared_numHitsPerLocation[tid] = 0;
-                }
-
-                for(int tid = threadIdx.x; tid < numLocs+1; tid += blockDim.x){
-                    shared_elementsPerLocationPS[tid] = d_elementsPerLocationPSPtr[tid];
-                }
-
-                __syncthreads();
-                
-                for(Index_t tid = threadIdx.x + blockIdx.x * Index_t(blockDim.x); 
-                        tid < numIds; 
-                        tid += Index_t(blockDim.x) * gridDim.x){
-
-                    Index_t element = d_indices[tid];
-
-                    for(int i = 0; i < numLocs; i++){
-                        if(shared_elementsPerLocationPS[i] <= element && element < shared_elementsPerLocationPS[i+1]){
-                            atomicAdd(shared_numHitsPerLocation + i, 1);
-                        }
-                    }
-                }
-
-                __syncthreads();
-
-                for(int tid = threadIdx.x; tid < numLocs; tid += blockDim.x){
-                    atomicAdd(d_indicesPerLocationPtr + tid, shared_numHitsPerLocation[tid]);
-                }
-                
-            }); CUERR;
-
-            generic_kernel<<<1,1, 0, destination_stream>>>([=]__device__(){
-                d_indicesPerLocationPSPtr[0] = 0;
-                
-                for(int i = 0; i < numLocs; i++){
-                    d_indicesPerLocationPSPtr[i+1] = d_indicesPerLocationPSPtr[i] + d_indicesPerLocationPtr[i];
-                }
-            }); CUERR;
-
-            cudaEventRecord(destination_cudaevent, destination_stream); CUERR;
-        }
-
-        //if host memory is used by distributed array, calculate the respective indices on destination gpu,
-        //then async copy indices to host.
-        // if(elementsPerLocation[hostLocation] > 0){
-        //     cudaMemcpyAsync(
-        //         handle->pinnedNumIndicesForHost.get(),
-        //         d_destination_numIndicesPerLocation.get() + hostLocation,
-        //         sizeof(Index_t),
-        //         destination_stream,
-        //         D2H
-        //     ); CUERR;
-
-        //     handle->pinnedPositionIndexPairsForLocation.resize(numIds);
-        //     d_destination_posIndexPairsForLocation.resize(numIds);
-
-        //     size_t cubBytes = 0;
-        //     //determine temp bytes
-        //     cub::DeviceSelect::If(
-        //         nullptr, 
-        //         cubBytes, 
-        //         cub::ArgIndexInputIterator<Index_t*>(d_indices), 
-        //         d_destination_posIndexPairsForLocation.get(), 
-        //         cub::DiscardOutputIterator<>{}, //calculated in d_destination_indicesPerLocation[gpu]
-        //         numIds, 
-        //         [=] __device__ (auto pair){
-        //             //pair.key == position, pair.value == d_indices[pair.key]
-        //             return d_destination_elementsPerLocationPS[hostLocation] <= pair.value 
-        //                     && pair.value < d_destination_elementsPerLocationPS[hostLocation+1];
-        //         },
-        //         destination_stream
-        //     );
-
-        //     d_destination_cubTemp.resize(cubBytes);
-
-        //     //select indices for host
-        //     cub::DeviceSelect::If(
-        //         d_destination_cubTemp.get(), 
-        //         cubBytes, 
-        //         cub::ArgIndexInputIterator<Index_t*>(d_indices), 
-        //         d_destination_posIndexPairsForLocation.get(), 
-        //         cub::DiscardOutputIterator<>{}, //calculated in d_destination_indicesPerLocation[gpu]
-        //         numIds, 
-        //         [=] __device__ (auto pair){
-        //             //pair.key == position, pair.value == d_indices[pair.key]
-        //             return d_destination_elementsPerLocationPS[hostLocation] <= pair.value 
-        //                     && pair.value < d_destination_elementsPerLocationPS[hostLocation+1];
-        //         },
-        //         destination_stream
-        //     );
-
-        //     cudaMemcpyAsync(
-        //         handle->pinnedPositionIndexPairsForLocation.get(),
-        //         d_destination_posIndexPairsForLocation.get(),
-        //         d_destination_posIndexPairsForLocation.sizeInBytes(),
-        //         destination_stream,
-        //         D2H
-        //     ); CUERR;
-
-        //     cudaEventRecord(handle->map_cudaeventsForHostComm[resultDeviceId], destination_stream); CUERR;
-        // }
-
-        //gather elements locally on the respective partitions, copy to result device. scatter to correct positions
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            const int location = gpu;
-            if(elementsPerLocation[location] > 0){
-                const int gpu_deviceId = deviceIds[gpu];
-
-                wrapperCudaSetDevice(gpu_deviceId); CUERR;
-
-                auto& gpu_cudaevent = handle->map_cudaevents[gpu_deviceId];
-                auto& gpu_stream = handle->map_cudastreams[gpu_deviceId];
-
-                auto& gpu_elementsPerLocationPS = handle->map_d_elementsPerLocationPS[gpu_deviceId];
-                auto& gpu_gatheredElementsForLocation = handle->map_d_gatheredElementsForLocation[gpu_deviceId];
-                auto& gpu_posIndexPairsForLocation = handle->map_d_positionIndexPairsForLocation[gpu_deviceId];
-                auto& gpu_numIndicesPerLocation = handle->map_d_numIndicesPerLocation[gpu_deviceId];
-                auto& gpu_numIndicesPerLocationPS = handle->map_d_numIndicesPerLocationPS[gpu_deviceId];
-                auto& gpu_cubTemp = handle->map_d_cubTemp[gpu_deviceId];
-
-                auto* d_destination_elementsPerLocationPSPtr = d_destination_elementsPerLocationPS.get();
-
-                //wait for counting and prefixsum
-                cudaStreamWaitEvent(gpu_stream, destination_cudaevent, 0); CUERR;
-
-                //copy num indices per location + prefixsum to gpu, since it is accessed multiple times
-                cudaMemcpyPeerAsync(
-                    gpu_numIndicesPerLocation.get(),
-                    gpu_deviceId,
-                    d_destination_numIndicesPerLocation.get(),
-                    resultDeviceId,
-                    d_destination_numIndicesPerLocation.sizeInBytes(),
-                    gpu_stream
-                ); CUERR;
-
-                cudaMemcpyPeerAsync(
-                    gpu_numIndicesPerLocationPS.get(),
-                    gpu_deviceId,
-                    d_destination_numIndicesPerLocationPS.get(),
-                    resultDeviceId,
-                    d_destination_numIndicesPerLocationPS.sizeInBytes(),
-                    gpu_stream
-                ); CUERR;
-
-                gpu_posIndexPairsForLocation.resize(numIds);
-
-                size_t cubBytes = 0;
-                //determine temp bytes
-                cub::DeviceSelect::If(
-                    nullptr, 
-                    cubBytes, 
-                    cub::ArgIndexInputIterator<Index_t*>(d_indices), 
-                    gpu_posIndexPairsForLocation.get(), 
-                    cub::DiscardOutputIterator<>{}, //calculated in d_destination_indicesPerLocation[gpu]
-                    numIds, 
-                    [=] __device__ (auto pair){
-                        //pair.key == position, pair.value == d_indices[pair.key]
-                        return d_destination_elementsPerLocationPSPtr[location] <= pair.value 
-                                && pair.value < d_destination_elementsPerLocationPSPtr[location+1];
-                    },
-                    gpu_stream
-                );
-
-                gpu_cubTemp.resize(cubBytes);
-
-                //select indices for current gpu
-                cub::DeviceSelect::If(
-                    gpu_cubTemp.get(), 
-                    cubBytes, 
-                    cub::ArgIndexInputIterator<Index_t*>(d_indices), 
-                    gpu_posIndexPairsForLocation.get(), 
-                    cub::DiscardOutputIterator<>{}, //calculated in d_destination_indicesPerLocation[gpu]
-                    numIds, 
-                    [=] __device__ (auto pair){
-                        //pair.key == position, pair.value == d_indices[pair.key]
-                        return d_destination_elementsPerLocationPSPtr[location] <= pair.value 
-                                && pair.value < d_destination_elementsPerLocationPSPtr[location+1];
-                    },
-                    gpu_stream
-                );
-
-                //gather elements of selected indices
-                {
-                    //allocate upper bound. number of elements for location is not available on host
-                    gpu_gatheredElementsForLocation.resize(numColumns * numIds); 
-
-                    const size_t numCols = numColumns;
-                    const size_t resultPitchValueTs = numColumns;
-                    Value_t* const outputBasePtr = gpu_gatheredElementsForLocation.get();
-                    const Value_t* const sourceArrayDataPtr = dataPtrPerLocation[gpu];
-                    const Index_t* const outputOffsetPtr = gpu_numIndicesPerLocationPS.get() + gpu;
-                    const PositionIndexPair* const myposIndexPairsPtr = gpu_posIndexPairsForLocation.get();
-                    const Index_t* const myNumIndicesPtr = gpu_numIndicesPerLocation.get() + gpu;
-                    const Index_t* const indexOffsetPtr = gpu_elementsPerLocationPS.get() + gpu;
-
-                    generic_kernel<<<SDIV(numIds, 128), 128, 0, gpu_stream>>>(
-                        [=] __device__ (){
-
-                            const Index_t nIndices = *myNumIndicesPtr;
-                            const Index_t indexOffset = *indexOffsetPtr;
-                            const Index_t outputOffset = *outputOffsetPtr;
-                            Value_t* const outputPtr = outputBasePtr + size_t(outputOffset) * numCols;
-
-                            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                    i < nIndices * numCols; 
-                                    i += size_t(blockDim.x) * gridDim.x){
-
-                                const Index_t outputrow = i / numCols;
-                                const Index_t inputrow = myposIndexPairsPtr[outputrow].value - indexOffset;
-                                const Index_t col = i % numCols;
-                                outputPtr[size_t(outputrow) * resultPitchValueTs + col] 
-                                        = sourceArrayDataPtr[size_t(inputrow) * numCols + col];
-                            }
-                        }
-                    ); CUERR;
-                }
-
-                //copy gathered data to target gpu
-                if(resultDeviceId != gpu_deviceId){
-                    
-                    const size_t numCols = numColumns;
-                    Value_t* const outputBasePtr = d_destination_gatheredElementsForLocation.get();
-                    const Value_t* const inputPtr = gpu_gatheredElementsForLocation[gpu];
-                    const Index_t* const outputOffsetPtr = gpu_numIndicesPerLocationPS.get() + gpu;
-                    const Index_t* const myNumIndicesPtr = gpu_numIndicesPerLocation.get() + gpu;
-
-                    generic_kernel<<<SDIV(numIds, 256), 256, 0, gpu_stream>>>(
-                        [=] __device__ (){
-
-                            const Index_t nIndices = *myNumIndicesPtr;
-                            const Index_t outputOffset = *outputOffsetPtr;
-                            Value_t* const outputPtr = outputBasePtr + size_t(outputOffset) * numCols;
-
-                            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                    i < nIndices * numCols; 
-                                    i += size_t(blockDim.x) * gridDim.x){
-
-                                outputPtr[i] = inputPtr[i];
-                            }
-                        }
-                    ); CUERR;
-                }
-
-                if(debug){ cudaDeviceSynchronize(); CUERR;}
-
-                cudaEventRecord(gpu_cudaevent, gpu_stream); CUERR;
-                
-                wrapperCudaSetDevice(gpu_deviceId); CUERR;
-                cudaStreamWaitEvent(destination_stream, gpu_cudaevent, 0); CUERR;
-
-                //on resultgpu scatter the copied data to the correct positions in final output array
-                {
-                    assert(resultPitch % sizeof(Value_t) == 0);
-
-                    size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-                    size_t numCols = numColumns;
-
-                    const Value_t* const inputBasePtr = d_destination_gatheredElementsForLocation.get();
-                    const Index_t* const inputOffsetPtr = d_destination_numIndicesPerLocationPS.get() + gpu;
-
-                    Value_t* dest = d_result;
-                    const Index_t* const myNumIndicesPtr = d_destination_numIndicesPerLocation.get() + gpu;
-                    //peer access
-                    const PositionIndexPair* const myposIndexPairsPtr = gpu_posIndexPairsForLocation.get();
-
-                    dim3 block(256,1,1);
-                    dim3 grid(std::min(320ul, SDIV(numIds * numCols, block.x)),1,1);
-
-                    generic_kernel<<<grid, block, 0, destination_stream>>>([=] __device__ (){
-                        const Index_t nIndices = *myNumIndicesPtr;
-
-                        const Value_t* const src = inputBasePtr + *inputOffsetPtr;
-
-                        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                i < nIndices * numCols; 
-                                i += size_t(blockDim.x) * gridDim.x){
-
-                            const Index_t inputRow = i / numCols;
-                            const Index_t col = i % numCols;
-                            const Index_t outputRow = myposIndexPairsPtr[inputRow].key;
-                            
-                            dest[size_t(outputRow) * resultPitchValueTs + col] 
-                                = src[size_t(inputRow) * numCols + col];
-                        }
-                    }); CUERR;
-                }
-
-            }else{
-                //do nothing
-            }
-        }
-
-        //handle data from host
-        handle->indicesForHost.resize(numIds);
-        handle->pinnedDestinationPositionsOfHostIndices.resize(numIds);
-
-        std::size_t numIndicesNotForHost = 0;
-        std::size_t numHostIndices = 0;
-
-        for(Index_t i = 0; i < numIds; i++){
-            const Index_t index = indices[i];
-            if(index >= elementsPerLocationPS[hostLocation]){
-                handle->indicesForHost[numHostIndices] = index;
-                handle->pinnedDestinationPositionsOfHostIndices[numHostIndices] = i;
-                numHostIndices++;
-            }else{
-                numIndicesNotForHost++;
-            }
-        }
-
-        //const std::size_t numHostIndices = std::distance(handle->indicesForHost.begin(), indicesForHostEnd);
-
-        wrapperCudaSetDevice(resultDeviceId);
-
-        if(numHostIndices > 0){
-            cudaMemcpyAsync(
-                handle->map_d_destinationPositionsOfHostIndices[resultDeviceId].get(),
-                handle->pinnedDestinationPositionsOfHostIndices.get(),
-                sizeof(Index_t) * numHostIndices,
-                H2D,
-                syncstream
-            ); CUERR;            
-
-            forLoop(
-                std::size_t(0), 
-                numHostIndices, 
-                [&](std::size_t begin, std::size_t end, int threadId){
-                    const std::size_t indexoffset = elementsPerLocationPS[hostLocation];
-                    
-                    for(std::size_t k = begin; k < end; k++){
-                        const std::size_t localId = handle->indicesForHost[k] - indexoffset;
-
-                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-
-                        Value_t* destPtr = handle->pinnedResultData.get() + std::size_t(numColumns) * k;
-                        std::copy_n(srcPtr, numColumns, destPtr);
-                    }
-                }
-            );
-
-            cudaMemcpyAsync(
-                d_destination_gatheredElementsForLocation.get() + numColumns * numIndicesNotForHost,
-                handle->pinnedResultData.get(),
-                sizeof(Value_t) * numColumns * numHostIndices,
-                H2D,
-                syncstream
-            ); CUERR;
-
-            //on resultgpu scatter the copied data to the correct positions in final output array
-            {
-                assert(resultPitch % sizeof(Value_t) == 0);
-
-                size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-                size_t numCols = numColumns;
-
-                const Value_t* const inputBasePtr = d_destination_gatheredElementsForLocation.get();
-                const Index_t* const inputOffsetPtr = d_destination_numIndicesPerLocationPS.get() + hostLocation;
-
-                Value_t* dest = d_result;
-                const Index_t* const myNumIndicesPtr = d_destination_numIndicesPerLocation.get() + hostLocation;
-
-                const Index_t* const destPositionsPtr = handle->map_d_destinationPositionsOfHostIndices[resultDeviceId].get();
-
-                dim3 block(256,1,1);
-                dim3 grid(std::min(320ul, SDIV(numIds * numCols, block.x)),1,1);
-
-                generic_kernel<<<grid, block, 0, syncstream>>>([=] __device__ (){
-                    const Index_t nIndices = *myNumIndicesPtr;
-
-                    const Value_t* const src = inputBasePtr + *inputOffsetPtr;
-
-                    for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                            i < nIndices * numCols; 
-                            i += size_t(blockDim.x) * gridDim.x){
-
-                        const Index_t inputRow = i / numCols;
-                        const Index_t col = i % numCols;
-                        const Index_t outputRow = destPositionsPtr[inputRow];
-                        
-                        dest[size_t(outputRow) * resultPitchValueTs + col] 
-                            = src[size_t(inputRow) * numCols + col];
-                    }
-                }); CUERR;
-            }
-        }
-
-        // //scan host input indices for any host index
-        // bool anyHostIndex = std::any_of(
-        //     indices, 
-        //     indices + numIds, 
-        //     [](auto index){
-        //         return index >= elementsPerLocationPS[hostLocation];
-        //     }
-        // );
-
-        // if(anyHostIndex){
-        //     //calculate indices for host, on host. stop if indices for host which were calculated on the gpu
-        //     //finished transfering to host.
-
-        //     if(cudaEventNotReady == cudaEventQuery(handle->map_cudaeventsForHostComm[resultDeviceId])){
-
-        //     }
-
-
-        // }
-
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
 
 
 
@@ -3556,7 +3333,7 @@ public:
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
 
         wrapperCudaSetDevice(resultDevice); CUERR;
-
+        assert(nIndices != 0);
         dim3 block(256,1,1);
         dim3 grid(std::min(320ul, SDIV(nIndices * numCols, block.x)),1,1);
 
@@ -3575,56 +3352,6 @@ public:
             gpuData,
             d_indices,
             nIndices,
-            indexOffset,
-            resultPitchValueTs,
-            numCols
-        ); CUERR;
-
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
-        // d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. d_indices[i] + indexOffset. 
-    // Gathers array elements of sourceDevice to resultDevice
-    // if resultDevice != sourceDevice, peer access must be enabled
-    void copyDataToGpuBufferAsync2(
-                Value_t* d_result, size_t resultPitch, int resultDevice, const Index_t* d_indices, const Index_t* d_numIndicesPtr,
-                Index_t maxNumIndices, int sourceDevice, cudaStream_t stream, Index_t indexOffset) const{
-
-        //assert(resultPitch >= sizeOfElement);
-        assert(resultPitch % sizeof(Value_t) == 0);
-
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-        auto it = std::find(deviceIds.begin(), deviceIds.end(), sourceDevice);
-        assert(it != deviceIds.end());
-
-        const int gpu = std::distance(deviceIds.begin(), it);
-        //size_t sizeOfElement_ = sizeOfElement;
-        const size_t numCols = numColumns;
-        const size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-
-        const Value_t* const gpuData = dataPtrPerLocation[gpu];
-
-        wrapperCudaSetDevice(resultDevice); CUERR;
-
-        dim3 block(256,1,1);
-        dim3 grid(std::min(320ul, SDIV(maxNumIndices * numCols, block.x)),1,1);
-
-        // generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-        //     for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-        //         const Index_t outputrow = i / numCols;
-        //         const Index_t inputrow = d_indices[outputrow] + indexOffset;
-        //         const Index_t col = i % numCols;
-        //         d_result[size_t(outputrow) * resultPitchValueTs + col] 
-        //                 = gpuData[size_t(inputrow) * numCols + col];
-        //     }
-        // }); CUERR;
-
-        distrArrayGatherKernel2<<<grid, block, 0, stream>>>(
-            d_result,
-            gpuData,
-            d_indices,
-            d_numIndicesPtr,
             indexOffset,
             resultPitchValueTs,
             numCols

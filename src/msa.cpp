@@ -638,7 +638,7 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     if(nCandidates == 0){
         //cannot be corrected without candidates
 
-        CorrectionResult result;
+        CorrectionResult result{};
         result.isCorrected = false;
         return result;
     }
@@ -661,7 +661,7 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     const float min_support = msaProperties.min_support;
     const float min_coverage = msaProperties.min_coverage;
 
-    CorrectionResult result;
+    CorrectionResult result{};
     result.isCorrected = false;
     result.correctedSequence.resize(nColumns);
     result.uncorrectedPositionsNoConsensus.reserve(nColumns);
@@ -738,9 +738,9 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
                                     float m_coverage,
                                     int new_columns_to_correct){
 
-    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+    // const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+    // const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+    // const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
     std::vector<CorrectedCandidate> result;
     result.reserve(nCandidates);
