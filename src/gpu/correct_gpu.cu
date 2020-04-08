@@ -75,9 +75,6 @@ constexpr int max_num_minimizations = 5;
 #define USE_CUDA_GRAPH
 
 
-#define LIMIT_MAX_CANDIDATES
-constexpr int batchsizeCandidates = 200000;
-
 namespace care{
 namespace gpu{
 
@@ -169,19 +166,19 @@ namespace gpu{
     constexpr int secondary_stream_index = 1;
     constexpr int nStreamsPerBatch = 2;
 
-    constexpr int alignments_finished_event_index = 0;
-    constexpr int quality_transfer_finished_event_index = 1;
-    constexpr int indices_transfer_finished_event_index = 2;
+    //constexpr int alignments_finished_event_index = 0;
+    //constexpr int quality_transfer_finished_event_index = 1;
+    //constexpr int indices_transfer_finished_event_index = 2;
     constexpr int correction_finished_event_index = 3;
     constexpr int result_transfer_finished_event_index = 4;
-    constexpr int msadata_transfer_finished_event_index = 5;
+    //constexpr int msadata_transfer_finished_event_index = 5;
     constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
-    constexpr int msa_build_finished_event_index = 7;
-    constexpr int indices_calculated_event_index = 8;
-    constexpr int num_indices_transfered_event_index = 9;
-    constexpr int secondary_stream_finished_event_index = 10;
-    constexpr int highqualityindices_event_index = 11;
-    constexpr int numTotalCorrectedCandidates_event_index = 12;
+    //constexpr int msa_build_finished_event_index = 7;
+    //constexpr int indices_calculated_event_index = 8;
+    //constexpr int num_indices_transfered_event_index = 9;
+    //constexpr int secondary_stream_finished_event_index = 10;
+    //constexpr int highqualityindices_event_index = 11;
+    //constexpr int numTotalCorrectedCandidates_event_index = 12;
     constexpr int nEventsPerBatch = 13;
 
     constexpr int doNotUseEditsValue = -1;
@@ -680,7 +677,6 @@ namespace gpu{
         cudaSetDevice(batch.deviceId); CUERR;
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         buildGraphViaCapture(batch);
 
@@ -973,9 +969,6 @@ namespace gpu{
             
             generic_kernel<<<1, 1, 0, nextData.stream>>>(
                 [=]__device__(){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-
                     const int numAnchors = *d_numAnchors; // leftover + new anchors
 
                     const int totalNumCandidates = d_candidates_per_subject_prefixsum[numAnchors];
@@ -993,32 +986,24 @@ namespace gpu{
                         const int index = thrust::distance(d_candidates_per_subject_prefixsum, iter) - 1;
     
                         const int newNumLeftoverAnchors = numAnchors - index;
-                        if(tid == 0){
-                            *d_numLeftoverAnchors = newNumLeftoverAnchors;
-                            *d_numAnchors = numAnchors - newNumLeftoverAnchors;
-                        }
+                        *d_numLeftoverAnchors = newNumLeftoverAnchors;
+                        *d_numAnchors = numAnchors - newNumLeftoverAnchors;
 
                         if(index < numAnchors){
 
                             const int newNumLeftoverCandidates = totalNumCandidates - d_candidates_per_subject_prefixsum[index];
                             
-                            if(tid == 0){
-                                *d_numLeftoverCandidates = newNumLeftoverCandidates;
-                                *d_numCandidates = totalNumCandidates - newNumLeftoverCandidates;
-                            }
+                            *d_numLeftoverCandidates = newNumLeftoverCandidates;
+                            *d_numCandidates = totalNumCandidates - newNumLeftoverCandidates;
                         }else{
-                            if(tid == 0){
-                                *d_numLeftoverCandidates = 0;
-                                *d_numCandidates = totalNumCandidates - 0;
-                            }
-                        }
-                    }else{
-                        if(tid == 0){
-                            *d_numLeftoverAnchors = 0;
                             *d_numLeftoverCandidates = 0;
-                            *d_numAnchors = numAnchors - 0;
                             *d_numCandidates = totalNumCandidates - 0;
                         }
+                    }else{
+                        *d_numLeftoverAnchors = 0;
+                        *d_numLeftoverCandidates = 0;
+                        *d_numAnchors = numAnchors - 0;
+                        *d_numCandidates = totalNumCandidates - 0;
                     }
                 }
             ); CUERR;
@@ -1271,10 +1256,7 @@ namespace gpu{
         const auto qualPitchBytes = batchData.qualityPitchInBytes;
 
         const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
-        
-        const auto n_subjects = batchData.n_subjects;
-        const auto n_queries = batchData.n_queries;
-        
+                
         //sequence input data
         //following arrays are initialized by next iteration data:
         //h_subject_sequences_data, h_subject_sequences_length
@@ -1613,8 +1595,6 @@ namespace gpu{
 
         const auto& transFuncData = *batch.transFuncData;
 
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-
         DataArrays& dataArrays = batch.dataArrays;
 
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
@@ -1759,18 +1739,11 @@ namespace gpu{
         const auto& transFuncData = *batch.transFuncData;
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         DataArrays& dataArrays = batch.dataArrays;
 
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
-
-		const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
-        //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
-
-        //std::cout << "msa_init" << std::endl;
-
 
         callBuildMSAKernel_async(
             dataArrays.d_msa_column_properties.get(),
@@ -1808,10 +1781,6 @@ namespace gpu{
             batch.kernelLaunchHandle
         );
 
-
-
-        //batch.dataArrays.copyEverythingToHostForDebugging();
-
         //At this point the msa is built
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -1828,15 +1797,10 @@ namespace gpu{
         const auto& transFuncData = *batch.transFuncData;
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         DataArrays& dataArrays = batch.dataArrays;
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
-        const auto maxCandidates = batch.numCandidatesLimit;
-        
-
-        const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
-        //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
+        const auto maxCandidates = batch.numCandidatesLimit;        
 
         /*bool* d_shouldBeKept = nullptr; //flag per candidate which shows whether the candidate should remain in the msa, or not.
 
@@ -2175,7 +2139,6 @@ namespace gpu{
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
-        const auto maxCandidates = batch.numCandidatesLimit;
 
 		const float avg_support_threshold = 1.0f-1.0f*transFuncData.correctionOptions.estimatedErrorrate;
 		const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
@@ -3146,7 +3109,7 @@ namespace gpu{
             
             auto& outputData = *outputDataPtr;
             auto& rawResults = outputData.rawResults;
-            const auto& transFuncData = *transFuncDataPtr;
+            //const auto& transFuncData = *transFuncDataPtr;
             const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
@@ -3219,7 +3182,6 @@ namespace gpu{
             auto& rawResults = outputData.rawResults;
             const auto& transFuncData = *transFuncDataPtr;
 
-            const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             const auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
 
             //std::cerr << "in unpackcandidates " << begin << " - " << end << "\n";
@@ -3478,9 +3440,6 @@ void correct_gpu(
       //std::mutex outputstreamlock;
 
       TransitionFunctionData transFuncData;
-
-      const int nParallelBatches = runtimeOptions.gpuParallelBatches;
-      const int batchsize = correctionOptions.batchsize;
 
       BackgroundThread outputThread;
 
