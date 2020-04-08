@@ -688,6 +688,7 @@ namespace gpu{
         cudaSetDevice(nextData.deviceId); CUERR;
 
         const size_t encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
+        const int numMinhashMaps = minhasher.getNumberOfMaps();
 
         nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
         nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
@@ -695,8 +696,8 @@ namespace gpu{
         nextData.reallocOccurred |= nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
         nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
-        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(maximum_number_of_maps * batchsize);
-        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(maximum_number_of_maps * batchsize);
+        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
+        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
 
         const int maxNumThreads = batchData.transFuncData->runtimeOptions.threads;
 
@@ -706,15 +707,14 @@ namespace gpu{
         std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
         std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
 
-        allRanges.resize(maximum_number_of_maps * batchsize);
+        allRanges.resize(numMinhashMaps * batchsize);
         idsPerChunk.resize(maxNumThreads, 0);   
         numAnchorsPerChunk.resize(maxNumThreads, 0);
         idsPerChunkPrefixSum.resize(maxNumThreads, 0);
         numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
 
-        const int resultsPerMap = 2.5f * batchData.transFuncData->correctionOptions.estimatedCoverage;
-            //minhasher.calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
-        const int maxNumIds = resultsPerMap * maximum_number_of_maps * batchsize;
+        const int resultsPerMap = calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
+        const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
 
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
@@ -799,7 +799,7 @@ namespace gpu{
 
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
-            maximum_number_of_maps,
+            numMinhashMaps,
             nextData.d_leftoverAnchorSequences.get() + numLeftoverAnchors * encodedSequencePitchInInts,
             encodedSequencePitchInInts,
             nextData.n_new_subjects,
@@ -831,8 +831,8 @@ namespace gpu{
 
             nvtx::push_range("queryPrecalculatedSignatures", 6);
             minhasherPtr->queryPrecalculatedSignatures(
-                nextData.h_minhashSignatures.get() + begin * maximum_number_of_maps,
-                allRanges.data() + begin * maximum_number_of_maps,
+                nextData.h_minhashSignatures.get() + begin * numMinhashMaps,
+                allRanges.data() + begin * numMinhashMaps,
                 &totalNumResults, 
                 numSequences
             );
@@ -875,11 +875,11 @@ namespace gpu{
                                                 + idsPerChunkPrefixSum[chunkId];
                 const size_t elementsInChunk = idsPerChunk[chunkId];
 
-                const auto ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * maximum_number_of_maps;
+                const auto ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * numMinhashMaps;
 
                 auto dest = hostdatabegin;
 
-                const int lmax = numAnchorsPerChunk[chunkId] * maximum_number_of_maps;
+                const int lmax = numAnchorsPerChunk[chunkId] * numMinhashMaps;
 
                 for(int k = 0; k < lmax; k++){
                     constexpr int nextprefetch = 2;
@@ -924,7 +924,7 @@ namespace gpu{
             nextData.d_candidates_per_subject_prefixsum.get() + numLeftoverAnchors,
             nextData.d_candidate_read_ids_tmp.get() + numLeftoverCandidates,
             allRanges.data(), 
-            maximum_number_of_maps * nextData.n_new_subjects, 
+            numMinhashMaps * nextData.n_new_subjects, 
             nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
             minhasherPtr->minparams.maps, 
             nextData.stream,
@@ -3193,9 +3193,13 @@ void correct_gpu(
         for(int deviceId : deviceIds){
             cudaDeviceProp deviceProperties;
             cudaGetDeviceProperties(&deviceProperties, deviceId); CUERR;
-            const int limit = deviceProperties.multiProcessorCount * deviceProperties.maxThreadsPerMultiProcessor;
-            numCandidatesLimitPerGpu[deviceId] = limit;
-            std::cerr << "Number of candidates per batch is limited to " << limit 
+            const int limitByThreads = deviceProperties.multiProcessorCount * deviceProperties.maxThreadsPerMultiProcessor;
+            const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+            //maximum number of candidates of 1 read. limit must be at least this number to ensure progress
+            const int minCandidates = resultsPerMap * minhasher.getNumberOfMaps();
+
+            numCandidatesLimitPerGpu[deviceId] = std::max(minCandidates, limitByThreads);
+            std::cerr << "Number of candidates per batch is limited to " << numCandidatesLimitPerGpu[deviceId] 
                 << " for device id " << deviceId << "\n";
         }
 
