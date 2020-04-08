@@ -965,7 +965,8 @@ namespace gpu{
 
     __global__
     void msa_update_properties_kernel(
-                MSAPointers d_msapointers,
+                MSAColumnProperties* __restrict__ msaColumnProperties,
+                const int* __restrict__ coverage,
                 const int* __restrict__ d_indices_per_subject,
                 size_t msa_weights_pitch,
                 int n_subjects,
@@ -976,7 +977,7 @@ namespace gpu{
             const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
-                MSAColumnProperties* const properties_ptr = d_msapointers.msaColumnProperties + subjectIndex;
+                MSAColumnProperties* const properties_ptr = msaColumnProperties + subjectIndex;
                 const int firstColumn_incl = properties_ptr->firstColumn_incl;
                 const int lastColumn_excl = properties_ptr->lastColumn_excl;
 
@@ -984,7 +985,7 @@ namespace gpu{
                 const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
 
                 if(num_indices_for_this_subject > 0){
-                    const int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_pitch_floats;
+                    const int* const my_coverage = coverage + subjectIndex * msa_weights_pitch_floats;
 
                     for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl-1; column += blockDim.x){
                         assert(my_coverage[column] >= 0);
@@ -2513,7 +2514,8 @@ namespace gpu{
     }
 
     void call_msa_update_properties_kernel_async(
-                    MSAPointers d_msapointers,
+                    MSAColumnProperties* d_msaColumnProperties,
+                    const int* d_coverage,
                     const int* d_indices_per_subject,
                     int n_subjects,
                     size_t msa_weights_pitch,
@@ -2559,11 +2561,14 @@ namespace gpu{
     	dim3 block(blocksize, 1, 1);
     	dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
 
-        msa_update_properties_kernel<<<grid, block, 0, stream>>>(d_msapointers,
-                                                                d_indices_per_subject,
-                                                                msa_weights_pitch,
-                                                                n_subjects,
-                                                                d_canExecute); CUERR;
+        msa_update_properties_kernel<<<grid, block, 0, stream>>>(
+            d_msaColumnProperties,
+            d_coverage,
+            d_indices_per_subject,
+            msa_weights_pitch,
+            n_subjects,
+            d_canExecute
+        ); CUERR;
 
 
 
