@@ -759,6 +759,10 @@ namespace gpu{
 
         nextData.h_numAnchors[0] = nextData.n_new_subjects + numLeftoverAnchors;
 
+        if(nextData.n_new_subjects == 0){
+            std::cerr << "0 new anchors, " << numLeftoverAnchors << " numLeftoverAnchors \n";
+        }
+
         if(nextData.n_subjects == 0){
             return;
         };
@@ -1204,11 +1208,17 @@ namespace gpu{
             nvtx::pop_range();
         };
 
+
+
 #if 0
         batchData.nextIterationData.syncFlag.setBusy();
         getDataForNextIteration();
         batchData.nextIterationData.syncFlag.wait();
         batchData.updateFromIterationData(batchData.nextIterationData); 
+
+        if(batchData.n_queries == 0){
+            return;
+        }
 
 #else
         if(batchData.isFirstIteration){
@@ -1221,7 +1231,15 @@ namespace gpu{
             batchData.nextIterationData.syncFlag.wait(); //wait until data is available
         }
 
-        batchData.updateFromIterationData(batchData.nextIterationData);        
+        if(batchptr->nextIterationData.n_queries == 0){
+            return;
+        }
+
+        batchData.updateFromIterationData(batchData.nextIterationData);    
+        
+        if(batchData.n_queries == 0){
+            return;
+        }
             
         batchData.nextIterationData.syncFlag.setBusy();
 
@@ -3580,7 +3598,7 @@ void correct_gpu(
             cudaGetDeviceProperties(&deviceProperties, deviceId); CUERR;
             const int limit = deviceProperties.multiProcessorCount * deviceProperties.maxThreadsPerMultiProcessor;
             numCandidatesLimitPerGpu[deviceId] = limit;
-            std::cerr << "Number of candidates per batch is limited to " << limit 
+            std::cerr << "Number of candidates per batch is limited to " << (limit)
                 << " for device id " << deviceId << "\n";
         }
 
@@ -3773,6 +3791,7 @@ void correct_gpu(
             poprange();
 
             if(batchData.n_queries == 0){
+                std::cerr << "batchData.n_queries == 0\n";
                 return;
             }
 
@@ -3989,13 +4008,17 @@ void correct_gpu(
                 bool isFirstIteration = true;
                 int batchIndex = 0;
 
+                std::array<bool, 2> batchIsFinished{false,false};
+
+                auto isBatchFinished = [](const auto& batch){
+                    return !batch.nextIterationData.syncFlag.isBusy()
+                        && batch.nextIterationData.n_subjects == 0
+                        && !batch.waitableOutputData.isBusy();
+                };
+
                 while(!(readIdGenerator.empty() 
-                        && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[0].nextIterationData.n_subjects == 0
-                        && !batchDataArray[0].waitableOutputData.isBusy()
-                        && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[1].nextIterationData.n_subjects == 0
-                        && !batchDataArray[1].waitableOutputData.isBusy())) {
+                        && isBatchFinished(batchDataArray[0])
+                        && isBatchFinished(batchDataArray[1]))) {
 
                     const int nextBatchIndex = 1 - batchIndex;
                     auto& currentBatchData = batchDataArray[batchIndex];
