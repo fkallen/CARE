@@ -1086,7 +1086,6 @@ namespace gpu{
         const int* d_subjectSequencesLength,
         const int* d_candidateSequencesLength,
         const int* d_candidates_per_subject_prefixsum,
-        const int* h_candidates_per_subject,
         const int* d_candidates_per_subject,
         const int* d_anchorIndicesOfCandidates,
         const int* d_numAnchors,
@@ -1227,7 +1226,6 @@ namespace gpu{
             const int* d_subjectSequencesLength,
             const int* d_candidateSequencesLength,
             const int* d_candidates_per_subject_prefixsum,
-            const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
             const int* d_anchorIndicesOfCandidates,
             const int* d_numAnchors,
@@ -1406,13 +1404,6 @@ namespace gpu{
         constexpr int blocksize = 128;
         constexpr int tilesPerBlock = blocksize / tilesize;
 
-        // int requiredTiles = 0;
-        // for(int i = 0; i < maxNumAnchors;i++){
-        //     requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
-        // }
-
-        // const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
-
         const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
         int max_blocks_per_device = 1;
@@ -1503,7 +1494,6 @@ namespace gpu{
             const int* d_subjectSequencesLength,
             const int* d_candidateSequencesLength,
             const int* d_candidates_per_subject_prefixsum,
-            const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
             const int* d_anchorIndicesOfCandidates,
             const int* d_numAnchors,
@@ -1533,7 +1523,6 @@ namespace gpu{
                     d_subjectSequencesLength, \
                     d_candidateSequencesLength, \
                     d_candidates_per_subject_prefixsum, \
-                    h_candidates_per_subject, \
                     d_candidates_per_subject, \
                     d_anchorIndicesOfCandidates, \
                     d_numAnchors, \
@@ -1607,7 +1596,6 @@ namespace gpu{
                         d_subjectSequencesLength,
                         d_candidateSequencesLength,
                         d_candidates_per_subject_prefixsum,
-                        h_candidates_per_subject,
                         d_candidates_per_subject,
                         d_anchorIndicesOfCandidates,
                         d_numAnchors,

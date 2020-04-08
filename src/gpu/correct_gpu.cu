@@ -231,7 +231,6 @@ namespace gpu{
         PinnedBuffer<int> h_subject_sequences_lengths;
         PinnedBuffer<read_number> h_subject_read_ids;
         PinnedBuffer<read_number> h_candidate_read_ids;
-        PinnedBuffer<int> h_candidates_per_subject;
 
         DeviceBuffer<unsigned int> d_subject_sequences_data;
         DeviceBuffer<int> d_subject_sequences_lengths;
@@ -438,8 +437,7 @@ namespace gpu{
             std::swap(dataArrays.h_subject_sequences_data, data.h_subject_sequences_data);
             std::swap(dataArrays.h_subject_sequences_lengths, data.h_subject_sequences_lengths);
             std::swap(dataArrays.h_subject_read_ids, data.h_subject_read_ids);
-            std::swap(dataArrays.h_candidate_read_ids, data.h_candidate_read_ids);
-            std::swap(dataArrays.h_candidates_per_subject, data.h_candidates_per_subject);           
+            std::swap(dataArrays.h_candidate_read_ids, data.h_candidate_read_ids);        
 
             std::swap(dataArrays.d_subject_sequences_data, data.d_subject_sequences_data);
             std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
@@ -574,7 +572,6 @@ namespace gpu{
         nextData.h_subject_sequences_lengths.destroy();
         nextData.h_subject_read_ids.destroy();
         nextData.h_candidate_read_ids.destroy();
-        nextData.h_candidates_per_subject.destroy();
 
         nextData.d_subject_sequences_data.destroy();
         nextData.d_subject_sequences_lengths.destroy();
@@ -736,7 +733,6 @@ namespace gpu{
         nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
-        nextData.reallocOccurred |= nextData.h_candidates_per_subject.resize(batchsize);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(2*batchsize);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
@@ -1178,14 +1174,6 @@ namespace gpu{
             nextData.stream
         ); CUERR;
 
-        // cudaMemcpyAsync(
-        //     nextData.h_candidates_per_subject.get(),
-        //     nextData.d_candidates_per_subject.get(),
-        //     sizeof(int) * (nextData.n_subjects),
-        //     D2H,
-        //     nextData.stream
-        // ); CUERR; 
-
         cudaStreamSynchronize(nextData.stream); CUERR;
 
 
@@ -1450,7 +1438,6 @@ namespace gpu{
             dataArrays.d_subject_sequences_lengths.get(),
             dataArrays.d_candidate_sequences_lengths.get(),
             dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.h_candidates_per_subject.get(),
             dataArrays.d_candidates_per_subject.get(),
             dataArrays.d_anchorIndicesOfCandidates.get(),
             dataArrays.d_numAnchors.get(),
@@ -1713,7 +1700,6 @@ namespace gpu{
                 dataArrays.d_subject_sequences_lengths.get(),
                 dataArrays.d_candidate_sequences_lengths.get(),
                 dataArrays.d_candidates_per_subject_prefixsum.get(),
-                dataArrays.h_candidates_per_subject.get(),
                 dataArrays.d_candidates_per_subject.get(),
                 dataArrays.d_anchorIndicesOfCandidates.get(),
                 dataArrays.d_numAnchors.get(),
