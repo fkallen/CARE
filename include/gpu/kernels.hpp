@@ -44,52 +44,7 @@ struct MSAColumnProperties{
     int lastColumn_excl;
 };
 
-struct AlignmentResultPointers{
-    int* scores;
-    int* overlaps;
-    int* shifts;
-    int* nOps;
-    bool* isValid;
-    BestAlignment_t* bestAlignmentFlags;
-};
 
-struct MSAPointers{
-    char* consensus;
-    float* support;
-    int* coverage;
-    float* origWeights;
-    int* origCoverages;
-    MSAColumnProperties* msaColumnProperties;
-    int* counts;
-    float* weights;
-};
-
-struct ReadSequencesPointers{
-    unsigned int* subjectSequencesData;
-    unsigned int* candidateSequencesData;
-    int* subjectSequencesLength;
-    int* candidateSequencesLength;
-    unsigned int* transposedCandidateSequencesData;
-};
-
-struct ReadQualitiesPointers{
-    char* subjectQualities;
-    char* candidateQualities;
-    char* candidateQualitiesTransposed;
-};
-
-struct CorrectionResultPointers{
-        char* correctedSubjects;
-        char* correctedCandidates;
-        int* numCorrectedCandidates;
-        bool* subjectIsCorrected;
-        int* indicesOfCorrectedCandidates;
-        AnchorHighQualityFlag* isHighQualitySubject;
-        int* highQualitySubjectIndices;
-        int* numHighQualitySubjectIndices;
-        int* num_uncorrected_positions_per_subject;
-        int* uncorrected_positions_per_subject;
-};
 
 
 

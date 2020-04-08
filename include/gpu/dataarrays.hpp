@@ -451,36 +451,12 @@ struct DataArrays {
 	}
 
 	// alignment input
-
-    ReadSequencesPointers getHostSequencePointers() const{
-        ReadSequencesPointers pointers{
-            h_subject_sequences_data.get(),
-            h_candidate_sequences_data.get(),
-            h_subject_sequences_lengths.get(),
-            h_candidate_sequences_lengths.get(),
-            h_transposedCandidateSequencesData.get()
-        };
-        return pointers;
-    }
-
-    ReadSequencesPointers getDeviceSequencePointers() const{
-        ReadSequencesPointers pointers{
-            d_subject_sequences_data.get(),
-            d_candidate_sequences_data.get(),
-            d_subject_sequences_lengths.get(),
-            d_candidate_sequences_lengths.get(),
-            d_transposedCandidateSequencesData.get()
-        };
-        return pointers;
-    }
     
     DeviceBuffer<char> d_tempstorage;
     PinnedBuffer<int> h_numAnchors;
     PinnedBuffer<int> h_numCandidates;
     DeviceBuffer<int> d_numAnchors;
     DeviceBuffer<int> d_numCandidates;
-
-	//std::size_t encoded_sequence_pitch = 0;
 
     PinnedBuffer<unsigned int> h_subject_sequences_data;
     PinnedBuffer<unsigned int> h_candidate_sequences_data;
@@ -539,69 +515,14 @@ struct DataArrays {
     DeviceBuffer<bool> d_candidateContainsN;
 
 
-    ReadQualitiesPointers getHostQualityPointers() const{
-        ReadQualitiesPointers pointers{
-            h_subject_qualities.get(),
-            h_candidate_qualities.get(),
-            nullptr, //candidateQualitiesTransposed
-        };
-        return pointers;
-    }
-
-    ReadQualitiesPointers getDeviceQualityPointers() const{
-        ReadQualitiesPointers pointers{
-            d_subject_qualities.get(),
-            d_candidate_qualities.get(),
-            d_candidate_qualities_transposed.get(), //candidateQualitiesTransposed
-        };
-        return pointers;
-    }
-
-    //std::size_t quality_pitch = 0;
-
     PinnedBuffer<char> h_subject_qualities;
     PinnedBuffer<char> h_candidate_qualities;
 
     DeviceBuffer<char> d_subject_qualities;
     DeviceBuffer<char> d_candidate_qualities;
     DeviceBuffer<char> d_candidate_qualities_transposed;
-    //DeviceBuffer<char> d_candidate_qualities_tmp;
 
 	//correction results output
-
-    CorrectionResultPointers getHostCorrectionResultPointers() const{
-        CorrectionResultPointers pointers{
-            h_corrected_subjects.get(),
-            h_corrected_candidates.get(),
-            h_num_corrected_candidates_per_anchor.get(),
-            h_subject_is_corrected.get(),
-            h_indices_of_corrected_candidates.get(),
-            h_is_high_quality_subject.get(),
-            h_high_quality_subject_indices.get(),
-            h_num_high_quality_subject_indices.get(),
-            h_num_uncorrected_positions_per_subject.get(),
-            h_uncorrected_positions_per_subject.get(),
-        };
-        return pointers;
-    }
-
-    CorrectionResultPointers getDeviceCorrectionResultPointers() const{
-        CorrectionResultPointers pointers{
-            d_corrected_subjects.get(),
-            d_corrected_candidates.get(),
-            d_num_corrected_candidates_per_anchor.get(),
-            d_subject_is_corrected.get(),
-            d_indices_of_corrected_candidates.get(),
-            d_is_high_quality_subject.get(),
-            d_high_quality_subject_indices.get(),
-            d_num_high_quality_subject_indices.get(),
-            d_num_uncorrected_positions_per_subject.get(),
-            d_uncorrected_positions_per_subject.get(),
-        };
-        return pointers;
-    }
-
-	//std::size_t sequence_pitch = 0;
 
     PinnedBuffer<char> h_corrected_subjects;
     PinnedBuffer<char> h_corrected_candidates;
@@ -637,30 +558,6 @@ struct DataArrays {
 
 	//alignment results
 
-    AlignmentResultPointers getHostAlignmentResultPointers() const{
-        AlignmentResultPointers pointers{
-            h_alignment_scores.get(),
-            h_alignment_overlaps.get(),
-            h_alignment_shifts.get(),
-            h_alignment_nOps.get(),
-            h_alignment_isValid.get(),
-            h_alignment_best_alignment_flags.get(),
-        };
-        return pointers;
-    }
-
-    AlignmentResultPointers getDeviceAlignmentResultPointers() const{
-        AlignmentResultPointers pointers{
-            d_alignment_scores.get(),
-            d_alignment_overlaps.get(),
-            d_alignment_shifts.get(),
-            d_alignment_nOps.get(),
-            d_alignment_isValid.get(),
-            d_alignment_best_alignment_flags.get(),
-        };
-        return pointers;
-    }
-
     PinnedBuffer<int> h_alignment_scores;
     PinnedBuffer<int> h_alignment_overlaps;
     PinnedBuffer<int> h_alignment_shifts;
@@ -679,37 +576,6 @@ struct DataArrays {
 
 
 	// multiple sequence alignment
-
-	//std::size_t msa_pitch = 0;
-	//std::size_t msa_weights_pitch = 0;
-
-    MSAPointers getHostMSAPointers() const{
-        MSAPointers ptrs{
-            h_consensus.get(),
-            h_support.get(),
-            h_coverage.get(),
-            h_origWeights.get(),
-            h_origCoverages.get(),
-            h_msa_column_properties.get(),
-            h_counts.get(),
-            h_weights.get(),
-        };
-        return  ptrs;
-    }
-
-    MSAPointers getDeviceMSAPointers() const{
-        MSAPointers ptrs{
-            d_consensus.get(),
-            d_support.get(),
-            d_coverage.get(),
-            d_origWeights.get(),
-            d_origCoverages.get(),
-            d_msa_column_properties.get(),
-            d_counts.get(),
-            d_weights.get(),
-        };
-        return  ptrs;
-    }
 
     PinnedBuffer<char> h_consensus;
     PinnedBuffer<float> h_support;
