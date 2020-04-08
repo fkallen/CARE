@@ -166,20 +166,10 @@ namespace gpu{
     constexpr int secondary_stream_index = 1;
     constexpr int nStreamsPerBatch = 2;
 
-    //constexpr int alignments_finished_event_index = 0;
-    //constexpr int quality_transfer_finished_event_index = 1;
-    //constexpr int indices_transfer_finished_event_index = 2;
-    constexpr int correction_finished_event_index = 3;
-    constexpr int result_transfer_finished_event_index = 4;
-    //constexpr int msadata_transfer_finished_event_index = 5;
-    constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
-    //constexpr int msa_build_finished_event_index = 7;
-    //constexpr int indices_calculated_event_index = 8;
-    //constexpr int num_indices_transfered_event_index = 9;
-    //constexpr int secondary_stream_finished_event_index = 10;
-    //constexpr int highqualityindices_event_index = 11;
-    //constexpr int numTotalCorrectedCandidates_event_index = 12;
-    constexpr int nEventsPerBatch = 13;
+    constexpr int correction_finished_event_index = 0;
+    constexpr int result_transfer_finished_event_index = 1;
+    constexpr int alignment_data_transfer_h2d_finished_event_index = 2;
+    constexpr int nEventsPerBatch = 3;
 
     constexpr int doNotUseEditsValue = -1;
 
