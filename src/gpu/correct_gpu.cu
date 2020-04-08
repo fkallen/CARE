@@ -2140,10 +2140,6 @@ namespace gpu{
         // cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
         // cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
-        std::array<int*,2> d_indices_dblbuf{
-            dataArrays.d_indices.get(), 
-            dataArrays.d_indices_tmp.get()
-        };
         std::array<int*,2> d_indices_per_subject_dblbuf{
             dataArrays.d_indices_per_subject.get(), 
             dataArrays.d_indices_per_subject_tmp.get()
@@ -2153,16 +2149,22 @@ namespace gpu{
             dataArrays.d_num_indices_tmp.get()
         };
 
-        const int* d_indices = d_indices_dblbuf[max_num_minimizations % 2];
         const int* d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2];
         const int* d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2];
 
+
         call_msa_correct_subject_implicit_kernel_async(
-            dataArrays.getDeviceMSAPointers(),
-            dataArrays.getDeviceAlignmentResultPointers(),
-            dataArrays.getDeviceSequencePointers(),
-            dataArrays.getDeviceCorrectionResultPointers(),
-            d_indices,
+            dataArrays.d_corrected_subjects.get(),
+            dataArrays.d_subject_is_corrected.get(),
+            dataArrays.d_is_high_quality_subject.get(),
+            dataArrays.d_msa_column_properties.get(),
+            dataArrays.d_support.get(),
+            dataArrays.d_coverage.get(),
+            dataArrays.d_origCoverages.get(),
+            dataArrays.d_consensus.get(),
+            dataArrays.d_subject_sequences_data.get(),
+            dataArrays.d_candidate_sequences_data.get(),
+            dataArrays.d_candidate_sequences_lengths.get(),
             d_indices_per_subject,
             dataArrays.d_numAnchors.get(),
             batchsize,

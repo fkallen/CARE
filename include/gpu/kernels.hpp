@@ -380,11 +380,17 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
 
 
 void call_msa_correct_subject_implicit_kernel_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            CorrectionResultPointers d_correctionResultPointers,
-            const int* d_indices,
+            char* d_correctedSubjects,
+            bool* d_subjectIsCorrected,
+            AnchorHighQualityFlag* d_isHighQualitySubject,
+            const MSAColumnProperties* d_msaColumnProperties,
+            const float* d_support,
+            const int* d_coverage,
+            const int* d_origCoverages,
+            const char* d_consensus,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const int* d_candidateSequencesLength,
             const int* d_indices_per_subject,
             const int* d_numAnchors,
             int maxNumAnchors,
