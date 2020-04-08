@@ -301,6 +301,32 @@ namespace gpu{
         PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
 
+
+        void resize(
+                int batchsize, 
+                int maxCandidates, 
+                int maxNumIdsFromMinhashing,
+                size_t decodedSequencePitchInBytes, 
+                int maxNumEditsPerSequence){
+
+            h_subject_read_ids.resize(batchsize);
+            h_subject_is_corrected.resize(batchsize);
+            h_is_high_quality_subject.resize(batchsize);
+            h_num_corrected_candidates_per_anchor.resize(batchsize);
+            h_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
+            h_indices_of_corrected_candidates.resize(maxCandidates);
+            h_candidate_read_ids.resize(maxNumIdsFromMinhashing);
+            h_corrected_subjects.resize(batchsize * decodedSequencePitchInBytes);
+            h_corrected_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
+            h_subject_sequences_lengths.resize(batchsize);
+            h_candidate_sequences_lengths.resize(maxCandidates);
+            h_alignment_shifts.resize(maxCandidates);
+            h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            h_numEditsPerCorrectedSubject.resize(batchsize);
+            h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            h_numEditsPerCorrectedCandidate.resize(maxCandidates);
+        }
+
     };
 
     struct OutputData{
@@ -444,6 +470,7 @@ namespace gpu{
 
             graphindex = 1 - graphindex;
         }
+
 
         void moveResultsToOutputData(OutputData& outputData){
             auto& rawResults = outputData.rawResults;
@@ -716,7 +743,7 @@ namespace gpu{
         const int resultsPerMap = calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
         const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
 
-        nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
+        nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
         nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
         nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(2*batchsize);
@@ -3321,6 +3348,18 @@ void correct_gpu(
             batchData.maxNumEditsPerSequence = std::max(1,sequenceFileProperties.maxSequenceLength / 7);
 
             initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
+
+            const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+            const int numMinhashMaps = minhasher.getNumberOfMaps();
+            const int maxNumIds = resultsPerMap * numMinhashMaps * correctionOptions.batchsize;
+
+            batchData.waitableOutputData.data.rawResults.resize(
+                correctionOptions.batchsize, 
+                numCandidatesLimitPerGpu[deviceId], 
+                maxNumIds,
+                batchData.decodedSequencePitchInBytes, 
+                batchData.maxNumEditsPerSequence
+            );
 
 
             
