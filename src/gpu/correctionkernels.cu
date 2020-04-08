@@ -446,9 +446,9 @@ namespace gpu{
 
         __shared__ int broadcastbuffer;
 
-        __shared__ int numUncorrectedPositions;
-        __shared__ int uncorrectedPositions[BLOCKSIZE];
-        __shared__ float avgCountPerWeight[4];
+        //__shared__ int numUncorrectedPositions;
+        //__shared__ int uncorrectedPositions[BLOCKSIZE];
+        //__shared__ float avgCountPerWeight[4];
 
         const int n_subjects = *numAnchorsPtr;
 
@@ -540,8 +540,8 @@ namespace gpu{
                 avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
 
 
-                const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        		const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+                //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        		//const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
 
                 if(threadIdx.x == 0){
                     subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
@@ -632,80 +632,6 @@ namespace gpu{
     }
 
 
-
-
-
-
-
-    __device__ __forceinline__
-    bool checkIfCandidateShouldBeCorrected(const MSAPointers& d_msapointers,
-                        const AlignmentResultPointers& d_alignmentresultpointers,
-                        const ReadSequencesPointers& d_sequencePointers,
-                        const CorrectionResultPointers& d_correctionResultPointers,
-                        const int* __restrict__ d_indices,
-                        const int* __restrict__ d_candidates_per_subject_prefixsum,
-                        size_t msa_weights_pitch_floats,
-                        float min_support_threshold,
-                        float min_coverage_threshold,
-                        int new_columns_to_correct,
-                        int subjectIndex,
-                        int local_goodcandidate_index){
-
-        const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
-        const int* const my_coverage = d_msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-
-        const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
-        const int* const my_indices = d_indices + globalOffset;
-
-        const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-        const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-        const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
-
-        const int localCandidateIndex = my_indices[local_goodcandidate_index];
-        const int global_candidate_index = localCandidateIndex + globalOffset;
-
-        const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
-        const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
-        const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
-
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-           && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-           && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
-
-            float newColMinSupport = 1.0f;
-            int newColMinCov = std::numeric_limits<int>::max();
-            //check new columns left of subject
-            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-                columnindex < subjectColumnsBegin_incl;
-                columnindex++) {
-
-                assert(columnindex < lastColumn_excl);
-                if(queryColumnsBegin_incl <= columnindex) {
-                    newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
-                    newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
-                }
-            }
-            //check new columns right of subject
-            for(int columnindex = subjectColumnsEnd_excl;
-                    columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                        && columnindex < lastColumn_excl;
-                    columnindex++) {
-
-                newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
-                newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
-            }
-
-            bool result = fgeq(newColMinSupport, min_support_threshold)
-                            && fgeq(newColMinCov, min_coverage_threshold);
-
-            //return result;
-            return true;
-        }else{
-            return false;
-        }
-
-    }
 
     __device__ __forceinline__
     bool checkIfCandidateShouldBeCorrectedGlobal(
@@ -860,7 +786,7 @@ namespace gpu{
 
         const int numGroups = (gridDim.x * blockDim.x) / groupsize;
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-        const int groupIdInBlock = threadIdx.x / groupsize;
+        //const int groupIdInBlock = threadIdx.x / groupsize;
 
         for(int hqsubjectIndex = groupId;
                 hqsubjectIndex < numHqSubjects;
@@ -951,40 +877,8 @@ namespace gpu{
                 
             }
         }
-
-        // for(int candidateIndex = threadIdx.x + blockIdx.x * blockDim.x; 
-        //         candidateIndex < n_candidates; 
-        //         candidateIndex += blockDim.x * gridDim.x){
-            
-        //     const int anchorIndex = anchorIndicesOfCandidates[candidateIndex];
-        //     const bool isHighQualitySubject = hqflags[anchorIndex].hq();
-
-        //     if(isHighQualitySubject){
-
-        //         const bool canHandleCandidate = checkIfCandidateShouldBeCorrectedGlobal(
-        //             support,
-        //             coverages,
-        //             msaColumnProperties,
-        //             alignmentShifts,
-        //             candidateSequencesLengths,
-        //             msa_weights_pitch_floats,
-        //             min_support_threshold,
-        //             min_coverage_threshold,
-        //             new_columns_to_correct,
-        //             anchorIndex,
-        //             candidateIndex
-        //         );
-
-        //         candidateCanBeCorrected[candidateIndex] = canHandleCandidate;
-
-        //         if(canHandleCandidate){
-        //             atomicAdd(numCorrectedCandidatesPerAnchor + anchorIndex, 1);
-        //         }
-        //     }else{
-        //         candidateCanBeCorrected[candidateIndex] = false;
-        //     }
-        // }
     }
+
 
     template<int BLOCKSIZE, int groupsize>
     __global__
@@ -1082,7 +976,7 @@ namespace gpu{
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
 
 
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        //const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
         const int loopEnd = *numCandidatesToBeCorrected;
 
         for(int id = groupId;
