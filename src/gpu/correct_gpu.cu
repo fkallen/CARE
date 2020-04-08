@@ -1682,7 +1682,9 @@ namespace gpu{
         );
 
         call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-            dataArrays.getDeviceAlignmentResultPointers(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_alignment_nOps.get(),
+            dataArrays.d_alignment_overlaps.get(),
             dataArrays.d_candidates_per_subject_prefixsum.get(),
             dataArrays.d_numAnchors.get(),
             dataArrays.d_numCandidates.get(),

@@ -151,7 +151,9 @@ void callGetNumCorrectedCandidatesPerAnchorKernel(
             KernelLaunchHandle& handle);
 
 void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-            AlignmentResultPointers d_alignmentresultpointers,
+            BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_nOps,
+            const int* d_overlaps,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_numAnchors,
             const int* d_numCandidates,

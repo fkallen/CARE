@@ -835,7 +835,9 @@ namespace gpu{
     template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
-                AlignmentResultPointers d_alignmentresultpointers,
+                BestAlignment_t* __restrict__ bestAlignmentFlags,
+                const int* __restrict__ nOps,
+                const int* __restrict__ overlaps,
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
                 const int* __restrict__ d_numAnchors,
                 const int* __restrict__ d_numCandidates,
@@ -871,15 +873,15 @@ namespace gpu{
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
 
                 const int candidate_index = firstIndex + index;
-                if(d_alignmentresultpointers.bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
 
-                    const int alignment_overlap = d_alignmentresultpointers.overlaps[candidate_index];
-                    const int alignment_nops = d_alignmentresultpointers.nOps[candidate_index];
+                    const int alignment_overlap = overlaps[candidate_index];
+                    const int alignment_nops = nOps[candidate_index];
 
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
                     if(mismatchratio >= 4 * mismatchratioBaseFactor) {
-                        d_alignmentresultpointers.bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                        bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
                     }else{
 
                             #pragma unroll
@@ -931,23 +933,21 @@ namespace gpu{
             // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
                 const int candidate_index = firstIndex + index;
-                if(d_alignmentresultpointers.bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+                if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
 
-                    const int alignment_overlap = d_alignmentresultpointers.overlaps[candidate_index];
-                    const int alignment_nops = d_alignmentresultpointers.nOps[candidate_index];
+                    const int alignment_overlap = overlaps[candidate_index];
+                    const int alignment_nops = nOps[candidate_index];
 
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
                     const bool doRemove = mismatchratio >= mismatchratioThreshold;
                     if(doRemove){
-                        d_alignmentresultpointers.bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                        bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
                     }
                 }
             }
         }
     }
-
-    
 
 
 
@@ -1502,7 +1502,9 @@ namespace gpu{
 
 
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-    			AlignmentResultPointers d_alignmentresultpointers,
+                BestAlignment_t* d_bestAlignmentFlags,
+                const int* d_nOps,
+                const int* d_overlaps,
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_numAnchors,
                 const int* d_numCandidates,
@@ -1565,7 +1567,9 @@ namespace gpu{
 
     	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
     	        <<<grid, block, smem, stream>>>( \
-    		d_alignmentresultpointers, \
+            d_bestAlignmentFlags, \
+            d_nOps, \
+            d_overlaps, \
     		d_candidates_per_subject_prefixsum, \
     		d_numAnchors, \
     		d_numCandidates, \
