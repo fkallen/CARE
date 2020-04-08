@@ -1317,18 +1317,18 @@ namespace gpu{
 
         //alignment output
 
-        batchData.reallocResize |= dataArrays.h_alignment_scores.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.h_alignment_overlaps.resize(2*maxCandidates);
+        // batchData.reallocResize |= dataArrays.h_alignment_scores.resize(2*maxCandidates);
+        // batchData.reallocResize |= dataArrays.h_alignment_overlaps.resize(2*maxCandidates);
         batchData.reallocResize |= dataArrays.h_alignment_shifts.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.h_alignment_nOps.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.h_alignment_isValid.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.h_alignment_best_alignment_flags.resize(maxCandidates);
+        // batchData.reallocResize |= dataArrays.h_alignment_nOps.resize(2*maxCandidates);
+        // batchData.reallocResize |= dataArrays.h_alignment_isValid.resize(2*maxCandidates);
+        // batchData.reallocResize |= dataArrays.h_alignment_best_alignment_flags.resize(maxCandidates);
 
-        batchData.reallocResize |= dataArrays.d_alignment_scores.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.d_alignment_overlaps.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.d_alignment_shifts.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.d_alignment_nOps.resize(2*maxCandidates);
-        batchData.reallocResize |= dataArrays.d_alignment_isValid.resize(2*maxCandidates);
+        //batchData.reallocResize |= dataArrays.d_alignment_scores.resize(maxCandidates);
+        batchData.reallocResize |= dataArrays.d_alignment_overlaps.resize(maxCandidates);
+        batchData.reallocResize |= dataArrays.d_alignment_shifts.resize(maxCandidates);
+        batchData.reallocResize |= dataArrays.d_alignment_nOps.resize(maxCandidates);
+        batchData.reallocResize |= dataArrays.d_alignment_isValid.resize(maxCandidates);
         batchData.reallocResize |= dataArrays.d_alignment_best_alignment_flags.resize(maxCandidates);
 
         // candidate indices
