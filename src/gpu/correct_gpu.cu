@@ -53,14 +53,8 @@
 
 #include <thrust/binary_search.h>
 
-//#define CARE_GPU_DEBUG
-//#define CARE_GPU_DEBUG_MEMCOPY
-//#define CARE_GPU_DEBUG_PRINT_ARRAYS
-//#define CARE_GPU_DEBUG_PRINT_MSA
 
-#define MSA_IMPLICIT
 
-//#define REARRANGE_INDICES
 #define USE_MSA_MINIMIZATION
 
 constexpr int max_num_minimizations = 5;
@@ -380,10 +374,7 @@ namespace gpu{
 
         WaitableData<OutputData> waitableOutputData;
 
-        bool combinedStreams = false;
-
         DataArrays dataArrays;
-        bool hasUnprocessedResults = false;
 
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
@@ -431,10 +422,8 @@ namespace gpu{
         std::array<CudaGraph,2> executionGraphs{};
 
 		void reset(){
-            combinedStreams = false;
             n_subjects = 0;
             n_queries = 0;
-            hasUnprocessedResults = false;
         }
 
         void resize(
@@ -3489,38 +3478,14 @@ void correct_gpu(
 #endif            
         };
 
-        auto copyCandidateCorrectionsToHostAndJoinStreams = [&](auto& batchData){
-            // auto& streams = batchData.streams;
-            // auto& events = batchData.events;
-
-            auto pushrange = [&](const std::string& msg, int color){
-                nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
-            };
-
-            auto poprange = [&](){
-                nvtx::pop_range();
-            };
-
-            if(transFuncData.correctionOptions.correctCandidates) {
-
-                pushrange("copyCorrectedCandidatesToHost", 8);
-
-                copyCorrectedCandidatesToHost(batchData);
-
-                poprange();                
-            }
-
-            // cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
-            // cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;   
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            batchData.hasUnprocessedResults = true;
-        };
-
         auto processBatchResults = [&](auto& batchData){
             auto& streams = batchData.streams;
-            //auto& events = batchData.events;
+            auto& events = batchData.events;
+
+            #ifndef USE_CUDA_GRAPH
+            cudaEventRecord(events[0], streams[secondary_stream_index]); CUERR;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[0], 0); CUERR;   
+            #endif
 
             cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
             // std::cerr << "batch " << batchData.id << " waitableOutputData.wait()\n";
@@ -3565,9 +3530,9 @@ void correct_gpu(
                 //batchData.hasUnprocessedResults = false;
             };
 
-            //func();
+            func();
             //batchData.backgroundWorker->enqueue(func);
-            batchData.unpackWorker->enqueue(func);            
+            //batchData.unpackWorker->enqueue(func);            
         };
 
 
@@ -3621,8 +3586,6 @@ void correct_gpu(
                         continue;
                     }
 
-                    copyCandidateCorrectionsToHostAndJoinStreams(batchData);
-
                     processBatchResults(batchData);
 
                     progressThread.addProgress(batchData.n_subjects);
@@ -3663,7 +3626,6 @@ void correct_gpu(
                             continue;
                         }
 
-                        copyCandidateCorrectionsToHostAndJoinStreams(currentBatchData);
                         processBatchResults(currentBatchData);
     
                         progressThread.addProgress(currentBatchData.n_subjects);
@@ -3718,7 +3680,6 @@ void correct_gpu(
                             continue;
                         }
 
-                        copyCandidateCorrectionsToHostAndJoinStreams(currentBatchData);
                         processBatchResults(currentBatchData);
     
                         progressThread.addProgress(currentBatchData.n_subjects);
