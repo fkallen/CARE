@@ -458,9 +458,9 @@ struct MemoryFileFixedSize{
         std::cerr << " elements in file = " << getNumElementsInFile();
         std::cerr << '\n';
 
-        auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-            return ptrcomparator(memoryStorage.getElementsData() + elementOffset1, memoryStorage.getElementsData() + elementOffset2);
-        };
+        // auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
+        //     return ptrcomparator(memoryStorage.getElementsData() + elementOffset1, memoryStorage.getElementsData() + elementOffset2);
+        // };
 
         bool success = false;
 

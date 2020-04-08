@@ -101,17 +101,18 @@ namespace care{
                     //     std::cerr << "\n";
 
                     bool ok = true;
+                    const int sequenceLength = readsBuffer[i].sequence.length();
 
-                    if(readsBuffer[i].sequence.length() != h_lengths[i]){
+                    if(sequenceLength != h_lengths[i]){
                         ok = false;
                         std::cerr << "length error at sequence read " << indicesBuffer[i] << "\n";
-                        std::cerr << "expected " << readsBuffer[i].sequence.length() << "\n";
+                        std::cerr << "expected " << sequenceLength << "\n";
                         std::cerr << "got      " << h_lengths[i] << "\n";
                     } 
     
-                    const std::string seqstring = get2BitString(h_sequences.data() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+                    const std::string seqstring = get2BitString(h_sequences.data() + i * sequencePitchInInts, sequenceLength);
     
-                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){  
+                    for(int k = 0; k < sequenceLength && ok; k++){  
 
                         if(isValidBase(readsBuffer[i].sequence[k]) && readsBuffer[i].sequence[k] != seqstring[k]){
                             ok = false;
@@ -121,14 +122,15 @@ namespace care{
                         }
                     }
                     if(withQuality){
+                        const int qualityLength = readsBuffer[i].quality.length();
                         ok = true;
-                        for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){    
+                        for(int k = 0; k < qualityLength && ok; k++){    
                             if(readsBuffer[i].quality[k] != h_qualities[qualityPitchInBytes * i + k]){
                                 ok = false;
                                 std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
                                 std::cerr << "expected " << readsBuffer[i].quality << "\n";
                                 std::cerr << "got      ";
-                                for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                for(int l = 0; l < qualityLength; l++){
                                     std::cerr << h_qualities[qualityPitchInBytes * i + l];
                                 }
                                 std::cerr << "\n";
@@ -192,8 +194,6 @@ namespace care{
         std::vector<read_number> h_readids(batchsize);
         std::vector<unsigned int> h_sequences(sequencePitchInInts * batchsize);
         std::vector<int> h_lengths(batchsize);
-
-        bool oneIter = true;
 
         auto validateBatch = [&](){
 
@@ -632,17 +632,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
             std::size_t availableMemForTables = maxMemoryForTables;
 
-            
-
-            std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
-            std::mutex progressMutex;
-		    std::uint64_t totalCount = 0;
-
-            // auto updateProgress = [&](auto totalCount, auto seconds){
-            //     std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
-            //                 << seconds << " seconds." << std::endl;
-            // };
-
             int numSavedTables = 0;
             int numConstructedTables = 0;
 
@@ -695,9 +684,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                         [](auto seconds){return seconds * 2;});
 
                 auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
-                    std::uint64_t countlimit = 1000000;
-                    std::uint64_t count = 0;
-                    std::uint64_t oldcount = 0;
 
                     for (read_number readId = begin; readId < end; readId++){
                         const read_number localId = readId - readIdBegin;
@@ -711,27 +697,9 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                                                                     tableIds,
                                                                     minhashTables,
                                                                     hashIds);
-                        // count++;
-                        // if(count == countlimit){
-                        //     const auto tpb = std::chrono::system_clock::now();
-                        //     const std::chrono::duration<double> duration = tpb - tpa;
-                        //     countlimit *= 2;
-
-                        //     std::lock_guard<std::mutex> lg(progressMutex);
-                        //     totalCount += count - oldcount;                            
-                        //     updateProgress(totalCount, duration.count());
-                        //     oldcount = count;                            
-                        // }
 
                         progressThread.addProgress(1);
                     }
-                    // if(count > 0){
-                    //     const auto tpb = std::chrono::system_clock::now();
-                    //     const std::chrono::duration<double> duration = tpb - tpa;
-                    //     std::lock_guard<std::mutex> lg(progressMutex);
-                    //     totalCount += count - oldcount;                            
-                    //     updateProgress(totalCount, duration.count());
-                    // }
                 };
 
                 threadPool.parallelFor(
@@ -886,9 +854,9 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::cout << "Saved minhasher" << std::endl;
         }
 
-        const auto& minhasher = result.builtMinhasher.data;
 
 #ifdef VALIDATE_MINHASHER        
+        const auto& minhasher = result.builtMinhasher.data;
         validateMinhasher(minhasher, readStorage, fileOptions);
 #endif  
 
