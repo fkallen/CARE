@@ -628,6 +628,7 @@ namespace gpu{
                 cudaGraphExecDestroy(graphwrap.execgraph); CUERR;
             }
             
+            //std::cerr << "correct_gpu buildGraphViaCapture start batch id " << batch.id << "\n";
             cudaStreamBeginCapture(streams[primary_stream_index], cudaStreamCaptureModeRelaxed); CUERR;
             //fork to capture secondary stream
             cudaEventRecord(events[0], streams[primary_stream_index]); CUERR;
@@ -650,6 +651,7 @@ namespace gpu{
 
             cudaGraph_t graph;
             cudaStreamEndCapture(streams[primary_stream_index], &graph); CUERR;
+            //std::cerr << "correct_gpu buildGraphViaCapture stop batch id " << batch.id << "\n";
             
             cudaGraphExec_t execGraph;
             cudaGraphNode_t errorNode;
@@ -1493,7 +1495,7 @@ namespace gpu{
         //     graph.d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
         //     graph.d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
         // }
-        
+        //std::cerr << batchData.id << " " << batchData.n_subjects << " " << batchData.n_queries << "\n";
         {
             int numAnchors = batchData.n_subjects;
             int numCandidates = batchData.n_queries;
@@ -1691,7 +1693,7 @@ namespace gpu{
                     dataArrays.d_numAnchors.get(),
                     dataArrays.d_candidates_per_subject.get(),
                     dataArrays.d_candidates_per_subject_prefixsum.get()
-                );
+                ); CUERR;
             }
         };
 
@@ -2619,7 +2621,7 @@ namespace gpu{
             dataArrays.d_num_indices_of_corrected_subjects.get(),
             dataArrays.d_subject_is_corrected.get(),
             dataArrays.d_numAnchors.get()
-        );
+        ); CUERR;
 
         callConstructAnchorResultsKernelAsync(
             dataArrays.d_editsPerCorrectedSubject.get(),
@@ -2755,7 +2757,7 @@ namespace gpu{
             dataArrays.d_num_high_quality_subject_indices.get(),
             d_isHqSubject,
             dataArrays.d_numAnchors.get()
-        );
+        ); CUERR;
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
