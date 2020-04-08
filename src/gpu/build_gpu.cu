@@ -182,7 +182,6 @@ namespace gpu{
         read_number numReads = numberOfReads;
         const int numIters = SDIV(numReads, parallelReads);
         const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
-        const std::size_t encodedSequencePitchInBytes = encodedSequencePitchInInts * sizeof(unsigned int);
 
         cudaSetDevice(0); CUERR;
 
@@ -299,7 +298,6 @@ namespace gpu{
             auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
                 std::uint64_t countlimit = 10000;
                 std::uint64_t count = 0;
-                std::uint64_t oldcount = 0;
 
                 for (read_number readId = begin; readId < end; readId++){
                     read_number localId = readId - readIdBegin;
@@ -467,11 +465,13 @@ namespace gpu{
                     //         std::cerr << h_qualities[qualityPitchInBytes * i + l];
                     //     }
                     //     std::cerr << "\n";
+
+                    const int sequenceLength = readsBuffer[i].sequence.size();
     
-                    std::string seqstring = get2BitString(h_sequences.get() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+                    std::string seqstring = get2BitString(h_sequences.get() + i * sequencePitchInInts, sequenceLength);
     
                     bool ok = true;
-                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){                                
+                    for(int k = 0; k < sequenceLength && ok; k++){                                
     
                         if(isValidBase(readsBuffer[i].sequence[k]) && readsBuffer[i].sequence[k] != seqstring[k]){
                             ok = false;
@@ -481,14 +481,16 @@ namespace gpu{
                         }
                     }
                     if(withQuality){
+                        const int qualityLength = readsBuffer[i].sequence.size();
+
                         ok = true;
-                        for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){    
+                        for(int k = 0; k < qualityLength && ok; k++){    
                             if(readsBuffer[i].quality[k] != h_qualities[qualityPitchInBytes * i + k]){
                                 ok = false;
                                 std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
                                 std::cerr << "expected " << readsBuffer[i].quality << "\n";
                                 std::cerr << "got      ";
-                                for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                for(int l = 0; l < qualityLength; l++){
                                     std::cerr << h_qualities[qualityPitchInBytes * i + l];
                                 }
                                 std::cerr << "\n";
@@ -564,8 +566,6 @@ namespace gpu{
         cudaStream_t stream;
         cudaStreamCreate(&stream); CUERR;
 
-        bool oneIter = true;
-
         auto validateBatch = [&](){
 
             ThreadPool::ParallelForHandle pforHandle;
@@ -638,8 +638,6 @@ namespace gpu{
             //func1(0, int(indicesBuffer.size()), func1);
             threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func1);
 
-            //oneIter = false;
-
             indicesBuffer.clear();
             readsBuffer.clear();
         };
@@ -698,7 +696,7 @@ namespace gpu{
             const int nThreads = std::max(1, runtimeOptions.threads);
 
             constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
-            int Ncount = 0;
+            //int Ncount = 0;
             //std::map<int,int> nmap{};
 
             BuiltDataStructure<GpuReadStorageWithFlags> result;
@@ -1033,9 +1031,7 @@ namespace gpu{
             const auto &readStorage = readStoragewFlags.readStorage;
             //const auto& validFlags = readStoragewFlags.readIsValidFlags;
 
-            constexpr read_number parallelReads = 10000000;
             read_number numReads = readStorage.getNumberOfReads();
-            int numIters = SDIV(numReads, parallelReads);
 
             auto sequencehandle = readStorage.makeGatherHandleSequences();
             //auto lengthhandle = readStorage.makeGatherHandleLengths();
@@ -1072,12 +1068,6 @@ namespace gpu{
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
-
-
-            
-            std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
-            std::mutex progressMutex;
-		    std::uint64_t totalCount = 0;
 
             auto showProgress = [&](auto totalCount, auto seconds){
                 std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
@@ -1434,21 +1424,11 @@ namespace gpu{
     		std::cout << "Saved minhasher" << std::endl;
         }
         
-        const auto& minhasher = result.builtMinhasher.data;
-
+        
 #ifdef VALIDATE_MINHASHER        
+        const auto& minhasher = result.builtMinhasher.data;
         validateMinhasher(minhasher, readStorage, fileOptions);
 #endif        
-        // const auto histograms = minhasher.getBinSizeHistogramsOfMaps();
-
-        // std::ofstream outhist("histograms.txt");
-        // for(int i = 0; i < int(histograms.size()); i++){
-        //     outhist << "table " << i << '\n';
-        //     for(auto pair : histograms[i]){
-        //         outhist << pair.first << ' '  << pair.second << '\n';
-        //     }
-        //     outhist << '\n';
-        // }
 
         return result;
     }
