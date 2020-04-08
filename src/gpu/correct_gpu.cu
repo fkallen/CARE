@@ -19,7 +19,7 @@
 //#include <nn_classifier.hpp>
 #include <minhasher.hpp>
 #include <options.hpp>
-#include <candidatedistribution.hpp>
+//#include <candidatedistribution.hpp>
 //#include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
@@ -3565,9 +3565,9 @@ void correct_gpu(
                 //batchData.hasUnprocessedResults = false;
             };
 
-            func();
+            //func();
             //batchData.backgroundWorker->enqueue(func);
-            //batchData.unpackWorker->enqueue(func);            
+            batchData.unpackWorker->enqueue(func);            
         };
 
 
