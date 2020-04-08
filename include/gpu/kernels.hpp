@@ -124,22 +124,6 @@ void call_popcount_shifted_hamming_distance_kernel_async(
     KernelLaunchHandle& handle);
 
 
-
-void call_cuda_find_best_alignment_kernel_async_exp(
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            int maxNumAnchors,
-            int maxNumCandidates,
-            float min_overlap_ratio,
-            int min_overlap,
-            float estimatedErrorrate,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            read_number debugsubjectreadid = read_number(-1));
-
 void callSelectIndicesOfGoodCandidatesKernelAsync(
             int* d_indicesOfGoodCandidates,
             int* d_numIndicesPerAnchor,

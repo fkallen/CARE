@@ -16,7 +16,6 @@ enum class KernelId {
     GetNumCorrectedCandidatesPerAnchor,
     PopcountSHDTiled,
     PopcountSHDTiledPitch8,
-	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
     MSAUpdateProperties,
