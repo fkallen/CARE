@@ -366,13 +366,7 @@ namespace gpu{
 
     struct CudaGraph{
         bool valid = false;
-        int numAnchors = 0;
-        int numCandidates = 0;
         cudaGraphExec_t execgraph = nullptr;
-        int* d_anchorIndicesOfCandidates;
-        int* d_numAnchors;
-        int* d_candidates_per_subject;
-        int* d_candidates_per_subject_prefixsum;
     };
 
 
@@ -439,7 +433,7 @@ namespace gpu{
         int n_queries;
 
         int graphindex = 0;
-        std::array<CudaGraph,2> alignmentGraphs;
+        std::array<CudaGraph,2> executionGraphs;
 
 		void reset(){
             combinedStreams = false;
@@ -448,6 +442,216 @@ namespace gpu{
             hasUnprocessedResults = false;
             reallocResize = false;
             reallocInNextIterationData = false;
+        }
+
+        void resize(){
+
+            //allocate memory required for batch processing
+    
+            auto& dataArrays = batchData.dataArrays;
+            const auto& transFuncData = *(batchData.transFuncData);
+            auto& streams = batchData.streams;
+    
+            const auto sequence_pitch = batchData.decodedSequencePitchInBytes;
+            const auto msa_pitch = batchData.msa_pitch;
+            const auto maxCandidates = batchData.numCandidatesLimit;
+            const auto batchsize = batchData.transFuncData->correctionOptions.batchsize;
+            const auto encodedSeqPitchInts = batchData.encodedSequencePitchInInts;
+            const auto qualPitchBytes = batchData.qualityPitchInBytes;
+            const auto msa_weights_pitch_floats = batchData.msa_weights_pitch_floats;
+            const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
+                    
+            const int resultsPerMap = calculateResultsPerMapThreshold(transFuncData.correctionOptions.estimatedCoverage);
+            const int numMinhashMaps = transFuncData.minhasher->getNumberOfMaps();
+            const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
+    
+            batchData.reallocResize |= dataArrays.h_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+            batchData.reallocResize |= dataArrays.h_subject_sequences_lengths.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_subject_read_ids.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_candidate_read_ids.resize(maxNumIds);
+            batchData.reallocResize |= dataArrays.d_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+            batchData.reallocResize |= dataArrays.d_subject_sequences_lengths.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_subject_read_ids.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_candidate_read_ids.resize(maxNumIds + maxCandidates);
+            batchData.reallocResize |= dataArrays.d_candidates_per_subject.resize(2*batchsize);
+            batchData.reallocResize |= dataArrays.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+    
+    
+            batchData.reallocResize |= dataArrays.h_numAnchors.resize(1);
+            batchData.reallocResize |= dataArrays.h_numCandidates.resize(1);
+            batchData.reallocResize |= dataArrays.d_numAnchors.resize(1);
+            batchData.reallocResize |= dataArrays.d_numCandidates.resize(1);
+    
+    
+            batchData.reallocResize |= dataArrays.h_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
+            batchData.reallocResize |= dataArrays.h_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
+            batchData.reallocResize |= dataArrays.h_subject_sequences_lengths.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_candidate_sequences_lengths.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.h_anchorIndicesOfCandidates.resize(maxCandidates);
+    
+            batchData.reallocResize |= dataArrays.d_subject_sequences_data.resize(batchsize * encodedSeqPitchInts);
+            batchData.reallocResize |= dataArrays.d_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
+            batchData.reallocResize |= dataArrays.d_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
+            batchData.reallocResize |= dataArrays.d_subject_sequences_lengths.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_candidate_sequences_lengths.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_anchorIndicesOfCandidates.resize(maxCandidates);
+    
+            
+    
+            //alignment output
+    
+            // batchData.reallocResize |= dataArrays.h_alignment_scores.resize(2*maxCandidates);
+            // batchData.reallocResize |= dataArrays.h_alignment_overlaps.resize(2*maxCandidates);
+            batchData.reallocResize |= dataArrays.h_alignment_shifts.resize(2*maxCandidates);
+            // batchData.reallocResize |= dataArrays.h_alignment_nOps.resize(2*maxCandidates);
+            // batchData.reallocResize |= dataArrays.h_alignment_isValid.resize(2*maxCandidates);
+            // batchData.reallocResize |= dataArrays.h_alignment_best_alignment_flags.resize(maxCandidates);
+    
+            //batchData.reallocResize |= dataArrays.d_alignment_scores.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_alignment_overlaps.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_alignment_shifts.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_alignment_nOps.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_alignment_isValid.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_alignment_best_alignment_flags.resize(maxCandidates);
+    
+            // candidate indices
+    
+            batchData.reallocResize |= dataArrays.h_indices.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.h_indices_per_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_num_indices.resize(1);
+    
+            batchData.reallocResize |= dataArrays.d_indices.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_indices_per_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_indices.resize(1);
+            batchData.reallocResize |= dataArrays.d_indices_tmp.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_indices_per_subject_tmp.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_indices_tmp.resize(1);
+    
+            batchData.reallocResize |= dataArrays.h_indices_of_corrected_subjects.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_num_indices_of_corrected_subjects.resize(1);
+            batchData.reallocResize |= dataArrays.d_indices_of_corrected_subjects.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_indices_of_corrected_subjects.resize(1);
+    
+            batchData.reallocResize |= dataArrays.h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            batchData.reallocResize |= dataArrays.h_numEditsPerCorrectedSubject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_anchorContainsN.resize(batchsize);
+    
+            batchData.reallocResize |= dataArrays.d_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            batchData.reallocResize |= dataArrays.d_numEditsPerCorrectedSubject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_anchorContainsN.resize(batchsize);
+    
+            batchData.reallocResize |= dataArrays.h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            batchData.reallocResize |= dataArrays.h_numEditsPerCorrectedCandidate.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.h_candidateContainsN.resize(maxCandidates);
+    
+            batchData.reallocResize |= dataArrays.d_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            batchData.reallocResize |= dataArrays.d_numEditsPerCorrectedCandidate.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_candidateContainsN.resize(maxCandidates);
+    
+            //qualitiy scores
+            if(transFuncData.correctionOptions.useQualityScores) {
+                batchData.reallocResize |= dataArrays.h_subject_qualities.resize(batchsize * qualPitchBytes);
+                batchData.reallocResize |= dataArrays.h_candidate_qualities.resize(maxCandidates * qualPitchBytes);
+    
+                batchData.reallocResize |= dataArrays.d_subject_qualities.resize(batchsize * qualPitchBytes);
+                batchData.reallocResize |= dataArrays.d_candidate_qualities.resize(maxCandidates * qualPitchBytes);
+                batchData.reallocResize |= dataArrays.d_candidate_qualities_transposed.resize(maxCandidates * qualPitchBytes);            
+            }
+    
+    
+            //correction results
+    
+            batchData.reallocResize |= dataArrays.h_corrected_subjects.resize(batchsize * sequence_pitch);
+            batchData.reallocResize |= dataArrays.h_corrected_candidates.resize(maxCandidates * sequence_pitch);
+            batchData.reallocResize |= dataArrays.h_num_corrected_candidates_per_anchor.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_num_total_corrected_candidates.resize(1);
+            batchData.reallocResize |= dataArrays.h_subject_is_corrected.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_indices_of_corrected_candidates.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.h_num_uncorrected_positions_per_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_uncorrected_positions_per_subject.resize(batchsize * transFuncData.sequenceFileProperties.maxSequenceLength);
+            
+            batchData.reallocResize |= dataArrays.d_corrected_subjects.resize(batchsize * sequence_pitch);
+            batchData.reallocResize |= dataArrays.d_corrected_candidates.resize(maxCandidates * sequence_pitch);
+            batchData.reallocResize |= dataArrays.d_num_corrected_candidates_per_anchor.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_total_corrected_candidates.resize(1);
+            batchData.reallocResize |= dataArrays.d_subject_is_corrected.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_indices_of_corrected_candidates.resize(maxCandidates);
+            batchData.reallocResize |= dataArrays.d_num_uncorrected_positions_per_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_uncorrected_positions_per_subject.resize(batchsize * transFuncData.sequenceFileProperties.maxSequenceLength);
+    
+            batchData.reallocResize |= dataArrays.h_is_high_quality_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_high_quality_subject_indices.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_num_high_quality_subject_indices.resize(1);
+    
+            batchData.reallocResize |= dataArrays.d_is_high_quality_subject.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_high_quality_subject_indices.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_num_high_quality_subject_indices.resize(1);
+    
+            //multiple sequence alignment
+    
+            batchData.reallocResize |= dataArrays.h_consensus.resize(batchsize * msa_pitch);
+            batchData.reallocResize |= dataArrays.h_support.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.h_coverage.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.h_origWeights.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.h_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.h_msa_column_properties.resize(batchsize);
+            batchData.reallocResize |= dataArrays.h_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.h_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+    
+            batchData.reallocResize |= dataArrays.d_consensus.resize(batchsize * msa_pitch);
+            batchData.reallocResize |= dataArrays.d_support.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.d_coverage.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.d_origWeights.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.d_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.d_msa_column_properties.resize(batchsize);
+            batchData.reallocResize |= dataArrays.d_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
+            batchData.reallocResize |= dataArrays.d_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+    
+    
+            batchData.reallocResize |= dataArrays.d_canExecute.resize(1);
+    
+               
+            
+            
+            std::size_t flagTemp = sizeof(bool) * maxCandidates;
+            std::size_t popcountShdTempBytes = 0; 
+            
+            call_popcount_shifted_hamming_distance_kernel_async(
+                nullptr,
+                popcountShdTempBytes,
+                dataArrays.d_alignment_overlaps.get(),
+                dataArrays.d_alignment_shifts.get(),
+                dataArrays.d_alignment_nOps.get(),
+                dataArrays.d_alignment_isValid.get(),
+                dataArrays.d_alignment_best_alignment_flags.get(),
+                dataArrays.d_subject_sequences_data.get(),
+                dataArrays.d_candidate_sequences_data.get(),
+                dataArrays.d_subject_sequences_lengths.get(),
+                dataArrays.d_candidate_sequences_lengths.get(),
+                dataArrays.d_candidates_per_subject_prefixsum.get(),
+                dataArrays.d_candidates_per_subject.get(),
+                dataArrays.d_anchorIndicesOfCandidates.get(),
+                dataArrays.d_numAnchors.get(),
+                dataArrays.d_numCandidates.get(),
+                batchsize,
+                maxCandidates,
+                transFuncData.sequenceFileProperties.maxSequenceLength,
+                batchData.encodedSequencePitchInInts,
+                transFuncData.goodAlignmentProperties.min_overlap,
+                transFuncData.goodAlignmentProperties.maxErrorRate,
+                transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                transFuncData.correctionOptions.estimatedErrorrate,
+                //batchData.maxSubjectLength,
+                streams[primary_stream_index],
+                batchData.kernelLaunchHandle
+            );
+            
+            // this buffer will also serve as temp storage for cub. The required memory for cub 
+            // is less than popcountShdTempBytes.
+            popcountShdTempBytes = std::max(flagTemp, popcountShdTempBytes);
+            batchData.reallocResize |= dataArrays.d_tempstorage.resize(popcountShdTempBytes);
         }
 
         void updateFromIterationData(NextIterationData& data){
@@ -554,7 +758,16 @@ namespace gpu{
 
 
 
-    void initNextIterationData(NextIterationData& nextData, int deviceId){
+    void initNextIterationData(
+        NextIterationData& nextData, 
+        int deviceId,
+        int batchsize,
+        int numCandidatesLimit,
+        size_t encodedSequencePitchInInts,
+        int maxNumThreads,
+        int numMinhashMaps,
+        int resultsPerMap
+    ){
         nextData.deviceId = deviceId;
 
         cudaSetDevice(deviceId); CUERR;
@@ -577,6 +790,45 @@ namespace gpu{
 
         nextData.h_numLeftoverAnchors[0] = 0;
         nextData.h_numLeftoverCandidates[0] = 0;
+    
+        nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+        nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+        nextData.h_subject_sequences_lengths.resize(batchsize);
+        nextData.d_subject_sequences_lengths.resize(batchsize);
+        nextData.h_subject_read_ids.resize(batchsize);
+        nextData.d_subject_read_ids.resize(batchsize);
+        nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
+        nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
+        
+        std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
+        std::vector<int>& idsPerChunk = nextData.idsPerChunk;
+        std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
+        std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
+        std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
+    
+        allRanges.resize(numMinhashMaps * batchsize);
+        idsPerChunk.resize(maxNumThreads, 0);   
+        numAnchorsPerChunk.resize(maxNumThreads, 0);
+        idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+        numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+
+        const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
+
+        nextData.h_candidate_read_ids.resize(maxNumIds);
+        nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
+        nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
+        nextData.d_candidates_per_subject.resize(2*batchsize);
+        nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
+        nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+
+        nextData.h_leftoverAnchorReadIds.resize(batchsize);
+        nextData.d_leftoverAnchorReadIds.resize(batchsize);
+        nextData.d_leftoverAnchorLengths.resize(batchsize);
+        nextData.d_leftoverCandidateReadIds.resize(maxNumIds + numCandidatesLimit);
+        nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
+        nextData.d_leftoverAnchorSequences.resize(encodedSequencePitchInInts * batchsize);
+
+        nextData.reallocOccurred = true;
 
         cudaStreamSynchronize(nextData.stream);
     }
@@ -634,7 +886,7 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        auto& graphwrap = batch.alignmentGraphs[batch.graphindex];
+        auto& graphwrap = batch.executionGraphs[batch.graphindex];
 
         if(!graphwrap.valid){
             std::cerr << "rebuild graph\n";
@@ -701,7 +953,7 @@ namespace gpu{
 
         buildGraphViaCapture(batch);
 
-        auto& graphwrap = batch.alignmentGraphs[batch.graphindex];
+        auto& graphwrap = batch.executionGraphs[batch.graphindex];
 
         assert(graphwrap.valid);
         cudaGraphLaunch(graphwrap.execgraph, streams[primary_stream_index]); CUERR;
@@ -721,16 +973,16 @@ namespace gpu{
         const size_t encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
         const int numMinhashMaps = minhasher.getNumberOfMaps();
 
-        nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.reallocOccurred |= nextData.h_subject_sequences_lengths.resize(batchsize);
-        nextData.reallocOccurred |= nextData.d_subject_sequences_lengths.resize(batchsize);
-        nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
-        nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
-        nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
-        nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
+        // nextData.reallocOccurred |= nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+        // nextData.reallocOccurred |= nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+        // nextData.reallocOccurred |= nextData.h_subject_sequences_lengths.resize(batchsize);
+        // nextData.reallocOccurred |= nextData.d_subject_sequences_lengths.resize(batchsize);
+        // nextData.reallocOccurred |= nextData.h_subject_read_ids.resize(batchsize);
+        // nextData.reallocOccurred |= nextData.d_subject_read_ids.resize(batchsize);
+        // nextData.reallocOccurred |= nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
+        // nextData.reallocOccurred |= nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
 
-        const int maxNumThreads = batchData.transFuncData->runtimeOptions.threads;
+        // const int maxNumThreads = batchData.transFuncData->runtimeOptions.threads;
 
         std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
         std::vector<int>& idsPerChunk = nextData.idsPerChunk;
@@ -738,28 +990,28 @@ namespace gpu{
         std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
         std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
 
-        allRanges.resize(numMinhashMaps * batchsize);
-        idsPerChunk.resize(maxNumThreads, 0);   
-        numAnchorsPerChunk.resize(maxNumThreads, 0);
-        idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-        numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+        // allRanges.resize(numMinhashMaps * batchsize);
+        // idsPerChunk.resize(maxNumThreads, 0);   
+        // numAnchorsPerChunk.resize(maxNumThreads, 0);
+        // idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+        // numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
 
         const int resultsPerMap = calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
         const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
 
-        nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds);
-        nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
-        nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
-        nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(2*batchsize);
-        nextData.reallocOccurred |= nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
-        nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+        // nextData.reallocOccurred |= nextData.h_candidate_read_ids.resize(maxNumIds);
+        // nextData.reallocOccurred |= nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
+        // nextData.reallocOccurred |= nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
+        // nextData.reallocOccurred |= nextData.d_candidates_per_subject.resize(2*batchsize);
+        // nextData.reallocOccurred |= nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
+        // nextData.reallocOccurred |= nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
 
-        nextData.h_leftoverAnchorReadIds.resize(batchsize);
-        nextData.d_leftoverAnchorReadIds.resize(batchsize);
-        nextData.d_leftoverAnchorLengths.resize(batchsize);
-        nextData.d_leftoverCandidateReadIds.resize(maxNumIds + numCandidatesLimit);
-        nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
-        nextData.d_leftoverAnchorSequences.resize(encodedSequencePitchInInts * batchsize);
+        // nextData.h_leftoverAnchorReadIds.resize(batchsize);
+        // nextData.d_leftoverAnchorReadIds.resize(batchsize);
+        // nextData.d_leftoverAnchorLengths.resize(batchsize);
+        // nextData.d_leftoverCandidateReadIds.resize(maxNumIds + numCandidatesLimit);
+        // nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
+        // nextData.d_leftoverAnchorSequences.resize(encodedSequencePitchInInts * batchsize);
 
 
         //data of new anchors is appended to leftover data
@@ -1269,13 +1521,20 @@ namespace gpu{
         const auto msa_weights_pitch_floats = batchData.msa_weights_pitch_floats;
         const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
                 
-        //sequence input data
-        //following arrays are initialized by next iteration data:
-        //h_subject_sequences_data, h_subject_sequences_length
-        //h_subject_read_ids, h_candidate_read_ids
-        //d_subject_sequences_data, d_subject_sequences_length, 
-        //d_candidates_per_subject, d_candidates_per_subject_prefixsum
-        //d_subject_read_ids, d_candidate_read_ids
+        const int resultsPerMap = calculateResultsPerMapThreshold(transFuncData.correctionOptions.estimatedCoverage);
+        const int numMinhashMaps = transFuncData.minhasher->getNumberOfMaps();
+        const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
+
+        batchData.reallocResize |= dataArrays.h_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+        batchData.reallocResize |= dataArrays.h_subject_sequences_lengths.resize(batchsize);
+        batchData.reallocResize |= dataArrays.h_subject_read_ids.resize(batchsize);
+        batchData.reallocResize |= dataArrays.h_candidate_read_ids.resize(maxNumIds);
+        batchData.reallocResize |= dataArrays.d_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+        batchData.reallocResize |= dataArrays.d_subject_sequences_lengths.resize(batchsize);
+        batchData.reallocResize |= dataArrays.d_subject_read_ids.resize(batchsize);
+        batchData.reallocResize |= dataArrays.d_candidate_read_ids.resize(maxNumIds + maxCandidates);
+        batchData.reallocResize |= dataArrays.d_candidates_per_subject.resize(2*batchsize);
+        batchData.reallocResize |= dataArrays.d_candidates_per_subject_prefixsum.resize(batchsize+1);
 
 
         batchData.reallocResize |= dataArrays.h_numAnchors.resize(1);
@@ -1457,19 +1716,19 @@ namespace gpu{
         if(batchData.reallocResize){
             //invalidate all graphs
             for(int i = 0; i < 2; i++){
-                batchData.alignmentGraphs[i].valid = false;
+                batchData.executionGraphs[i].valid = false;
             }
         }else{
             if(batchData.reallocInNextIterationData){
                 //invalidate current graph
-                batchData.alignmentGraphs[batchData.graphindex].valid = false;
+                batchData.executionGraphs[batchData.graphindex].valid = false;
             }else{
                 ; //all good
             }
         }
 
         // if(batchData.reallocResize){
-        //     auto& graph = batchData.alignmentGraphs[batchData.graphindex];
+        //     auto& graph = batchData.executionGraphs[batchData.graphindex];
 
         //     graph.d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
         //     graph.d_numAnchors = dataArrays.d_numAnchors.get();
@@ -3353,12 +3612,26 @@ void correct_gpu(
             batchData.msa_pitch = SDIV(sizeof(char)*batchData.msa_max_column_count, 4) * 4;
             batchData.msa_weights_pitch = SDIV(sizeof(float)*batchData.msa_max_column_count, 4) * 4;
             batchData.msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
-
-            initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
+            
+            batchData.numCandidatesLimit = numCandidatesLimitPerGpu[deviceId];
 
             const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
             const int numMinhashMaps = minhasher.getNumberOfMaps();
             const int maxNumIds = resultsPerMap * numMinhashMaps * correctionOptions.batchsize;
+
+
+            initNextIterationData(
+                batchData.nextIterationData, 
+                batchData.deviceId,
+                correctionOptions.batchsize,
+                batchData.numCandidatesLimit,
+                batchData.encodedSequencePitchInInts,
+                runtimeOptions.threads,
+                numMinhashMaps,
+                resultsPerMap
+            );
+
+            
 
             batchData.waitableOutputData.data.rawResults.resize(
                 correctionOptions.batchsize, 
@@ -3368,9 +3641,8 @@ void correct_gpu(
                 batchData.maxNumEditsPerSequence
             );
 
-
+            batchData.resize();
             
-            batchData.numCandidatesLimit = numCandidatesLimitPerGpu[deviceId];
         };
 
         auto destroyBatchData = [&](auto& batchData){
@@ -3381,8 +3653,8 @@ void correct_gpu(
             destroyNextIterationData(batchData.nextIterationData);
 
             for(int i = 0; i < 2; i++){
-                if(batchData.alignmentGraphs[i].execgraph != nullptr){
-                    cudaGraphExecDestroy(batchData.alignmentGraphs[i].execgraph); CUERR;
+                if(batchData.executionGraphs[i].execgraph != nullptr){
+                    cudaGraphExecDestroy(batchData.executionGraphs[i].execgraph); CUERR;
                 }
             }
     
