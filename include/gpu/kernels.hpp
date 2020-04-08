@@ -236,9 +236,18 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             int* d_newIndices,
             int* d_newIndicesPerSubject,
             int* d_newNumIndices,
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
+            const MSAColumnProperties* d_msaColumnProperties,
+            const char* d_consensus,
+            const int* d_counts,
+            const float* d_weights,
+            const BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_shifts,
+            const int* d_nOps,
+            const int* d_overlaps,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
             bool* d_shouldBeKept,
             const int* d_candidates_per_subject_prefixsum,
             int n_subjects,
@@ -251,9 +260,7 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             int dataset_coverage,
             const bool* d_canExecute,
             cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            const unsigned int* d_readids,
-            bool debug);
+            KernelLaunchHandle& handle);
 
 void callBuildMSASingleBlockKernel_async(
             MSAColumnProperties* d_msaColumnProperties,

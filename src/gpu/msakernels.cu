@@ -1642,9 +1642,18 @@ namespace gpu{
             int* __restrict__ d_newIndices,
             int* __restrict__ d_newNumIndicesPerSubject,
             int* __restrict__ d_newNumIndices,
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const char* __restrict__ consensus,
+            const int* __restrict__ counts,
+            const float* __restrict__ weights,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const int* __restrict__ shifts,
+            const int* __restrict__ nOps,
+            const int* __restrict__ overlaps,
+            const unsigned int* __restrict__ subjectSequencesData,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const int* __restrict__ subjectSequencesLength,
+            const int* __restrict__ candidateSequencesLength,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             int n_subjects,
@@ -1655,9 +1664,7 @@ namespace gpu{
             const int* __restrict__ d_indices,
             const int* __restrict__ d_indices_per_subject,
             int dataset_coverage,
-            const bool* __restrict__ canExecute,
-            const unsigned int* d_readids,
-            bool debug = false){
+            const bool* __restrict__ canExecute){
 
         if(*canExecute){
 
@@ -1686,23 +1693,23 @@ namespace gpu{
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;
 
-                    const MSAColumnProperties* const myMsaColumnProperties = d_msapointers.msaColumnProperties + subjectIndex;
-                    const char* const myConsensus = d_msapointers.consensus + msa_pitch * subjectIndex;
-                    const int* const myCounts = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                    const float* const myWeights = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
+                    const char* const myConsensus = consensus + msa_pitch * subjectIndex;
+                    const int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
 
-                    const BestAlignment_t* const myAlignmentFlags = d_alignmentresultpointers.bestAlignmentFlags + globalOffset;
-                    const int* const myShifts = d_alignmentresultpointers.shifts + globalOffset;
-                    const int* const myNops = d_alignmentresultpointers.nOps + globalOffset;
-                    const int* const myOverlaps = d_alignmentresultpointers.overlaps + globalOffset;
+                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                    const int* const myShifts = shifts + globalOffset;
+                    const int* const myNops = nOps + globalOffset;
+                    const int* const myOverlaps = overlaps + globalOffset;
 
-                    const unsigned int* const myAnchorSequenceData = d_sequencePointers.subjectSequencesData 
+                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
                                                                         + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const unsigned int* const myCandidateSequencesData = d_sequencePointers.candidateSequencesData 
+                    const unsigned int* const myCandidateSequencesData = candidateSequencesData 
                                                                         + std::size_t(globalOffset) * encodedSequencePitchInInts;
 
-                    const int subjectLength = d_sequencePointers.subjectSequencesLength[subjectIndex];
-                    const int* const myCandidateLengths = d_sequencePointers.candidateSequencesLength + globalOffset;
+                    const int subjectLength = subjectSequencesLength[subjectIndex];
+                    const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
 
                     findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
                         (int2*)&temp_storage.int2reduce,
@@ -3077,7 +3084,7 @@ namespace gpu{
         constexpr int blocksize = 128;
 
         const std::size_t smem = 0;
-
+#if 0
         int max_blocks_per_device = 1;
 
         KernelLaunchConfig kernelLaunchConfig;
@@ -3123,6 +3130,7 @@ namespace gpu{
             // std::cerr << max_blocks_per_device 
             //         << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << "\n";
         }
+#endif        
   #if 0      
         //std::cerr << grid.x << " " << max_blocks_per_device << " " << n_subjects << "\n";
 
@@ -3148,7 +3156,7 @@ namespace gpu{
         dim3 grid(n_subjects, 1, 1);
 
         msaFindConsensusKernel<(blocksize)>
-                <<<grid, block, 0, stream>>>(
+                <<<grid, block, smem, stream>>>(
             d_msaColumnProperties,
             d_counts,
             d_weights,
@@ -3174,9 +3182,18 @@ namespace gpu{
                 int* d_newIndices,
                 int* d_newIndicesPerSubject,
                 int* d_newNumIndices,
-                MSAPointers d_msapointers,
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                const MSAColumnProperties* d_msaColumnProperties,
+                const char* d_consensus,
+                const int* d_counts,
+                const float* d_weights,
+                const BestAlignment_t* d_bestAlignmentFlags,
+                const int* d_shifts,
+                const int* d_nOps,
+                const int* d_overlaps,
+                const unsigned int* d_subjectSequencesData,
+                const unsigned int* d_candidateSequencesData,
+                const int* d_subjectSequencesLength,
+                const int* d_candidateSequencesLength,
                 bool* d_shouldBeKept,
                 const int* d_candidates_per_subject_prefixsum,
                 int n_subjects,
@@ -3189,9 +3206,7 @@ namespace gpu{
                 int dataset_coverage,
                 const bool* d_canExecute,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle,
-                const unsigned int* d_readids,
-                bool debug){
+    			KernelLaunchHandle& handle){
 
         cudaMemsetAsync(d_newNumIndices, 0, sizeof(int), stream); CUERR;
         cudaMemsetAsync(d_newIndicesPerSubject, 0, sizeof(int) * n_subjects, stream); CUERR;
@@ -3253,9 +3268,18 @@ namespace gpu{
                     d_newIndices, \
                     d_newIndicesPerSubject, \
                     d_newNumIndices, \
-                    d_msapointers, \
-                    d_alignmentresultpointers, \
-                    d_sequencePointers, \
+                    d_msaColumnProperties, \
+                    d_consensus, \
+                    d_counts, \
+                    d_weights, \
+                    d_bestAlignmentFlags, \
+                    d_shifts, \
+                    d_nOps, \
+                    d_overlaps, \
+                    d_subjectSequencesData, \
+                    d_candidateSequencesData, \
+                    d_subjectSequencesLength, \
+                    d_candidateSequencesLength, \
                     d_shouldBeKept, \
                     d_candidates_per_subject_prefixsum, \
                     n_subjects, \
@@ -3266,9 +3290,7 @@ namespace gpu{
                     d_indices, \
                     d_indices_per_subject, \
                     dataset_coverage, \
-                    d_canExecute, \
-                    d_readids, \
-                    debug); CUERR;
+                    d_canExecute); CUERR;
 
     	assert(blocksize > 0 && blocksize <= max_block_size);
 
