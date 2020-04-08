@@ -53,350 +53,128 @@ struct DataArrays {
     template<class T>
     using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
-
-#if 0
-    void resizeAnchorSequenceData(int numAnchors, int maximumSequenceBytes){
-        const size_t pitch = SDIV(maximumSequenceBytes, padding_bytes) * padding_bytes;
-        h_subject_read_ids.resize(numAnchors);
-        h_subject_sequences_data.resize(numAnchors * (pitch / sizeof(int)));
-        h_subject_sequences_lengths.resize(numAnchors);
-        d_subject_read_ids.resize(numAnchors);
-        d_subject_sequences_data.resize(numAnchors * (pitch / sizeof(int)));
-        d_subject_sequences_lengths.resize(numAnchors);
-    }
-
-	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores_){
-        // n_subjects = n_sub;
-		// n_queries = n_quer;
-		// maximum_sequence_length = max_seq_length;
-        // maximum_sequence_bytes = max_seq_bytes;
-		// min_overlap = std::max(1, std::max(min_overlap_, int(maximum_sequence_length * min_overlap_ratio_)));
-        // useQualityScores = useQualityScores_;
-
-		// encoded_sequence_pitch = SDIV(maximum_sequence_bytes, padding_bytes) * padding_bytes;
-		// quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
-		// sequence_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
-
-		// //sequence input data
-
-        // h_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
-        // h_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
-        // h_transposedCandidateSequencesData.resize(n_quer * encoded_sequence_pitch);
-        // h_subject_sequences_lengths.resize(n_sub);
-        // h_candidate_sequences_lengths.resize(n_quer);
-        // h_candidates_per_subject.resize(n_sub);
-        // h_candidates_per_subject_prefixsum.resize((n_sub + 1));
-        // h_subject_read_ids.resize(n_sub);
-        // h_candidate_read_ids.resize(n_quer);
-
-        // d_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
-        // d_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
-        // d_transposedCandidateSequencesData.resize(n_quer * encoded_sequence_pitch);
-        // d_subject_sequences_lengths.resize(n_sub);
-        // d_candidate_sequences_lengths.resize(n_quer);
-        // d_candidates_per_subject.resize(n_sub);
-        // d_candidates_per_subject_prefixsum.resize((n_sub + 1));
-        // d_subject_read_ids.resize(n_sub);
-        // d_candidate_read_ids.resize(n_quer);
-
-		// //alignment output
-
-		// h_alignment_scores.resize(2*n_quer);
-        // h_alignment_overlaps.resize(2*n_quer);
-        // h_alignment_shifts.resize(2*n_quer);
-        // h_alignment_nOps.resize(2*n_quer);
-        // h_alignment_isValid.resize(2*n_quer);
-        // h_alignment_best_alignment_flags.resize(n_quer);
-
-        // d_alignment_scores.resize(2*n_quer);
-        // d_alignment_overlaps.resize(2*n_quer);
-        // d_alignment_shifts.resize(2*n_quer);
-        // d_alignment_nOps.resize(2*n_quer);
-        // d_alignment_isValid.resize(2*n_quer);
-        // d_alignment_best_alignment_flags.resize(n_quer);
-
-		// // candidate indices
-
-        // h_indices.resize(n_quer);
-        // h_indices_per_subject.resize(n_sub);
-        // h_indices_per_subject_prefixsum.resize((n_sub + 1));
-        // h_num_indices.resize(1);
-
-        // d_indices.resize(n_quer);
-        // d_indices_per_subject.resize(n_sub);
-        // d_indices_per_subject_prefixsum.resize((n_sub + 1));
-        // d_num_indices.resize(1);
-        // d_num_indices_tmp.resize(1);
-
-		// //qualitiy scores
-		// if(useQualityScores) {
-        //     h_subject_qualities.resize(n_sub * quality_pitch);
-        //     h_candidate_qualities.resize(n_quer * quality_pitch);
-
-        //     d_subject_qualities.resize(n_sub * quality_pitch);
-        //     d_candidate_qualities.resize(n_quer * quality_pitch);
-        //     d_candidate_qualities_transposed.resize(n_quer * quality_pitch);
-        //     d_candidate_qualities_tmp.resize(n_quer * quality_pitch);
-		// }
-
-
-		// //correction results
-
-        // h_corrected_subjects.resize(n_sub * sequence_pitch);
-        // h_corrected_candidates.resize(n_quer * sequence_pitch);
-        // h_num_corrected_candidates_per_anchor.resize(n_sub);
-        // h_subject_is_corrected.resize(n_sub);
-        // h_indices_of_corrected_candidates.resize(n_quer);
-        // h_num_uncorrected_positions_per_subject.resize(n_sub);
-        // h_uncorrected_positions_per_subject.resize(n_sub * max_seq_length);
-
-        // d_corrected_subjects.resize(n_sub * sequence_pitch);
-        // d_corrected_candidates.resize(n_quer * sequence_pitch);
-        // d_num_corrected_candidates_per_anchor.resize(n_sub);
-        // d_subject_is_corrected.resize(n_sub);
-        // d_indices_of_corrected_candidates.resize(n_quer);
-        // d_num_uncorrected_positions_per_subject.resize(n_sub);
-        // d_uncorrected_positions_per_subject.resize(n_sub * max_seq_length);
-
-        // h_is_high_quality_subject.resize(n_sub);
-        // h_high_quality_subject_indices.resize(n_sub);
-        // h_num_high_quality_subject_indices.resize(1);
-
-        // d_is_high_quality_subject.resize(n_sub);
-        // d_high_quality_subject_indices.resize(n_sub);
-        // d_num_high_quality_subject_indices.resize(1);
-
-		// //multiple sequence alignment
-
-        // int msa_max_column_count = (3*max_seq_length - 2*min_overlap_);
-        // msa_pitch = SDIV(sizeof(char)*msa_max_column_count, padding_bytes) * padding_bytes;
-        // msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
-        // size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
-        // h_consensus.resize(n_sub * msa_pitch);
-        // h_support.resize(n_sub * msa_weights_pitch_floats);
-        // h_coverage.resize(n_sub * msa_weights_pitch_floats);
-        // h_origWeights.resize(n_sub * msa_weights_pitch_floats);
-        // h_origCoverages.resize(n_sub * msa_weights_pitch_floats);
-        // h_msa_column_properties.resize(n_sub);
-        // h_counts.resize(n_sub * 4 * msa_weights_pitch_floats);
-        // h_weights.resize(n_sub * 4 * msa_weights_pitch_floats);
-
-        // d_consensus.resize(n_sub * msa_pitch);
-        // d_support.resize(n_sub * msa_weights_pitch_floats);
-        // d_coverage.resize(n_sub * msa_weights_pitch_floats);
-        // d_origWeights.resize(n_sub * msa_weights_pitch_floats);
-        // d_origCoverages.resize(n_sub * msa_weights_pitch_floats);
-        // d_msa_column_properties.resize(n_sub);
-        // d_counts.resize(n_sub * 4 * msa_weights_pitch_floats);
-        // d_weights.resize(n_sub * 4 * msa_weights_pitch_floats);
-
-
-        // d_canExecute.resize(1);
-
-        // size_t hostSizeBytes = hostArraysSizeInBytes();
-        // size_t deviceSizeBytes = deviceArraysSizeInBytes();
-        // size_t hostCapacityBytes = hostArraysCapacityInBytes();
-        // size_t deviceCapacityBytes = deviceArraysCapacityInBytes();
-        //
-        // auto MB = [](auto bytes){
-        //     return bytes / 1024. / 1024;
-        // };
-        //
-        // std::cerr << "Resize: Host " << MB(hostSizeBytes) << " " << MB(hostCapacityBytes);
-        // std::cerr << " Device " << MB(deviceSizeBytes) << " " << MB(deviceCapacityBytes) << '\n';
-	}
-#endif
-
-	void set_cub_temp_storage_size(std::size_t newsize){
-		d_cub_temp_storage.resize(newsize);
-	}
-
-	void zero_gpu(cudaStream_t stream){
-        // cudaMemsetAsync(d_consensus, 0, d_consensus.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_support, 0, d_support.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_coverage, 0, d_coverage.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_origWeights, 0, d_origWeights.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_origCoverages, 0, d_origCoverages.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_msa_column_properties, 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_counts, 0, d_counts.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_weights, 0, d_weights.sizeInBytes(), stream); CUERR;
-
-        //cudaMemsetAsync(d_corrected_subjects, 0, d_corrected_subjects.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_corrected_candidates, 0, d_corrected_candidates.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_num_corrected_candidates_per_anchor, 0, d_num_corrected_candidates_per_anchor.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_high_quality_subject_indices, 0, d_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_num_high_quality_subject_indices, 0, d_num_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_num_uncorrected_positions_per_subject, 0, d_num_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
-        //cudaMemsetAsync(d_uncorrected_positions_per_subject, 0, d_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
-
-
-        // cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_alignment_shifts, 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_alignment_nOps, 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_alignment_isValid, 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_alignment_best_alignment_flags, 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
-
-        // cudaMemsetAsync(d_subject_sequences_data, 0, d_subject_sequences_data.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_candidate_sequences_data, 0, d_candidate_sequences_data.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_subject_sequences_lengths, 0, d_subject_sequences_lengths.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_candidate_sequences_lengths, 0, d_candidate_sequences_lengths.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_candidates_per_subject, 0, d_candidates_per_subject.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_candidates_per_subject_prefixsum, 0, d_candidates_per_subject_prefixsum.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
-        // cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
-
-        // if(useQualityScores){
-        //     cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
-        //     cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-        //     cudaMemsetAsync(d_candidate_qualities_transposed, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-        //     cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
-        // }
-	}
-
 	void reset(){
 
-        h_subject_sequences_data = std::move(PinnedBuffer<unsigned int>{});
-        h_candidate_sequences_data = std::move(PinnedBuffer<unsigned int>{});
-        h_transposedCandidateSequencesData = std::move(PinnedBuffer<unsigned int>{});
-        h_subject_sequences_lengths = std::move(PinnedBuffer<int>{});
-        h_candidate_sequences_lengths = std::move(PinnedBuffer<int>{});
-        h_candidates_per_subject = std::move(PinnedBuffer<int>{});
-        h_candidates_per_subject_prefixsum = std::move(PinnedBuffer<int>{});
-        h_subject_read_ids = std::move(PinnedBuffer<read_number>{});
-        h_candidate_read_ids = std::move(PinnedBuffer<read_number>{});
+        h_subject_sequences_data.destroy();
+        h_candidate_sequences_data.destroy();
+        h_transposedCandidateSequencesData.destroy();
+        h_subject_sequences_lengths.destroy();
+        h_candidate_sequences_lengths.destroy();
+        h_candidates_per_subject.destroy();
+        h_candidates_per_subject_prefixsum.destroy();
+        h_subject_read_ids.destroy();
+        h_candidate_read_ids.destroy();
 
-        d_subject_sequences_data = std::move(DeviceBuffer<unsigned int>{});
-        d_candidate_sequences_data = std::move(DeviceBuffer<unsigned int>{});
-        d_transposedCandidateSequencesData = std::move(DeviceBuffer<unsigned int>{});
-        d_subject_sequences_lengths = std::move(DeviceBuffer<int>{});
-        d_candidate_sequences_lengths = std::move(DeviceBuffer<int>{});
-        d_candidates_per_subject = std::move(DeviceBuffer<int>{});
-        d_candidates_per_subject_prefixsum = std::move(DeviceBuffer<int>{});
-        d_subject_read_ids = std::move(DeviceBuffer<read_number>{});
-        d_candidate_read_ids = std::move(DeviceBuffer<read_number>{});
+        d_subject_sequences_data.destroy();
+        d_candidate_sequences_data.destroy();
+        d_transposedCandidateSequencesData.destroy();
+        d_subject_sequences_lengths.destroy();
+        d_candidate_sequences_lengths.destroy();
+        d_candidates_per_subject.destroy();
+        d_candidates_per_subject_prefixsum.destroy();
+        d_subject_read_ids.destroy();
+        d_candidate_read_ids.destroy();
 
-        h_subject_qualities = std::move(PinnedBuffer<char>{});
-        h_candidate_qualities = std::move(PinnedBuffer<char>{});
+        h_subject_qualities.destroy();
+        h_candidate_qualities.destroy();
 
-        d_subject_qualities = std::move(DeviceBuffer<char>{});
-        d_candidate_qualities = std::move(DeviceBuffer<char>{});
-        d_candidate_qualities_transposed = std::move(DeviceBuffer<char>{});
-        //d_candidate_qualities_tmp = std::move(DeviceBuffer<char>{});
+        d_subject_qualities.destroy();
+        d_candidate_qualities.destroy();
+        d_candidate_qualities_transposed.destroy();
 
-        h_consensus = std::move(PinnedBuffer<char>{});
-        h_support = std::move(PinnedBuffer<float>{});
-        h_coverage = std::move(PinnedBuffer<int>{});
-        h_origWeights = std::move(PinnedBuffer<float>{});
-        h_origCoverages = std::move(PinnedBuffer<int>{});
-        h_msa_column_properties = std::move(PinnedBuffer<MSAColumnProperties>{});
-        h_counts = std::move(PinnedBuffer<int>{});
-        h_weights = std::move(PinnedBuffer<float>{});
+        h_consensus.destroy();
+        h_support.destroy();
+        h_coverage.destroy();
+        h_origWeights.destroy();
+        h_origCoverages.destroy();
+        h_msa_column_properties.destroy();
+        h_counts.destroy();
+        h_weights.destroy();
 
-        d_consensus = std::move(DeviceBuffer<char>{});
-        d_support = std::move(DeviceBuffer<float>{});
-        d_coverage = std::move(DeviceBuffer<int>{});
-        d_origWeights = std::move(DeviceBuffer<float>{});
-        d_origCoverages = std::move(DeviceBuffer<int>{});
-        d_msa_column_properties = std::move(DeviceBuffer<MSAColumnProperties>{});
-        d_counts = std::move(DeviceBuffer<int>{});
-        d_weights = std::move(DeviceBuffer<float>{});
+        d_consensus.destroy();
+        d_support.destroy();
+        d_coverage.destroy();
+        d_origWeights.destroy();
+        d_origCoverages.destroy();
+        d_msa_column_properties.destroy();
+        d_counts.destroy();
+        d_weights.destroy();
 
-        h_alignment_scores = std::move(PinnedBuffer<int>{});
-        h_alignment_overlaps = std::move(PinnedBuffer<int>{});
-        h_alignment_shifts = std::move(PinnedBuffer<int>{});
-        h_alignment_nOps = std::move(PinnedBuffer<int>{});
-        h_alignment_isValid = std::move(PinnedBuffer<bool>{});
-        h_alignment_best_alignment_flags = std::move(PinnedBuffer<BestAlignment_t>{});
+        h_alignment_scores.destroy();
+        h_alignment_overlaps.destroy();
+        h_alignment_shifts.destroy();
+        h_alignment_nOps.destroy();
+        h_alignment_isValid.destroy();
+        h_alignment_best_alignment_flags.destroy();
 
-        d_alignment_scores = std::move(DeviceBuffer<int>{});
-        d_alignment_overlaps = std::move(DeviceBuffer<int>{});
-        d_alignment_shifts = std::move(DeviceBuffer<int>{});
-        d_alignment_nOps = std::move(DeviceBuffer<int>{});
-        d_alignment_isValid = std::move(DeviceBuffer<bool>{});
-        d_alignment_best_alignment_flags = std::move(DeviceBuffer<BestAlignment_t>{});
+        d_alignment_scores.destroy();
+        d_alignment_overlaps.destroy();
+        d_alignment_shifts.destroy();
+        d_alignment_nOps.destroy();
+        d_alignment_isValid.destroy();
+        d_alignment_best_alignment_flags.destroy();
 
-        h_corrected_subjects = std::move(PinnedBuffer<char>{});
-        h_corrected_candidates = std::move(PinnedBuffer<char>{});
-        h_num_corrected_candidates_per_anchor = std::move(PinnedBuffer<int>{});
-        h_num_corrected_candidates_per_anchor_prefixsum = std::move(PinnedBuffer<int>{});
-        h_subject_is_corrected = std::move(PinnedBuffer<bool>{});
-        h_indices_of_corrected_candidates = std::move(PinnedBuffer<int>{});
-        h_is_high_quality_subject = std::move(PinnedBuffer<AnchorHighQualityFlag>{});
-        h_high_quality_subject_indices = std::move(PinnedBuffer<int>{});
-        h_num_high_quality_subject_indices = std::move(PinnedBuffer<int>{});
-        h_num_uncorrected_positions_per_subject = std::move(PinnedBuffer<int>{});
-        h_uncorrected_positions_per_subject= std::move(PinnedBuffer<int>{});
+        h_corrected_subjects.destroy();
+        h_corrected_candidates.destroy();
+        h_num_corrected_candidates_per_anchor.destroy();
+        h_num_corrected_candidates_per_anchor_prefixsum.destroy();
+        h_subject_is_corrected.destroy();
+        h_indices_of_corrected_candidates.destroy();
+        h_is_high_quality_subject.destroy();
+        h_high_quality_subject_indices.destroy();
+        h_num_high_quality_subject_indices.destroy();
+        h_num_uncorrected_positions_per_subject.destroy();
+        h_uncorrected_positions_per_subject.destroy();
 
-        d_corrected_subjects = std::move(DeviceBuffer<char>{});
-        d_corrected_candidates = std::move(DeviceBuffer<char>{});
-        d_num_corrected_candidates_per_anchor = std::move(DeviceBuffer<int>{});
-        d_num_corrected_candidates_per_anchor_prefixsum = std::move(DeviceBuffer<int>{});
-        d_subject_is_corrected = std::move(DeviceBuffer<bool>{});
-        d_indices_of_corrected_candidates = std::move(DeviceBuffer<int>{});
-        d_is_high_quality_subject = std::move(DeviceBuffer<AnchorHighQualityFlag>{});
-        d_high_quality_subject_indices = std::move(DeviceBuffer<int>{});
-        d_num_high_quality_subject_indices = std::move(DeviceBuffer<int>{});
-        d_num_uncorrected_positions_per_subject = std::move(DeviceBuffer<int>{});
-        d_uncorrected_positions_per_subject= std::move(DeviceBuffer<int>{});
+        d_corrected_subjects.destroy();
+        d_corrected_candidates.destroy();
+        d_num_corrected_candidates_per_anchor.destroy();
+        d_num_corrected_candidates_per_anchor_prefixsum.destroy();
+        d_subject_is_corrected.destroy();
+        d_indices_of_corrected_candidates.destroy();
+        d_is_high_quality_subject.destroy();
+        d_high_quality_subject_indices.destroy();
+        d_num_high_quality_subject_indices.destroy();
+        d_num_uncorrected_positions_per_subject.destroy();
+        d_uncorrected_positions_per_subject.destroy();
 
-        h_indices = std::move(PinnedBuffer<int>{});
-        h_indices_per_subject = std::move(PinnedBuffer<int>{});
-        h_num_indices = std::move(PinnedBuffer<int>{});
+        h_indices.destroy();
+        h_indices_per_subject.destroy();
+        h_num_indices.destroy();
 
-        d_indices = std::move(DeviceBuffer<int>{});
-        d_indices_per_subject = std::move(DeviceBuffer<int>{});
-        d_num_indices = std::move(DeviceBuffer<int>{});
+        d_indices.destroy();
+        d_indices_per_subject.destroy();
+        d_num_indices.destroy();
 
-        d_indices_tmp = std::move(DeviceBuffer<int>{});
-        d_indices_per_subject_tmp = std::move(DeviceBuffer<int>{});
-        d_num_indices_tmp = std::move(DeviceBuffer<int>{});
+        d_indices_tmp.destroy();
+        d_indices_per_subject_tmp.destroy();
+        d_num_indices_tmp.destroy();
 
-        d_indices_of_corrected_subjects = std::move(DeviceBuffer<int>{});
-        d_num_indices_of_corrected_subjects = std::move(DeviceBuffer<int>{});
-
-
-        h_editsPerCorrectedSubject = std::move(PinnedBuffer<TempCorrectedSequence::Edit>{});
-        h_numEditsPerCorrectedSubject = std::move(PinnedBuffer<int>{});
-        h_editsPerCorrectedCandidate = std::move(PinnedBuffer<TempCorrectedSequence::Edit>{});
-        h_numEditsPerCorrectedCandidate = std::move(PinnedBuffer<int>{});
-        h_anchorContainsN = std::move(PinnedBuffer<bool>{});
-        h_candidateContainsN = std::move(PinnedBuffer<bool>{});
-
-        d_editsPerCorrectedSubject = std::move(DeviceBuffer<TempCorrectedSequence::Edit>{});
-        d_numEditsPerCorrectedSubject = std::move(DeviceBuffer<int>{});
-        d_editsPerCorrectedCandidate = std::move(DeviceBuffer<TempCorrectedSequence::Edit>{});
-        d_numEditsPerCorrectedCandidate = std::move(DeviceBuffer<int>{});
-        d_anchorContainsN = std::move(DeviceBuffer<bool>{});
-        d_candidateContainsN = std::move(DeviceBuffer<bool>{});
+        d_indices_of_corrected_subjects.destroy();
+        d_num_indices_of_corrected_subjects.destroy();
 
 
-        d_cub_temp_storage = std::move(DeviceBuffer<char>{});
+        h_editsPerCorrectedSubject.destroy();
+        h_numEditsPerCorrectedSubject.destroy();
+        h_editsPerCorrectedCandidate.destroy();
+        h_numEditsPerCorrectedCandidate.destroy();
+        h_anchorContainsN.destroy();
+        h_candidateContainsN.destroy();
 
-        d_canExecute = std::move(DeviceBuffer<bool>{});
+        d_editsPerCorrectedSubject.destroy();
+        d_numEditsPerCorrectedSubject.destroy();
+        d_editsPerCorrectedCandidate.destroy();
+        d_numEditsPerCorrectedCandidate.destroy();
+        d_anchorContainsN.destroy();
+        d_candidateContainsN.destroy();
+
+        d_canExecute.destroy();
         
         d_tempstorage.destroy();
         d_numAnchors.destroy();
         d_numCandidates.destroy();
         h_numAnchors.destroy();
         h_numCandidates.destroy();
-
-		// n_subjects = 0;
-		// n_queries = 0;
-		// n_indices = 0;
-		// maximum_sequence_length = 0;
-        // maximum_sequence_bytes = 0;
-		// min_overlap = 1;
-
-		// encoded_sequence_pitch = 0;
-		// quality_pitch = 0;
-		// sequence_pitch = 0;
-		// msa_pitch = 0;
-		// msa_weights_pitch = 0;
 	}
 
     size_t hostArraysSizeInBytes() const{
@@ -527,8 +305,6 @@ struct DataArrays {
         bytes += f(d_numEditsPerCorrectedCandidate);
         bytes += f(d_anchorContainsN);
         bytes += f(d_candidateContainsN);
-
-        bytes += f(d_cub_temp_storage);
 
         bytes += f(d_canExecute);
         
@@ -667,24 +443,12 @@ struct DataArrays {
         bytes += f(d_anchorContainsN);
         bytes += f(d_candidateContainsN);
 
-        bytes += f(d_cub_temp_storage);
-
         bytes += f(d_canExecute);
         
         bytes += f(d_tempstorage);
 
         return bytes;
 	}
-
-	// int deviceId = -1;
-
-	// int n_subjects = 0;
-	// int n_queries = 0;
-	// int n_indices = 0;
-	// int maximum_sequence_length = 0;
-    // int maximum_sequence_bytes = 0;
-	// int min_overlap = 1;
-    // bool useQualityScores = false;
 
 	// alignment input
 
@@ -911,9 +675,6 @@ struct DataArrays {
     DeviceBuffer<bool> d_alignment_isValid;
     DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags;
 
-	//tmp storage for cub
-    DeviceBuffer<char> d_cub_temp_storage;
-
     DeviceBuffer<bool> d_canExecute;
 
 
@@ -967,76 +728,6 @@ struct DataArrays {
     DeviceBuffer<MSAColumnProperties> d_msa_column_properties;
     DeviceBuffer<int> d_counts;
     DeviceBuffer<float> d_weights;
-
-    void copyEverythingToHostForDebugging(){
-        // auto handleArray = [](auto& host, const auto& device){
-        //     assert(host.sizeInBytes() == device.sizeInBytes());
-        //     cudaMemcpy(host,
-        //                 device,
-        //                 device.sizeInBytes(),
-        //                 D2H); CUERR;
-        // };
-
-        #define handlearray(x){auto& host = h_##x; const auto& device = d_##x; \
-            assert(host.sizeInBytes() == device.sizeInBytes()); \
-            cudaMemcpy(host, \
-                        device, \
-                        device.sizeInBytes(), \
-                        D2H); CUERR;          \
-        }
-
-        cudaDeviceSynchronize(); CUERR;
-
-        handlearray(subject_sequences_data);
-        handlearray(candidate_sequences_data);
-        handlearray(transposedCandidateSequencesData);
-        handlearray(subject_sequences_lengths);
-        handlearray(candidate_sequences_lengths);
-        handlearray(candidates_per_subject);
-        handlearray(candidates_per_subject_prefixsum);
-        handlearray(subject_read_ids);
-        handlearray(candidate_read_ids);
-        handlearray(indices);
-        handlearray(indices_per_subject);
-        handlearray(num_indices);
-        handlearray(anchorIndicesOfCandidates);
-
-        handlearray(subject_qualities);
-        handlearray(candidate_qualities);
-
-        handlearray(corrected_subjects);
-        handlearray(corrected_candidates);
-        handlearray(num_corrected_candidates_per_anchor);
-        handlearray(subject_is_corrected);
-        handlearray(indices_of_corrected_candidates);
-        handlearray(num_uncorrected_positions_per_subject);
-        handlearray(uncorrected_positions_per_subject);
-
-        handlearray(is_high_quality_subject);
-        handlearray(high_quality_subject_indices);
-        handlearray(num_high_quality_subject_indices);
-
-        handlearray(alignment_scores);
-        handlearray(alignment_overlaps);
-        handlearray(alignment_shifts);
-        handlearray(alignment_nOps);
-        handlearray(alignment_isValid);
-        handlearray(alignment_best_alignment_flags);
-
-        handlearray(consensus);
-        handlearray(support);
-        handlearray(coverage);
-        handlearray(origWeights);
-        handlearray(origCoverages);
-        handlearray(msa_column_properties);
-        handlearray(counts);
-        handlearray(weights);
-
-        cudaDeviceSynchronize(); CUERR;
-
-        #undef handlearray
-    }
-
 
     void printMemoryUsage() const{
         // auto handleArray = [](auto& host, const auto& device){
