@@ -804,6 +804,10 @@ struct Minhasher {
 
     bool operator!=(const Minhasher& rhs) const;
 
+    int getNumberOfMaps() const{
+        return minparams.maps;
+    }
+
     std::size_t numBytes() const;
 
     MemoryUsage getMemoryInfo() const;
