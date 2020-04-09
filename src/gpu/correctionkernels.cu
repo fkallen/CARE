@@ -7,7 +7,6 @@
 // //#include <gpu/bestalignment.hpp>
 // #include <bestalignment.hpp>
 #include <gpu/utility_kernels.cuh>
-#include <gpu/cubcachingallocator.cuh>
 
 // #include <msa.hpp>
 #include <sequence.hpp>

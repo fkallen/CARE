@@ -1,6 +1,5 @@
 #include <gpu/kernels.hpp>
 #include <gpu/utility_kernels.cuh>
-#include <gpu/cubcachingallocator.cuh>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <sequence.hpp>
