@@ -4,6 +4,7 @@
 #include <config.hpp>
 #include <sequence.hpp>
 #include <lengthstorage.hpp>
+#include <memorymanagement.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -52,7 +53,6 @@ namespace cpu{
         using LengthStore_t = LengthStore<std::uint32_t>;
 
         std::unique_ptr<unsigned int[]> h_sequence_data = nullptr;
-        std::unique_ptr<Length_t[]> h_sequence_lengths = nullptr;
         std::unique_ptr<char[]> h_quality_data = nullptr;
         int sequenceLengthLowerBound = 0;
         int sequenceLengthUpperBound = 0;
@@ -61,14 +61,14 @@ namespace cpu{
         bool useQualityScores = false;
         read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
-        std::size_t sequence_lengths_bytes = 0;
         std::size_t quality_data_bytes = 0;
         std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
         std::mutex mutexUndeterminedBaseReads;
         Statistics statistics;
         std::atomic<read_number> numberOfInsertedReads{0};
         LengthStore_t lengthStorage;
-        
+
+
 
         ContiguousReadStorage() : ContiguousReadStorage(0){}
 
@@ -94,16 +94,12 @@ namespace cpu{
             h_sequence_data.reset(new unsigned int[std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts]);
             sequence_data_bytes = sizeof(unsigned int) * std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts;
 
-            //h_sequence_lengths.reset(new Length_t[std::size_t(maximumNumberOfSequences)]);
-            sequence_lengths_bytes = sizeof(Length_t) * std::size_t(maximumNumberOfSequences);
-
             if(useQualityScores){
                 h_quality_data.reset(new char[std::size_t(maximumNumberOfSequences) * sequenceQualitiesPitchInBytes]);
                 quality_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * sequenceQualitiesPitchInBytes;
             }
 
             std::fill_n(&h_sequence_data[0], std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts, 0);
-            //std::fill(&h_sequence_lengths[0], &h_sequence_lengths[maximumNumberOfSequences], 0);
             std::fill(&h_quality_data[0], &h_quality_data[quality_data_bytes], 0);
         }
 
@@ -112,7 +108,6 @@ namespace cpu{
 
         ContiguousReadStorage(ContiguousReadStorage&& other)
             : h_sequence_data(std::move(other.h_sequence_data)),
-              h_sequence_lengths(std::move(other.h_sequence_lengths)),
               h_quality_data(std::move(other.h_quality_data)),
               sequenceLengthLowerBound(other.sequenceLengthLowerBound),
               sequenceLengthUpperBound(other.sequenceLengthUpperBound),
@@ -121,7 +116,6 @@ namespace cpu{
               useQualityScores(other.useQualityScores),
               maximumNumberOfSequences(other.maximumNumberOfSequences),
               sequence_data_bytes(other.sequence_data_bytes),
-              sequence_lengths_bytes(other.sequence_lengths_bytes),
               quality_data_bytes(other.quality_data_bytes),
               readIdsOfReadsWithUndeterminedBase(std::move(other.readIdsOfReadsWithUndeterminedBase)),
               statistics(std::move(other.statistics)),
@@ -135,7 +129,6 @@ namespace cpu{
 
         ContiguousReadStorage& operator=(ContiguousReadStorage&& other){
             h_sequence_data = std::move(other.h_sequence_data);
-            h_sequence_lengths = std::move(other.h_sequence_lengths);
             h_quality_data = std::move(other.h_quality_data);
             sequenceLengthLowerBound = other.sequenceLengthLowerBound;
             sequenceLengthUpperBound = other.sequenceLengthUpperBound;
@@ -144,7 +137,6 @@ namespace cpu{
             useQualityScores = other.useQualityScores;
             maximumNumberOfSequences = other.maximumNumberOfSequences;
             sequence_data_bytes = other.sequence_data_bytes;
-            sequence_lengths_bytes = other.sequence_lengths_bytes;
             quality_data_bytes = other.quality_data_bytes;
             readIdsOfReadsWithUndeterminedBase = std::move(other.readIdsOfReadsWithUndeterminedBase);
             statistics = std::move(other.statistics);
@@ -174,8 +166,6 @@ namespace cpu{
                 return false;
             if(sequence_data_bytes != other.sequence_data_bytes)
                 return false;
-            if(sequence_lengths_bytes != other.sequence_lengths_bytes)
-                return false;
             if(quality_data_bytes != other.quality_data_bytes)
                 return false;
             if(readIdsOfReadsWithUndeterminedBase != other.readIdsOfReadsWithUndeterminedBase){
@@ -191,8 +181,6 @@ namespace cpu{
 
             if(0 != std::memcmp(h_sequence_data.get(), other.h_sequence_data.get(), sequence_data_bytes))
                 return false;
-            //if(0 != std::memcmp(h_sequence_lengths.get(), other.h_sequence_lengths.get(), sequence_lengths_bytes))
-            //    return false;
             if(0 != std::memcmp(h_quality_data.get(), other.h_quality_data.get(), quality_data_bytes))
                 return false;
 
@@ -205,7 +193,6 @@ namespace cpu{
 
         std::size_t size() const{
             //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
-            //assert(std::size_t(maximumNumberOfSequences) * sizeof(Length_t) == sequence_lengths_bytes);
 
             std::size_t result = 0;
             result += sequence_data_bytes;
@@ -227,7 +214,6 @@ namespace cpu{
 
     	void destroy(){
             h_sequence_data.reset();
-            h_sequence_lengths.reset();
             h_quality_data.reset();
     	}
 
@@ -273,6 +259,19 @@ namespace cpu{
             return b2;
         }
 
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info;
+            info.host = sequence_data_bytes;
+            info.host += lengthStorage.getRawSizeInBytes();
+            info.host += sizeof(read_number) * readIdsOfReadsWithUndeterminedBase.capacity();
+
+            if(useQualityScores){
+                info.host += quality_data_bytes;
+            }         
+
+            return info;
+        }
+
 private:
         void insertSequence(read_number readNumber, const std::string& sequence){
             auto identity = [](auto i){return i;};
@@ -289,8 +288,6 @@ private:
 
             statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, sequencelength);
             statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, sequencelength);
-
-            //h_sequence_lengths[readNumber] = Length_t(sequence.length());
 
             lengthStorage.setLength(readNumber, Length_t(sequence.length()));
 
@@ -343,7 +340,6 @@ public:
 
         int fetchSequenceLength(read_number readNumber) const{
             return lengthStorage.getLength(readNumber);
-        	//return h_sequence_lengths[readNumber];
         }
 
         template<class T, class GatherType>

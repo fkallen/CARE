@@ -81,10 +81,18 @@ namespace care{
 
         std::cout << "Running CARE CPU" << std::endl;
 
-        cpu::correct_cpu(minhashOptions, alignmentOptions,
-                    goodAlignmentProperties, correctionOptions,
-                    runtimeOptions, fileOptions, sequenceFileProperties,
-                    minhasher, readStorage);
+        cpu::correct_cpu(
+            minhashOptions, 
+            alignmentOptions,
+            goodAlignmentProperties, 
+            correctionOptions,
+            runtimeOptions, 
+            fileOptions, 
+            memoryOptions, 
+            sequenceFileProperties,
+            minhasher, 
+            readStorage
+        );
 
         TIMERSTARTCPU(finalizing_files);
 

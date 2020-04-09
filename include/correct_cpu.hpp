@@ -20,6 +20,7 @@ namespace cpu{
     				  const CorrectionOptions& correctionOptions,
     				  const RuntimeOptions& runtimeOptions,
     				  const FileOptions& fileOptions,
+					  const MemoryOptions& memoryOptions,
                       const SequenceFileProperties& sequenceFileProperties,
                       Minhasher& minhasher,
                       cpu::ContiguousReadStorage& readStorage);

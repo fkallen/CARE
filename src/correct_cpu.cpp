@@ -1235,6 +1235,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                   const CorrectionOptions& correctionOptions,
                   const RuntimeOptions& runtimeOptions,
                   const FileOptions& fileOptions,
+                  const MemoryOptions& memoryOptions,
                   const SequenceFileProperties& sequenceFileProperties,
                   Minhasher& minhasher,
                   cpu::ContiguousReadStorage& readStorage){
@@ -1250,7 +1251,37 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     //     throw std::runtime_error("Could not open output file " + tmpfiles[0]);
     // }
 
-    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
+
+    #pragma omp parallel for
+    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+        correctionStatusFlagsPerRead[i] = 0;
+    }
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+
+    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
+        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
     if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
@@ -1276,13 +1307,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
           }
       };
 
-    std::vector<std::uint8_t> correctionStatusFlagsPerRead;
-    std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-    std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+    // std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    // std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-    correctionStatusFlagsPerRead.resize(sequenceFileProperties.nReads, 0);
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
 
     // auto lock = [&](read_number readId){
     //     read_number index = readId % nLocksForProcessedFlags;
@@ -1496,9 +1523,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 batchData.timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
-                setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.data());
+                setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.get());
 
-                if(batchTask.msaProperties.isHQ){
+                if(batchTask.msaProperties.isHQ && correctionOptions.correctCandidates){
 
                     #ifdef ENABLE_TIMING
                     tpa = std::chrono::system_clock::now();
@@ -1512,7 +1539,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 }
                 
-                makeOutputDataOfTask(batchData, batchTask, readStorage, correctionStatusFlagsPerRead.data());
+                makeOutputDataOfTask(batchData, batchTask, readStorage, correctionStatusFlagsPerRead.get());
             }
 
             //makeOutputData(batchData, readStorage, correctionStatusFlagsPerRead.data());

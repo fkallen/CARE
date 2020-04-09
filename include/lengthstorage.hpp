@@ -2,6 +2,7 @@
 #define CARE_LENGTH_STORAGE_HPP
 
 #include <config.hpp>
+#include <memorymanagement.hpp>
 
 #include <cassert>
 #include <cmath>
@@ -179,6 +180,12 @@ struct LengthStore{
         stream.write(reinterpret_cast<const char*>(&rawSizeElements), sizeof(std::size_t));
         stream.write(reinterpret_cast<const char*>(&rawSizeBytes), sizeof(std::size_t));
         stream.write(reinterpret_cast<const char*>(data.data()), rawSizeBytes);
+    }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage info;
+        info.host = getRawSizeInBytes();
+        return info;
     }
 
 private:   
