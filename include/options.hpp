@@ -10,9 +10,6 @@
 
 namespace care{
 
-    enum class CorrectionMode {Hamming, Graph};
-    enum class CorrectionType {Classic, Forest, Convnet};
-
 	//Options which can be parsed from command-line arguments
 
     struct MinhashOptions {

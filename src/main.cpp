@@ -14,6 +14,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <ios>
 #include <string>
 #include <omp.h>
 
@@ -154,9 +155,6 @@ int main(int argc, char** argv){
 	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
 	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
 
-
-	std::cout << "Tempdir = " << fileOptions.tempdirectory << std::endl;
-
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
 
@@ -170,7 +168,64 @@ int main(int argc, char** argv){
 		}
 		
 	}
-		
+
+	//print all options that will be used
+	std::cout << "CARE will be started with the following parameters:\n";
+
+	std::cout << "--------------------------------\n";
+
+	std::cout << "Number of hash tables / hash functions: " << minhashOptions.maps << "\n";
+	std::cout << "K-mer size of hashing: " << minhashOptions.k << "\n";
+
+	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
+	std::cout << "Alignment relative required overlap: " << goodAlignmentProperties.min_overlap_ratio << "\n";
+	std::cout << "Alignment max number of mismatches: " << goodAlignmentProperties.maxErrorRate << "\n";
+
+	std::cout << "Correct candidate reads: " << std::boolalpha << correctionOptions.correctCandidates << "\n";
+	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
+	std::cout << "Use quality scores: " << std::boolalpha << correctionOptions.useQualityScores << "\n";
+	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
+	std::cout << "Estimated error rate: " << correctionOptions.estimatedErrorrate << "\n";
+	std::cout << "m_coverage: " << correctionOptions.m_coverage << "\n";
+	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
+
+	std::cout << "Threads: " << runtimeOptions.threads << "\n";
+	std::cout << "Show progress bar: " << std::boolalpha << runtimeOptions.showProgress << "\n";
+	std::cout << "Can use GPU(s): " << std::boolalpha << runtimeOptions.canUseGpu << "\n";
+	if(runtimeOptions.canUseGpu){
+		std::cout << "GPU device ids: ";
+		for(int id : runtimeOptions.deviceIds){
+			std::cout << id << " ";
+		}
+		std::cout << "\n";
+	}
+
+	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
+	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
+
+	std::cout << "Input file: " << fileOptions.inputfile << "\n";
+	std::cout << "Input file type: ";
+	switch(fileOptions.format){
+		case FileFormat::FASTA: std::cout << "fasta \n"; break;
+		case FileFormat::FASTQ: std::cout << "fastq \n"; break;
+		case FileFormat::FASTAGZ: std::cout << "fasta.gz \n"; break;
+		case FileFormat::FASTQGZ: std::cout << "fastq.gz \n"; break;
+		default: std::cout << "unknown! \n"; break;
+	}
+	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
+	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";
+	std::cout << "Maximum number of reads: " << fileOptions.nReads << "\n";
+	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
+	std::cout << "Output filename: " << fileOptions.outputfilename << "\n";
+	std::cout << "Output file: " << fileOptions.outputfile << "\n";
+	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
+	std::cout << "save_binary_reads_to: " << fileOptions.save_binary_reads_to << "\n";
+	std::cout << "load_binary_reads_from: " << fileOptions.load_binary_reads_from << "\n";
+	std::cout << "save_hashtables_to: " << fileOptions.save_hashtables_to << "\n";
+	std::cout << "load_hashtables_from: " << fileOptions.load_hashtables_from << "\n";
+
+	std::cout << "--------------------------------\n";
+
 
     const int numThreads = parseresults["threads"].as<int>();
 
