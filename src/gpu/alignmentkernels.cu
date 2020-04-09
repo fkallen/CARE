@@ -2,7 +2,6 @@
 
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
-// #include <gpu/devicefunctionsforkernels.cuh>
 
 // //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
