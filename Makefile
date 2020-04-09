@@ -20,8 +20,8 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 
 
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -ldl -lz 
-LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl -lz 
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz 
+LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz 
 
 
 # sources which are used by both cpu version and gpu version
