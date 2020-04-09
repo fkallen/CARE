@@ -21,9 +21,7 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -ldl -lz 
-#-lpython2.7
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl -lz 
-#-lpython2.7
 
 
 # sources which are used by both cpu version and gpu version
@@ -50,16 +48,10 @@ OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_ONLY_CPU))
 OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_ONLY_CPU))
 
 
-SOURCES_FORESTS = $(wildcard src/forests/*.cpp)
-OBJECTS_FORESTS = $(patsubst src/forests/%.cpp, forests/%.so, $(SOURCES_FORESTS))
-OBJECTS_FORESTS_DEBUG = $(patsubst src/forests/%.cpp, forests/%.dbg.so, $(SOURCES_FORESTS))
 
 #$(info $SOURCES_CPU_AND_GPU is [${SOURCES_CPU_AND_GPU}])
 #$(info $SOURCES_ONLY_GPU is [${SOURCES_ONLY_GPU}])
 #$(info $SORCES_ONLY_CPU is [${SORCES_ONLY_CPU}])
-
-#$(info $$OBJECTS_FORESTS is [${OBJECTS_FORESTS}])
-#$(info $$OBJECTS_FORESTS_DEBUG is [${OBJECTS_FORESTS_DEBUG}])
 
 
 GPU_VERSION = errorcorrector_gpu
@@ -75,7 +67,6 @@ gpu:	$(GPU_VERSION)
 cpud:	$(CPU_VERSION_DEBUG)
 gpud:	$(GPU_VERSION_DEBUG)
 
-forests:	$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 
 $(GPU_VERSION) : $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
 	@echo Linking $(GPU_VERSION)
@@ -113,13 +104,7 @@ buildgpu/%.dbg.o : src/gpu/%.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
-forests/%.so : src/forests/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS) -shared -fPIC $< -o $@
 
-forests/%.dbg.so : src/forests/%.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -shared -fPIC $< -o $@
 
 minhashertest:
 	@echo Building minhashertest
@@ -152,7 +137,5 @@ makedir:
 .PHONY: minhashertest
 
 .PHONY: makedirs
-
-.PHONY: forests
 
 .PHONY: makeresultfile
