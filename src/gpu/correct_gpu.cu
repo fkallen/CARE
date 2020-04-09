@@ -207,7 +207,9 @@ namespace gpu{
         PinnedBuffer<int> h_subject_sequences_lengths;
         PinnedBuffer<read_number> h_subject_read_ids;
         PinnedBuffer<read_number> h_candidate_read_ids;
-
+        PinnedBuffer<std::uint64_t> h_minhashSignatures;
+        PinnedBuffer<int> h_numAnchors;
+        PinnedBuffer<int> h_numCandidates;
         DeviceBuffer<unsigned int> d_subject_sequences_data;
         DeviceBuffer<int> d_subject_sequences_lengths;
         DeviceBuffer<read_number> d_subject_read_ids;
@@ -215,16 +217,15 @@ namespace gpu{
         DeviceBuffer<int> d_candidates_per_subject;
         DeviceBuffer<int> d_candidates_per_subject_tmp;
         DeviceBuffer<int> d_candidates_per_subject_prefixsum;
-
         DeviceBuffer<read_number> d_candidate_read_ids_tmp;
-        PinnedBuffer<std::uint64_t> h_minhashSignatures;
         DeviceBuffer<std::uint64_t> d_minhashSignatures;
-        PinnedBuffer<int> h_numAnchors;
-        PinnedBuffer<int> h_numCandidates;
         DeviceBuffer<int> d_numAnchors;
         DeviceBuffer<int> d_numCandidates;
 
         //private buffers
+        PinnedBuffer<read_number> h_leftoverAnchorReadIds;
+        PinnedBuffer<int> h_numLeftoverAnchors;
+        PinnedBuffer<int> h_numLeftoverCandidates;
         DeviceBuffer<int> d_numLeftoverAnchors;
         DeviceBuffer<int> d_leftoverAnchorLengths;
         DeviceBuffer<read_number> d_leftoverAnchorReadIds;
@@ -232,9 +233,6 @@ namespace gpu{
         DeviceBuffer<read_number> d_leftoverCandidateReadIds;
         DeviceBuffer<int> d_leftoverCandidatesPerAnchors;
         DeviceBuffer<unsigned int> d_leftoverAnchorSequences;
-        PinnedBuffer<read_number> h_leftoverAnchorReadIds;
-        PinnedBuffer<int> h_numLeftoverAnchors;
-        PinnedBuffer<int> h_numLeftoverCandidates;
 
         int n_subjects = -1;
         int n_new_subjects = -1;
@@ -255,6 +253,52 @@ namespace gpu{
         MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
 
         SyncFlag syncFlag;
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info;
+            info.host = 0;
+            info.device[deviceId] = 0;
+
+            auto handlehost = [&](const auto& buff){
+                info.host += buff.capacityInBytes();
+            };
+
+            auto handledevice = [&](const auto& buff){
+                info.device[deviceId] += buff.capacityInBytes();
+            };
+
+            handlehost(h_subject_sequences_data);
+            handlehost(h_subject_sequences_lengths);
+            handlehost(h_subject_read_ids);
+            handlehost(h_candidate_read_ids);
+            handlehost(h_minhashSignatures);
+            handlehost(h_numAnchors);
+            handlehost(h_numCandidates);
+            handlehost(h_leftoverAnchorReadIds);
+            handlehost(h_numLeftoverAnchors);
+            handlehost(h_numLeftoverCandidates);
+
+            handledevice(d_subject_sequences_data);
+            handledevice(d_subject_sequences_lengths);
+            handledevice(d_subject_read_ids);
+            handledevice(d_candidate_read_ids);
+            handledevice(d_candidates_per_subject);
+            handledevice(d_candidates_per_subject_tmp);
+            handledevice(d_candidates_per_subject_prefixsum);
+            handledevice(d_candidate_read_ids_tmp);
+            handledevice(d_minhashSignatures);
+            handledevice(d_numAnchors);
+            handledevice(d_numCandidates);
+            handledevice(d_numLeftoverAnchors);
+            handledevice(d_leftoverAnchorLengths);
+            handledevice(d_leftoverAnchorReadIds);
+            handledevice(d_numLeftoverCandidates);
+            handledevice(d_leftoverCandidateReadIds);
+            handledevice(d_leftoverCandidatesPerAnchors);
+            handledevice(d_leftoverAnchorSequences);
+
+            return info;
+        }
     };
 
     struct UnprocessedCorrectionResults{
@@ -314,6 +358,33 @@ namespace gpu{
             h_numEditsPerCorrectedCandidate.resize(maxCandidates);
         }
 
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info;
+            info.host = 0;
+
+            auto handlehost = [&](const auto& buff){
+                info.host += buff.capacityInBytes();
+            };
+
+            handlehost(h_subject_read_ids);
+            handlehost(h_subject_is_corrected);
+            handlehost(h_is_high_quality_subject);
+            handlehost(h_num_corrected_candidates_per_anchor);
+            handlehost(h_num_corrected_candidates_per_anchor_prefixsum);
+            handlehost(h_indices_of_corrected_candidates);
+            handlehost(h_candidate_read_ids);
+            handlehost(h_corrected_subjects);
+            handlehost(h_corrected_candidates);
+            handlehost(h_subject_sequences_lengths);
+            handlehost(h_candidate_sequences_lengths);
+            handlehost(h_alignment_shifts);
+            handlehost(h_editsPerCorrectedSubject);
+            handlehost(h_numEditsPerCorrectedSubject);
+            handlehost(h_editsPerCorrectedCandidate);
+            handlehost(h_numEditsPerCorrectedCandidate);
+
+            return info;
+        }
     };
 
     struct OutputData{
@@ -3564,10 +3635,24 @@ void correct_gpu(
                 minhasher.getNumberOfMaps()
             );
 
-            MemoryUsage info = batchData.getMemoryInfo();
+            MemoryUsage infobatch = batchData.getMemoryInfo();
             std::cerr << "Batch memory usage:\n";
-            std::cerr << "host: " << info.host << "\n";
-            for(auto pair : info.device){
+            std::cerr << "host: " << infobatch.host << "\n";
+            for(auto pair : infobatch.device){
+                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+            }
+            
+            MemoryUsage infonextiterdata = batchData.nextIterationData.getMemoryInfo();
+            std::cerr << "nextiterationdata memory usage:\n";
+            std::cerr << "host: " << infonextiterdata.host << "\n";
+            for(auto pair : infonextiterdata.device){
+                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+            }
+
+            MemoryUsage infooutputdata = batchData.waitableOutputData.data.rawResults.getMemoryInfo();
+            std::cerr << "outputdata memory usage:\n";
+            std::cerr << "host: " << infooutputdata.host << "\n";
+            for(auto pair : infooutputdata.device){
                 std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
             }
             
