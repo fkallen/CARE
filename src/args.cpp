@@ -31,36 +31,6 @@ namespace args{
     	return result;
     }
 
-
-	template<>
-	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
-        MinhashOptions result{};
-
-        if(pr.count("hashmaps")){
-            result.maps = pr["hashmaps"].as<int>();
-        }
-
-        if(pr.count("kmerlength")){
-            result.k = pr["kmerlength"].as<int>();
-        }
-
-        int coverage = CorrectionOptions{}.estimatedCoverage;
-        if(pr.count("coverage")){
-            coverage = pr["coverage"].as<float>();
-        }
-        result.numResultsPerMapQueryThreshold = calculateResultsPerMapThreshold(coverage);
-
-        return result;
-	}
-
-
-	template<>
-	AlignmentOptions to<AlignmentOptions>(const cxxopts::ParseResult& pr){
-        AlignmentOptions result{};
-
-        return result;
-	}
-
 	template<>
 	GoodAlignmentProperties to<GoodAlignmentProperties>(const cxxopts::ParseResult& pr){
 
@@ -103,9 +73,10 @@ namespace args{
 
         if(pr.count("kmerlength")){
             result.kmerlength = pr["kmerlength"].as<int>();
-        }else{
-            result.kmerlength = MinhashOptions{}.k;
         }
+        if(pr.count("hashmaps")){
+            result.numHashFunctions = pr["hashmaps"].as<int>();
+        }        
 
         if(pr.count("batchsize")){
             result.batchsize = pr["batchsize"].as<int>();
@@ -256,32 +227,6 @@ namespace args{
 	}
 
 
-
-    template<>
-    bool isValid<MinhashOptions>(const MinhashOptions& opt){
-        bool valid = true;
-
-        if(opt.maps < 1){
-            valid = false;
-            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.maps) << std::endl;
-        }
-
-        if(opt.k < 1 || opt.k > max_k<kmer_type>::value){
-            valid = false;
-            std::cout << "Error: kmer length must be in range [1, " << max_k<kmer_type>::value 
-                << "], is " + std::to_string(opt.k) << std::endl;
-        }
-
-        return valid;
-    }
-
-    template<>
-    bool isValid<AlignmentOptions>(const AlignmentOptions& opt){
-        bool valid = true;
-
-        return valid;
-    }
-
     template<>
     bool isValid<GoodAlignmentProperties>(const GoodAlignmentProperties& opt){
         bool valid = true;
@@ -322,6 +267,18 @@ namespace args{
         if(opt.batchsize < 1 /*|| corOpts.batchsize > 16*/){
             valid = false;
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
+        }
+
+
+        if(opt.numHashFunctions < 1){
+            valid = false;
+            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.numHashFunctions) << std::endl;
+        }
+
+        if(opt.kmerlength < 1 || opt.kmerlength > max_k<kmer_type>::value){
+            valid = false;
+            std::cout << "Error: kmer length must be in range [1, " << max_k<kmer_type>::value 
+                << "], is " + std::to_string(opt.kmerlength) << std::endl;
         }
 
         return valid;

@@ -1,5 +1,5 @@
 #include <minhasher.hpp>
-#include <options.hpp>
+
 #include <hpc_helpers.cuh>
 #include <util.hpp>
 #include <config.hpp>
@@ -26,9 +26,9 @@
 
 namespace care{
 
-    Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16}){}
+    Minhasher::Minhasher() : Minhasher(Minhasher::MinhashOptions{32,20,128}){}
 
-	Minhasher::Minhasher(const MinhashOptions& parameters)
+	Minhasher::Minhasher(const Minhasher::MinhashOptions& parameters)
 		: minparams(parameters), nReads(0)
 	{
 		if(maximum_number_of_maps < minparams.maps)

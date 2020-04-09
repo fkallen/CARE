@@ -14,8 +14,7 @@
 namespace care{
 namespace cpu{
 
-    void correct_cpu(const MinhashOptions& minhashOptions,
-    				  const AlignmentOptions& alignmentOptions,
+    void correct_cpu(
     				  const GoodAlignmentProperties& goodAlignmentProperties,
     				  const CorrectionOptions& correctionOptions,
     				  const RuntimeOptions& runtimeOptions,

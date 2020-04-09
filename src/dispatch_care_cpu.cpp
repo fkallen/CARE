@@ -51,8 +51,7 @@ namespace care{
     }
 
 
-    void performCorrection(MinhashOptions minhashOptions,
-                            AlignmentOptions alignmentOptions,
+    void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
@@ -65,7 +64,7 @@ namespace care{
 
         TIMERSTARTCPU(load_and_build);
 
-        BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
+        BuiltDataStructures dataStructures = buildAndSaveDataStructures(
                                                                 correctionOptions,
                                                                 runtimeOptions,
                                                                 memoryOptions,
@@ -82,8 +81,6 @@ namespace care{
         std::cout << "Running CARE CPU" << std::endl;
 
         cpu::correct_cpu(
-            minhashOptions, 
-            alignmentOptions,
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
@@ -94,9 +91,6 @@ namespace care{
             readStorage
         );
 
-        TIMERSTARTCPU(finalizing_files);
-
-        TIMERSTOPCPU(finalizing_files);
     }
 
 }

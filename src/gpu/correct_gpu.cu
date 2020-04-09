@@ -691,8 +691,6 @@ namespace gpu{
         GoodAlignmentProperties goodAlignmentProperties;
         SequenceFileProperties sequenceFileProperties;
         RuntimeOptions runtimeOptions;
-        MinhashOptions minhashOptions;
-        AlignmentOptions alignmentOptions;
         FileOptions fileOptions;
 		std::atomic_uint8_t* correctionStatusFlagsPerRead;
         std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
@@ -994,8 +992,8 @@ namespace gpu{
         NextIterationData* nextDataPtr = &nextData;
         const Minhasher* minhasherPtr = &minhasher;
 
-        const int kmerSize = batchData.transFuncData->minhashOptions.k;
-        const int numHashFunctions = minhasherPtr->minparams.maps;
+        const int kmerSize = batchData.transFuncData->correctionOptions.kmerlength;
+        const int numHashFunctions = numMinhashMaps;
 
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
@@ -3037,8 +3035,6 @@ namespace gpu{
 
 
 void correct_gpu(
-        const MinhashOptions& minhashOptions,
-        const AlignmentOptions& alignmentOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const RuntimeOptions& runtimeOptions,
@@ -3158,8 +3154,6 @@ void correct_gpu(
       transFuncData.goodAlignmentProperties = goodAlignmentProperties;
       transFuncData.correctionOptions = correctionOptions;
       transFuncData.runtimeOptions = runtimeOptions;
-      transFuncData.minhashOptions = minhashOptions;
-      transFuncData.alignmentOptions = alignmentOptions;
       transFuncData.fileOptions = fileOptions;
       transFuncData.sequenceFileProperties = sequenceFileProperties;
 

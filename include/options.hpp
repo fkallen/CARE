@@ -12,26 +12,6 @@ namespace care{
 
 	//Options which can be parsed from command-line arguments
 
-    struct MinhashOptions {
-        int maps = 32;
-        int k = 20;
-        int numResultsPerMapQueryThreshold = 100;
-        bool operator==(const MinhashOptions& other) const{
-            return maps == other.maps && k == other.k 
-                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
-        };
-        bool operator!=(const MinhashOptions& other) const{
-            return !(*this == other);
-        };
-    };
-
-    struct AlignmentOptions{
-        int alignmentscore_match = 1;
-        int alignmentscore_sub = -1;
-        int alignmentscore_ins = -100;
-        int alignmentscore_del = -100;
-    };
-
     struct GoodAlignmentProperties{
         int min_overlap = 20;
         float maxErrorRate = 0.2f;
@@ -44,9 +24,10 @@ namespace care{
         float estimatedCoverage = 1.0f;
         float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
-        int kmerlength = 20;
 		int batchsize = 1000;
         int new_columns_to_correct = 15;
+        int kmerlength = 20;
+        int numHashFunctions = 32;
     };
 
 	struct RuntimeOptions{
@@ -80,8 +61,6 @@ namespace care{
 	};
 
     struct AllOptions{
-        MinhashOptions minhashOptions;
-        AlignmentOptions alignmentOptions;
         GoodAlignmentProperties goodAlignmentProperties;
         CorrectionOptions correctionOptions;
         RuntimeOptions runtimeOptions;

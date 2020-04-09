@@ -1004,7 +1004,7 @@ namespace gpu{
                                                 const RuntimeOptions &runtimeOptions,
                                                 const MemoryOptions& memoryOptions,
                                                 std::uint64_t nReads,
-                                                const MinhashOptions &minhashOptions,
+                                                const CorrectionOptions &correctionOptions,
                                                 const GpuReadStorageWithFlags &readStoragewFlags)
     {
 
@@ -1012,6 +1012,13 @@ namespace gpu{
         auto &minhasher = result.data;
 
         auto identity = [](auto i) { return i; };
+
+        Minhasher::MinhashOptions minhashOptions;
+        minhashOptions.k = correctionOptions.kmerlength;
+        minhashOptions.maps = correctionOptions.numHashFunctions;
+        minhashOptions.numResultsPerMapQueryThreshold 
+            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+
 
         minhasher = std::move(Minhasher{minhashOptions});
 
@@ -1358,7 +1365,7 @@ namespace gpu{
 
 
 
-    BuiltGpuDataStructures buildGpuDataStructuresImpl(const MinhashOptions& minhashOptions,
+    BuiltGpuDataStructures buildGpuDataStructuresImpl(
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
                                                         const MemoryOptions& memoryOptions,
@@ -1414,7 +1421,7 @@ namespace gpu{
             runtimeOptions, 
             memoryOptions,
             sequenceFileProperties.nReads, 
-            minhashOptions, 
+            correctionOptions,
             result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 
@@ -1434,13 +1441,13 @@ namespace gpu{
     }
 
 
-    BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
+    BuiltGpuDataStructures buildGpuDataStructures(
                                 			const CorrectionOptions& correctionOptions,
                                             const RuntimeOptions& runtimeOptions,
                                             const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions){
 
-        return buildGpuDataStructuresImpl(minhashOptions,
+        return buildGpuDataStructuresImpl(
                                         correctionOptions,
                                         runtimeOptions,
                                         memoryOptions,
@@ -1448,13 +1455,13 @@ namespace gpu{
                                         false);
     }
 
-    BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
+    BuiltGpuDataStructures buildAndSaveGpuDataStructures(
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
                                                         const MemoryOptions& memoryOptions,
                                                         const FileOptions& fileOptions){                                                     
 
-        return buildGpuDataStructuresImpl(minhashOptions,
+        return buildGpuDataStructuresImpl(
                                         correctionOptions,
                                         runtimeOptions,
                                         memoryOptions,

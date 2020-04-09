@@ -1229,16 +1229,16 @@ namespace cpu{
         }
 
 
-void correct_cpu(const MinhashOptions& minhashOptions,
-                  const AlignmentOptions& alignmentOptions,
-                  const GoodAlignmentProperties& goodAlignmentProperties,
-                  const CorrectionOptions& correctionOptions,
-                  const RuntimeOptions& runtimeOptions,
-                  const FileOptions& fileOptions,
-                  const MemoryOptions& memoryOptions,
-                  const SequenceFileProperties& sequenceFileProperties,
-                  Minhasher& minhasher,
-                  cpu::ContiguousReadStorage& readStorage){
+void correct_cpu(
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    const SequenceFileProperties& sequenceFileProperties,
+    Minhasher& minhasher,
+    cpu::ContiguousReadStorage& readStorage
+){
 
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 

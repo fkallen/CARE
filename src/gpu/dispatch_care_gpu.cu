@@ -47,8 +47,7 @@ namespace care{
     	std::cout << "----------------------------------------" << std::endl;
     }
 
-    void performCorrection(MinhashOptions minhashOptions,
-                            AlignmentOptions alignmentOptions,
+    void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
@@ -66,11 +65,12 @@ namespace care{
 
         TIMERSTARTCPU(set_up_datastructures);
 
-        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures(minhashOptions,
-                                                                                    correctionOptions,
-                                                                                    runtimeOptions,
-                                                                                    memoryOptions,
-                                                                                    fileOptions);
+        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions
+        );
 
         TIMERSTOPCPU(set_up_datastructures);
 
@@ -80,10 +80,7 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        //gpu::correct_gpu(minhashOptions, alignmentOptions,
         gpu::correct_gpu(
-            minhashOptions, 
-            alignmentOptions,
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
@@ -93,9 +90,6 @@ namespace care{
             minhasher, 
             readStorage);
 
-        TIMERSTARTCPU(finalizing_files);
-
-        TIMERSTOPCPU(finalizing_files);
     }
 
 }

@@ -498,11 +498,17 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                 			   const RuntimeOptions& runtimeOptions,
                                 			   std::uint64_t nReads,
-                                               const MinhashOptions& minhashOptions,
+                                               const CorrectionOptions& correctionOptions,
                                 			   cpu::ContiguousReadStorage& readStorage){
 
         BuiltDataStructure<Minhasher> result;
         auto& minhasher = result.data;
+
+        Minhasher::MinhashOptions minhashOptions;
+        minhashOptions.k = correctionOptions.kmerlength;
+        minhashOptions.maps = correctionOptions.numHashFunctions;
+        minhashOptions.numResultsPerMapQueryThreshold 
+            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
 
         minhasher = std::move(Minhasher{minhashOptions});
 
@@ -592,11 +598,17 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                                 			   const RuntimeOptions& runtimeOptions,
                                                const MemoryOptions& memoryOptions,
                                 			   std::uint64_t nReads,
-                                               const MinhashOptions& minhashOptions,
+                                               const CorrectionOptions& correctionOptions,
                                 			   cpu::ContiguousReadStorage& readStorage){
 
         BuiltDataStructure<Minhasher> result;
         auto& minhasher = result.data;
+
+        Minhasher::MinhashOptions minhashOptions;
+        minhashOptions.k = correctionOptions.kmerlength;
+        minhashOptions.maps = correctionOptions.numHashFunctions;
+        minhashOptions.numResultsPerMapQueryThreshold 
+            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
 
         minhasher = std::move(Minhasher{minhashOptions});
 
@@ -794,7 +806,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
 #endif
 
-    BuiltDataStructures buildDataStructuresImpl(const MinhashOptions& minhashOptions,
+    BuiltDataStructures buildDataStructuresImpl(
                                             const CorrectionOptions& correctionOptions,
                                             const RuntimeOptions& runtimeOptions,
                                             const MemoryOptions& memoryOptions,
@@ -844,7 +856,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                                                 runtimeOptions, 
                                                 memoryOptions,
                                                 sequenceFileProperties.nReads, 
-                                                minhashOptions, 
+                                                correctionOptions, 
                                                 readStorage);
         TIMERSTOPCPU(build_minhasher);
 
@@ -863,21 +875,21 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
         return result;
     }
 
-    BuiltDataStructures buildDataStructures(const MinhashOptions& minhashOptions,
+    BuiltDataStructures buildDataStructures(
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
                                             const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions){
 
-        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, memoryOptions, fileOptions, false);
+        return buildDataStructuresImpl(correctionOptions, runtimeOptions, memoryOptions, fileOptions, false);
     }
 
-    BuiltDataStructures buildAndSaveDataStructures(const MinhashOptions& minhashOptions,
+    BuiltDataStructures buildAndSaveDataStructures(
                                             const CorrectionOptions& correctionOptions,
                                             const RuntimeOptions& runtimeOptions,
                                             const MemoryOptions& memoryOptions,
                                             const FileOptions& fileOptions){
 
-        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, memoryOptions, fileOptions, true);
+        return buildDataStructuresImpl(correctionOptions, runtimeOptions, memoryOptions, fileOptions, true);
     }
 }

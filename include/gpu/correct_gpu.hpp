@@ -16,16 +16,16 @@ namespace care {
 namespace gpu {
 
 
-void correct_gpu(const MinhashOptions& minhashOptions,
-			const AlignmentOptions& alignmentOptions,
-			const GoodAlignmentProperties& goodAlignmentProperties,
-			const CorrectionOptions& correctionOptions,
-			const RuntimeOptions& runtimeOptions,
-			const FileOptions& fileOptions,
-			const MemoryOptions& memoryOptions,
-			const SequenceFileProperties& sequenceFileProperties,
-            Minhasher& minhasher,
-            DistributedReadStorage& readStorage);
+void correct_gpu(
+	const GoodAlignmentProperties& goodAlignmentProperties,
+	const CorrectionOptions& correctionOptions,
+	const RuntimeOptions& runtimeOptions,
+	const FileOptions& fileOptions,
+	const MemoryOptions& memoryOptions,
+	const SequenceFileProperties& sequenceFileProperties,
+	Minhasher& minhasher,
+	DistributedReadStorage& readStorage
+);
 
 
 }

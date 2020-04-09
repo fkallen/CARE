@@ -126,16 +126,12 @@ int main(int argc, char** argv){
 		std::exit(0);
 	}
 
-	MinhashOptions minhashOptions = args::to<care::MinhashOptions>(parseresults);
-	AlignmentOptions alignmentOptions = args::to<AlignmentOptions>(parseresults);
 	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
 	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
 	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
 	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
 	FileOptions fileOptions = args::to<FileOptions>(parseresults);
 
-	if(!args::isValid(minhashOptions)) throw std::runtime_error("Invalid minhashOptions!");
-	if(!args::isValid(alignmentOptions)) throw std::runtime_error("Invalid alignmentOptions!");
 	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
 	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
 	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
@@ -161,13 +157,13 @@ int main(int argc, char** argv){
 
 	std::cout << "--------------------------------\n";
 
-	std::cout << "Number of hash tables / hash functions: " << minhashOptions.maps << "\n";
-	std::cout << "K-mer size of hashing: " << minhashOptions.k << "\n";
 
 	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
 	std::cout << "Alignment relative required overlap: " << goodAlignmentProperties.min_overlap_ratio << "\n";
 	std::cout << "Alignment max relative number of mismatches in overlap: " << goodAlignmentProperties.maxErrorRate << "\n";
 
+	std::cout << "Number of hash tables / hash functions: " << correctionOptions.numHashFunctions << "\n";
+	std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
 	std::cout << "Correct candidate reads: " << std::boolalpha << correctionOptions.correctCandidates << "\n";
 	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
 	std::cout << "Use quality scores: " << std::boolalpha << correctionOptions.useQualityScores << "\n";
@@ -218,13 +214,13 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-    care::performCorrection(minhashOptions,
-				alignmentOptions,
-				correctionOptions,
-				runtimeOptions,
-				memoryOptions,
-				fileOptions,
-				goodAlignmentProperties);
+    care::performCorrection(
+		correctionOptions,
+		runtimeOptions,
+		memoryOptions,
+		fileOptions,
+		goodAlignmentProperties
+	);
 
 	return 0;
 }

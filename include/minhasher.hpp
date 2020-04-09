@@ -1,7 +1,6 @@
 #ifndef CARE_MINHASHER_HPP
 #define CARE_MINHASHER_HPP
 
-#include "options.hpp"
 #include "hpc_helpers.cuh"
 #include "util.hpp"
 
@@ -782,6 +781,20 @@ struct Minhasher {
         //     return numResultsPerSequence[i];
         // }
 	};
+
+    struct MinhashOptions {
+        int maps;
+        int k;
+        int numResultsPerMapQueryThreshold;
+
+        bool operator==(const MinhashOptions& other) const{
+            return maps == other.maps && k == other.k 
+                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
+        };
+        bool operator!=(const MinhashOptions& other) const{
+            return !(*this == other);
+        };
+    };
 
 	// the actual maps
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
