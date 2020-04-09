@@ -3,20 +3,17 @@
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 
-// //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
 #include <gpu/utility_kernels.cuh>
 
-// #include <msa.hpp>
 #include <sequence.hpp>
-// #include <correctionresultprocessing.hpp>
 
-#include <shiftedhammingdistance_common.hpp>
+#include <hostdevicefunctions.cuh>
 
-// #include <hpc_helpers.cuh>
-// #include <config.hpp>
+#include <hpc_helpers.cuh>
+#include <config.hpp>
 
-// #include <cassert>
+#include <cassert>
 
 
 #include <cub/cub.cuh>
