@@ -13,9 +13,7 @@
 #include <msa.hpp>
 #include "qualityscoreweights.hpp"
 #include "rangegenerator.hpp"
-#include "featureextractor.hpp"
-#include "forestclassifier.hpp"
-//#include "nn_classifier.hpp"
+
 #include "cpu_correction_core.hpp"
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
@@ -193,9 +191,6 @@ namespace cpu{
             std::vector<int> tmpoverlaps;
 
             OutputData outputData;
-
-
-            std::vector<MSAFeature> msaforestfeatures;
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
 
@@ -1182,20 +1177,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-
-#if 0
-    NN_Correction_Classifier_Base nnClassifierBase;
-    NN_Correction_Classifier nnClassifier;
-    if(correctionOptions.correctionType == CorrectionType::Convnet){
-        nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
-        nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
-    }
-#endif 
-
-    ForestClassifier forestClassifier;
-    if(correctionOptions.correctionType == CorrectionType::Forest){
-        forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
-    }
 
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);

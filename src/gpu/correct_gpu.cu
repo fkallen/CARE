@@ -14,13 +14,9 @@
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
 #include <sequence.hpp>
-#include <featureextractor.hpp>
-#include <forestclassifier.hpp>
-//#include <nn_classifier.hpp>
+
 #include <minhasher.hpp>
 #include <options.hpp>
-//#include <candidatedistribution.hpp>
-//#include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
@@ -687,19 +683,6 @@ namespace gpu{
 
 	};
 
-    struct SerializedFeature{
-        char consensus;
-        int position;
-        read_number readId;
-        std::string featureString;
-
-        SerializedFeature(){}
-        SerializedFeature(read_number r, int p, char c, const std::string& s)
-            : readId(r), position(p), consensus(c), featureString(s){}
-        SerializedFeature(read_number r, int p, char c, std::string&& s)
-        : readId(r), position(p), consensus(c), featureString(std::move(s)){}
-    };
-
 
     struct TransitionFunctionData {
 		cpu::RangeGenerator<read_number>* readIdGenerator;
@@ -720,11 +703,6 @@ namespace gpu{
 
         std::condition_variable isFinishedCV;
         std::mutex isFinishedMutex;
-
-        std::function<void(const SerializedFeature&)> saveFeature;
-
-        ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
-        //NN_Correction_Classifier nnClassifier;
 
         std::vector<Minhasher::Handle> minhashHandles;
 	};
@@ -3232,10 +3210,6 @@ void correct_gpu(
                          // transFuncData.locksForProcessedFlags[index].unlock();
                      };
 
-      if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
-         transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
-      }
-
       transFuncData.minhashHandles.resize(threadPoolSize);
 
 
@@ -3480,9 +3454,9 @@ void correct_gpu(
 
         auto processBatchResults = [&](auto& batchData){
             auto& streams = batchData.streams;
-            auto& events = batchData.events;
-
+            
             #ifndef USE_CUDA_GRAPH
+            auto& events = batchData.events;
             cudaEventRecord(events[0], streams[secondary_stream_index]); CUERR;
             cudaStreamWaitEvent(streams[primary_stream_index], events[0], 0); CUERR;   
             #endif
