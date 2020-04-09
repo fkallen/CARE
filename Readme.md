@@ -18,7 +18,7 @@
 CPU version: This produces executable file errorcorrector_cpu
 make / make cpu
 
-CPU version: This produces executable file errorcorrector_gpu
+GPU version: This produces executable file errorcorrector_gpu
 make gpu
 
 # Run   
@@ -29,7 +29,7 @@ The simplest command which only includes mandatory options is
 ```
 
 Available program options:
-
+```
  Mandatory options:
       --inputfile arg  The file to correct. Fasta or Fastq format. May be
                        gzip'ed. Always treated as single end.
@@ -102,7 +102,7 @@ Available program options:
                                 K,M,G , e.g. 20G means 20 gigabyte. This option
                                 is not a hard limit. Default: All free
                                 memory.
-
+```
 
 # Algorithm
 Please refer to the description in the paper: 
