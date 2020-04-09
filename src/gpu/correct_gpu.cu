@@ -194,6 +194,28 @@ namespace gpu{
         }        
     };
 
+    template<class T>
+    struct WaitableData{
+        T data;
+        SyncFlag syncFlag;
+
+        void setBusy(){
+            syncFlag.setBusy();
+        }
+
+        bool isBusy() const{
+            return syncFlag.isBusy();
+        }
+
+        void wait(){
+            syncFlag.wait();
+        }
+
+        void signal(){
+            syncFlag.signal();
+        } 
+    };
+
     struct NextIterationData{
         static constexpr int overprovisioningPercent = 0;
 
@@ -253,6 +275,119 @@ namespace gpu{
         MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
 
         SyncFlag syncFlag;
+
+        void init(            
+            int deviceId,
+            int batchsize,
+            int numCandidatesLimit,
+            size_t encodedSequencePitchInInts,
+            int maxNumThreads,
+            int numMinhashMaps,
+            int resultsPerMap
+        ){
+            NextIterationData& nextData = *this;
+
+            nextData.deviceId = deviceId;
+    
+            cudaSetDevice(deviceId); CUERR;
+            cudaStreamCreate(&nextData.stream); CUERR;
+            cudaEventCreate(&nextData.event); CUERR;
+    
+            nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
+    
+            nextData.d_numLeftoverAnchors.resize(1);
+            nextData.d_numLeftoverCandidates.resize(1);
+            nextData.h_numLeftoverAnchors.resize(1);
+            nextData.h_numLeftoverCandidates.resize(1);
+            nextData.h_numAnchors.resize(1);
+            nextData.h_numCandidates.resize(1);
+            nextData.d_numAnchors.resize(1);
+            nextData.d_numCandidates.resize(1);
+    
+            cudaMemsetAsync(nextData.d_numLeftoverAnchors.get(), 0, sizeof(int), nextData.stream); CUERR;
+            cudaMemsetAsync(nextData.d_numLeftoverCandidates.get(), 0, sizeof(int), nextData.stream); CUERR;
+    
+            nextData.h_numLeftoverAnchors[0] = 0;
+            nextData.h_numLeftoverCandidates[0] = 0;
+        
+            nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+            nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
+            nextData.h_subject_sequences_lengths.resize(batchsize);
+            nextData.d_subject_sequences_lengths.resize(batchsize);
+            nextData.h_subject_read_ids.resize(batchsize);
+            nextData.d_subject_read_ids.resize(batchsize);
+            nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
+            nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
+            
+            std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
+            std::vector<int>& idsPerChunk = nextData.idsPerChunk;
+            std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
+            std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
+            std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
+        
+            allRanges.resize(numMinhashMaps * batchsize);
+            idsPerChunk.resize(maxNumThreads, 0);   
+            numAnchorsPerChunk.resize(maxNumThreads, 0);
+            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+    
+            const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
+    
+            nextData.h_candidate_read_ids.resize(maxNumIds);
+            nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
+            nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
+            nextData.d_candidates_per_subject.resize(2*batchsize);
+            nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
+            nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+    
+            nextData.h_leftoverAnchorReadIds.resize(batchsize);
+            nextData.d_leftoverAnchorReadIds.resize(batchsize);
+            nextData.d_leftoverAnchorLengths.resize(batchsize);
+            nextData.d_leftoverCandidateReadIds.resize(maxNumIds + numCandidatesLimit);
+            nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
+            nextData.d_leftoverAnchorSequences.resize(encodedSequencePitchInInts * batchsize);
+    
+            cudaStreamSynchronize(nextData.stream);
+        }
+    
+        void destroy(){
+            NextIterationData& nextData = *this;
+
+            cudaSetDevice(nextData.deviceId); CUERR;
+            cudaStreamDestroy(nextData.stream); CUERR;
+            cudaEventDestroy(nextData.event); CUERR;
+    
+            nextData.h_subject_sequences_data.destroy();
+            nextData.h_subject_sequences_lengths.destroy();
+            nextData.h_subject_read_ids.destroy();
+            nextData.h_candidate_read_ids.destroy();
+    
+            nextData.d_subject_sequences_data.destroy();
+            nextData.d_subject_sequences_lengths.destroy();
+            nextData.d_subject_read_ids.destroy();
+            nextData.d_candidate_read_ids.destroy();
+            nextData.d_candidates_per_subject.destroy();
+            nextData.d_candidates_per_subject_tmp.destroy();
+            nextData.d_candidates_per_subject_prefixsum.destroy();
+    
+            nextData.d_candidate_read_ids_tmp.destroy();
+            nextData.h_minhashSignatures.destroy();
+            nextData.d_minhashSignatures.destroy();
+    
+            nextData.d_numLeftoverAnchors.destroy();
+            nextData.d_leftoverAnchorLengths.destroy();
+            nextData.d_leftoverAnchorReadIds.destroy();
+            nextData.d_numLeftoverCandidates.destroy();
+            nextData.d_leftoverCandidateReadIds.destroy();
+            nextData.d_leftoverCandidatesPerAnchors.destroy();
+            nextData.h_numLeftoverAnchors.destroy();
+            nextData.h_numLeftoverCandidates.destroy();
+            nextData.d_leftoverAnchorSequences.destroy();
+    
+            nextData.h_leftoverAnchorReadIds.destroy();
+    
+            destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
+        }
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info;
@@ -333,13 +468,13 @@ namespace gpu{
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
 
 
-        void resize(
+        void init(
                 int batchsize, 
                 int maxCandidates, 
                 int maxNumIdsFromMinhashing,
                 size_t decodedSequencePitchInBytes, 
-                int maxNumEditsPerSequence){
-
+                int maxNumEditsPerSequence
+        ){
             h_subject_read_ids.resize(batchsize);
             h_subject_is_corrected.resize(batchsize);
             h_is_high_quality_subject.resize(batchsize);
@@ -356,6 +491,25 @@ namespace gpu{
             h_numEditsPerCorrectedSubject.resize(batchsize);
             h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
             h_numEditsPerCorrectedCandidate.resize(maxCandidates);
+        }
+
+        void destroy(){
+            h_subject_read_ids.destroy();
+            h_subject_is_corrected.destroy();
+            h_is_high_quality_subject.destroy();
+            h_num_corrected_candidates_per_anchor.destroy();
+            h_num_corrected_candidates_per_anchor_prefixsum.destroy();
+            h_indices_of_corrected_candidates.destroy();
+            h_candidate_read_ids.destroy();
+            h_corrected_subjects.destroy();
+            h_corrected_candidates.destroy();
+            h_subject_sequences_lengths.destroy();
+            h_candidate_sequences_lengths.destroy();
+            h_alignment_shifts.destroy();
+            h_editsPerCorrectedSubject.destroy();
+            h_numEditsPerCorrectedSubject.destroy();
+            h_editsPerCorrectedCandidate.destroy();
+            h_numEditsPerCorrectedCandidate.destroy();
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -400,27 +554,7 @@ namespace gpu{
     };
 
 
-    template<class T>
-    struct WaitableData{
-        T data;
-        SyncFlag syncFlag;
 
-        void setBusy(){
-            syncFlag.setBusy();
-        }
-
-        bool isBusy() const{
-            return syncFlag.isBusy();
-        }
-
-        void wait(){
-            syncFlag.wait();
-        }
-
-        void signal(){
-            syncFlag.signal();
-        } 
-    };
 
     struct CudaGraph{
         bool valid = false;
@@ -581,8 +715,7 @@ namespace gpu{
         std::array<CudaGraph,2> executionGraphs{};
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
-        ThreadPool::ParallelForHandle pforHandle;
-        std::vector<Minhasher::Handle> minhashHandles;        
+        ThreadPool::ParallelForHandle pforHandle;    
 		KernelLaunchHandle kernelLaunchHandle;        
         DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
         DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
@@ -1122,123 +1255,13 @@ namespace gpu{
 
         std::condition_variable isFinishedCV;
         std::mutex isFinishedMutex;
-
-        std::vector<Minhasher::Handle> minhashHandles;
 	};
 
 
 
 
 
-    void initNextIterationData(
-        NextIterationData& nextData, 
-        int deviceId,
-        int batchsize,
-        int numCandidatesLimit,
-        size_t encodedSequencePitchInInts,
-        int maxNumThreads,
-        int numMinhashMaps,
-        int resultsPerMap
-    ){
-        nextData.deviceId = deviceId;
-
-        cudaSetDevice(deviceId); CUERR;
-        cudaStreamCreate(&nextData.stream); CUERR;
-        cudaEventCreate(&nextData.event); CUERR;
-
-        nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
-
-        nextData.d_numLeftoverAnchors.resize(1);
-        nextData.d_numLeftoverCandidates.resize(1);
-        nextData.h_numLeftoverAnchors.resize(1);
-        nextData.h_numLeftoverCandidates.resize(1);
-        nextData.h_numAnchors.resize(1);
-        nextData.h_numCandidates.resize(1);
-        nextData.d_numAnchors.resize(1);
-        nextData.d_numCandidates.resize(1);
-
-        cudaMemsetAsync(nextData.d_numLeftoverAnchors.get(), 0, sizeof(int), nextData.stream); CUERR;
-        cudaMemsetAsync(nextData.d_numLeftoverCandidates.get(), 0, sizeof(int), nextData.stream); CUERR;
-
-        nextData.h_numLeftoverAnchors[0] = 0;
-        nextData.h_numLeftoverCandidates[0] = 0;
     
-        nextData.h_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.d_subject_sequences_data.resize(encodedSequencePitchInInts * batchsize);
-        nextData.h_subject_sequences_lengths.resize(batchsize);
-        nextData.d_subject_sequences_lengths.resize(batchsize);
-        nextData.h_subject_read_ids.resize(batchsize);
-        nextData.d_subject_read_ids.resize(batchsize);
-        nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
-        nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
-        
-        std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
-        std::vector<int>& idsPerChunk = nextData.idsPerChunk;
-        std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
-        std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
-        std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
-    
-        allRanges.resize(numMinhashMaps * batchsize);
-        idsPerChunk.resize(maxNumThreads, 0);   
-        numAnchorsPerChunk.resize(maxNumThreads, 0);
-        idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-        numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
-
-        const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
-
-        nextData.h_candidate_read_ids.resize(maxNumIds);
-        nextData.d_candidate_read_ids.resize(maxNumIds + numCandidatesLimit);
-        nextData.d_candidate_read_ids_tmp.resize(maxNumIds + numCandidatesLimit);
-        nextData.d_candidates_per_subject.resize(2*batchsize);
-        nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
-        nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
-
-        nextData.h_leftoverAnchorReadIds.resize(batchsize);
-        nextData.d_leftoverAnchorReadIds.resize(batchsize);
-        nextData.d_leftoverAnchorLengths.resize(batchsize);
-        nextData.d_leftoverCandidateReadIds.resize(maxNumIds + numCandidatesLimit);
-        nextData.d_leftoverCandidatesPerAnchors.resize(batchsize);
-        nextData.d_leftoverAnchorSequences.resize(encodedSequencePitchInInts * batchsize);
-
-        cudaStreamSynchronize(nextData.stream);
-    }
-
-    void destroyNextIterationData(NextIterationData& nextData){
-        cudaSetDevice(nextData.deviceId); CUERR;
-        cudaStreamDestroy(nextData.stream); CUERR;
-        cudaEventDestroy(nextData.event); CUERR;
-
-        nextData.h_subject_sequences_data.destroy();
-        nextData.h_subject_sequences_lengths.destroy();
-        nextData.h_subject_read_ids.destroy();
-        nextData.h_candidate_read_ids.destroy();
-
-        nextData.d_subject_sequences_data.destroy();
-        nextData.d_subject_sequences_lengths.destroy();
-        nextData.d_subject_read_ids.destroy();
-        nextData.d_candidate_read_ids.destroy();
-        nextData.d_candidates_per_subject.destroy();
-        nextData.d_candidates_per_subject_tmp.destroy();
-        nextData.d_candidates_per_subject_prefixsum.destroy();
-
-        nextData.d_candidate_read_ids_tmp.destroy();
-        nextData.h_minhashSignatures.destroy();
-        nextData.d_minhashSignatures.destroy();
-
-        nextData.d_numLeftoverAnchors.destroy();
-        nextData.d_leftoverAnchorLengths.destroy();
-        nextData.d_leftoverAnchorReadIds.destroy();
-        nextData.d_numLeftoverCandidates.destroy();
-        nextData.d_leftoverCandidateReadIds.destroy();
-        nextData.d_leftoverCandidatesPerAnchors.destroy();
-        nextData.h_numLeftoverAnchors.destroy();
-        nextData.h_numLeftoverCandidates.destroy();
-        nextData.d_leftoverAnchorSequences.destroy();
-
-        nextData.h_leftoverAnchorReadIds.destroy();
-
-        destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
-    }
 
 
 
@@ -3540,10 +3563,6 @@ void correct_gpu(
                          // transFuncData.locksForProcessedFlags[index].unlock();
                      };
 
-      transFuncData.minhashHandles.resize(threadPoolSize);
-
-
-
      outputThread.start();
 
         std::vector<std::thread> batchExecutors;
@@ -3581,7 +3600,6 @@ void correct_gpu(
             batchData.unpackWorker = nullptr;
             batchData.threadPool = &threadPool;
             batchData.threadsInThreadPool = threadPoolSize;
-            batchData.minhashHandles.resize(threadPoolSize);
             batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
             batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
@@ -3606,8 +3624,7 @@ void correct_gpu(
             const int maxNumIds = resultsPerMap * numMinhashMaps * correctionOptions.batchsize;
 
 
-            initNextIterationData(
-                batchData.nextIterationData, 
+            batchData.nextIterationData.init( 
                 batchData.deviceId,
                 correctionOptions.batchsize,
                 batchData.numCandidatesLimit,
@@ -3617,9 +3634,7 @@ void correct_gpu(
                 resultsPerMap
             );
 
-            
-
-            batchData.waitableOutputData.data.rawResults.resize(
+            batchData.waitableOutputData.data.rawResults.init(
                 correctionOptions.batchsize, 
                 numCandidatesLimitPerGpu[deviceId], 
                 maxNumIds,
@@ -3641,7 +3656,7 @@ void correct_gpu(
             for(auto pair : infobatch.device){
                 std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
             }
-            
+
             MemoryUsage infonextiterdata = batchData.nextIterationData.getMemoryInfo();
             std::cerr << "nextiterationdata memory usage:\n";
             std::cerr << "host: " << infonextiterdata.host << "\n";
@@ -3662,8 +3677,9 @@ void correct_gpu(
             
             cudaSetDevice(batchData.deviceId); CUERR;
     
+            batchData.nextIterationData.destroy();
+            batchData.waitableOutputData.data.rawResults.destroy();
             batchData.destroy();
-            destroyNextIterationData(batchData.nextIterationData);
 
             for(int i = 0; i < 2; i++){
                 if(batchData.executionGraphs[i].execgraph != nullptr){
