@@ -25,8 +25,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const MemoryOptions& memoryOptions,
 			const SequenceFileProperties& sequenceFileProperties,
             Minhasher& minhasher,
-            DistributedReadStorage& readStorage,
-            std::uint64_t maxCandidatesPerRead);
+            DistributedReadStorage& readStorage);
 
 
 }

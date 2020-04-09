@@ -22,8 +22,7 @@ namespace cpu{
     				  const FileOptions& fileOptions,
                       const SequenceFileProperties& sequenceFileProperties,
                       Minhasher& minhasher,
-                      cpu::ContiguousReadStorage& readStorage,
-                      std::uint64_t maxCandidatesPerRead);
+                      cpu::ContiguousReadStorage& readStorage);
 
 
 }

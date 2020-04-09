@@ -78,25 +78,6 @@ namespace care{
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
         auto& sequenceFileProperties = dataStructuresgpu.sequenceFileProperties;
 
-        TIMERSTARTCPU(candidateestimation);
-        std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
-
-        //if(maxCandidatesPerRead == 0){
-            // maxCandidatesPerRead = cpu::calculateMaxCandidatesPerReadThreshold(minhasher,
-            //                                         readStorage,
-            //                                         sequenceFileProperties.nReads / 10,
-            //                                         correctionOptions.hits_per_candidate,
-            //                                         runtimeOptions.threads
-            //                                         //,"ncandidates.txt"
-            //                                         );
-            //assert(maxCandidatesPerRead != 0);
-            //std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
-        //}
-
-
-
-        TIMERSTOPCPU(candidateestimation);
-
         printDataStructureMemoryUsage(minhasher, readStorage);
 
         //gpu::correct_gpu(minhashOptions, alignmentOptions,
@@ -110,8 +91,7 @@ namespace care{
             memoryOptions,
             sequenceFileProperties,
             minhasher, 
-            readStorage,
-            maxCandidatesPerRead);
+            readStorage);
 
         TIMERSTARTCPU(finalizing_files);
 

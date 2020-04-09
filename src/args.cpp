@@ -45,12 +45,7 @@ namespace args{
 
 	template<>
 	AlignmentOptions to<AlignmentOptions>(const cxxopts::ParseResult& pr){
-        AlignmentOptions result{
-            pr["matchscore"].as<int>(),
-            pr["subscore"].as<int>(),
-            pr["insertscore"].as<int>(),
-            pr["deletionscore"].as<int>()
-        };
+        AlignmentOptions result;
 
         return result;
 	}
@@ -68,35 +63,15 @@ namespace args{
 
 	template<>
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
-        CorrectionMode correctionMode = CorrectionMode::Hamming;
-        if(pr["indels"].as<bool>()){
-            correctionMode = CorrectionMode::Graph;
-        }
-
-        CorrectionType correctionType = CorrectionType::Classic;
-
-        switch(pr["correctionType"].as<int>()){
-        case 0: correctionType = CorrectionType::Classic; break;
-        case 1: correctionType = CorrectionType::Forest; break;
-        case 2: correctionType = CorrectionType::Convnet; break;
-        default: correctionType = CorrectionType::Classic;
-        }
-
         CorrectionOptions result{
-            correctionMode,
-            correctionType,
             pr["candidateCorrection"].as<bool>(),
 			pr["useQualityScores"].as<bool>(),
             pr["coverage"].as<float>(),
             pr["errorrate"].as<float>(),
             pr["m_coverage"].as<float>(),
-            pr["alpha"].as<float>(),
-            pr["base"].as<float>(),
             pr["kmerlength"].as<int>(),
             pr["batchsize"].as<int>(),
             pr["candidateCorrectionNewColumns"].as<int>(),
-            pr["extractFeatures"].as<bool>(),
-            pr["hits_per_candidate"].as<int>()
         };
 
         return result;
@@ -107,12 +82,9 @@ namespace args{
         RuntimeOptions result;
 
 		result.threads = pr["threads"].as<int>();
-        //result.threadsForGPUs = pr["threadsForGPUs"].as<int>();
 		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = pr["progress"].as<bool>();
-        result.max_candidates = pr["maxCandidates"].as<int>();
-        result.gpuParallelBatches = pr["gpuParallelBatches"].as<int>();
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
@@ -195,22 +167,7 @@ namespace args{
 
 		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
-		result.fileformatstring = pr["fileformat"].as<std::string>();
-
-        result.format = FileFormat::NONE;
-		if (result.fileformatstring == "fasta"){
-			result.format = FileFormat::FASTA;
-        }else if(result.fileformatstring == "fastq"){
-			result.format = FileFormat::FASTQ;
-        }else if(result.fileformatstring == "fastagz"){
-			result.format = FileFormat::FASTAGZ;
-        }else if(result.fileformatstring == "fastqgz"){
-			result.format = FileFormat::FASTQGZ;
-        };
-
-        if(result.format == FileFormat::NONE){
-            result.format = getFileFormat(result.inputfile);
-        }
+        result.format = getFileFormat(result.inputfile);
 
 		result.nReads = pr["nReads"].as<std::uint64_t>();
         result.minimum_sequence_length = pr["min_length"].as<int>();
@@ -219,8 +176,6 @@ namespace args{
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
         result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
         result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
-        result.forestfilename = pr["forest"].as<std::string>();
-        result.nnmodelfilename = pr["nnmodel"].as<std::string>();
 
         if(pr.count("tempdir") > 0){
             result.tempdirectory = pr["tempdir"].as<std::string>();
@@ -242,9 +197,10 @@ namespace args{
             std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.maps) << std::endl;
         }
 
-        if(opt.k < 1 || opt.k > 32){
+        if(opt.k < 1 || opt.k > max_k<kmer_type>::value){
             valid = false;
-            std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(opt.k) << std::endl;
+            std::cout << "Error: kmer length must be in range [1, " << max_k<kmer_type>::value 
+                << "], is " + std::to_string(opt.k) << std::endl;
         }
 
         return valid;
@@ -297,11 +253,6 @@ namespace args{
         if(opt.batchsize < 1 /*|| corOpts.batchsize > 16*/){
             valid = false;
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
-        }
-
-        if(opt.hits_per_candidate < 1){
-            valid = false;
-            std::cout << "Error: hits_per_candidate must be greater than 0, is " + std::to_string(opt.hits_per_candidate) << std::endl;
         }
 
         return valid;

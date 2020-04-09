@@ -42,31 +42,22 @@ namespace care{
     };
 
     struct CorrectionOptions{
-        CorrectionMode correctionMode = CorrectionMode::Hamming;
-        CorrectionType correctionType = CorrectionType::Classic;
         bool correctCandidates = false;
         bool useQualityScores = true;
         float estimatedCoverage = 1.0f;
         float estimatedErrorrate = 0.01f;
         float m_coverage = 0.6f;
-        float graphalpha = 1.0f;
-        float graphx = 1.5f;
         int kmerlength = 16;
 		int batchsize = 5;
         int new_columns_to_correct = 0;
-        bool extractFeatures = false;
-        int hits_per_candidate = 1;
     };
 
 	struct RuntimeOptions{
 		int threads = 1;
-        //int threadsForGPUs = 0;
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
         bool showProgress = true;
         bool canUseGpu = false;
-        int max_candidates = 0;
-        int gpuParallelBatches = 1;
         std::vector<int> deviceIds;
 	};
 
@@ -77,7 +68,6 @@ namespace care{
 
 	struct FileOptions{
 		FileFormat format;
-		std::string fileformatstring;
 		std::string inputfile;
 		std::string outputdirectory;
         std::string outputfilename;
@@ -89,8 +79,6 @@ namespace care{
         std::string load_binary_reads_from;
         std::string save_hashtables_to;
         std::string load_hashtables_from;
-        std::string forestfilename;
-        std::string nnmodelfilename;
         std::string tempdirectory;
 	};
 

@@ -389,8 +389,7 @@ namespace cpu{
         }
 
         void determineCandidateReadIds(BatchData& data,
-                                        const Minhasher& minhasher,
-                                        int requiredHitsPerCandidate){
+                                        const Minhasher& minhasher){
 
             const int numSubjects = data.subjectReadIds.size();
 
@@ -645,8 +644,8 @@ namespace cpu{
                 correctionOptions.estimatedErrorrate,
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage,
-                [hpc = correctionOptions.hits_per_candidate](){
-                return hpc > 1;
+                [](){
+                    return false;
                 }
             );
 
@@ -1238,20 +1237,11 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                   const FileOptions& fileOptions,
                   const SequenceFileProperties& sequenceFileProperties,
                   Minhasher& minhasher,
-                  cpu::ContiguousReadStorage& readStorage,
-                  std::uint64_t maxCandidatesPerRead){
-
-    int oldNumOMPThreads = 1;
-    #pragma omp parallel
-    {
-        #pragma omp single
-        oldNumOMPThreads = omp_get_num_threads();
-    }
+                  cpu::ContiguousReadStorage& readStorage){
 
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 
     std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
-    std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
     // std::ofstream outputstream;
 
@@ -1269,13 +1259,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
 
-    std::ofstream featurestream;
-      //if(correctionOptions.extractFeatures){
-          featurestream = std::move(std::ofstream(featureTmpFiles[0]));
-          if(!featurestream && correctionOptions.extractFeatures){
-              throw std::runtime_error("Could not open output feature file");
-          }
-      //}
 
 #ifndef DO_PROFILE
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
@@ -1395,7 +1378,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             tpa = std::chrono::system_clock::now();
             #endif
 
-            determineCandidateReadIds(batchData, minhasher, correctionOptions.hits_per_candidate);
+            determineCandidateReadIds(batchData, minhasher);
 
             #ifdef ENABLE_TIMING
             batchData.timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1470,8 +1453,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 #endif
 
             }
-
-            assert(correctionOptions.correctionType == CorrectionType::Classic);
 
             for(auto& batchTask : batchData.batchTasks){
 
@@ -1571,7 +1552,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    featurestream.flush();
     //outputstream.flush();
     partialResults.flush();
 
@@ -1618,82 +1598,36 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     std::cout << "Correction finished. Constructing result file." << std::endl;
 
-    if(!correctionOptions.extractFeatures){
+    const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForSorting = 0;
 
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        std::size_t memoryForSorting = 0;
-
-        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
-            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
-        }
-
-        std::cout << "begin merging reads" << std::endl;
-
-        TIMERSTARTCPU(merge);
-
-        constructOutputFileFromResults(
-            fileOptions.tempdirectory,
-            sequenceFileProperties.nReads, 
-            fileOptions.inputfile, 
-            fileOptions.format, 
-            partialResults, 
-            memoryForSorting, 
-            fileOptions.outputfile, 
-            false
-        );
-
-        TIMERSTOPCPU(merge);
-
-        std::cout << "end merging reads" << std::endl;
-
+    if(availableMemoryInBytes2 > 1*(std::size_t(1) << 30)){
+        memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
     }
+
+    std::cout << "begin merging reads" << std::endl;
+
+    TIMERSTARTCPU(merge);
+
+    constructOutputFileFromResults(
+        fileOptions.tempdirectory,
+        sequenceFileProperties.nReads, 
+        fileOptions.inputfile, 
+        fileOptions.format, 
+        partialResults, 
+        memoryForSorting, 
+        fileOptions.outputfile, 
+        false
+    );
+
+    TIMERSTOPCPU(merge);
+
+    std::cout << "end merging reads" << std::endl;
 
     filehelpers::deleteFiles(tmpfiles);
 
-    std::vector<std::string> featureFiles(tmpfiles);
-    for(auto& s : featureFiles){
-        s = s + "_features";
-    }
-    //concatenate feature files one file
-
-    if(correctionOptions.extractFeatures){
-        std::cout << "begin merging features" << std::endl;
-
-        std::stringstream commandbuilder;
-
-        commandbuilder << "cat";
-
-        for(const auto& featureFile : featureTmpFiles){
-            commandbuilder << " \"" << featureFile << "\"";
-        }
-
-        commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
-
-        const std::string command = commandbuilder.str();
-        TIMERSTARTCPU(concat_feature_files);
-        int r1 = std::system(command.c_str());
-        TIMERSTOPCPU(concat_feature_files);
-
-        if(r1 != 0){
-            std::cerr << "Warning. Feature files could not be concatenated!\n";
-            std::cerr << "This command returned a non-zero error value: \n";
-            std::cerr << command +  '\n';
-            std::cerr << "Please concatenate the following files manually\n";
-            for(const auto& s : featureTmpFiles){
-                std::cerr << s << '\n';
-            }
-        }else{
-            filehelpers::deleteFiles(featureTmpFiles);
-        }
-
-        std::cout << "end merging features" << std::endl;
-    }else{
-        filehelpers::deleteFiles(featureTmpFiles);
-    }
-
     std::cout << "end merge" << std::endl;
 
-    omp_set_num_threads(oldNumOMPThreads);
 }
 
 
