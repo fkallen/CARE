@@ -14,7 +14,6 @@
 #include "qualityscoreweights.hpp"
 #include "rangegenerator.hpp"
 
-#include "cpu_correction_core.hpp"
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
 #include <util.hpp>
@@ -159,7 +158,7 @@ namespace cpu{
                 }            
             };
 
-        // data for all batch tasks within batch
+            // data for all batch tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
@@ -180,7 +179,7 @@ namespace cpu{
             std::vector<int> candidatesPerSubject;
             std::vector<int> candidatesPerSubjectPrefixSum;
             std::vector<read_number> filteredReadIds;
-        // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
+            // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
             std::vector<BestAlignment_t> alignmentFlags;
@@ -195,7 +194,7 @@ namespace cpu{
             std::vector<int> indicesOfCandidatesEqualToSubject;
 
 
-        // ------------------------------------------------
+            // ------------------------------------------------
             std::vector<Task> batchTasks;
 
             ContiguousReadStorage::GatherHandle readStorageGatherHandle;
@@ -251,6 +250,112 @@ namespace cpu{
 
         // std::vector<read_number> interestingReadIds;
         // std::mutex interestingMutex;
+
+        template<class Iter>
+        Iter findBestAlignmentDirection(
+                Iter result,
+                const SHDResult* forwardAlignments,
+                const SHDResult* revcAlignments,
+                int numCandidates,
+                const int subjectLength,
+                const int* candidateLengths,
+                const int min_overlap,
+                const float estimatedErrorrate,
+                const float min_overlap_ratio){
+
+
+            for(int i = 0; i < numCandidates; i++, ++result){
+                const SHDResult& forwardAlignment = forwardAlignments[i];
+                const SHDResult& revcAlignment = revcAlignments[i];
+                const int candidateLength = candidateLengths[i];
+
+                BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(forwardAlignment,
+                                                                                revcAlignment,
+                                                                                subjectLength,
+                                                                                candidateLength,
+                                                                                min_overlap_ratio,
+                                                                                min_overlap,
+                                                                                estimatedErrorrate);
+
+                *result = bestAlignmentFlag;
+            }
+
+            return result;
+        }
+
+        /*
+            Filters alignments by good mismatch ratio.
+
+            Returns an sorted index list to alignments which pass the filter.
+        */
+
+        template<class Iter, class Func>
+        Iter
+        filterAlignmentsByMismatchRatio(Iter result,
+                                        const SHDResult* alignments,
+                                        int numAlignments,
+                                        const float estimatedErrorrate,
+                                        const int estimatedCoverage,
+                                        const float m_coverage,
+                                        Func lastResortFunc){
+
+            const float mismatchratioBaseFactor = estimatedErrorrate * 1.0f;
+            const float goodAlignmentsCountThreshold = estimatedCoverage * m_coverage;
+
+            std::array<int, 3> counts({0,0,0});
+
+            for(int i = 0; i < numAlignments; i++){
+                const auto& alignment = alignments[i];
+                const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+
+                if (mismatchratio < 2 * mismatchratioBaseFactor) {
+                    counts[0] += 1;
+                }
+                if (mismatchratio < 3 * mismatchratioBaseFactor) {
+                    counts[1] += 1;
+                }
+                if (mismatchratio < 4 * mismatchratioBaseFactor) {
+                    counts[2] += 1;
+                }
+            }
+
+            //no correction possible without enough candidates
+            if(std::none_of(counts.begin(), counts.end(), [](auto c){return c > 0;})){
+                return result;
+            }
+
+            //std::cerr << "Read " << task.readId << ", good alignments after bining: " << std::accumulate(counts.begin(), counts.end(), int(0)) << '\n';
+            //std::cerr << "Read " << task.readId << ", bins: " << counts[0] << " " << counts[1] << " " << counts[2] << '\n';
+
+
+            float mismatchratioThreshold = 0;
+            if (counts[0] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 2 * mismatchratioBaseFactor;
+            } else if (counts[1] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 3 * mismatchratioBaseFactor;
+            } else if (counts[2] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+            } else {
+                if(lastResortFunc()){
+                    mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+                }else{
+                    return result; //no correction possible without good candidates
+                }
+            }
+
+            for(int i = 0; i < numAlignments; i++){
+                const auto& alignment = alignments[i];
+                const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+                const bool notremoved = mismatchratio < mismatchratioThreshold;
+
+                if(notremoved){
+                    *result = i;
+                    ++result;
+                }
+            }
+
+            return result;
+        }
 
 
         void getSubjectSequenceData(BatchData& data,
@@ -777,15 +882,16 @@ namespace cpu{
             auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
 
                 if(minimizationResult.performedMinimization){
-                    assert(minimizationResult.differentRegionCandidate.size() == task.numFilteredCandidates);
+                    const int numDifferentRegionCandidates = minimizationResult.differentRegionCandidate.size();
+                    assert(numDifferentRegionCandidates == task.numFilteredCandidates);
                     
                     if(0) /*if(task.subjectReadId == 1)*/{
                         std::cerr << "------\n";
                     }
 
                     //bool anyRemoved = false;
-                    size_t cur = 0;
-                    for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
+                    int cur = 0;
+                    for(int i = 0; i < numDifferentRegionCandidates; i++){
                         if(!minimizationResult.differentRegionCandidate[i]){
                             
                             if(0) /*if(task.subjectReadId == 1)*/{
@@ -1195,15 +1301,15 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
 
-    auto lock = [&](read_number readId){
-        read_number index = readId % nLocksForProcessedFlags;
-        locksForProcessedFlags[index].lock();
-    };
+    // auto lock = [&](read_number readId){
+    //     read_number index = readId % nLocksForProcessedFlags;
+    //     locksForProcessedFlags[index].lock();
+    // };
 
-    auto unlock = [&](read_number readId){
-        read_number index = readId % nLocksForProcessedFlags;
-        locksForProcessedFlags[index].unlock();
-    };
+    // auto unlock = [&](read_number readId){
+    //     read_number index = readId % nLocksForProcessedFlags;
+    //     locksForProcessedFlags[index].unlock();
+    // };
 
 
     BackgroundThread outputThread(true);
@@ -1255,7 +1361,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     #pragma omp parallel
     {
-        const int threadId = omp_get_thread_num();
+        //const int threadId = omp_get_thread_num();
 
         BatchData batchData;
         batchData.subjectReadIds.resize(correctionOptions.batchsize);
