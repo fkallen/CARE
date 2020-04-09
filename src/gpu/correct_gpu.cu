@@ -5,11 +5,11 @@
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
-#include <gpu/dataarrays.hpp>
+
 #include <gpu/minhashkernels.hpp>
 
 #include <correctionresultprocessing.hpp>
-
+#include <memorymanagement.hpp>
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
 #include <sequence.hpp>
@@ -358,63 +358,293 @@ namespace gpu{
 
 
     struct Batch {
+        static constexpr int overprovisioningPercent = 0;
+
+        template<class T>
+        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        
+        template<class T>
+        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+
         Batch() = default;
         Batch(const Batch&) = delete;
         Batch(Batch&&) = default;
         Batch& operator=(const Batch&) = delete;
         Batch& operator=(Batch&&) = default;
 
-        NextIterationData nextIterationData;
+
         bool isFirstIteration = true;
-
-        WaitableData<OutputData> waitableOutputData;
-
-        DataArrays dataArrays;
-
-		std::array<cudaStream_t, nStreamsPerBatch> streams;
-		std::array<cudaEvent_t, nEventsPerBatch> events;
-
+        int threadsInThreadPool = 1;
+        int id = -1;
+        int deviceId = 0;
+        int min_overlap = -1;
+        int msa_max_column_count = -1;        
+        int numCandidatesLimit = 0;        
+        int encodedSequencePitchInInts;
+        int decodedSequencePitchInBytes;
+        int qualityPitchInBytes;        
+        int maxNumEditsPerSequence;        
+        int msa_weights_pitch;
+        int msa_pitch;        
+        int n_subjects;
+        int n_queries;        
+        int graphindex = 0;
+        size_t msa_weights_pitch_floats = 0;
         TransitionFunctionData* transFuncData;
         BackgroundThread* outputThread;
         BackgroundThread* backgroundWorker;
         BackgroundThread* unpackWorker;
-
         ThreadPool* threadPool;
-        int threadsInThreadPool = 1;
 
+        PinnedBuffer<int> h_numAnchors;
+        PinnedBuffer<int> h_numCandidates;
+        PinnedBuffer<unsigned int> h_subject_sequences_data;
+        PinnedBuffer<unsigned int> h_candidate_sequences_data;
+        PinnedBuffer<unsigned int> h_transposedCandidateSequencesData;
+        PinnedBuffer<int> h_subject_sequences_lengths;
+        PinnedBuffer<int> h_candidate_sequences_lengths;
+        PinnedBuffer<int> h_candidates_per_subject;
+        PinnedBuffer<int> h_candidates_per_subject_prefixsum;
+        PinnedBuffer<read_number> h_subject_read_ids;
+        PinnedBuffer<read_number> h_candidate_read_ids;
+        PinnedBuffer<int> h_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
+        PinnedBuffer<int> h_indices;
+        PinnedBuffer<int> h_indices_per_subject;
+        PinnedBuffer<int> h_num_indices;
+        PinnedBuffer<int> h_indices_of_corrected_subjects;
+        PinnedBuffer<int> h_num_indices_of_corrected_subjects;
+        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
+        PinnedBuffer<int> h_numEditsPerCorrectedSubject;
+        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+        PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
+        PinnedBuffer<bool> h_anchorContainsN;
+        PinnedBuffer<bool> h_candidateContainsN;
+        PinnedBuffer<char> h_subject_qualities;
+        PinnedBuffer<char> h_candidate_qualities;    
+        PinnedBuffer<char> h_corrected_subjects;
+        PinnedBuffer<char> h_corrected_candidates;
+        PinnedBuffer<int> h_num_corrected_candidates_per_anchor;
+        PinnedBuffer<int> h_num_corrected_candidates_per_anchor_prefixsum;
+        PinnedBuffer<int> h_num_total_corrected_candidates;
+        PinnedBuffer<bool> h_subject_is_corrected;
+        PinnedBuffer<int> h_indices_of_corrected_candidates;
+        PinnedBuffer<int> h_num_uncorrected_positions_per_subject;
+        PinnedBuffer<int> h_uncorrected_positions_per_subject;    
+        PinnedBuffer<AnchorHighQualityFlag> h_is_high_quality_subject;
+        PinnedBuffer<int> h_high_quality_subject_indices;
+        PinnedBuffer<int> h_num_high_quality_subject_indices;    
+        PinnedBuffer<int> h_alignment_scores;
+        PinnedBuffer<int> h_alignment_overlaps;
+        PinnedBuffer<int> h_alignment_shifts;
+        PinnedBuffer<int> h_alignment_nOps;
+        PinnedBuffer<bool> h_alignment_isValid;
+        PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;    
+        PinnedBuffer<char> h_consensus;
+        PinnedBuffer<float> h_support;
+        PinnedBuffer<int> h_coverage;
+        PinnedBuffer<float> h_origWeights;
+        PinnedBuffer<int> h_origCoverages;
+        PinnedBuffer<MSAColumnProperties> h_msa_column_properties;
+        PinnedBuffer<int> h_counts;
+        PinnedBuffer<float> h_weights;    
+        DeviceBuffer<char> d_tempstorage;
+        DeviceBuffer<int> d_numAnchors;
+        DeviceBuffer<int> d_numCandidates;
+        DeviceBuffer<unsigned int> d_subject_sequences_data;
+        DeviceBuffer<unsigned int> d_candidate_sequences_data;
+        DeviceBuffer<unsigned int> d_transposedCandidateSequencesData;
+        DeviceBuffer<int> d_subject_sequences_lengths;
+        DeviceBuffer<int> d_candidate_sequences_lengths;
+        DeviceBuffer<int> d_candidates_per_subject;
+        DeviceBuffer<int> d_candidates_per_subject_prefixsum;
+        DeviceBuffer<read_number> d_subject_read_ids;
+        DeviceBuffer<read_number> d_candidate_read_ids;
+        DeviceBuffer<int> d_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
+        DeviceBuffer<int> d_indices;
+        DeviceBuffer<int> d_indices_per_subject;
+        DeviceBuffer<int> d_num_indices;
+        DeviceBuffer<int> d_indices_tmp;
+        DeviceBuffer<int> d_indices_per_subject_tmp;
+        DeviceBuffer<int> d_num_indices_tmp;
+        DeviceBuffer<int> d_indices_of_corrected_subjects;
+        DeviceBuffer<int> d_num_indices_of_corrected_subjects;
+        DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
+        DeviceBuffer<int> d_numEditsPerCorrectedSubject;
+        DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedCandidate;
+        DeviceBuffer<int> d_numEditsPerCorrectedCandidate;
+        DeviceBuffer<bool> d_anchorContainsN;
+        DeviceBuffer<bool> d_candidateContainsN;   
+        DeviceBuffer<char> d_subject_qualities;
+        DeviceBuffer<char> d_candidate_qualities;
+        DeviceBuffer<char> d_candidate_qualities_transposed;        
+        DeviceBuffer<char> d_corrected_subjects;
+        DeviceBuffer<char> d_corrected_candidates;
+        DeviceBuffer<int> d_num_corrected_candidates_per_anchor;
+        DeviceBuffer<int> d_num_corrected_candidates_per_anchor_prefixsum;
+        DeviceBuffer<int> d_num_total_corrected_candidates;
+        DeviceBuffer<bool> d_subject_is_corrected;
+        DeviceBuffer<int> d_indices_of_corrected_candidates;
+        DeviceBuffer<int> d_num_uncorrected_positions_per_subject;
+        DeviceBuffer<int> d_uncorrected_positions_per_subject;    
+        DeviceBuffer<AnchorHighQualityFlag> d_is_high_quality_subject;
+        DeviceBuffer<int> d_high_quality_subject_indices;
+        DeviceBuffer<int> d_num_high_quality_subject_indices;      
+        DeviceBuffer<int> d_alignment_scores;
+        DeviceBuffer<int> d_alignment_overlaps;
+        DeviceBuffer<int> d_alignment_shifts;
+        DeviceBuffer<int> d_alignment_nOps;
+        DeviceBuffer<bool> d_alignment_isValid;
+        DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags;    
+        DeviceBuffer<bool> d_canExecute; 
+        DeviceBuffer<char> d_consensus;
+        DeviceBuffer<float> d_support;
+        DeviceBuffer<int> d_coverage;
+        DeviceBuffer<float> d_origWeights;
+        DeviceBuffer<int> d_origCoverages;
+        DeviceBuffer<MSAColumnProperties> d_msa_column_properties;
+        DeviceBuffer<int> d_counts;
+        DeviceBuffer<float> d_weights;
+
+
+
+        std::array<CudaGraph,2> executionGraphs{};
+		std::array<cudaStream_t, nStreamsPerBatch> streams;
+		std::array<cudaEvent_t, nEventsPerBatch> events;
         ThreadPool::ParallelForHandle pforHandle;
-        std::vector<Minhasher::Handle> minhashHandles;
-
-        int id = -1;
-        int deviceId = 0;
-
-		KernelLaunchHandle kernelLaunchHandle;
-
+        std::vector<Minhasher::Handle> minhashHandles;        
+		KernelLaunchHandle kernelLaunchHandle;        
         DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
         DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
 
-        int min_overlap = -1;
-        int msa_max_column_count = -1;
-        size_t msa_weights_pitch_floats = 0;
+        WaitableData<OutputData> waitableOutputData;
+        NextIterationData nextIterationData;
 
-        int numCandidatesLimit = 0;
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info;
+            info.host = 0;
+            info.device[deviceId] = 0;
 
-        int encodedSequencePitchInInts;
-        int decodedSequencePitchInBytes;
-        int qualityPitchInBytes;
+            auto handlehost = [&](const auto& buff){
+                info.host += buff.capacityInBytes();
+            };
+            auto handledevice = [&](const auto& buff){
+                info.device[deviceId] += buff.capacityInBytes();
+            };
 
-        int maxNumEditsPerSequence;
+            handlehost(h_numAnchors);
+            handlehost(h_numCandidates);
+            handlehost(h_subject_sequences_data);
+            handlehost(h_candidate_sequences_data);
+            handlehost(h_transposedCandidateSequencesData);
+            handlehost(h_subject_sequences_lengths);
+            handlehost(h_candidate_sequences_lengths);
+            handlehost(h_candidates_per_subject);
+            handlehost(h_candidates_per_subject_prefixsum);
+            handlehost(h_subject_read_ids);
+            handlehost(h_candidate_read_ids);
+            handlehost(h_anchorIndicesOfCandidates);
+            handlehost(h_indices);
+            handlehost(h_indices_per_subject);
+            handlehost(h_num_indices);
+            handlehost(h_indices_of_corrected_subjects);
+            handlehost(h_num_indices_of_corrected_subjects);
+            handlehost(h_editsPerCorrectedSubject);
+            handlehost(h_numEditsPerCorrectedSubject);
+            handlehost(h_editsPerCorrectedCandidate);
+            handlehost(h_numEditsPerCorrectedCandidate);
+            handlehost(h_anchorContainsN);
+            handlehost(h_candidateContainsN);
+            handlehost(h_subject_qualities);
+            handlehost(h_candidate_qualities);    
+            handlehost(h_corrected_subjects);
+            handlehost(h_corrected_candidates);
+            handlehost(h_num_corrected_candidates_per_anchor);
+            handlehost(h_num_corrected_candidates_per_anchor_prefixsum);
+            handlehost(h_num_total_corrected_candidates);
+            handlehost(h_subject_is_corrected);
+            handlehost(h_indices_of_corrected_candidates);
+            handlehost(h_num_uncorrected_positions_per_subject);
+            handlehost(h_uncorrected_positions_per_subject);    
+            handlehost(h_is_high_quality_subject);
+            handlehost(h_high_quality_subject_indices);
+            handlehost(h_num_high_quality_subject_indices);    
+            handlehost(h_alignment_scores);
+            handlehost(h_alignment_overlaps);
+            handlehost(h_alignment_shifts);
+            handlehost(h_alignment_nOps);
+            handlehost(h_alignment_isValid);
+            handlehost(h_alignment_best_alignment_flags);    
+            handlehost(h_consensus);
+            handlehost(h_support);
+            handlehost(h_coverage);
+            handlehost(h_origWeights);
+            handlehost(h_origCoverages);
+            handlehost(h_msa_column_properties);
+            handlehost(h_counts);
+            handlehost(h_weights); 
 
-        int msa_weights_pitch;
-        int msa_pitch;
+            handledevice(d_tempstorage);
+            handledevice(d_numAnchors);
+            handledevice(d_numCandidates);
+            handledevice(d_subject_sequences_data);
+            handledevice(d_candidate_sequences_data);
+            handledevice(d_transposedCandidateSequencesData);
+            handledevice(d_subject_sequences_lengths);
+            handledevice(d_candidate_sequences_lengths);
+            handledevice(d_candidates_per_subject);
+            handledevice(d_candidates_per_subject_prefixsum);
+            handledevice(d_subject_read_ids);
+            handledevice(d_candidate_read_ids);
+            handledevice(d_anchorIndicesOfCandidates); 
+            handledevice(d_indices);
+            handledevice(d_indices_per_subject);
+            handledevice(d_num_indices);
+            handledevice(d_indices_tmp);
+            handledevice(d_indices_per_subject_tmp);
+            handledevice(d_num_indices_tmp);
+            handledevice(d_indices_of_corrected_subjects);
+            handledevice(d_num_indices_of_corrected_subjects);
+            handledevice(d_editsPerCorrectedSubject);
+            handledevice(d_numEditsPerCorrectedSubject);
+            handledevice(d_editsPerCorrectedCandidate);
+            handledevice(d_numEditsPerCorrectedCandidate);
+            handledevice(d_anchorContainsN);
+            handledevice(d_candidateContainsN);   
+            handledevice(d_subject_qualities);
+            handledevice(d_candidate_qualities);
+            handledevice(d_candidate_qualities_transposed);        
+            handledevice(d_corrected_subjects);
+            handledevice(d_corrected_candidates);
+            handledevice(d_num_corrected_candidates_per_anchor);
+            handledevice(d_num_corrected_candidates_per_anchor_prefixsum);
+            handledevice(d_num_total_corrected_candidates);
+            handledevice(d_subject_is_corrected);
+            handledevice(d_indices_of_corrected_candidates);
+            handledevice(d_num_uncorrected_positions_per_subject);
+            handledevice(d_uncorrected_positions_per_subject);    
+            handledevice(d_is_high_quality_subject);
+            handledevice(d_high_quality_subject_indices);
+            handledevice(d_num_high_quality_subject_indices);      
+            handledevice(d_alignment_scores);
+            handledevice(d_alignment_overlaps);
+            handledevice(d_alignment_shifts);
+            handledevice(d_alignment_nOps);
+            handledevice(d_alignment_isValid);
+            handledevice(d_alignment_best_alignment_flags);    
+            handledevice(d_canExecute); 
+            handledevice(d_consensus);
+            handledevice(d_support);
+            handledevice(d_coverage);
+            handledevice(d_origWeights);
+            handledevice(d_origCoverages);
+            handledevice(d_msa_column_properties);
+            handledevice(d_counts);
+            handledevice(d_weights);
 
-        int n_subjects;
-        int n_queries;
-
-        int graphindex = 0;
-        std::array<CudaGraph,2> executionGraphs{};
+            return info;
+        }
 
 		void reset(){
             n_subjects = 0;
@@ -431,7 +661,6 @@ namespace gpu{
 
             Batch& batchData = *this;
 
-            auto& dataArrays = batchData.dataArrays;
             auto& streams = batchData.streams;
     
             const auto sequence_pitch = batchData.decodedSequencePitchInBytes;
@@ -445,145 +674,145 @@ namespace gpu{
             const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
             const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
     
-            dataArrays.h_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
-            dataArrays.h_subject_sequences_lengths.resize(batchsize);
-            dataArrays.h_subject_read_ids.resize(batchsize);
-            dataArrays.h_candidate_read_ids.resize(maxNumIds);
-            dataArrays.d_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
-            dataArrays.d_subject_sequences_lengths.resize(batchsize);
-            dataArrays.d_subject_read_ids.resize(batchsize);
-            dataArrays.d_candidate_read_ids.resize(maxNumIds + maxCandidates);
-            dataArrays.d_candidates_per_subject.resize(2*batchsize);
-            dataArrays.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+            h_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+            h_subject_sequences_lengths.resize(batchsize);
+            h_subject_read_ids.resize(batchsize);
+            h_candidate_read_ids.resize(maxNumIds);
+            d_subject_sequences_data.resize(encodedSeqPitchInts * batchsize);
+            d_subject_sequences_lengths.resize(batchsize);
+            d_subject_read_ids.resize(batchsize);
+            d_candidate_read_ids.resize(maxNumIds + maxCandidates);
+            d_candidates_per_subject.resize(2*batchsize);
+            d_candidates_per_subject_prefixsum.resize(batchsize+1);
     
     
-            dataArrays.h_numAnchors.resize(1);
-            dataArrays.h_numCandidates.resize(1);
-            dataArrays.d_numAnchors.resize(1);
-            dataArrays.d_numCandidates.resize(1);
+            h_numAnchors.resize(1);
+            h_numCandidates.resize(1);
+            d_numAnchors.resize(1);
+            d_numCandidates.resize(1);
     
     
-            dataArrays.h_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
-            dataArrays.h_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
-            dataArrays.h_subject_sequences_lengths.resize(batchsize);
-            dataArrays.h_candidate_sequences_lengths.resize(maxCandidates);
-            dataArrays.h_anchorIndicesOfCandidates.resize(maxCandidates);
+            h_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
+            h_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
+            h_subject_sequences_lengths.resize(batchsize);
+            h_candidate_sequences_lengths.resize(maxCandidates);
+            h_anchorIndicesOfCandidates.resize(maxCandidates);
     
-            dataArrays.d_subject_sequences_data.resize(batchsize * encodedSeqPitchInts);
-            dataArrays.d_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
-            dataArrays.d_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
-            dataArrays.d_subject_sequences_lengths.resize(batchsize);
-            dataArrays.d_candidate_sequences_lengths.resize(maxCandidates);
-            dataArrays.d_anchorIndicesOfCandidates.resize(maxCandidates);
+            d_subject_sequences_data.resize(batchsize * encodedSeqPitchInts);
+            d_candidate_sequences_data.resize(maxCandidates * encodedSeqPitchInts);
+            d_transposedCandidateSequencesData.resize(maxCandidates * encodedSeqPitchInts);
+            d_subject_sequences_lengths.resize(batchsize);
+            d_candidate_sequences_lengths.resize(maxCandidates);
+            d_anchorIndicesOfCandidates.resize(maxCandidates);
     
             
     
             //alignment output
     
-            dataArrays.h_alignment_shifts.resize(2*maxCandidates);
-            dataArrays.d_alignment_overlaps.resize(maxCandidates);
-            dataArrays.d_alignment_shifts.resize(maxCandidates);
-            dataArrays.d_alignment_nOps.resize(maxCandidates);
-            dataArrays.d_alignment_isValid.resize(maxCandidates);
-            dataArrays.d_alignment_best_alignment_flags.resize(maxCandidates);
+            h_alignment_shifts.resize(2*maxCandidates);
+            d_alignment_overlaps.resize(maxCandidates);
+            d_alignment_shifts.resize(maxCandidates);
+            d_alignment_nOps.resize(maxCandidates);
+            d_alignment_isValid.resize(maxCandidates);
+            d_alignment_best_alignment_flags.resize(maxCandidates);
     
             // candidate indices
     
-            dataArrays.h_indices.resize(maxCandidates);
-            dataArrays.h_indices_per_subject.resize(batchsize);
-            dataArrays.h_num_indices.resize(1);
+            h_indices.resize(maxCandidates);
+            h_indices_per_subject.resize(batchsize);
+            h_num_indices.resize(1);
     
-            dataArrays.d_indices.resize(maxCandidates);
-            dataArrays.d_indices_per_subject.resize(batchsize);
-            dataArrays.d_num_indices.resize(1);
-            dataArrays.d_indices_tmp.resize(maxCandidates);
-            dataArrays.d_indices_per_subject_tmp.resize(batchsize);
-            dataArrays.d_num_indices_tmp.resize(1);
+            d_indices.resize(maxCandidates);
+            d_indices_per_subject.resize(batchsize);
+            d_num_indices.resize(1);
+            d_indices_tmp.resize(maxCandidates);
+            d_indices_per_subject_tmp.resize(batchsize);
+            d_num_indices_tmp.resize(1);
     
-            dataArrays.h_indices_of_corrected_subjects.resize(batchsize);
-            dataArrays.h_num_indices_of_corrected_subjects.resize(1);
-            dataArrays.d_indices_of_corrected_subjects.resize(batchsize);
-            dataArrays.d_num_indices_of_corrected_subjects.resize(1);
+            h_indices_of_corrected_subjects.resize(batchsize);
+            h_num_indices_of_corrected_subjects.resize(1);
+            d_indices_of_corrected_subjects.resize(batchsize);
+            d_num_indices_of_corrected_subjects.resize(1);
     
-            dataArrays.h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
-            dataArrays.h_numEditsPerCorrectedSubject.resize(batchsize);
-            dataArrays.h_anchorContainsN.resize(batchsize);
+            h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            h_numEditsPerCorrectedSubject.resize(batchsize);
+            h_anchorContainsN.resize(batchsize);
     
-            dataArrays.d_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
-            dataArrays.d_numEditsPerCorrectedSubject.resize(batchsize);
-            dataArrays.d_anchorContainsN.resize(batchsize);
+            d_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            d_numEditsPerCorrectedSubject.resize(batchsize);
+            d_anchorContainsN.resize(batchsize);
     
-            dataArrays.h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
-            dataArrays.h_numEditsPerCorrectedCandidate.resize(maxCandidates);
-            dataArrays.h_candidateContainsN.resize(maxCandidates);
+            h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            h_numEditsPerCorrectedCandidate.resize(maxCandidates);
+            h_candidateContainsN.resize(maxCandidates);
     
-            dataArrays.d_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
-            dataArrays.d_numEditsPerCorrectedCandidate.resize(maxCandidates);
-            dataArrays.d_candidateContainsN.resize(maxCandidates);
+            d_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            d_numEditsPerCorrectedCandidate.resize(maxCandidates);
+            d_candidateContainsN.resize(maxCandidates);
     
             //qualitiy scores
             if(correctionOptions.useQualityScores) {
-                dataArrays.h_subject_qualities.resize(batchsize * qualPitchBytes);
-                dataArrays.h_candidate_qualities.resize(maxCandidates * qualPitchBytes);
+                h_subject_qualities.resize(batchsize * qualPitchBytes);
+                h_candidate_qualities.resize(maxCandidates * qualPitchBytes);
     
-                dataArrays.d_subject_qualities.resize(batchsize * qualPitchBytes);
-                dataArrays.d_candidate_qualities.resize(maxCandidates * qualPitchBytes);
-                dataArrays.d_candidate_qualities_transposed.resize(maxCandidates * qualPitchBytes);            
+                d_subject_qualities.resize(batchsize * qualPitchBytes);
+                d_candidate_qualities.resize(maxCandidates * qualPitchBytes);
+                d_candidate_qualities_transposed.resize(maxCandidates * qualPitchBytes);            
             }
     
     
             //correction results
     
-            dataArrays.h_corrected_subjects.resize(batchsize * sequence_pitch);
-            dataArrays.h_corrected_candidates.resize(maxCandidates * sequence_pitch);
-            dataArrays.h_num_corrected_candidates_per_anchor.resize(batchsize);
-            dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
-            dataArrays.h_num_total_corrected_candidates.resize(1);
-            dataArrays.h_subject_is_corrected.resize(batchsize);
-            dataArrays.h_indices_of_corrected_candidates.resize(maxCandidates);
-            dataArrays.h_num_uncorrected_positions_per_subject.resize(batchsize);
-            dataArrays.h_uncorrected_positions_per_subject.resize(batchsize * sequenceFileProperties.maxSequenceLength);
+            h_corrected_subjects.resize(batchsize * sequence_pitch);
+            h_corrected_candidates.resize(maxCandidates * sequence_pitch);
+            h_num_corrected_candidates_per_anchor.resize(batchsize);
+            h_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
+            h_num_total_corrected_candidates.resize(1);
+            h_subject_is_corrected.resize(batchsize);
+            h_indices_of_corrected_candidates.resize(maxCandidates);
+            h_num_uncorrected_positions_per_subject.resize(batchsize);
+            h_uncorrected_positions_per_subject.resize(batchsize * sequenceFileProperties.maxSequenceLength);
             
-            dataArrays.d_corrected_subjects.resize(batchsize * sequence_pitch);
-            dataArrays.d_corrected_candidates.resize(maxCandidates * sequence_pitch);
-            dataArrays.d_num_corrected_candidates_per_anchor.resize(batchsize);
-            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
-            dataArrays.d_num_total_corrected_candidates.resize(1);
-            dataArrays.d_subject_is_corrected.resize(batchsize);
-            dataArrays.d_indices_of_corrected_candidates.resize(maxCandidates);
-            dataArrays.d_num_uncorrected_positions_per_subject.resize(batchsize);
-            dataArrays.d_uncorrected_positions_per_subject.resize(batchsize * sequenceFileProperties.maxSequenceLength);
+            d_corrected_subjects.resize(batchsize * sequence_pitch);
+            d_corrected_candidates.resize(maxCandidates * sequence_pitch);
+            d_num_corrected_candidates_per_anchor.resize(batchsize);
+            d_num_corrected_candidates_per_anchor_prefixsum.resize(batchsize);
+            d_num_total_corrected_candidates.resize(1);
+            d_subject_is_corrected.resize(batchsize);
+            d_indices_of_corrected_candidates.resize(maxCandidates);
+            d_num_uncorrected_positions_per_subject.resize(batchsize);
+            d_uncorrected_positions_per_subject.resize(batchsize * sequenceFileProperties.maxSequenceLength);
     
-            dataArrays.h_is_high_quality_subject.resize(batchsize);
-            dataArrays.h_high_quality_subject_indices.resize(batchsize);
-            dataArrays.h_num_high_quality_subject_indices.resize(1);
+            h_is_high_quality_subject.resize(batchsize);
+            h_high_quality_subject_indices.resize(batchsize);
+            h_num_high_quality_subject_indices.resize(1);
     
-            dataArrays.d_is_high_quality_subject.resize(batchsize);
-            dataArrays.d_high_quality_subject_indices.resize(batchsize);
-            dataArrays.d_num_high_quality_subject_indices.resize(1);
+            d_is_high_quality_subject.resize(batchsize);
+            d_high_quality_subject_indices.resize(batchsize);
+            d_num_high_quality_subject_indices.resize(1);
     
             //multiple sequence alignment
     
-            dataArrays.h_consensus.resize(batchsize * msa_pitch);
-            dataArrays.h_support.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.h_coverage.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.h_origWeights.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.h_origCoverages.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.h_msa_column_properties.resize(batchsize);
-            dataArrays.h_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
-            dataArrays.h_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+            h_consensus.resize(batchsize * msa_pitch);
+            h_support.resize(batchsize * msa_weights_pitch_floats);
+            h_coverage.resize(batchsize * msa_weights_pitch_floats);
+            h_origWeights.resize(batchsize * msa_weights_pitch_floats);
+            h_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            h_msa_column_properties.resize(batchsize);
+            h_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
+            h_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
     
-            dataArrays.d_consensus.resize(batchsize * msa_pitch);
-            dataArrays.d_support.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.d_coverage.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.d_origWeights.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.d_origCoverages.resize(batchsize * msa_weights_pitch_floats);
-            dataArrays.d_msa_column_properties.resize(batchsize);
-            dataArrays.d_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
-            dataArrays.d_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+            d_consensus.resize(batchsize * msa_pitch);
+            d_support.resize(batchsize * msa_weights_pitch_floats);
+            d_coverage.resize(batchsize * msa_weights_pitch_floats);
+            d_origWeights.resize(batchsize * msa_weights_pitch_floats);
+            d_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            d_msa_column_properties.resize(batchsize);
+            d_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
+            d_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
     
     
-            dataArrays.d_canExecute.resize(1);
+            d_canExecute.resize(1);
     
                
             
@@ -594,20 +823,20 @@ namespace gpu{
             call_popcount_shifted_hamming_distance_kernel_async(
                 nullptr,
                 popcountShdTempBytes,
-                dataArrays.d_alignment_overlaps.get(),
-                dataArrays.d_alignment_shifts.get(),
-                dataArrays.d_alignment_nOps.get(),
-                dataArrays.d_alignment_isValid.get(),
-                dataArrays.d_alignment_best_alignment_flags.get(),
-                dataArrays.d_subject_sequences_data.get(),
-                dataArrays.d_candidate_sequences_data.get(),
-                dataArrays.d_subject_sequences_lengths.get(),
-                dataArrays.d_candidate_sequences_lengths.get(),
-                dataArrays.d_candidates_per_subject_prefixsum.get(),
-                dataArrays.d_candidates_per_subject.get(),
-                dataArrays.d_anchorIndicesOfCandidates.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
+                d_alignment_overlaps.get(),
+                d_alignment_shifts.get(),
+                d_alignment_nOps.get(),
+                d_alignment_isValid.get(),
+                d_alignment_best_alignment_flags.get(),
+                d_subject_sequences_data.get(),
+                d_candidate_sequences_data.get(),
+                d_subject_sequences_lengths.get(),
+                d_candidate_sequences_lengths.get(),
+                d_candidates_per_subject_prefixsum.get(),
+                d_candidates_per_subject.get(),
+                d_anchorIndicesOfCandidates.get(),
+                d_numAnchors.get(),
+                d_numCandidates.get(),
                 batchsize,
                 maxCandidates,
                 sequenceFileProperties.maxSequenceLength,
@@ -624,21 +853,144 @@ namespace gpu{
             // this buffer will also serve as temp storage for cub. The required memory for cub 
             // is less than popcountShdTempBytes.
             popcountShdTempBytes = std::max(flagTemp, popcountShdTempBytes);
-            dataArrays.d_tempstorage.resize(popcountShdTempBytes);
+            d_tempstorage.resize(popcountShdTempBytes);
+        }
+
+        void destroy(){
+            h_subject_sequences_data.destroy();
+            h_candidate_sequences_data.destroy();
+            h_transposedCandidateSequencesData.destroy();
+            h_subject_sequences_lengths.destroy();
+            h_candidate_sequences_lengths.destroy();
+            h_candidates_per_subject.destroy();
+            h_candidates_per_subject_prefixsum.destroy();
+            h_subject_read_ids.destroy();
+            h_candidate_read_ids.destroy();
+    
+            d_subject_sequences_data.destroy();
+            d_candidate_sequences_data.destroy();
+            d_transposedCandidateSequencesData.destroy();
+            d_subject_sequences_lengths.destroy();
+            d_candidate_sequences_lengths.destroy();
+            d_candidates_per_subject.destroy();
+            d_candidates_per_subject_prefixsum.destroy();
+            d_subject_read_ids.destroy();
+            d_candidate_read_ids.destroy();
+    
+            h_subject_qualities.destroy();
+            h_candidate_qualities.destroy();
+    
+            d_subject_qualities.destroy();
+            d_candidate_qualities.destroy();
+            d_candidate_qualities_transposed.destroy();
+    
+            h_consensus.destroy();
+            h_support.destroy();
+            h_coverage.destroy();
+            h_origWeights.destroy();
+            h_origCoverages.destroy();
+            h_msa_column_properties.destroy();
+            h_counts.destroy();
+            h_weights.destroy();
+    
+            d_consensus.destroy();
+            d_support.destroy();
+            d_coverage.destroy();
+            d_origWeights.destroy();
+            d_origCoverages.destroy();
+            d_msa_column_properties.destroy();
+            d_counts.destroy();
+            d_weights.destroy();
+    
+            h_alignment_scores.destroy();
+            h_alignment_overlaps.destroy();
+            h_alignment_shifts.destroy();
+            h_alignment_nOps.destroy();
+            h_alignment_isValid.destroy();
+            h_alignment_best_alignment_flags.destroy();
+    
+            d_alignment_scores.destroy();
+            d_alignment_overlaps.destroy();
+            d_alignment_shifts.destroy();
+            d_alignment_nOps.destroy();
+            d_alignment_isValid.destroy();
+            d_alignment_best_alignment_flags.destroy();
+    
+            h_corrected_subjects.destroy();
+            h_corrected_candidates.destroy();
+            h_num_corrected_candidates_per_anchor.destroy();
+            h_num_corrected_candidates_per_anchor_prefixsum.destroy();
+            h_subject_is_corrected.destroy();
+            h_indices_of_corrected_candidates.destroy();
+            h_is_high_quality_subject.destroy();
+            h_high_quality_subject_indices.destroy();
+            h_num_high_quality_subject_indices.destroy();
+            h_num_uncorrected_positions_per_subject.destroy();
+            h_uncorrected_positions_per_subject.destroy();
+    
+            d_corrected_subjects.destroy();
+            d_corrected_candidates.destroy();
+            d_num_corrected_candidates_per_anchor.destroy();
+            d_num_corrected_candidates_per_anchor_prefixsum.destroy();
+            d_subject_is_corrected.destroy();
+            d_indices_of_corrected_candidates.destroy();
+            d_is_high_quality_subject.destroy();
+            d_high_quality_subject_indices.destroy();
+            d_num_high_quality_subject_indices.destroy();
+            d_num_uncorrected_positions_per_subject.destroy();
+            d_uncorrected_positions_per_subject.destroy();
+    
+            h_indices.destroy();
+            h_indices_per_subject.destroy();
+            h_num_indices.destroy();
+    
+            d_indices.destroy();
+            d_indices_per_subject.destroy();
+            d_num_indices.destroy();
+    
+            d_indices_tmp.destroy();
+            d_indices_per_subject_tmp.destroy();
+            d_num_indices_tmp.destroy();
+    
+            d_indices_of_corrected_subjects.destroy();
+            d_num_indices_of_corrected_subjects.destroy();
+    
+    
+            h_editsPerCorrectedSubject.destroy();
+            h_numEditsPerCorrectedSubject.destroy();
+            h_editsPerCorrectedCandidate.destroy();
+            h_numEditsPerCorrectedCandidate.destroy();
+            h_anchorContainsN.destroy();
+            h_candidateContainsN.destroy();
+    
+            d_editsPerCorrectedSubject.destroy();
+            d_numEditsPerCorrectedSubject.destroy();
+            d_editsPerCorrectedCandidate.destroy();
+            d_numEditsPerCorrectedCandidate.destroy();
+            d_anchorContainsN.destroy();
+            d_candidateContainsN.destroy();
+    
+            d_canExecute.destroy();
+            
+            d_tempstorage.destroy();
+            d_numAnchors.destroy();
+            d_numCandidates.destroy();
+            h_numAnchors.destroy();
+            h_numCandidates.destroy();
         }
 
         void updateFromIterationData(NextIterationData& data){
-            std::swap(dataArrays.h_subject_sequences_data, data.h_subject_sequences_data);
-            std::swap(dataArrays.h_subject_sequences_lengths, data.h_subject_sequences_lengths);
-            std::swap(dataArrays.h_subject_read_ids, data.h_subject_read_ids);
-            std::swap(dataArrays.h_candidate_read_ids, data.h_candidate_read_ids);        
+            std::swap(h_subject_sequences_data, data.h_subject_sequences_data);
+            std::swap(h_subject_sequences_lengths, data.h_subject_sequences_lengths);
+            std::swap(h_subject_read_ids, data.h_subject_read_ids);
+            std::swap(h_candidate_read_ids, data.h_candidate_read_ids);        
 
-            std::swap(dataArrays.d_subject_sequences_data, data.d_subject_sequences_data);
-            std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
-            std::swap(dataArrays.d_subject_read_ids, data.d_subject_read_ids);
-            std::swap(dataArrays.d_candidate_read_ids, data.d_candidate_read_ids);
-            std::swap(dataArrays.d_candidates_per_subject, data.d_candidates_per_subject);
-            std::swap(dataArrays.d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
+            std::swap(d_subject_sequences_data, data.d_subject_sequences_data);
+            std::swap(d_subject_sequences_lengths, data.d_subject_sequences_lengths);
+            std::swap(d_subject_read_ids, data.d_subject_read_ids);
+            std::swap(d_candidate_read_ids, data.d_candidate_read_ids);
+            std::swap(d_candidates_per_subject, data.d_candidates_per_subject);
+            std::swap(d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
 
             n_subjects = data.n_subjects;
             n_queries = data.n_queries;  
@@ -659,24 +1011,24 @@ namespace gpu{
             rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
             rawResults.maxNumEditsPerSequence = maxNumEditsPerSequence;
 
-            std::swap(dataArrays.h_subject_read_ids, rawResults.h_subject_read_ids);
-            std::swap(dataArrays.h_subject_is_corrected, rawResults.h_subject_is_corrected);
-            std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
-            std::swap(dataArrays.h_num_corrected_candidates_per_anchor, rawResults.h_num_corrected_candidates_per_anchor);
-            std::swap(dataArrays.h_num_corrected_candidates_per_anchor_prefixsum, rawResults.h_num_corrected_candidates_per_anchor_prefixsum);
-            std::swap(dataArrays.h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
-            std::swap(dataArrays.h_candidate_read_ids, rawResults.h_candidate_read_ids);
-            std::swap(dataArrays.h_corrected_subjects, rawResults.h_corrected_subjects);
-            std::swap(dataArrays.h_corrected_candidates, rawResults.h_corrected_candidates);
-            std::swap(dataArrays.h_subject_sequences_lengths, rawResults.h_subject_sequences_lengths);
-            std::swap(dataArrays.h_candidate_sequences_lengths, rawResults.h_candidate_sequences_lengths);
-            std::swap(dataArrays.h_alignment_shifts, rawResults.h_alignment_shifts);
+            std::swap(h_subject_read_ids, rawResults.h_subject_read_ids);
+            std::swap(h_subject_is_corrected, rawResults.h_subject_is_corrected);
+            std::swap(h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
+            std::swap(h_num_corrected_candidates_per_anchor, rawResults.h_num_corrected_candidates_per_anchor);
+            std::swap(h_num_corrected_candidates_per_anchor_prefixsum, rawResults.h_num_corrected_candidates_per_anchor_prefixsum);
+            std::swap(h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
+            std::swap(h_candidate_read_ids, rawResults.h_candidate_read_ids);
+            std::swap(h_corrected_subjects, rawResults.h_corrected_subjects);
+            std::swap(h_corrected_candidates, rawResults.h_corrected_candidates);
+            std::swap(h_subject_sequences_lengths, rawResults.h_subject_sequences_lengths);
+            std::swap(h_candidate_sequences_lengths, rawResults.h_candidate_sequences_lengths);
+            std::swap(h_alignment_shifts, rawResults.h_alignment_shifts);
 
-            std::swap(dataArrays.h_editsPerCorrectedSubject, rawResults.h_editsPerCorrectedSubject);
-            std::swap(dataArrays.h_numEditsPerCorrectedSubject, rawResults.h_numEditsPerCorrectedSubject);
+            std::swap(h_editsPerCorrectedSubject, rawResults.h_editsPerCorrectedSubject);
+            std::swap(h_numEditsPerCorrectedSubject, rawResults.h_numEditsPerCorrectedSubject);
 
-            std::swap(dataArrays.h_editsPerCorrectedCandidate, rawResults.h_editsPerCorrectedCandidate);
-            std::swap(dataArrays.h_numEditsPerCorrectedCandidate, rawResults.h_numEditsPerCorrectedCandidate);
+            std::swap(h_editsPerCorrectedCandidate, rawResults.h_editsPerCorrectedCandidate);
+            std::swap(h_numEditsPerCorrectedCandidate, rawResults.h_numEditsPerCorrectedCandidate);
 
         }
 
@@ -1420,10 +1772,10 @@ namespace gpu{
         {
             int numAnchors = batchData.n_subjects;
             int numCandidates = batchData.n_queries;
-            int* d_numAnchorsPtr = batchData.dataArrays.d_numAnchors.get();
-            int* d_numCandidatesPtr = batchData.dataArrays.d_numCandidates.get();
-            bool* d_canExecutePtr = batchData.dataArrays.d_canExecute.get();
-            int* d_numTotalCorrectedCandidatePtr = batchData.dataArrays.d_num_total_corrected_candidates.get();
+            int* d_numAnchorsPtr = batchData.d_numAnchors.get();
+            int* d_numCandidatesPtr = batchData.d_numCandidates.get();
+            bool* d_canExecutePtr = batchData.d_canExecute.get();
+            int* d_numTotalCorrectedCandidatePtr = batchData.d_num_total_corrected_candidates.get();
 
             generic_kernel<<<1,1,0,streams[primary_stream_index]>>>(
                 [=] __device__ (){
@@ -1445,23 +1797,15 @@ namespace gpu{
 
         const auto& transFuncData = *batch.transFuncData;
 
-        DataArrays& dataArrays = batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
 
-        // readStorage.gatherSequenceLengthsToGpuBufferAsync(
-        //                                 dataArrays.d_subject_sequences_lengths.get(),
-        //                                 batch.deviceId,
-        //                                 dataArrays.d_subject_read_ids.get(),
-        //                                 batch.n_subjects,   
-        //                                 streams[primary_stream_index]);
-
         cudaMemcpyAsync(
-            dataArrays.h_subject_sequences_lengths,
-            dataArrays.d_subject_sequences_lengths, //filled by nextiteration data
+            batch.h_subject_sequences_lengths,
+            batch.d_subject_sequences_lengths, //filled by nextiteration data
             sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
@@ -1469,44 +1813,44 @@ namespace gpu{
 
         readStorage.readsContainN_async(
             batch.deviceId,
-            dataArrays.d_anchorContainsN.get(), 
-            dataArrays.d_subject_read_ids.get(), 
-            dataArrays.d_numAnchors,
+            batch.d_anchorContainsN.get(), 
+            batch.d_subject_read_ids.get(), 
+            batch.d_numAnchors,
             batchsize, 
             streams[primary_stream_index]
         );
 
         readStorage.readsContainN_async(
             batch.deviceId,
-            dataArrays.d_candidateContainsN.get(), 
-            dataArrays.d_candidate_read_ids.get(), 
-            dataArrays.d_numCandidates,
+            batch.d_candidateContainsN.get(), 
+            batch.d_candidate_read_ids.get(), 
+            batch.d_numCandidates,
             maxCandidates, 
             streams[primary_stream_index]
         );  
 
         readStorage.gatherSequenceLengthsToGpuBufferAsync(
-                                        dataArrays.d_candidate_sequences_lengths.get(),
+                                        batch.d_candidate_sequences_lengths.get(),
                                         batch.deviceId,
-                                        dataArrays.d_candidate_read_ids.get(),
+                                        batch.d_candidate_read_ids.get(),
                                         batch.n_queries,            
                                         streams[primary_stream_index]);
         // std::cerr << "gather candidates\n";
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batch.threadPool,
             batch.candidateSequenceGatherHandle,
-            dataArrays.d_candidate_sequences_data.get(),
+            batch.d_candidate_sequences_data.get(),
             batch.encodedSequencePitchInInts,
-            dataArrays.h_candidate_read_ids,
-            dataArrays.d_candidate_read_ids,
+            batch.h_candidate_read_ids,
+            batch.d_candidate_read_ids,
             batch.n_queries,
             batch.deviceId,
             streams[primary_stream_index],
             transFuncData.runtimeOptions.nCorrectorThreads);
 
         call_transpose_kernel(
-            dataArrays.d_transposedCandidateSequencesData.get(), 
-            dataArrays.d_candidate_sequences_data.get(), 
+            batch.d_transposedCandidateSequencesData.get(), 
+            batch.d_candidate_sequences_data.get(), 
             batch.n_queries, 
             batch.encodedSequencePitchInInts, 
             batch.encodedSequencePitchInInts, 
@@ -1519,8 +1863,8 @@ namespace gpu{
         cudaStreamWaitEvent(streams[secondary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0) ;
 
 
-        cudaMemcpyAsync(dataArrays.h_candidate_sequences_lengths,
-                        dataArrays.d_candidate_sequences_lengths,
+        cudaMemcpyAsync(batch.h_candidate_sequences_lengths,
+                        batch.d_candidate_sequences_lengths,
                         sizeof(int) * maxCandidates,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
@@ -1535,8 +1879,6 @@ namespace gpu{
 
         const auto& transFuncData = *batch.transFuncData;
 
-        DataArrays& dataArrays = batch.dataArrays;
-
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
         const auto* gpuReadStorage = transFuncData.readStorage;
@@ -1546,10 +1888,10 @@ namespace gpu{
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
                 batch.subjectQualitiesGatherHandle,
-                dataArrays.d_subject_qualities,
+                batch.d_subject_qualities,
                 batch.qualityPitchInBytes,
-                dataArrays.h_subject_read_ids,
-                dataArrays.d_subject_read_ids,
+                batch.h_subject_read_ids,
+                batch.d_subject_read_ids,
                 batch.n_subjects,
                 batch.deviceId,
                 streams[primary_stream_index],
@@ -1558,10 +1900,10 @@ namespace gpu{
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
                 batch.candidateQualitiesGatherHandle,
-                dataArrays.d_candidate_qualities,
+                batch.d_candidate_qualities,
                 batch.qualityPitchInBytes,
-                dataArrays.h_candidate_read_ids.get(),
-                dataArrays.d_candidate_read_ids.get(),
+                batch.h_candidate_read_ids.get(),
+                batch.d_candidate_read_ids.get(),
                 batch.n_queries,
                 batch.deviceId,
                 streams[primary_stream_index],
@@ -1578,46 +1920,45 @@ namespace gpu{
 
         const auto& transFuncData = *batch.transFuncData;
 
-		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
 
         {
-            const int* numAnchorsPtr = dataArrays.d_numAnchors.get();
-            int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
-            int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
-            int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+            const int* numAnchorsPtr = batch.d_numAnchors.get();
+            int* d_anchorIndicesOfCandidates = batch.d_anchorIndicesOfCandidates.get();
+            int* d_candidates_per_subject = batch.d_candidates_per_subject.get();
+            int* d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get();
 
             setAnchorIndicesOfCandidateskernel<1024, 128>
                     <<<1024, 128, 0, streams[primary_stream_index]>>>(
-                        dataArrays.d_anchorIndicesOfCandidates.get(),
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_candidates_per_subject.get(),
-                dataArrays.d_candidates_per_subject_prefixsum.get()
+                        batch.d_anchorIndicesOfCandidates.get(),
+                batch.d_numAnchors.get(),
+                batch.d_candidates_per_subject.get(),
+                batch.d_candidates_per_subject_prefixsum.get()
             ); CUERR;
         }
 
-        std::size_t tempBytes = dataArrays.d_tempstorage.sizeInBytes();
+        std::size_t tempBytes = batch.d_tempstorage.sizeInBytes();
 
         call_popcount_shifted_hamming_distance_kernel_async(
-            dataArrays.d_tempstorage.get(),
+            batch.d_tempstorage.get(),
             tempBytes,
-            dataArrays.d_alignment_overlaps.get(),
-            dataArrays.d_alignment_shifts.get(),
-            dataArrays.d_alignment_nOps.get(),
-            dataArrays.d_alignment_isValid.get(),
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_subject_sequences_data.get(),
-            dataArrays.d_candidate_sequences_data.get(),
-            dataArrays.d_subject_sequences_lengths.get(),
-            dataArrays.d_candidate_sequences_lengths.get(),
-            dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.d_candidates_per_subject.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
-            dataArrays.d_numAnchors.get(),
-            dataArrays.d_numCandidates.get(),
+            batch.d_alignment_overlaps.get(),
+            batch.d_alignment_shifts.get(),
+            batch.d_alignment_nOps.get(),
+            batch.d_alignment_isValid.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_subject_sequences_data.get(),
+            batch.d_candidate_sequences_data.get(),
+            batch.d_subject_sequences_lengths.get(),
+            batch.d_candidate_sequences_lengths.get(),
+            batch.d_candidates_per_subject_prefixsum.get(),
+            batch.d_candidates_per_subject.get(),
+            batch.d_anchorIndicesOfCandidates.get(),
+            batch.d_numAnchors.get(),
+            batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
             transFuncData.sequenceFileProperties.maxSequenceLength,
@@ -1632,12 +1973,12 @@ namespace gpu{
         );
 
         call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_alignment_nOps.get(),
-            dataArrays.d_alignment_overlaps.get(),
-            dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.d_numAnchors.get(),
-            dataArrays.d_numCandidates.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_alignment_nOps.get(),
+            batch.d_alignment_overlaps.get(),
+            batch.d_candidates_per_subject_prefixsum.get(),
+            batch.d_numAnchors.get(),
+            batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
             transFuncData.correctionOptions.estimatedErrorrate,
@@ -1647,15 +1988,15 @@ namespace gpu{
         );
 
         callSelectIndicesOfGoodCandidatesKernelAsync(
-            dataArrays.d_indices.get(),
-            dataArrays.d_indices_per_subject.get(),
-            dataArrays.d_num_indices.get(),
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_candidates_per_subject.get(),
-            dataArrays.d_candidates_per_subject_prefixsum.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
-            dataArrays.d_numAnchors.get(),
-            dataArrays.d_numCandidates.get(),
+            batch.d_indices.get(),
+            batch.d_indices_per_subject.get(),
+            batch.d_num_indices.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_candidates_per_subject.get(),
+            batch.d_candidates_per_subject_prefixsum.get(),
+            batch.d_anchorIndicesOfCandidates.get(),
+            batch.d_numAnchors.get(),
+            batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
             streams[primary_stream_index],
@@ -1663,15 +2004,15 @@ namespace gpu{
         );
 
 
-        // cudaMemcpyAsync(dataArrays.h_num_indices,
-        //                 dataArrays.d_num_indices,
+        // cudaMemcpyAsync(batch.h_num_indices,
+        //                 batch.d_num_indices,
         //                 sizeof(int),
         //                 D2H,
         //                 streams[primary_stream_index]); CUERR;       
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
+        //std::cerr << "After alignment: " << *batch.h_num_indices << " / " << batch.n_queries << "\n";
 	}
 
     void buildMultipleSequenceAlignment(Batch& batch){
@@ -1682,43 +2023,41 @@ namespace gpu{
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        DataArrays& dataArrays = batch.dataArrays;
-
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
 
         callBuildMSAKernel_async(
-            dataArrays.d_msa_column_properties.get(),
-            dataArrays.d_counts.get(),
-            dataArrays.d_weights.get(),
-            dataArrays.d_coverage.get(),
-            dataArrays.d_origWeights.get(),
-            dataArrays.d_origCoverages.get(),
-            dataArrays.d_support.get(),
-            dataArrays.d_consensus.get(),
-            dataArrays.d_alignment_overlaps.get(),
-            dataArrays.d_alignment_shifts.get(),
-            dataArrays.d_alignment_nOps.get(),
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_subject_sequences_data.get(),
-            dataArrays.d_subject_sequences_lengths.get(),
-            dataArrays.d_transposedCandidateSequencesData.get(),
-            dataArrays.d_candidate_sequences_lengths.get(),
-            dataArrays.d_subject_qualities.get(),
-            dataArrays.d_candidate_qualities.get(),
+            batch.d_msa_column_properties.get(),
+            batch.d_counts.get(),
+            batch.d_weights.get(),
+            batch.d_coverage.get(),
+            batch.d_origWeights.get(),
+            batch.d_origCoverages.get(),
+            batch.d_support.get(),
+            batch.d_consensus.get(),
+            batch.d_alignment_overlaps.get(),
+            batch.d_alignment_shifts.get(),
+            batch.d_alignment_nOps.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_subject_sequences_data.get(),
+            batch.d_subject_sequences_lengths.get(),
+            batch.d_transposedCandidateSequencesData.get(),
+            batch.d_candidate_sequences_lengths.get(),
+            batch.d_subject_qualities.get(),
+            batch.d_candidate_qualities.get(),
             transFuncData.correctionOptions.useQualityScores,
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
             batch.msa_pitch,
             batch.msa_weights_pitch / sizeof(float),
-            dataArrays.d_indices,
-            dataArrays.d_indices_per_subject,
-            dataArrays.d_candidates_per_subject_prefixsum,
-            dataArrays.d_numAnchors.get(),
-            dataArrays.d_numCandidates.get(),
+            batch.d_indices,
+            batch.d_indices_per_subject,
+            batch.d_candidates_per_subject_prefixsum,
+            batch.d_numAnchors.get(),
+            batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
-            dataArrays.d_canExecute,
+            batch.d_canExecute,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
@@ -1740,25 +2079,24 @@ namespace gpu{
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        DataArrays& dataArrays = batch.dataArrays;
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
 
-        assert(batch.dataArrays.d_tempstorage.sizeInBytes() >= sizeof(bool) * batch.n_queries);
+        assert(batch.d_tempstorage.sizeInBytes() >= sizeof(bool) * batch.n_queries);
         
-        bool* d_shouldBeKept = (bool*)batch.dataArrays.d_tempstorage.get();
+        bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
 
         std::array<int*,2> d_indices_dblbuf{
-            dataArrays.d_indices.get(), 
-            dataArrays.d_indices_tmp.get()
+            batch.d_indices.get(), 
+            batch.d_indices_tmp.get()
         };
         std::array<int*,2> d_indices_per_subject_dblbuf{
-            dataArrays.d_indices_per_subject.get(), 
-            dataArrays.d_indices_per_subject_tmp.get()
+            batch.d_indices_per_subject.get(), 
+            batch.d_indices_per_subject_tmp.get()
         };
         std::array<int*,2> d_num_indices_dblbuf{
-            dataArrays.d_num_indices.get(), 
-            dataArrays.d_num_indices_tmp.get()
+            batch.d_num_indices.get(), 
+            batch.d_num_indices_tmp.get()
         };
 
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
@@ -1766,29 +2104,29 @@ namespace gpu{
                 d_indices_dblbuf[(1 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(1 + iteration) % 2],
                 d_num_indices_dblbuf[(1 + iteration) % 2],
-                dataArrays.d_msa_column_properties.get(),
-                dataArrays.d_consensus.get(),
-                dataArrays.d_coverage.get(),
-                dataArrays.d_counts.get(),
-                dataArrays.d_weights.get(),
-                dataArrays.d_support.get(),
-                dataArrays.d_origCoverages.get(),
-                dataArrays.d_origWeights.get(),
-                dataArrays.d_alignment_best_alignment_flags.get(),
-                dataArrays.d_alignment_shifts.get(),
-                dataArrays.d_alignment_nOps.get(),
-                dataArrays.d_alignment_overlaps.get(),
-                dataArrays.d_subject_sequences_data.get(),
-                dataArrays.d_candidate_sequences_data.get(),
-                dataArrays.d_transposedCandidateSequencesData.get(),
-                dataArrays.d_subject_sequences_lengths.get(),
-                dataArrays.d_candidate_sequences_lengths.get(),
-                dataArrays.d_subject_qualities.get(),
-                dataArrays.d_candidate_qualities.get(),
+                batch.d_msa_column_properties.get(),
+                batch.d_consensus.get(),
+                batch.d_coverage.get(),
+                batch.d_counts.get(),
+                batch.d_weights.get(),
+                batch.d_support.get(),
+                batch.d_origCoverages.get(),
+                batch.d_origWeights.get(),
+                batch.d_alignment_best_alignment_flags.get(),
+                batch.d_alignment_shifts.get(),
+                batch.d_alignment_nOps.get(),
+                batch.d_alignment_overlaps.get(),
+                batch.d_subject_sequences_data.get(),
+                batch.d_candidate_sequences_data.get(),
+                batch.d_transposedCandidateSequencesData.get(),
+                batch.d_subject_sequences_lengths.get(),
+                batch.d_candidate_sequences_lengths.get(),
+                batch.d_subject_qualities.get(),
+                batch.d_candidate_qualities.get(),
                 d_shouldBeKept,
-                dataArrays.d_candidates_per_subject_prefixsum,
-                dataArrays.d_numAnchors.get(),
-                dataArrays.d_numCandidates.get(),
+                batch.d_candidates_per_subject_prefixsum,
+                batch.d_numAnchors.get(),
+                batch.d_numCandidates.get(),
                 batchsize,
                 maxCandidates,
                 transFuncData.correctionOptions.useQualityScores,
@@ -1799,9 +2137,9 @@ namespace gpu{
                 d_indices_dblbuf[(0 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(0 + iteration) % 2],
                 transFuncData.correctionOptions.estimatedCoverage,
-                dataArrays.d_canExecute,
+                batch.d_canExecute,
                 iteration,
-                dataArrays.d_subject_read_ids.get(),
+                batch.d_subject_read_ids.get(),
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle
             );
@@ -1821,7 +2159,6 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
@@ -1835,53 +2172,53 @@ namespace gpu{
 
 		// correct subjects
 #if 0
-        cudaMemcpyAsync(dataArrays.h_num_indices,
-                        dataArrays.d_num_indices,
-                        dataArrays.d_num_indices.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_num_indices,
+                        batch.d_num_indices,
+                        batch.d_num_indices.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_indices,
+                        batch.d_indices,
+                        batch.d_indices.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_indices_per_subject,
+                        batch.d_indices_per_subject,
+                        batch.d_indices_per_subject.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                        dataArrays.d_msa_column_properties,
-                        dataArrays.d_msa_column_properties.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_msa_column_properties,
+                        batch.d_msa_column_properties,
+                        batch.d_msa_column_properties.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_alignment_shifts,
-                        dataArrays.d_alignment_shifts,
-                        dataArrays.d_alignment_shifts.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_alignment_shifts,
+                        batch.d_alignment_shifts,
+                        batch.d_alignment_shifts.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
-                        dataArrays.d_alignment_best_alignment_flags,
-                        dataArrays.d_alignment_best_alignment_flags.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_alignment_best_alignment_flags,
+                        batch.d_alignment_best_alignment_flags,
+                        batch.d_alignment_best_alignment_flags.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data,
-                        dataArrays.d_subject_sequences_data.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_subject_sequences_data,
+                        batch.d_subject_sequences_data,
+                        batch.d_subject_sequences_data.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data,
-                        dataArrays.d_candidate_sequences_data.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_candidate_sequences_data,
+                        batch.d_candidate_sequences_data,
+                        batch.d_candidate_sequences_data.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_consensus,
-                        dataArrays.d_consensus,
-                        dataArrays.d_consensus.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_consensus,
+                        batch.d_consensus,
+                        batch.d_consensus.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
         cudaDeviceSynchronize(); CUERR;
@@ -1889,9 +2226,9 @@ namespace gpu{
         auto identity = [](auto i){return i;};
 
 
-        for(int i = 0; i < dataArrays.n_subjects; i++){
+        for(int i = 0; i < batch.n_subjects; i++){
             std::cout << "Subject  : " << batch.tasks[i].subject_string << ", subject id " <<  batch.tasks[i].readId << std::endl;
-            int numind = dataArrays.h_indices_per_subject[i];
+            int numind = batch.h_indices_per_subject[i];
             if(numind > 0){
                 std::vector<char> cands;
                 cands.resize(128 * numind, 'F');
@@ -1900,17 +2237,17 @@ namespace gpu{
                 std::vector<int> candshifts;
                 candshifts.resize(numind);
                 for(int j = 0; j < numind; j++){
-                    int index = dataArrays.h_indices[dataArrays.h_indices_per_subject_prefixsum[i] + j];
+                    int index = batch.h_indices[batch.h_indices_per_subject_prefixsum[i] + j];
                     char* dst = cands.data() + 128 * j;
-                    candlengths[j] = dataArrays.h_candidate_sequences_lengths[index];
-                    candshifts[j] = dataArrays.h_alignment_shifts[index];
+                    candlengths[j] = batch.h_candidate_sequences_lengths[index];
+                    candshifts[j] = batch.h_alignment_shifts[index];
 
-                    const unsigned int* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts;
+                    const unsigned int* candidateSequencePtr = batch.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts;
 
-                    assert(dataArrays.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
+                    assert(batch.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
 
-                    std::string candidatestring = get2BitString((unsigned int*)candidateSequencePtr, dataArrays.h_candidate_sequences_lengths[index]);
-                    if(dataArrays.h_alignment_best_alignment_flags[index] == BestAlignment_t::ReverseComplement){
+                    std::string candidatestring = get2BitString((unsigned int*)candidateSequencePtr, batch.h_candidate_sequences_lengths[index]);
+                    if(batch.h_alignment_best_alignment_flags[index] == BestAlignment_t::ReverseComplement){
                         candidatestring = reverseComplementString(candidatestring.c_str(), candidatestring.length());
                     }
 
@@ -1921,29 +2258,29 @@ namespace gpu{
 
                 printSequencesInMSA(std::cout,
                                          batch.tasks[i].subject_string.c_str(),
-                                         dataArrays.h_subject_sequences_lengths[i],
+                                         batch.h_subject_sequences_lengths[i],
                                          cands.data(),
                                          candlengths.data(),
                                          numind,
                                          candshifts.data(),
-                                         dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl,
-                                         dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl,
-                                         dataArrays.h_msa_column_properties[i].lastColumn_excl - dataArrays.h_msa_column_properties[i].firstColumn_incl,
+                                         batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
+                                         batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
+                                         batch.h_msa_column_properties[i].lastColumn_excl - batch.h_msa_column_properties[i].firstColumn_incl,
                                          128);
                  std::cout << "\n";
-                 std::string consensus = std::string{dataArrays.h_consensus + i * batch.msa_pitch, dataArrays.h_consensus + (i+1) * batch.msa_pitch};
+                 std::string consensus = std::string{batch.h_consensus + i * batch.msa_pitch, batch.h_consensus + (i+1) * batch.msa_pitch};
                  std::cout << "Consensus:\n   " << consensus << "\n\n";
                  printSequencesInMSAConsEq(std::cout,
                                           batch.tasks[i].subject_string.c_str(),
-                                          dataArrays.h_subject_sequences_lengths[i],
+                                          batch.h_subject_sequences_lengths[i],
                                           cands.data(),
                                           candlengths.data(),
                                           numind,
                                           candshifts.data(),
                                           consensus.c_str(),
-                                          dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl,
-                                          dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl,
-                                          dataArrays.h_msa_column_properties[i].lastColumn_excl - dataArrays.h_msa_column_properties[i].firstColumn_incl,
+                                          batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
+                                          batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
+                                          batch.h_msa_column_properties[i].lastColumn_excl - batch.h_msa_column_properties[i].firstColumn_incl,
                                           128);
                 std::cout << "\n";
 
@@ -1959,58 +2296,58 @@ namespace gpu{
 #if 0
         cudaDeviceSynchronize(); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-            dataArrays.d_msa_column_properties,
-            dataArrays.d_msa_column_properties.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_msa_column_properties,
+            batch.d_msa_column_properties,
+            batch.d_msa_column_properties.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_counts,
-            dataArrays.d_counts,
-            dataArrays.d_counts.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_counts,
+            batch.d_counts,
+            batch.d_counts.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_weights,
-            dataArrays.d_weights,
-            dataArrays.d_weights.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_weights,
+            batch.d_weights,
+            batch.d_weights.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_coverage,
-            dataArrays.d_coverage,
-            dataArrays.d_coverage.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_coverage,
+            batch.d_coverage,
+            batch.d_coverage.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_origWeights,
-            dataArrays.d_origWeights,
-            dataArrays.d_origWeights.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_origWeights,
+            batch.d_origWeights,
+            batch.d_origWeights.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_origCoverages,
-            dataArrays.d_origCoverages,
-            dataArrays.d_origCoverages.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_origCoverages,
+            batch.d_origCoverages,
+            batch.d_origCoverages.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_support,
-            dataArrays.d_support,
-            dataArrays.d_support.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_support,
+            batch.d_support,
+            batch.d_support.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_consensus,
-            dataArrays.d_consensus,
-            dataArrays.d_consensus.sizeInBytes(),
+        cudaMemcpyAsync(batch.h_consensus,
+            batch.d_consensus,
+            batch.d_consensus.sizeInBytes(),
             D2H,
             streams[primary_stream_index]
         ); CUERR;
@@ -2020,12 +2357,12 @@ namespace gpu{
         std::size_t msa_row_pitch = batch.msa_pitch;
 
         for(int i = 0; i < batch.n_subjects; i++){
-            if(dataArrays.h_subject_read_ids[i] == 13){
-                std::cerr << "subjectColumnsBegin_incl = " << dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
-                std::cerr << "subjectColumnsEnd_excl = " << dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
-                std::cerr << "lastColumn_excl = " << dataArrays.h_msa_column_properties[i].lastColumn_excl << "\n";
+            if(batch.h_subject_read_ids[i] == 13){
+                std::cerr << "subjectColumnsBegin_incl = " << batch.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
+                std::cerr << "subjectColumnsEnd_excl = " << batch.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
+                std::cerr << "lastColumn_excl = " << batch.h_msa_column_properties[i].lastColumn_excl << "\n";
                 std::cerr << "counts: \n";
-                int* counts = dataArrays.h_counts + i * 4 * msa_weights_row_pitch_floats;
+                int* counts = batch.h_counts + i * 4 * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
                     std::cerr << counts[0 * msa_weights_row_pitch_floats + k];
                 }
@@ -2044,7 +2381,7 @@ namespace gpu{
                 std::cerr << "\n";
 
                 std::cerr << "weights: \n";
-                float* weights = dataArrays.h_weights + i * 4 * msa_weights_row_pitch_floats;
+                float* weights = batch.h_weights + i * 4 * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
                     std::cerr << weights[0 * msa_weights_row_pitch_floats + k];
                 }
@@ -2063,21 +2400,21 @@ namespace gpu{
                 std::cerr << "\n";
 
                 std::cerr << "coverage: \n";
-                int* coverage = dataArrays.h_coverage + i * msa_weights_row_pitch_floats;
+                int* coverage = batch.h_coverage + i * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
                     std::cerr << coverage[k];
                 }
                 std::cerr << "\n";
 
                 std::cerr << "support: \n";
-                float* support = dataArrays.h_support + i * msa_weights_row_pitch_floats;
+                float* support = batch.h_support + i * msa_weights_row_pitch_floats;
                 for(int k = 0; k < msa_weights_row_pitch_floats; k++){
                     std::cerr << support[k];
                 }
                 std::cerr << "\n";
 
                 std::cerr << "consensus: \n";
-                char* consensus = dataArrays.h_consensus + i * msa_row_pitch;
+                char* consensus = batch.h_consensus + i * msa_row_pitch;
                 for(int k = 0; k < msa_row_pitch; k++){
                     std::cerr << consensus[k];
                 }
@@ -2091,12 +2428,12 @@ namespace gpu{
         // cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
         std::array<int*,2> d_indices_per_subject_dblbuf{
-            dataArrays.d_indices_per_subject.get(), 
-            dataArrays.d_indices_per_subject_tmp.get()
+            batch.d_indices_per_subject.get(), 
+            batch.d_indices_per_subject_tmp.get()
         };
         std::array<int*,2> d_num_indices_dblbuf{
-            dataArrays.d_num_indices.get(), 
-            dataArrays.d_num_indices_tmp.get()
+            batch.d_num_indices.get(), 
+            batch.d_num_indices_tmp.get()
         };
 
         const int* d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2];
@@ -2104,19 +2441,19 @@ namespace gpu{
 
 
         call_msaCorrectAnchorsKernel_async(
-            dataArrays.d_corrected_subjects.get(),
-            dataArrays.d_subject_is_corrected.get(),
-            dataArrays.d_is_high_quality_subject.get(),
-            dataArrays.d_msa_column_properties.get(),
-            dataArrays.d_support.get(),
-            dataArrays.d_coverage.get(),
-            dataArrays.d_origCoverages.get(),
-            dataArrays.d_consensus.get(),
-            dataArrays.d_subject_sequences_data.get(),
-            dataArrays.d_candidate_sequences_data.get(),
-            dataArrays.d_candidate_sequences_lengths.get(),
+            batch.d_corrected_subjects.get(),
+            batch.d_subject_is_corrected.get(),
+            batch.d_is_high_quality_subject.get(),
+            batch.d_msa_column_properties.get(),
+            batch.d_support.get(),
+            batch.d_coverage.get(),
+            batch.d_origCoverages.get(),
+            batch.d_consensus.get(),
+            batch.d_subject_sequences_data.get(),
+            batch.d_candidate_sequences_data.get(),
+            batch.d_candidate_sequences_lengths.get(),
             d_indices_per_subject,
-            dataArrays.d_numAnchors.get(),
+            batch.d_numAnchors.get(),
             batchsize,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
@@ -2138,64 +2475,64 @@ namespace gpu{
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
-        //std::cerr << "cudaMemcpyAsync " << (void*)dataArrays.h_indices_per_subject.get() << (void*) d_indices_per_subject << "\n";
+        //std::cerr << "cudaMemcpyAsync " << (void*)batch.h_indices_per_subject.get() << (void*) d_indices_per_subject << "\n";
         cudaMemcpyAsync(
-            dataArrays.h_indices_per_subject,
+            batch.h_indices_per_subject,
             d_indices_per_subject,
             sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_corrected_subjects,
-                        dataArrays.d_corrected_subjects,
+        cudaMemcpyAsync(batch.h_corrected_subjects,
+                        batch.d_corrected_subjects,
                         batch.decodedSequencePitchInBytes * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_subject_is_corrected,
-                        dataArrays.d_subject_is_corrected,
+        cudaMemcpyAsync(batch.h_subject_is_corrected,
+                        batch.d_subject_is_corrected,
                         sizeof(bool) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.h_is_high_quality_subject,
-                        dataArrays.d_is_high_quality_subject,
+        cudaMemcpyAsync(batch.h_is_high_quality_subject,
+                        batch.d_is_high_quality_subject,
                         sizeof(AnchorHighQualityFlag) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        // cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
-        //                 dataArrays.d_num_uncorrected_positions_per_subject,
+        // cudaMemcpyAsync(batch.h_num_uncorrected_positions_per_subject,
+        //                 batch.d_num_uncorrected_positions_per_subject,
         //                 sizeof(int) * batchsize,
         //                 D2H,
         //                 streams[secondary_stream_index]); CUERR;
 
-        // cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
-        //                 dataArrays.d_uncorrected_positions_per_subject,
+        // cudaMemcpyAsync(batch.h_uncorrected_positions_per_subject,
+        //                 batch.d_uncorrected_positions_per_subject,
         //                 sizeof(int) * transFuncData.sequenceFileProperties.maxSequenceLength * batchsize,
         //                 D2H,
         //                 streams[secondary_stream_index]); CUERR;
 
         selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
-            dataArrays.d_indices_of_corrected_subjects.get(),
-            dataArrays.d_num_indices_of_corrected_subjects.get(),
-            dataArrays.d_subject_is_corrected.get(),
-            dataArrays.d_numAnchors.get()
+            batch.d_indices_of_corrected_subjects.get(),
+            batch.d_num_indices_of_corrected_subjects.get(),
+            batch.d_subject_is_corrected.get(),
+            batch.d_numAnchors.get()
         ); CUERR;
 
         callConstructAnchorResultsKernelAsync(
-            dataArrays.d_editsPerCorrectedSubject.get(),
-            dataArrays.d_numEditsPerCorrectedSubject.get(),
+            batch.d_editsPerCorrectedSubject.get(),
+            batch.d_numEditsPerCorrectedSubject.get(),
             doNotUseEditsValue,
-            dataArrays.d_indices_of_corrected_subjects.get(),
-            dataArrays.d_num_indices_of_corrected_subjects.get(),
-            dataArrays.d_anchorContainsN.get(),
-            dataArrays.d_subject_sequences_data.get(),
-            dataArrays.d_subject_sequences_lengths.get(),
-            dataArrays.d_corrected_subjects.get(),
+            batch.d_indices_of_corrected_subjects.get(),
+            batch.d_num_indices_of_corrected_subjects.get(),
+            batch.d_anchorContainsN.get(),
+            batch.d_subject_sequences_data.get(),
+            batch.d_subject_sequences_lengths.get(),
+            batch.d_corrected_subjects.get(),
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            dataArrays.d_numAnchors.get(),
+            batch.d_numAnchors.get(),
             batch.transFuncData->correctionOptions.batchsize,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -2205,73 +2542,20 @@ namespace gpu{
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
         cudaMemcpyAsync(
-            dataArrays.h_editsPerCorrectedSubject,
-            dataArrays.d_editsPerCorrectedSubject,
+            batch.h_editsPerCorrectedSubject,
+            batch.d_editsPerCorrectedSubject,
             sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
 
         cudaMemcpyAsync(
-            dataArrays.h_numEditsPerCorrectedSubject,
-            dataArrays.d_numEditsPerCorrectedSubject,
+            batch.h_numEditsPerCorrectedSubject,
+            batch.d_numEditsPerCorrectedSubject,
             sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
-
-        // cudaMemcpyAsync(
-        //     dataArrays.h_indices_of_corrected_subjects,
-        //     dataArrays.d_indices_of_corrected_subjects,
-        //     sizeof(int) * batchsize,
-        //     D2H,
-        //     streams[secondary_stream_index]
-        // ); CUERR;
-
-        // cudaMemcpyAsync(
-        //     dataArrays.h_num_indices_of_corrected_subjects,
-        //     dataArrays.d_num_indices_of_corrected_subjects,
-        //     sizeof(int),
-        //     D2H,
-        //     streams[secondary_stream_index]
-        // ); CUERR;
-
-		//cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-		//if(transFuncData.correctionOptions.correctCandidates) {
-            // find subject ids of subjects with high quality multiple sequence alignment
-
-            // auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
-            //     return flag.hq();
-            // };
-
-            // cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
-            //     d_isHqSubject(dataArrays.d_is_high_quality_subject,
-            //                     isHqSubject);
-
-            // selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
-            //     dataArrays.d_high_quality_subject_indices.get(),
-            //     dataArrays.d_num_high_quality_subject_indices.get(),
-            //     d_isHqSubject,
-            //     dataArrays.d_numAnchors.get()
-            // );
-
-            // cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
-            // cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
-
-            // cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
-            //                 dataArrays.d_high_quality_subject_indices,
-            //                 sizeof(int) * batchsize,
-            //                 D2H,
-            //                 streams[secondary_stream_index]); CUERR;
-
-            // cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
-            //                 dataArrays.d_num_high_quality_subject_indices,
-            //                 sizeof(int),
-            //                 D2H,
-            //                 streams[secondary_stream_index]); CUERR;
-		//}
-
         
 	}
 
@@ -2283,7 +2567,6 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        DataArrays& dataArrays = batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
@@ -2297,38 +2580,38 @@ namespace gpu{
         const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
 
 
-        bool* const d_candidateCanBeCorrected = dataArrays.d_alignment_isValid.get(); //repurpose
+        bool* const d_candidateCanBeCorrected = batch.d_alignment_isValid.get(); //repurpose
 
-        int* const d_num_corrected_candidates_per_anchor = dataArrays.d_num_corrected_candidates_per_anchor.get();
-        const int* const d_numAnchors = dataArrays.d_numAnchors.get();
-        const int* const d_numCandidates = dataArrays.d_numCandidates.get();
+        int* const d_num_corrected_candidates_per_anchor = batch.d_num_corrected_candidates_per_anchor.get();
+        const int* const d_numAnchors = batch.d_numAnchors.get();
+        const int* const d_numCandidates = batch.d_numCandidates.get();
 
         auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
             return flag.hq();
         };
 
         cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
-            d_isHqSubject(dataArrays.d_is_high_quality_subject,
+            d_isHqSubject(batch.d_is_high_quality_subject,
                             isHqSubject);
 
         selectIndicesOfFlagsOnlyOneBlock<256><<<1,256,0, streams[primary_stream_index]>>>(
-            dataArrays.d_high_quality_subject_indices.get(),
-            dataArrays.d_num_high_quality_subject_indices.get(),
+            batch.d_high_quality_subject_indices.get(),
+            batch.d_num_high_quality_subject_indices.get(),
             d_isHqSubject,
-            dataArrays.d_numAnchors.get()
+            batch.d_numAnchors.get()
         ); CUERR;
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
-                        dataArrays.d_high_quality_subject_indices,
+        cudaMemcpyAsync(batch.h_high_quality_subject_indices,
+                        batch.d_high_quality_subject_indices,
                         sizeof(int) * batchsize,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
-                        dataArrays.d_num_high_quality_subject_indices,
+        cudaMemcpyAsync(batch.h_num_high_quality_subject_indices,
+                        batch.d_num_high_quality_subject_indices,
                         sizeof(int),
                         D2H,
                         streams[secondary_stream_index]); CUERR;
@@ -2350,16 +2633,16 @@ namespace gpu{
 
 
         std::array<int*,2> d_indices_dblbuf{
-            dataArrays.d_indices.get(), 
-            dataArrays.d_indices_tmp.get()
+            batch.d_indices.get(), 
+            batch.d_indices_tmp.get()
         };
         std::array<int*,2> d_indices_per_subject_dblbuf{
-            dataArrays.d_indices_per_subject.get(), 
-            dataArrays.d_indices_per_subject_tmp.get()
+            batch.d_indices_per_subject.get(), 
+            batch.d_indices_per_subject_tmp.get()
         };
         std::array<int*,2> d_num_indices_dblbuf{
-            dataArrays.d_num_indices.get(), 
-            dataArrays.d_num_indices_tmp.get()
+            batch.d_num_indices.get(), 
+            batch.d_num_indices_tmp.get()
         };
 
         const int* d_indices = d_indices_dblbuf[max_num_minimizations % 2];
@@ -2368,15 +2651,15 @@ namespace gpu{
 
         callFlagCandidatesToBeCorrectedKernel_async(
             d_candidateCanBeCorrected,
-            dataArrays.d_num_corrected_candidates_per_anchor.get(),
-            dataArrays.d_support.get(),
-            dataArrays.d_coverage.get(),
-            dataArrays.d_msa_column_properties.get(),
-            dataArrays.d_alignment_shifts.get(),
-            dataArrays.d_candidate_sequences_lengths.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
-            dataArrays.d_is_high_quality_subject.get(),
-            dataArrays.d_candidates_per_subject_prefixsum,
+            batch.d_num_corrected_candidates_per_anchor.get(),
+            batch.d_support.get(),
+            batch.d_coverage.get(),
+            batch.d_msa_column_properties.get(),
+            batch.d_alignment_shifts.get(),
+            batch.d_candidate_sequences_lengths.get(),
+            batch.d_anchorIndicesOfCandidates.get(),
+            batch.d_is_high_quality_subject.get(),
+            batch.d_candidates_per_subject_prefixsum,
             d_indices,
             d_indices_per_subject,
             d_numAnchors,
@@ -2389,15 +2672,15 @@ namespace gpu{
             batch.kernelLaunchHandle
         );
 
-        size_t cubTempSize = dataArrays.d_tempstorage.sizeInBytes();
+        size_t cubTempSize = batch.d_tempstorage.sizeInBytes();
 
         cub::DeviceSelect::Flagged(
-            dataArrays.d_tempstorage.get(),
+            batch.d_tempstorage.get(),
             cubTempSize,
             cub::CountingInputIterator<int>(0),
             d_candidateCanBeCorrected,
-            dataArrays.d_indices_of_corrected_candidates.get(),
-            dataArrays.d_num_total_corrected_candidates.get(),
+            batch.d_indices_of_corrected_candidates.get(),
+            batch.d_num_total_corrected_candidates.get(),
             maxCandidates,
             streams[primary_stream_index]
         ); CUERR;
@@ -2410,8 +2693,8 @@ namespace gpu{
         //start result transfer of already calculated data in second stream
 
         cudaMemcpyAsync(
-            dataArrays.h_num_total_corrected_candidates.get(),
-            dataArrays.d_num_total_corrected_candidates.get(),
+            batch.h_num_total_corrected_candidates.get(),
+            batch.d_num_total_corrected_candidates.get(),
             sizeof(int),
             D2H,
             streams[secondary_stream_index]
@@ -2420,42 +2703,42 @@ namespace gpu{
         //cudaEventRecord(events[numTotalCorrectedCandidates_event_index], streams[secondary_stream_index]); CUERR;
 
         cub::DeviceScan::ExclusiveSum(
-            dataArrays.d_tempstorage.get(), 
+            batch.d_tempstorage.get(), 
             cubTempSize, 
-            dataArrays.d_num_corrected_candidates_per_anchor.get(), 
-            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(), 
+            batch.d_num_corrected_candidates_per_anchor.get(), 
+            batch.d_num_corrected_candidates_per_anchor_prefixsum.get(), 
             batchsize, 
             streams[secondary_stream_index]
         );
 
         cudaMemcpyAsync(
-            dataArrays.h_num_corrected_candidates_per_anchor,
-            dataArrays.d_num_corrected_candidates_per_anchor,
+            batch.h_num_corrected_candidates_per_anchor,
+            batch.d_num_corrected_candidates_per_anchor,
             sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
 
         cudaMemcpyAsync(
-            dataArrays.h_num_corrected_candidates_per_anchor_prefixsum.get(),
-            dataArrays.d_num_corrected_candidates_per_anchor_prefixsum.get(),
+            batch.h_num_corrected_candidates_per_anchor_prefixsum.get(),
+            batch.d_num_corrected_candidates_per_anchor_prefixsum.get(),
             sizeof(int) * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
 
         // cudaMemcpyAsync(
-        //     dataArrays.h_alignment_shifts,
-        //     dataArrays.d_alignment_shifts,
+        //     batch.h_alignment_shifts,
+        //     batch.d_alignment_shifts,
         //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
         //     D2H,
         //     streams[secondary_stream_index]
         // ); CUERR;
 
-        int* h_alignment_shifts = dataArrays.h_alignment_shifts.get();
-        const int* d_alignment_shifts = dataArrays.d_alignment_shifts.get();
-        int* h_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates.get();
-        const int* d_indices_of_corrected_candidates = dataArrays.d_indices_of_corrected_candidates.get();
+        int* h_alignment_shifts = batch.h_alignment_shifts.get();
+        const int* d_alignment_shifts = batch.d_alignment_shifts.get();
+        int* h_indices_of_corrected_candidates = batch.h_indices_of_corrected_candidates.get();
+        const int* d_indices_of_corrected_candidates = batch.d_indices_of_corrected_candidates.get();
 
         generic_kernel<<<320, 256, 0, streams[secondary_stream_index]>>>(
             [=] __device__ (){
@@ -2476,20 +2759,20 @@ namespace gpu{
         //compute candidate correction in first stream
 
         callCorrectCandidatesWithGroupKernel2_async(
-            dataArrays.h_corrected_candidates.get(),
-            dataArrays.h_editsPerCorrectedCandidate.get(),
-            dataArrays.h_numEditsPerCorrectedCandidate.get(),
-            dataArrays.d_msa_column_properties.get(),
-            dataArrays.d_consensus.get(),
-            dataArrays.d_support.get(),
-            dataArrays.d_alignment_shifts.get(),
-            dataArrays.d_alignment_best_alignment_flags.get(),
-            dataArrays.d_candidate_sequences_data.get(),
-            dataArrays.d_candidate_sequences_lengths.get(),
-            dataArrays.d_candidateContainsN.get(),
-            dataArrays.d_indices_of_corrected_candidates.get(),
-            dataArrays.d_num_total_corrected_candidates.get(),
-            dataArrays.d_anchorIndicesOfCandidates.get(),
+            batch.h_corrected_candidates.get(),
+            batch.h_editsPerCorrectedCandidate.get(),
+            batch.h_numEditsPerCorrectedCandidate.get(),
+            batch.d_msa_column_properties.get(),
+            batch.d_consensus.get(),
+            batch.d_support.get(),
+            batch.d_alignment_shifts.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_candidate_sequences_data.get(),
+            batch.d_candidate_sequences_lengths.get(),
+            batch.d_candidateContainsN.get(),
+            batch.d_indices_of_corrected_candidates.get(),
+            batch.d_num_total_corrected_candidates.get(),
+            batch.d_anchorIndicesOfCandidates.get(),
             d_numAnchors,
             d_numCandidates,
             doNotUseEditsValue,
@@ -2506,16 +2789,16 @@ namespace gpu{
         //cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
         
         // cudaMemcpyAsync(
-        //     dataArrays.h_numEditsPerCorrectedCandidate,
-        //     dataArrays.d_numEditsPerCorrectedCandidate,
+        //     batch.h_numEditsPerCorrectedCandidate,
+        //     batch.d_numEditsPerCorrectedCandidate,
         //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
         
         // cudaMemcpyAsync(
-        //     dataArrays.h_indices_of_corrected_candidates,
-        //     dataArrays.d_indices_of_corrected_candidates,
+        //     batch.h_indices_of_corrected_candidates,
+        //     batch.d_indices_of_corrected_candidates,
         //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
         //     D2H,
         //     streams[primary_stream_index]
@@ -2524,31 +2807,31 @@ namespace gpu{
         // const int resultsToCopy = batch.n_queries * 0.2f;
 
         // cudaMemcpyAsync(
-        //     dataArrays.h_corrected_candidates,
-        //     dataArrays.d_corrected_candidates,
+        //     batch.h_corrected_candidates,
+        //     batch.d_corrected_candidates,
         //     batch.decodedSequencePitchInBytes * resultsToCopy,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
 
         // cudaMemcpyAsync(
-        //     dataArrays.h_editsPerCorrectedCandidate,
-        //     dataArrays.d_editsPerCorrectedCandidate,
+        //     batch.h_editsPerCorrectedCandidate,
+        //     batch.d_editsPerCorrectedCandidate,
         //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * resultsToCopy,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
 
-        // int* d_remainingResultsToCopy = dataArrays.d_num_high_quality_subject_indices.get(); //reuse
-        // const int* tmpptr = dataArrays.d_num_total_corrected_candidates.get();
+        // int* d_remainingResultsToCopy = batch.d_num_high_quality_subject_indices.get(); //reuse
+        // const int* tmpptr = batch.d_num_total_corrected_candidates.get();
 
         // generic_kernel<<<1,1,0, streams[primary_stream_index]>>>([=] __device__ (){
         //     *d_remainingResultsToCopy = max(0, *tmpptr - resultsToCopy);
         // }); CUERR;
         
         // callMemcpy2DKernel(
-        //     dataArrays.h_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
-        //     dataArrays.d_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
+        //     batch.h_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
+        //     batch.d_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
         //     d_remainingResultsToCopy,
         //     batch.decodedSequencePitchInBytes,
         //     batch.n_queries - resultsToCopy,
@@ -2556,8 +2839,8 @@ namespace gpu{
         // ); CUERR;
         
         // callMemcpy2DKernel(
-        //     dataArrays.h_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
-        //     dataArrays.d_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
+        //     batch.h_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
+        //     batch.d_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
         //     d_remainingResultsToCopy,
         //     batch.maxNumEditsPerSequence,
         //     batch.n_queries - resultsToCopy,
@@ -2565,12 +2848,12 @@ namespace gpu{
         // ); CUERR;
 
         // {
-        //     char* const h_corrected_candidates = dataArrays.h_corrected_candidates.get();
-        //     char* const d_corrected_candidates = dataArrays.d_corrected_candidates.get();
-        //     const int* const d_num_total_corrected_candidates = dataArrays.d_num_total_corrected_candidates.get();
+        //     char* const h_corrected_candidates = batch.h_corrected_candidates.get();
+        //     char* const d_corrected_candidates = batch.d_corrected_candidates.get();
+        //     const int* const d_num_total_corrected_candidates = batch.d_num_total_corrected_candidates.get();
             
-        //     auto* h_editsPerCorrectedCandidate = dataArrays.h_editsPerCorrectedCandidate.get();
-        //     auto* d_editsPerCorrectedCandidate = dataArrays.d_editsPerCorrectedCandidate.get();
+        //     auto* h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get();
+        //     auto* d_editsPerCorrectedCandidate = batch.d_editsPerCorrectedCandidate.get();
 
         //     std::size_t decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes;
         //     std::size_t maxNumEditsPerSequence = batch.maxNumEditsPerSequence;
@@ -2624,18 +2907,18 @@ namespace gpu{
         // }
 
         // callMemcpy2DKernel(
-        //     dataArrays.h_corrected_candidates.get(),
-        //     dataArrays.d_corrected_candidates.get(),
-        //     dataArrays.d_num_total_corrected_candidates.get(),
+        //     batch.h_corrected_candidates.get(),
+        //     batch.d_corrected_candidates.get(),
+        //     batch.d_num_total_corrected_candidates.get(),
         //     batch.decodedSequencePitchInBytes,
         //     batch.n_queries,
         //     streams[primary_stream_index]
         // ); CUERR;
         
         // callMemcpy2DKernel(
-        //     dataArrays.h_editsPerCorrectedCandidate.get(),
-        //     dataArrays.d_editsPerCorrectedCandidate.get(),
-        //     dataArrays.d_num_total_corrected_candidates.get(),
+        //     batch.h_editsPerCorrectedCandidate.get(),
+        //     batch.d_editsPerCorrectedCandidate.get(),
+        //     batch.d_num_total_corrected_candidates.get(),
         //     batch.maxNumEditsPerSequence,
         //     batch.n_queries,
         //     streams[primary_stream_index]
@@ -2647,13 +2930,12 @@ namespace gpu{
 
         // cudaSetDevice(batch.deviceId); CUERR;
 
-        // DataArrays& dataArrays = batch.dataArrays;
         // std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         // std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
         // cudaEventSynchronize(events[numTotalCorrectedCandidates_event_index]); CUERR;
 
-        // const int numTotalCorrectedCandidates = *dataArrays.h_num_total_corrected_candidates.get();
+        // const int numTotalCorrectedCandidates = *batch.h_num_total_corrected_candidates.get();
         // //std::cerr << numTotalCorrectedCandidates << " / " << batch.n_queries << "\n";
 
         // cudaEventSynchronize(events[correction_finished_event_index]); CUERR;        
@@ -2661,23 +2943,20 @@ namespace gpu{
 
 
         // cudaMemcpyAsync(
-        //     dataArrays.h_corrected_candidates,
-        //     dataArrays.d_corrected_candidates,
+        //     batch.h_corrected_candidates,
+        //     batch.d_corrected_candidates,
         //     batch.decodedSequencePitchInBytes * numTotalCorrectedCandidates,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
 
         // cudaMemcpyAsync(
-        //     dataArrays.h_editsPerCorrectedCandidate,
-        //     dataArrays.d_editsPerCorrectedCandidate,
+        //     batch.h_editsPerCorrectedCandidate,
+        //     batch.d_editsPerCorrectedCandidate,
         //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
-
-        // // cubCachingAllocator.DeviceFree(dataArrays.d_compactCorrectedCandidates); CUERR;
-        // // cubCachingAllocator.DeviceFree(dataArrays.d_compactEditsPerCorrectedCandidate); CUERR;
 
         //  cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
@@ -3193,16 +3472,6 @@ void correct_gpu(
       transFuncData.minhashHandles.resize(threadPoolSize);
 
 
-#if 0
-      NN_Correction_Classifier_Base nnClassifierBase;
-      NN_Correction_Classifier nnClassifier;
-      if(correctionOptions.correctionType == CorrectionType::Convnet){
-          nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
-          nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
-      }
-#endif 
-      // BEGIN CORRECTION
-
 
      outputThread.start();
 
@@ -3216,8 +3485,6 @@ void correct_gpu(
 
             cudaSetDevice(deviceId); CUERR;
 
-            DataArrays dataArrays;
-
             std::array<cudaStream_t, nStreamsPerBatch> streams;
             for(int j = 0; j < nStreamsPerBatch; ++j) {
                 cudaStreamCreate(&streams[j]); CUERR;
@@ -3230,7 +3497,6 @@ void correct_gpu(
 
             batchData.id = -1;
             batchData.deviceId = deviceId;
-            batchData.dataArrays = std::move(dataArrays);
             batchData.streams = std::move(streams);
             batchData.events = std::move(events);
             batchData.kernelLaunchHandle = make_kernel_launch_handle(deviceId);
@@ -3297,6 +3563,13 @@ void correct_gpu(
                 sequenceFileProperties,
                 minhasher.getNumberOfMaps()
             );
+
+            MemoryUsage info = batchData.getMemoryInfo();
+            std::cerr << "Batch memory usage:\n";
+            std::cerr << "host: " << info.host << "\n";
+            for(auto pair : info.device){
+                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+            }
             
         };
 
@@ -3304,7 +3577,7 @@ void correct_gpu(
             
             cudaSetDevice(batchData.deviceId); CUERR;
     
-            batchData.dataArrays.reset();
+            batchData.destroy();
             destroyNextIterationData(batchData.nextIterationData);
 
             for(int i = 0; i < 2; i++){
@@ -3670,14 +3943,14 @@ void correct_gpu(
 
 
     //   for(const auto& batch : batches){
-    //       std::cout << "size elements: " << batch.dataArrays.h_candidate_read_ids.size() << ", capacity elements " << batch.dataArrays.h_candidate_read_ids.capacity() << std::endl;
+    //       std::cout << "size elements: " << batch.h_candidate_read_ids.size() << ", capacity elements " << batch.h_candidate_read_ids.capacity() << std::endl;
       
     //     }
 
     //     for(const auto& batch : batches){
     //         std::cerr << "Memory usage: \n";
-    //         batch.dataArrays.printMemoryUsage();
-    //         std::cerr << "Total: " << batch.dataArrays.getMemoryUsageInBytes() << " bytes\n";
+    //         batch.printMemoryUsage();
+    //         std::cerr << "Total: " << batch.getMemoryUsageInBytes() << " bytes\n";
     //         std::cerr << '\n';
     //     }
 
