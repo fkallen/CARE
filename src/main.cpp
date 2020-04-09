@@ -35,7 +35,7 @@ void printCommandlineArguments(std::ostream& out, const cxxopts::ParseResult& pa
 bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
-		"inputfile", "outdir", "coverage"
+		"inputfile", "outdir", "outfile", "coverage"
 	};
 
 	bool success = true;
@@ -58,11 +58,11 @@ int main(int argc, char** argv){
 	options.add_options("Mandatory")
 		("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Always treated as single end.", cxxopts::value<std::string>())
 		("outdir", "The output directory", cxxopts::value<std::string>())
+		("outfile", "The output file", cxxopts::value<std::string>())
 		("coverage", "Estimated coverage of input file", cxxopts::value<float>());
 
 	options.add_options("Optional")
 		("h", "Show this help message", cxxopts::value<bool>(help))
-		("outfile", "The output file", cxxopts::value<std::string>())
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
 		("kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>())
