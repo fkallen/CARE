@@ -89,9 +89,9 @@ int main(int argc, char** argv){
 		("fileformat", "Format of input file. Overrides automatic detection. Allowed values: {fasta, fastq, fastagz, fastqgz}",
 		cxxopts::value<std::string>()->default_value(""))
 
-		("errorrate", "estimated error rate of input file",
-		cxxopts::value<float>()->default_value("0.03"))
-		("m_coverage", "m",
+		("errorfactortuning", "errorfactortuning",
+		cxxopts::value<float>()->default_value("0.06"))
+		("coveragefactortuning", "coveragefactortuning",
 		cxxopts::value<float>()->default_value("0.6"))
 
 		("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string> >()->default_value({}))
@@ -105,9 +105,9 @@ int main(int argc, char** argv){
 		("progress", "If set, progress bar is shown during correction",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 
-		("save-binary-reads-to", "Save binary dump of loaded reads from inputfile to disk",
+		("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
 		cxxopts::value<std::string>()->default_value(""))
-		("load-binary-reads-from", "Load binary dump of reads from disk",
+		("load-preprocessedreads-from", "Load binary dump of read data structure from disk",
 		cxxopts::value<std::string>()->default_value(""))
 		("save-hashtables-to", "Save binary dump of hash tables to disk",
 		cxxopts::value<std::string>()->default_value(""))
@@ -179,14 +179,14 @@ int main(int argc, char** argv){
 
 	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
 	std::cout << "Alignment relative required overlap: " << goodAlignmentProperties.min_overlap_ratio << "\n";
-	std::cout << "Alignment max number of mismatches: " << goodAlignmentProperties.maxErrorRate << "\n";
+	std::cout << "Alignment max relative number of mismatches in overlap: " << goodAlignmentProperties.maxErrorRate << "\n";
 
 	std::cout << "Correct candidate reads: " << std::boolalpha << correctionOptions.correctCandidates << "\n";
 	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
 	std::cout << "Use quality scores: " << std::boolalpha << correctionOptions.useQualityScores << "\n";
 	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
-	std::cout << "Estimated error rate: " << correctionOptions.estimatedErrorrate << "\n";
-	std::cout << "m_coverage: " << correctionOptions.m_coverage << "\n";
+	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
+	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
@@ -219,10 +219,10 @@ int main(int argc, char** argv){
 	std::cout << "Output filename: " << fileOptions.outputfilename << "\n";
 	std::cout << "Output file: " << fileOptions.outputfile << "\n";
 	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
-	std::cout << "save_binary_reads_to: " << fileOptions.save_binary_reads_to << "\n";
-	std::cout << "load_binary_reads_from: " << fileOptions.load_binary_reads_from << "\n";
-	std::cout << "save_hashtables_to: " << fileOptions.save_hashtables_to << "\n";
-	std::cout << "load_hashtables_from: " << fileOptions.load_hashtables_from << "\n";
+	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";
+	std::cout << "Load preprocessed reads from file: " << fileOptions.load_binary_reads_from << "\n";
+	std::cout << "Save hash tables to file: " << fileOptions.save_hashtables_to << "\n";
+	std::cout << "Load hash tables from file: " << fileOptions.load_hashtables_from << "\n";
 
 	std::cout << "--------------------------------\n";
 

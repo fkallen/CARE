@@ -67,8 +67,8 @@ namespace args{
             pr["candidateCorrection"].as<bool>(),
 			pr["useQualityScores"].as<bool>(),
             pr["coverage"].as<float>(),
-            pr["errorrate"].as<float>(),
-            pr["m_coverage"].as<float>(),
+            pr["errorfactortuning"].as<float>(),
+            pr["coveragefactortuning"].as<float>(),
             pr["kmerlength"].as<int>(),
             pr["batchsize"].as<int>(),
             pr["candidateCorrectionNewColumns"].as<int>(),
@@ -172,8 +172,8 @@ namespace args{
 		result.nReads = pr["nReads"].as<std::uint64_t>();
         result.minimum_sequence_length = pr["min_length"].as<int>();
         result.maximum_sequence_length = pr["max_length"].as<int>();
-        result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
-        result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
+        result.save_binary_reads_to = pr["save-preprocessedreads-to"].as<std::string>();
+        result.load_binary_reads_from = pr["load-preprocessedreads-from"].as<std::string>();
         result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
         result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
 

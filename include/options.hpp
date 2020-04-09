@@ -42,7 +42,7 @@ namespace care{
         bool correctCandidates = false;
         bool useQualityScores = true;
         float estimatedCoverage = 1.0f;
-        float estimatedErrorrate = 0.01f;
+        float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
         int kmerlength = 16;
 		int batchsize = 5;
