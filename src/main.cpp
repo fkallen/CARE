@@ -56,7 +56,7 @@ int main(int argc, char** argv){
 	cxxopts::Options options(argv[0], "Perform error correction on a fastq file");
 
 	options.add_options("Mandatory")
-		("inputfile", "The file to correct. May be a gzip file. Reads are treated as single end.", cxxopts::value<std::string>())
+		("inputfile", "The file to correct. May be a gzip file. Always treated as single end.", cxxopts::value<std::string>())
 		("outdir", "The output directory", cxxopts::value<std::string>())
 		("outfile", "The output file", cxxopts::value<std::string>())
 		("coverage", "Estimated coverage of input file", cxxopts::value<float>());
@@ -70,36 +70,29 @@ int main(int argc, char** argv){
 		("threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>()->default_value("1"))
 		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
 		cxxopts::value<int>()->default_value("1000"))
-
 		("useQualityScores", "If set, quality scores (if any) are considered during read correction",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-
         ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected",
 		cxxopts::value<int>()->default_value("5"))
-
-
-		("maxmismatchratio", "Overlap between query and candidate must contain at most maxmismatchratio * overlapsize mismatches",
+		("maxmismatchratio", "Overlap between anchor and candidate must contain at most maxmismatchratio * overlapsize mismatches",
 		cxxopts::value<float>()->default_value("0.2"))
-		("minalignmentoverlap", "Overlap between query and candidate must be at least this long", 
+		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long", 
 		cxxopts::value<int>()->default_value("35"))
-		("minalignmentoverlapratio", "Overlap between query and candidate must be at least as long as minalignmentoverlapratio * querylength",
+		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as long as minalignmentoverlapratio * querylength",
 		cxxopts::value<float>()->default_value("0.35"))
-		("fileformat", "Format of input file. Overrides automatic detection. Allowed values: {fasta, fastq, fastagz, fastqgz}",
-		cxxopts::value<std::string>()->default_value(""))
 
 		("errorfactortuning", "errorfactortuning",
 		cxxopts::value<float>()->default_value("0.06"))
 		("coveragefactortuning", "coveragefactortuning",
 		cxxopts::value<float>()->default_value("0.6"))
-
 		("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string> >()->default_value({}))
-		("nReads", "Upper bound for number of reads in the inputfile. If set 0, the input file is parsed to find the exact number of reads before any work is done.",
+		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>()->default_value("0"))
-		("min_length", "Lower bound for read length in file. If set negative, the input file is parsed to find the exact minimum length before any work is done.",
+		("min_length", "Lower bound for read length in file. If missing or set negative, the input file is parsed to find the exact minimum length before any work is done.",
 		cxxopts::value<int>()->default_value("-1"))
-		("max_length", "Upper bound for read length in file. If set 0, the input file is parsed to find the exact maximum length before any work is done.",
+		("max_length", "Upper bound for read length in file. If missing or set 0, the input file is parsed to find the exact maximum length before any work is done.",
 		cxxopts::value<int>()->default_value("0"))
 
 		("progress", "If set, progress bar is shown during correction",
@@ -114,7 +107,7 @@ int main(int argc, char** argv){
 		("load-hashtables-from", "Load binary dump of hash tables from disk",
 		cxxopts::value<std::string>()->default_value(""))
 
-		("memHashtables", "Memory limit for hash tables and hash table construction",
+		("memHashtables", "Memory limit for hash tables and hash table construction (This is not a hard limit)",
 		cxxopts::value<std::string>()->default_value("0"))
 
 		("memTotal", "Total memory limit (This is not a hard limit)",
