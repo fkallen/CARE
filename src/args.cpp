@@ -56,7 +56,7 @@ namespace args{
 
 	template<>
 	AlignmentOptions to<AlignmentOptions>(const cxxopts::ParseResult& pr){
-        AlignmentOptions result;
+        AlignmentOptions result{};
 
         return result;
 	}
@@ -64,7 +64,7 @@ namespace args{
 	template<>
 	GoodAlignmentProperties to<GoodAlignmentProperties>(const cxxopts::ParseResult& pr){
 
-        GoodAlignmentProperties result;
+        GoodAlignmentProperties result{};
 
         if(pr.count("minalignmentoverlap")){
             result.min_overlap = pr["minalignmentoverlap"].as<int>();
@@ -81,7 +81,7 @@ namespace args{
 
 	template<>
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
-        CorrectionOptions result;
+        CorrectionOptions result{};
 
         if(pr.count("candidateCorrection")){
             result.correctCandidates = pr["candidateCorrection"].as<bool>();
@@ -119,7 +119,7 @@ namespace args{
 
 	template<>
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr){
-        RuntimeOptions result;
+        RuntimeOptions result{};
 
         if(pr.count("threads")){
             result.threads = pr["threads"].as<int>();
@@ -147,7 +147,7 @@ namespace args{
 
     template<>
 	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
-        MemoryOptions result;
+        MemoryOptions result{};
 
         auto parseMemoryString = [](const auto& string) -> std::size_t{
             if(string.length() > 0){
@@ -204,7 +204,7 @@ namespace args{
 
 	template<>
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
-        FileOptions result;
+        FileOptions result{};
 
         result.format = FileFormat::NONE;
         if(pr.count("inputfile")){

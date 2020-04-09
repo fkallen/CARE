@@ -39,8 +39,8 @@ namespace care{
     };
 
     struct CorrectionOptions{
-        bool correctCandidates = true;
-        bool useQualityScores = true;
+        bool correctCandidates = false;
+        bool useQualityScores = false;
         float estimatedCoverage = 1.0f;
         float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
@@ -53,7 +53,7 @@ namespace care{
 		int threads = 1;
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
-        bool showProgress = true;
+        bool showProgress = false;
         bool canUseGpu = false;
         std::vector<int> deviceIds;
 	};
