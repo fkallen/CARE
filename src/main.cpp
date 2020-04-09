@@ -75,13 +75,13 @@ int main(int argc, char** argv){
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected",
-		cxxopts::value<int>()->default_value("5"))
+		cxxopts::value<int>()->default_value("15"))
 		("maxmismatchratio", "Overlap between anchor and candidate must contain at most maxmismatchratio * overlapsize mismatches",
 		cxxopts::value<float>()->default_value("0.2"))
 		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long", 
-		cxxopts::value<int>()->default_value("35"))
+		cxxopts::value<int>()->default_value("20"))
 		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as long as minalignmentoverlapratio * querylength",
-		cxxopts::value<float>()->default_value("0.35"))
+		cxxopts::value<float>()->default_value("0.20"))
 
 		("errorfactortuning", "errorfactortuning",
 		cxxopts::value<float>()->default_value("0.06"))

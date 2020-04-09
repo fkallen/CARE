@@ -13,8 +13,8 @@ namespace care{
 	//Options which can be parsed from command-line arguments
 
     struct MinhashOptions {
-        int maps = 2;
-        int k = 16;
+        int maps = 32;
+        int k = 20;
         int numResultsPerMapQueryThreshold = 100;
         bool operator==(const MinhashOptions& other) const{
             return maps == other.maps && k == other.k 
@@ -33,20 +33,20 @@ namespace care{
     };
 
     struct GoodAlignmentProperties{
-        int min_overlap = 35;
+        int min_overlap = 20;
         float maxErrorRate = 0.2f;
-        float min_overlap_ratio = 0.35f;
+        float min_overlap_ratio = 0.20f;
     };
 
     struct CorrectionOptions{
-        bool correctCandidates = false;
+        bool correctCandidates = true;
         bool useQualityScores = true;
         float estimatedCoverage = 1.0f;
         float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
-        int kmerlength = 16;
-		int batchsize = 5;
-        int new_columns_to_correct = 0;
+        int kmerlength = 20;
+		int batchsize = 1000;
+        int new_columns_to_correct = 15;
     };
 
 	struct RuntimeOptions{
@@ -64,18 +64,18 @@ namespace care{
     };
 
 	struct FileOptions{
-		FileFormat format;
+		FileFormat format = FileFormat::NONE;
 		std::string inputfile;
 		std::string outputdirectory;
         std::string outputfilename;
-		std::string outputfile;
-		std::uint64_t nReads;
-        int minimum_sequence_length;
-        int maximum_sequence_length;
-        std::string save_binary_reads_to;
-        std::string load_binary_reads_from;
-        std::string save_hashtables_to;
-        std::string load_hashtables_from;
+		std::string outputfile = "";
+		std::uint64_t nReads = 0;
+        int minimum_sequence_length = -1;
+        int maximum_sequence_length = 0;
+        std::string save_binary_reads_to = "";
+        std::string load_binary_reads_from = "";
+        std::string save_hashtables_to = "";
+        std::string load_hashtables_from = "";
         std::string tempdirectory;
 	};
 
