@@ -38,15 +38,6 @@ namespace care{
     	std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB on host." << std::endl;
     }
 
-    void printFileProperties(const std::string& filename, const SequenceFileProperties& props){
-    	std::cout << "----------------------------------------" << std::endl;
-    	std::cout << "File: " << filename << std::endl;
-    	std::cout << "Reads: " << props.nReads << std::endl;
-    	std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
-    	std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    	std::cout << "----------------------------------------" << std::endl;
-    }
-
     void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
