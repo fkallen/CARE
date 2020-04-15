@@ -3407,7 +3407,8 @@ namespace gpu{
 
 
 
-void correct_gpu(
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const RuntimeOptions& runtimeOptions,
@@ -3422,12 +3423,6 @@ void correct_gpu(
     assert(runtimeOptions.deviceIds.size() > 0);
 
     const auto& deviceIds = runtimeOptions.deviceIds;
-
-    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
-
-    //std::vector<std::atomic_uint8_t> correctionStatusFlagsPerRead;
-    //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-    //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
@@ -3466,24 +3461,8 @@ void correct_gpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
-
-    //   std::ofstream outputstream;
-    //   std::unique_ptr<SequenceFileWriter> writer;
-
-      //if candidate correction is not enabled, it is possible to write directly into the result file
-      // if(!correctionOptions.correctCandidates){
-      //     //writer = std::move(makeSequenceWriter(fileOptions.outputfile, FileFormat::FASTQGZ));
-      //     outputstream = std::move(std::ofstream(fileOptions.outputfile));
-      //     if(!outputstream){
-      //         throw std::runtime_error("Could not open output file " + tmpfiles[0]);
-      //     }
-      // }else{
-        //   outputstream = std::move(std::ofstream(tmpfiles[0]));
-        //   if(!outputstream){
-        //       throw std::runtime_error("Could not open output file " + tmpfiles[0]);
-        //   }
-     // }
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
       //std::mutex outputstreamlock;
 
@@ -4056,75 +4035,29 @@ void correct_gpu(
     //     }
 
 
-      correctionStatusFlagsPerRead.reset();
+    correctionStatusFlagsPerRead.reset();
 
-      //size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
+    //size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
 
-      minhasher.destroy();
-      readStorage.destroy();
+    minhasher.destroy();
+    readStorage.destroy();
 
-      std::cerr << "useEditsCountMap\n";
-      for(const auto& pair : useEditsCountMap){
-          std::cerr << int(pair.first) << " : " << pair.second << "\n";
-      }
+    std::cerr << "useEditsCountMap\n";
+    for(const auto& pair : useEditsCountMap){
+        std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    }
 
-      std::cerr << "useEditsSavedCountMap\n";
-      for(const auto& pair : useEditsSavedCountMap){
-          std::cerr << int(pair.first) << " : " << pair.second << "\n";
-      }
+    std::cerr << "useEditsSavedCountMap\n";
+    for(const auto& pair : useEditsSavedCountMap){
+        std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    }
 
-      std::cerr << "numEditsHistogram\n";
-      for(const auto& pair : numEditsHistogram){
-          std::cerr << int(pair.first) << " : " << pair.second << "\n";
-      }
+    std::cerr << "numEditsHistogram\n";
+    for(const auto& pair : numEditsHistogram){
+        std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    }
 
-      
-
-        #ifndef DO_PROFILE
-
-        //if candidate correction is enabled, only the read id and corrected sequence of corrected reads is written to outputfile
-        //outputfile needs to be sorted by read id
-        //then, the corrected reads from the output file have to be merged with the original input file to get headers, uncorrected reads, and quality scores
-        {
-
-            const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-            std::size_t memoryForSorting = 0;
-
-            if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
-                memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
-            }
-
-            std::cout << "begin merge" << std::endl;
-
-
-            std::cout << "begin merging reads" << std::endl;
-
-            TIMERSTARTCPU(merge);
-
-            constructOutputFileFromResults(
-                fileOptions.tempdirectory,
-                sequenceFileProperties.nReads, 
-                fileOptions.inputfile, 
-                fileOptions.format, 
-                partialResults, 
-                memoryForSorting,
-                fileOptions.outputfile, 
-                false
-            );
-
-            TIMERSTOPCPU(merge);
-
-            std::cout << "end merging reads" << std::endl;
-
-            filehelpers::deleteFiles(tmpfiles);
-        }
-
-
-        std::cout << "end merge" << std::endl;
-
-        #endif
-
-
+    return partialResults;
 
 }
 

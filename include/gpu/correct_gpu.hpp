@@ -1,12 +1,14 @@
 #ifndef CARE_CORRECT_GPU_HPP
 #define CARE_CORRECT_GPU_HPP
 
+#include <gpu/distributedreadstorage.hpp>
+
 #include <config.hpp>
+#include <correctionresultprocessing.hpp>
+#include <minhasher.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-#include <minhasher.hpp>
 #include <readstorage.hpp>
-#include <gpu/distributedreadstorage.hpp>
 
 #include <mutex>
 #include <memory>
@@ -16,7 +18,8 @@ namespace care {
 namespace gpu {
 
 
-void correct_gpu(
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
 	const GoodAlignmentProperties& goodAlignmentProperties,
 	const CorrectionOptions& correctionOptions,
 	const RuntimeOptions& runtimeOptions,

@@ -60,6 +60,7 @@ namespace care{
         std::string tempdirectory;
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
+        std::vector<std::uint64_t> maxReadsPerFile;
 	};
 
     struct AllOptions{

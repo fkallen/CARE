@@ -48,6 +48,16 @@ namespace care{
             }
         }
 
+
+        inline
+        std::vector<SequenceFileProperties> getSequenceFilePropertiesFromFileOptions2(const FileOptions& fileOptions){
+            std::vector<SequenceFileProperties> result;
+            for(const auto& inputfile : fileOptions.inputfiles){
+                result.emplace_back(getSequenceFileProperties(inputfile));
+            }
+            return result;
+        }
+
         inline
         void printInputFileProperties(std::ostream& os, const std::string& filename, const SequenceFileProperties& props){
             os << "----------------------------------------\n";

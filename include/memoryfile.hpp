@@ -21,6 +21,7 @@
 
 namespace care{
 
+#if 0
 /*
     T must have a function size_t heapsize() which returns the size 
     of memory allocated on the heap which is owned by an instance of T
@@ -117,7 +118,7 @@ struct MemoryFile{
           filename(file),
           getHeapUsageOfElement(std::move(heapUsageFunc)){
 
-        outputstream =  std::ofstream(filename, std::ios::binary);
+        outputstream = std::ofstream(filename, std::ios::binary);
     }
 
     bool storeElement(T element){
@@ -292,7 +293,7 @@ private:
 
 
 
-
+#endif
 
 
 
@@ -412,7 +413,29 @@ struct MemoryFileFixedSize{
           outputstream(filename, std::ios::binary){
 
         assert(outputstream.good());
+    }
 
+    ~MemoryFileFixedSize(){
+        if(filename != ""){
+            std::cerr << "Deleting file " << filename << " of MemoryFileFixedSize\n";
+            filehelpers::deleteFiles({filename});
+        }
+    }
+
+    MemoryFileFixedSize(const MemoryFileFixedSize&) = delete;
+    MemoryFileFixedSize& operator=(const MemoryFileFixedSize&) = delete;
+
+    MemoryFileFixedSize(MemoryFileFixedSize&& rhs){
+        *this = std::move(rhs);
+    }
+    MemoryFileFixedSize& operator=(MemoryFileFixedSize&& rhs){
+        isUsingFile = std::exchange(rhs.isUsingFile, false);
+        memoryStorage = std::exchange(rhs.memoryStorage, FixedSizeStorage<T>{0});
+        numStoredElementsInFile = std::exchange(rhs.numStoredElementsInFile, 0);
+        filename = std::exchange(rhs.filename, "");
+        outputstream = std::exchange(rhs.outputstream, std::ofstream{});
+
+        return *this;
     }
 
     Reader makeReader() const{
