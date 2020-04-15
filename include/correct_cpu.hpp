@@ -10,22 +10,20 @@
 #include <readstorage.hpp>
 
 
-#include <mutex>
-#include <memory>
-#include <vector>
-
 namespace care{
 namespace cpu{
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> correct_cpu(
-    				  const GoodAlignmentProperties& goodAlignmentProperties,
-    				  const CorrectionOptions& correctionOptions,
-    				  const RuntimeOptions& runtimeOptions,
-    				  const FileOptions& fileOptions,
-					  const MemoryOptions& memoryOptions,
-                      const SequenceFileProperties& sequenceFileProperties,
-                      Minhasher& minhasher,
-                      cpu::ContiguousReadStorage& readStorage);
+    MemoryFileFixedSize<EncodedTempCorrectedSequence>
+	correct_cpu(
+		const GoodAlignmentProperties& goodAlignmentProperties,
+		const CorrectionOptions& correctionOptions,
+		const RuntimeOptions& runtimeOptions,
+		const FileOptions& fileOptions,
+		const MemoryOptions& memoryOptions,
+		const SequenceFileProperties& sequenceFileProperties,
+		Minhasher& minhasher,
+		cpu::ContiguousReadStorage& readStorage
+	);
 
 
 }
