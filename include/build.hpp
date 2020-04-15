@@ -52,8 +52,18 @@ namespace care{
         inline
         std::vector<SequenceFileProperties> getSequenceFilePropertiesFromFileOptions2(const FileOptions& fileOptions){
             std::vector<SequenceFileProperties> result;
+
+            std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
+
             for(const auto& inputfile : fileOptions.inputfiles){
                 result.emplace_back(getSequenceFileProperties(inputfile));
+
+                std::cout << "----------------------------------------\n";
+                std::cout << "File: " << inputfile << "\n";
+                std::cout << "Reads: " << result.back().nReads << "\n";
+                std::cout << "Minimum sequence length: " << result.back().minSequenceLength << "\n";
+                std::cout << "Maximum sequence length: " << result.back().maxSequenceLength << "\n";
+                std::cout << "----------------------------------------\n";
             }
             return result;
         }
@@ -83,6 +93,7 @@ namespace care{
         BuiltDataStructure<Minhasher> builtMinhasher;
 
         SequenceFileProperties sequenceFileProperties;
+        std::vector<SequenceFileProperties> inputFileProperties;
     };
 
     BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
@@ -109,6 +120,18 @@ namespace care{
                                             const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions);
 
+    BuiltDataStructures buildDataStructures2(
+                                			const CorrectionOptions& correctionOptions,
+                                			const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
+                                			const FileOptions& fileOptions);
+
+    BuiltDataStructures buildAndSaveDataStructures2(
+                                            const CorrectionOptions& correctionOptions,
+                                            const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
+                                            const FileOptions& fileOptions);
+
 #ifdef __NVCC__
 
     namespace gpu{
@@ -123,6 +146,7 @@ namespace care{
             BuiltDataStructure<Minhasher> builtMinhasher;
 
             SequenceFileProperties sequenceFileProperties;
+            std::vector<SequenceFileProperties> inputFileProperties;
         };
 
         BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
@@ -148,6 +172,13 @@ namespace care{
                                                             const RuntimeOptions& runtimeOptions,
                                                             const MemoryOptions& memoryOptions,
                                                             const FileOptions& fileOptions);
+
+
+        BuiltGpuDataStructures buildGpuDataStructures2(
+            const CorrectionOptions& correctionOptions,
+            const RuntimeOptions& runtimeOptions,
+            const MemoryOptions& memoryOptions,
+            const FileOptions& fileOptions);
     }
 #endif
 }

@@ -1229,7 +1229,8 @@ namespace cpu{
         }
 
 
-void correct_cpu(
+MemoryFileFixedSize<EncodedTempCorrectedSequence>
+correct_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,
@@ -1242,7 +1243,6 @@ void correct_cpu(
 
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 
-    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
 
     // std::ofstream outputstream;
 
@@ -1288,7 +1288,8 @@ void correct_cpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
 
 #ifndef DO_PROFILE
@@ -1623,37 +1624,7 @@ void correct_cpu(
 
 #endif
 
-    std::cout << "Correction finished. Constructing result file." << std::endl;
-
-    const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
-    std::size_t memoryForSorting = 0;
-
-    if(availableMemoryInBytes2 > 1*(std::size_t(1) << 30)){
-        memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
-    }
-
-    std::cout << "begin merging reads" << std::endl;
-
-    TIMERSTARTCPU(merge);
-
-    constructOutputFileFromResults(
-        fileOptions.tempdirectory,
-        sequenceFileProperties.nReads, 
-        fileOptions.inputfile, 
-        fileOptions.format, 
-        partialResults, 
-        memoryForSorting, 
-        fileOptions.outputfile, 
-        false
-    );
-
-    TIMERSTOPCPU(merge);
-
-    std::cout << "end merging reads" << std::endl;
-
-    filehelpers::deleteFiles(tmpfiles);
-
-    std::cout << "end merge" << std::endl;
+    return partialResults;
 
 }
 

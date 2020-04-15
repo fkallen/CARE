@@ -324,13 +324,13 @@ namespace args{
     bool isValid<FileOptions>(const FileOptions& opt){
         bool valid = true;
 
-        {
-            std::ifstream is(opt.inputfile);
-            if(!(bool)is){
-                valid = false;
-                std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
-            }
-        }
+        // {
+        //     std::ifstream is(opt.inputfile);
+        //     if(!(bool)is){
+        //         valid = false;
+        //         std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
+        //     }
+        // }
 
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
@@ -348,13 +348,13 @@ namespace args{
             }
         }
 
-        {
-            std::ofstream os(opt.outputfile);
-            if(!(bool)os){
-                valid = false;
-                std::cout << "Error: cannot open output file " << opt.outputfile << std::endl;
-            }
-        }
+        // {
+        //     std::ofstream os(opt.outputfile);
+        //     if(!(bool)os){
+        //         valid = false;
+        //         std::cout << "Error: cannot open output file " << opt.outputfile << std::endl;
+        //     }
+        // }
 
         {
             std::ofstream os(opt.tempdirectory+"/tmptest");

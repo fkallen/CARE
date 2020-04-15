@@ -124,11 +124,11 @@ int main(int argc, char** argv){
 
 	//printCommandlineArguments(std::cerr, parseresults);
 
-	const bool mandatoryPresent = checkMandatoryArguments(parseresults);
-	if(!mandatoryPresent){
-		std::cout << options.help({"Mandatory"}) << std::endl;
-		std::exit(0);
-	}
+	// const bool mandatoryPresent = checkMandatoryArguments(parseresults);
+	// if(!mandatoryPresent){
+	// 	std::cout << options.help({"Mandatory"}) << std::endl;
+	// 	std::exit(0);
+	// }
 
 	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
 	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
@@ -146,14 +146,28 @@ int main(int argc, char** argv){
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
 
 	if(correctionOptions.useQualityScores){
-		const bool fileHasQscores = hasQualityScores(fileOptions.inputfile);
+		// const bool fileHasQscores = hasQualityScores(fileOptions.inputfile);
 
-		if(!fileHasQscores){
-			std::cerr << "Quality scores have been disabled because no quality scores were found in the input file.\n";
+		// if(!fileHasQscores){
+		// 	std::cerr << "Quality scores have been disabled because no quality scores were found in the input file.\n";
+			
+		// 	correctionOptions.useQualityScores = false;
+		// }
+		
+		const bool hasQ = std::all_of(
+			fileOptions.inputfiles.begin(),
+			fileOptions.inputfiles.end(),
+			[](const auto& s){
+				return hasQualityScores(s);
+			}
+		);
+
+		if(!hasQ){
+			std::cerr << "Quality scores have been disabled because there exist reads in an input file without quality scores.\n";
 			
 			correctionOptions.useQualityScores = false;
 		}
-		
+
 	}
 
 	//print all options that will be used

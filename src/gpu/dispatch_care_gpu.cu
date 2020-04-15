@@ -7,6 +7,7 @@
 #include <build.hpp>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/correct_gpu.hpp>
+#include <correctionresultprocessing.hpp>
 
 #include <algorithm>
 #include <iostream>
@@ -56,7 +57,7 @@ namespace care{
 
         TIMERSTARTCPU(set_up_datastructures);
 
-        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures(
+        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildGpuDataStructures2(
             correctionOptions,
             runtimeOptions,
             memoryOptions,
@@ -95,14 +96,21 @@ namespace care{
 
         TIMERSTARTCPU(merge);
 
-        constructOutputFileFromResults(
+        std::vector<FileFormat> formats;
+        for(const auto& inputfile : fileOptions.inputfiles){
+            formats.emplace_back(getFileFormat(inputfile));
+        }
+        std::vector<std::string> outputfiles;
+        for(const auto& outputfilename : fileOptions.outputfilenames){
+            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        }
+        constructOutputFileFromResults2(
             fileOptions.tempdirectory,
-            sequenceFileProperties.nReads, 
-            fileOptions.inputfile, 
-            fileOptions.format, 
+            fileOptions.inputfiles, 
+            formats, 
             partialResults, 
             memoryForSorting,
-            fileOptions.outputfile, 
+            outputfiles, 
             false
         );
 

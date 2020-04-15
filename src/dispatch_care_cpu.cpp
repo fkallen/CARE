@@ -12,7 +12,7 @@
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
 //#include <candidatedistribution.hpp>
-
+#include <correctionresultprocessing.hpp>
 #include <sequence.hpp>
 
 #include <vector>
@@ -64,7 +64,7 @@ namespace care{
 
         TIMERSTARTCPU(load_and_build);
 
-        BuiltDataStructures dataStructures = buildAndSaveDataStructures(
+        BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
                                                                 correctionOptions,
                                                                 runtimeOptions,
                                                                 memoryOptions,
@@ -80,7 +80,7 @@ namespace care{
 
         std::cout << "Running CARE CPU" << std::endl;
 
-        cpu::correct_cpu(
+        auto partialResults = cpu::correct_cpu(
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
@@ -90,6 +90,40 @@ namespace care{
             minhasher, 
             readStorage
         );
+
+
+        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        std::vector<FileFormat> formats;
+        for(const auto& inputfile : fileOptions.inputfiles){
+            formats.emplace_back(getFileFormat(inputfile));
+        }
+        std::vector<std::string> outputfiles;
+        for(const auto& outputfilename : fileOptions.outputfilenames){
+            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        }
+        constructOutputFileFromResults2(
+            fileOptions.tempdirectory,
+            fileOptions.inputfiles, 
+            formats, 
+            partialResults, 
+            memoryForSorting,
+            outputfiles, 
+            false
+        );
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
 
     }
 
