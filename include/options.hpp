@@ -58,6 +58,9 @@ namespace care{
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
         std::string tempdirectory;
+        std::vector<std::string> inputfiles;
+        std::vector<std::string> outputfilenames;
+        std::vector<std::uint64_t> maxReadsPerFile;
 	};
 
     struct AllOptions{

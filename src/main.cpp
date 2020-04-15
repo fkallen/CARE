@@ -56,12 +56,16 @@ int main(int argc, char** argv){
 	cxxopts::Options options(argv[0], "CARE: Context-Aware Error Correction for Illumina reads");
 
 	options.add_options("Mandatory")
-		("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Always treated as single end.", cxxopts::value<std::string>())
+		("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Input files are treated as unpaired. Paired information is not used.", cxxopts::value<std::string>())
 		("outdir", "The output directory", cxxopts::value<std::string>())
 		("outfile", "The output file", cxxopts::value<std::string>())
 		("coverage", "Estimated coverage of input file", cxxopts::value<float>());
 
 	options.add_options("Optional")
+		("inputfiles", "The file(s) to correct. Fasta or Fastq format. May be gzip'ed. Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). Cannot mix fasta and fastq files. Input files are treated as unpaired.", 
+			cxxopts::value<std::vector<std::string>>())
+		("outputfilenames", "The names of outputfiles. Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). Output files are uncompressed.", 
+			cxxopts::value<std::vector<std::string>>())			
 		("h", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
@@ -206,7 +210,16 @@ int main(int argc, char** argv){
 	std::cout << "Load preprocessed reads from file: " << fileOptions.load_binary_reads_from << "\n";
 	std::cout << "Save hash tables to file: " << fileOptions.save_hashtables_to << "\n";
 	std::cout << "Load hash tables from file: " << fileOptions.load_hashtables_from << "\n";
-
+	std::cout << "Input files: ";
+	for(auto& s : fileOptions.inputfiles){
+		std::cout << s << ' ';
+	}
+	std::cout << "\n";
+	std::cout << "Output file names: ";
+	for(auto& s : fileOptions.outputfilenames){
+		std::cout << s << ' ';
+	}
+	std::cout << "\n";
 	std::cout << "--------------------------------\n";
 
 

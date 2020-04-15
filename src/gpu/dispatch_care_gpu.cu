@@ -38,15 +38,6 @@ namespace care{
     	std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB on host." << std::endl;
     }
 
-    void printFileProperties(const std::string& filename, const SequenceFileProperties& props){
-    	std::cout << "----------------------------------------" << std::endl;
-    	std::cout << "File: " << filename << std::endl;
-    	std::cout << "Reads: " << props.nReads << std::endl;
-    	std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
-    	std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    	std::cout << "----------------------------------------" << std::endl;
-    }
-
     void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
@@ -80,7 +71,7 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        gpu::correct_gpu(
+        auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
@@ -88,7 +79,36 @@ namespace care{
             memoryOptions,
             sequenceFileProperties,
             minhasher, 
-            readStorage);
+            readStorage
+        );
+
+        //Merge corrected reads with input file to generate output file
+
+        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        constructOutputFileFromResults(
+            fileOptions.tempdirectory,
+            sequenceFileProperties.nReads, 
+            fileOptions.inputfile, 
+            fileOptions.format, 
+            partialResults, 
+            memoryForSorting,
+            fileOptions.outputfile, 
+            false
+        );
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
 
     }
 

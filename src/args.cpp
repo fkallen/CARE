@@ -223,6 +223,13 @@ namespace args{
             result.tempdirectory = result.outputdirectory;
         }
 
+        if(pr.count("inputfiles")){
+            result.inputfiles = pr["inputfiles"].as<std::vector<std::string>>();
+        }
+        if(pr.count("outputfilenames")){
+            result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
+        }
+
         return result;
 	}
 
@@ -356,6 +363,13 @@ namespace args{
                 std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
             }else{
                 filehelpers::removeFile(opt.tempdirectory+"/tmptest");
+            }
+        }
+
+        {
+            if(opt.inputfiles.size() != opt.outputfilenames.size()){
+                valid = false;
+                std::cout << "Error: An output file name must be specified for each input file. Number of input files : " << opt.inputfiles.size() << ", number of output file names: " << opt.outputfilenames.size() << "\n";
             }
         }
         

@@ -97,6 +97,8 @@ public:
     DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, 
                             int minimum_sequence_length, int maximum_sequence_length);
 
+    DistributedReadStorage(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
+
     DistributedReadStorage(const DistributedReadStorage& other) = delete;
     DistributedReadStorage& operator=(const DistributedReadStorage& other) = delete;
 
@@ -258,6 +260,8 @@ public:
     private:
         void init(const std::vector<int>& deviceIds, read_number nReads, bool b, 
                     int minimum_sequence_length, int maximum_sequence_length);
+
+        void init(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setSequences(const std::vector<read_number>& indices, const char* data);
