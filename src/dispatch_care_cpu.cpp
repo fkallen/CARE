@@ -78,9 +78,7 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        std::cout << "Running CARE CPU" << std::endl;
-
-        cpu::correct_cpu(
+        auto partialResults = cpu::correct_cpu(
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
@@ -90,6 +88,35 @@ namespace care{
             minhasher, 
             readStorage
         );
+
+
+        std::cout << "Correction finished. Constructing result file." << std::endl;
+
+        const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes2 > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        constructOutputFileFromResults(
+            fileOptions.tempdirectory,
+            sequenceFileProperties.nReads, 
+            fileOptions.inputfile, 
+            fileOptions.format, 
+            partialResults, 
+            memoryForSorting, 
+            fileOptions.outputfile, 
+            false
+        );
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
 
     }
 
