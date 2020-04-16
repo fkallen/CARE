@@ -114,10 +114,10 @@ namespace care{
         }
         constructOutputFileFromResults2(
             fileOptions.tempdirectory,
-            fileOptions.inputfiles, 
-            formats, 
+            fileOptions.inputfiles,            
             partialResults, 
             memoryForSorting,
+            formats[0], 
             outputfiles, 
             false
         );

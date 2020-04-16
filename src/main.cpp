@@ -60,9 +60,19 @@ int main(int argc, char** argv){
 		("outdir", "The output directory", cxxopts::value<std::string>())
 		//("outfile", "The output file", cxxopts::value<std::string>())
 		("coverage", "Estimated coverage of input file", cxxopts::value<float>())
-		("inputfiles", "The file(s) to correct. Fasta or Fastq format. May be gzip'ed. Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). Cannot mix fasta and fastq files. Input files are treated as unpaired.",
+		("inputfiles", 
+			"The file(s) to correct. "
+			"Fasta or Fastq format. May be gzip'ed. "
+			"Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). "
+			"Must not mix fasta and fastq files. Input files are treated as unpaired.",
 			cxxopts::value<std::vector<std::string>>())
-		("outputfilenames", "The names of outputfiles. Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). Output files are uncompressed.", 
+		("outputfilenames", 
+			"The names of outputfiles. "
+			"Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). "
+			"If a single output file is specified. It will contain the concatenated results of all input files. "
+			"If multiple output files are specified, the number of output files must be equal to the number of input files. "
+			"In this case, output file i will contain the results of input file i. "
+			"Output files are uncompressed.", 
 			cxxopts::value<std::vector<std::string>>());
 
 	options.add_options("Optional")

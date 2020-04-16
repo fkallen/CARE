@@ -605,14 +605,13 @@ template<class MemoryFile_t>
 void mergeResultFiles2_impl(
                     const std::string& tempdir,
                     const std::vector<std::string>& originalReadFiles,
-                    const std::vector<FileFormat> originalFormats,
                     MemoryFile_t& partialResults, 
                     std::size_t memoryForSorting,
+                    FileFormat outputFormat,
                     const std::vector<std::string>& outputfiles,
                     bool isSorted){
 
-    assert(originalReadFiles.size() == originalFormats.size());
-    assert(originalReadFiles.size() == outputfiles.size());
+    assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
     bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
 
@@ -992,34 +991,37 @@ void mergeResultFiles2_impl(
 
     auto partialResultsReader = partialResults.makeReader();
 
+    //no gz output
+    if(outputFormat == FileFormat::FASTQGZ)
+        outputFormat = FileFormat::FASTQ;
+    if(outputFormat == FileFormat::FASTAGZ)
+        outputFormat = FileFormat::FASTA;
+
 
     std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
     std::vector<kseqpp::KseqPP> inputReaderVector;
-    for(size_t i = 0; i < outputfiles.size(); i++){
-        FileFormat outputformat = originalFormats[i];
-        if(outputformat == FileFormat::FASTQGZ)
-            outputformat = FileFormat::FASTQ;
-        if(outputformat == FileFormat::FASTAGZ)
-            outputformat = FileFormat::FASTA;
-        const std::string& inputfile = originalReadFiles[i];
-        const std::string& outputfile = outputfiles[i];
 
-        writerVector.emplace_back(makeSequenceWriter(outputfile, outputformat));
+    for(const auto& outputfile : outputfiles){
+        writerVector.emplace_back(makeSequenceWriter(outputfile, outputFormat));
+    }
+    for(const auto& inputfile : originalReadFiles){
         inputReaderVector.emplace_back(std::move(kseqpp::KseqPP{inputfile}));
     }
 
     bool inputReaderIsValid = true;
-    int fileId = 0;
+    int inputFileId = 0;
+    int outputFileId = 0;
+
     const int numFiles = originalReadFiles.size();
     Read read;
     std::uint64_t originalReadId = 0;
     bool firstiter = true;
 
     auto updateRead = [&](Read& read){
-        read.name = inputReaderVector[fileId].getCurrentName();
-        read.comment = inputReaderVector[fileId].getCurrentComment();
-        read.sequence = inputReaderVector[fileId].getCurrentSequence();
-        read.quality = inputReaderVector[fileId].getCurrentQuality();
+        read.name = inputReaderVector[inputFileId].getCurrentName();
+        read.comment = inputReaderVector[inputFileId].getCurrentComment();
+        read.sequence = inputReaderVector[inputFileId].getCurrentSequence();
+        read.quality = inputReaderVector[inputFileId].getCurrentQuality();
     };
 
     while(partialResultsReader.hasNext()){
@@ -1047,18 +1049,22 @@ void mergeResultFiles2_impl(
         
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
-            const int status = inputReaderVector[fileId].next();
+            const int status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
 
             if(inputReaderIsValid){
                 updateRead(read);
-                writerVector[fileId]->writeRead(read);
+                writerVector[outputFileId]->writeRead(read);
                 originalReadId++;
             }else{
-                fileId++;
-                if(fileId >= numFiles){
+                inputFileId++;
+                if(inputFileId >= numFiles){
                     throw std::runtime_error{"Cannot skip to read " + std::to_string(currentReadId)
                         + " during merge."};
+                }
+
+                if(outputfiles.size() > 1){
+                    outputFileId++;
                 }
             }
         }
@@ -1066,17 +1072,21 @@ void mergeResultFiles2_impl(
         //get read with id currentReadId
         int status = 0;
         do{
-            status = inputReaderVector[fileId].next();
+            status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
             if(inputReaderIsValid){
                 updateRead(read);
                 originalReadId++;
                 break;
             }else{
-                fileId++;
-                if(fileId >= numFiles){
+                inputFileId++;
+                if(inputFileId >= numFiles){
                     throw std::runtime_error{"Could not find read " + std::to_string(currentReadId)
                         + " during merge."};
+                }
+
+                if(outputfiles.size() > 1){
+                    outputFileId++;
                 }
             }
         }while(true);
@@ -1107,9 +1117,9 @@ void mergeResultFiles2_impl(
                         << "does contain an invalid DNA base!\n"
                         << "Corrected sequence is: "  << correctedSequence.first << '\n';
             }
-            writerVector[fileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
+            writerVector[outputFileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
         }else{
-            writerVector[fileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+            writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
         }
 
         correctionVector.clear();
@@ -1123,18 +1133,22 @@ void mergeResultFiles2_impl(
     if(correctionVector.size() > 0){
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
-            const int status = inputReaderVector[fileId].next();
+            const int status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
 
             if(inputReaderIsValid){
                 updateRead(read);
-                writerVector[fileId]->writeRead(read);
+                writerVector[outputFileId]->writeRead(read);
                 originalReadId++;
             }else{
-                fileId++;
-                if(fileId >= numFiles){
+                inputFileId++;
+                if(inputFileId >= numFiles){
                     throw std::runtime_error{"Cannot skip to read " + std::to_string(currentReadId)
                         + " during merge."};
+                }
+
+                if(outputfiles.size() > 1){
+                    outputFileId++;
                 }
             }
         }
@@ -1142,17 +1156,21 @@ void mergeResultFiles2_impl(
         //get read with id currentReadId
         int status = 0;
         do{
-            status = inputReaderVector[fileId].next();
+            status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
             if(inputReaderIsValid){
                 updateRead(read);
                 originalReadId++;
                 break;
             }else{
-                fileId++;
-                if(fileId >= numFiles){
+                inputFileId++;
+                if(inputFileId >= numFiles){
                     throw std::runtime_error{"Could not find read " + std::to_string(currentReadId)
                         + " during merge."};
+                }
+
+                if(outputfiles.size() > 1){
+                    outputFileId++;
                 }
             }
         }while(true);
@@ -1183,22 +1201,26 @@ void mergeResultFiles2_impl(
                         << "does contain an invalid DNA base!\n"
                         << "Corrected sequence is: "  << correctedSequence.first << '\n';
             }
-            writerVector[fileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
+            writerVector[outputFileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
         }else{
-            writerVector[fileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+            writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
         }
 
         correctionVector.clear();
     }
 
-    //copy remaining reads from original file
-    while((inputReaderIsValid = (inputReaderVector[fileId].next() >= 0)) && fileId < numFiles){
+    //copy remaining reads from original files
+    while((inputReaderIsValid = (inputReaderVector[inputFileId].next() >= 0)) && inputFileId < numFiles){
         if(inputReaderIsValid){
             updateRead(read);
-            writerVector[fileId]->writeRead(read);
+            writerVector[outputFileId]->writeRead(read);
             originalReadId++;
         }else{
-            fileId++;
+            inputFileId++;
+
+            if(outputfiles.size() > 1){
+                outputFileId++;
+            }
         }
     }
 
@@ -1242,18 +1264,18 @@ void constructOutputFileFromResults(
 void constructOutputFileFromResults2(
                     const std::string& tempdir,
                     const std::vector<std::string>& originalReadFiles,
-                    const std::vector<FileFormat> originalFormats,
                     MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
                     std::size_t memoryForSorting,
+                    FileFormat outputFormat,
                     const std::vector<std::string>& outputfiles,
                     bool isSorted){
                         
     mergeResultFiles2_impl(
         tempdir, 
         originalReadFiles, 
-        originalFormats, 
         partialResults, 
         memoryForSorting, 
+        outputFormat,
         outputfiles, 
         isSorted
     );

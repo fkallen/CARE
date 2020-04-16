@@ -107,9 +107,9 @@ namespace care{
         constructOutputFileFromResults2(
             fileOptions.tempdirectory,
             fileOptions.inputfiles, 
-            formats, 
             partialResults, 
             memoryForSorting,
+            formats[0],
             outputfiles, 
             false
         );

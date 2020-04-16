@@ -150,13 +150,13 @@ namespace care{
                         bool isSorted);
 
     void constructOutputFileFromResults2(
-                        const std::string& tempdir,
-                        const std::vector<std::string>& originalReadFiles,
-                        const std::vector<FileFormat> originalFormats,
-                        MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
-                        std::size_t memoryForSorting,
-                        const std::vector<std::string>& outputfiles,
-                        bool isSorted);
+                    const std::string& tempdir,
+                    const std::vector<std::string>& originalReadFiles,
+                    MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
+                    std::size_t memoryForSorting,
+                    FileFormat outputFormat,
+                    const std::vector<std::string>& outputfiles,
+                    bool isSorted);
 
 
 

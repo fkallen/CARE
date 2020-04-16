@@ -348,13 +348,48 @@ namespace args{
             }
         }
 
-        // {
-        //     std::ofstream os(opt.outputfile);
-        //     if(!(bool)os){
-        //         valid = false;
-        //         std::cout << "Error: cannot open output file " << opt.outputfile << std::endl;
-        //     }
-        // }
+        {
+            for(const auto& inputfile : opt.inputfiles){
+                std::ifstream is(inputfile);
+                if(!(bool)is){
+                    valid = false;
+                    std::cout << "Error: cannot find input file " << inputfile << std::endl;
+                }
+            }            
+        }
+
+        {
+            for(const auto& outputfilename : opt.outputfilenames){
+                const std::string outputfile = opt.outputdirectory + "/" + outputfilename;
+                std::ofstream os(outputfile);
+                if(!(bool)os){
+                    valid = false;
+                    std::cout << "Error: cannot open output file " << outputfile << std::endl;
+                }
+            }            
+        }
+
+        {
+            std::vector<FileFormat> formats;
+            for(const auto& inputfile : opt.inputfiles){
+                FileFormat f = getFileFormat(inputfile);
+                if(f == FileFormat::FASTQGZ)
+                    f = FileFormat::FASTQ;
+                if(f == FileFormat::FASTAGZ)
+                    f = FileFormat::FASTA;
+                formats.emplace_back(f);
+            }
+            bool sameFormats = std::all_of(
+                formats.begin()+1, 
+                formats.end(), [&](const auto f){
+                    return f == formats[0];
+                }
+            );
+            if(!sameFormats){
+                valid = false;
+                std::cout << "Error: Must not specify both fasta and fastq files!" << std::endl;
+            }
+        }
 
         {
             std::ofstream os(opt.tempdirectory+"/tmptest");
@@ -367,7 +402,7 @@ namespace args{
         }
 
         {
-            if(opt.inputfiles.size() != opt.outputfilenames.size()){
+            if(opt.outputfilenames.size() > 1 && opt.inputfiles.size() != opt.outputfilenames.size()){
                 valid = false;
                 std::cout << "Error: An output file name must be specified for each input file. Number of input files : " << opt.inputfiles.size() << ", number of output file names: " << opt.outputfilenames.size() << "\n";
             }
