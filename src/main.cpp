@@ -56,17 +56,15 @@ int main(int argc, char** argv){
 	cxxopts::Options options(argv[0], "CARE: Context-Aware Error Correction for Illumina reads");
 
 	options.add_options("Mandatory")
-		//("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Input files are treated as unpaired. Paired information is not used.", cxxopts::value<std::string>())
-		("outdir", "The output directory", cxxopts::value<std::string>())
-		//("outfile", "The output file", cxxopts::value<std::string>())
-		("coverage", "Estimated coverage of input file", cxxopts::value<float>())
-		("inputfiles", 
+		("d,outdir", "The output directory", cxxopts::value<std::string>())
+		("c,coverage", "Estimated coverage of input file", cxxopts::value<float>())
+		("i,inputfiles", 
 			"The file(s) to correct. "
 			"Fasta or Fastq format. May be gzip'ed. "
 			"Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). "
 			"Must not mix fasta and fastq files. Input files are treated as unpaired.",
 			cxxopts::value<std::vector<std::string>>())
-		("outputfilenames", 
+		("o,outputfilenames", 
 			"The names of outputfiles. "
 			"Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). "
 			"If a single output file is specified. It will contain the concatenated results of all input files. "
