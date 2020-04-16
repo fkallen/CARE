@@ -1075,11 +1075,11 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
             result.builtType = BuiltType::Loaded;
 
             if(useQualityScores && !readStorage.canUseQualityScores())
-                throw std::runtime_error("Quality scores are required but not present in compressed sequence file!");
+                throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
             if(!useQualityScores && readStorage.canUseQualityScores())
-                std::cerr << "Warning. The loaded compressed read file contains quality scores, but program does not use them!\n";
+                std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
 
-            std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
+            std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
 
             readStorage.constructionIsComplete();
 
@@ -1305,33 +1305,51 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
 
         BuiltGpuDataStructures result;
 
-        auto inputFileProperties = detail::getSequenceFilePropertiesFromFileOptions2(fileOptions);
+        std::uint64_t maximumNumberOfReads = fileOptions.nReads;
+        int maximumSequenceLength = fileOptions.maximum_sequence_length;
+        int minimumSequenceLength = fileOptions.minimum_sequence_length;
+        bool scanned = false;
 
-        SequenceFileProperties totalInputFileProperties;
-        totalInputFileProperties.nReads = std::accumulate(
-            inputFileProperties.begin(), 
-            inputFileProperties.end(), 
-            std::uint64_t{0}, 
-            [](const auto acc, const auto& e){return acc + e.nReads;}
-        );
-        totalInputFileProperties.minSequenceLength = std::min_element(
-            inputFileProperties.begin(), 
-            inputFileProperties.end(), 
-            [](const auto& l, const auto& r){return l.minSequenceLength < r.minSequenceLength;}
-        )->minSequenceLength;
-        totalInputFileProperties.maxSequenceLength = std::max_element(
-            inputFileProperties.begin(), 
-            inputFileProperties.end(), 
-            [](const auto& l, const auto& r){return l.maxSequenceLength < r.maxSequenceLength;}
-        )->maxSequenceLength;
+        if(fileOptions.load_binary_reads_from == ""){
+
+            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength < 0) {
+                std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
+
+                maximumNumberOfReads = 0;
+                maximumSequenceLength = 0;
+                minimumSequenceLength = std::numeric_limits<int>::max();
+
+                for(const auto& inputfile : fileOptions.inputfiles){
+                    auto prop = getSequenceFileProperties(inputfile);
+                    maximumNumberOfReads += prop.nReads;
+                    maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
+                    minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
+
+                    std::cout << "----------------------------------------\n";
+                    std::cout << "File: " << inputfile << "\n";
+                    std::cout << "Reads: " << prop.nReads << "\n";
+                    std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
+                    std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
+                    std::cout << "----------------------------------------\n";
+
+                    //result.inputFileProperties.emplace_back(prop);
+                }
+
+                scanned = true;
+            }else{
+                //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
+            }
+        }
 
         TIMERSTARTCPU(build_readstorage);
-        result.builtReadStorage = buildGpuReadStorage2(fileOptions,
-                                                  runtimeOptions,
-                                                  correctionOptions.useQualityScores,
-                                                  totalInputFileProperties.nReads,
-                                                  totalInputFileProperties.minSequenceLength,
-                                                  totalInputFileProperties.maxSequenceLength);
+        result.builtReadStorage = buildGpuReadStorage2(
+            fileOptions,
+            runtimeOptions,
+            correctionOptions.useQualityScores,
+            maximumNumberOfReads,
+            minimumSequenceLength,
+            maximumSequenceLength
+        );
         TIMERSTOPCPU(build_readstorage);
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
@@ -1340,7 +1358,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
         validateReadstorage(readStorage, fileOptions);
 #endif 
 
-        std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
+        //std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
 
         if(saveDataStructuresToFile && fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
@@ -1350,10 +1368,22 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
     		std::cout << "Saved reads" << std::endl;
     	}
 
-        result.sequenceFileProperties.nReads = readStorage.getNumberOfReads();
-        result.sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-        result.sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
-        result.inputFileProperties = std::move(inputFileProperties);
+        result.totalInputFileProperties.nReads = readStorage.getNumberOfReads();
+        result.totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        result.totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+
+        if(!scanned){
+            std::cout << "Determined the following read properties:\n";
+            std::cout << "----------------------------------------\n";
+            std::cout << "Total number of reads: " << result.totalInputFileProperties.nReads << "\n";
+            std::cout << "Minimum sequence length: " << result.totalInputFileProperties.minSequenceLength << "\n";
+            std::cout << "Maximum sequence length: " << result.totalInputFileProperties.maxSequenceLength << "\n";
+            std::cout << "----------------------------------------\n";
+        }
+
+        
+
+ 
 
         std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
@@ -1361,7 +1391,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
         result.builtMinhasher = build_minhasher(fileOptions, 
             runtimeOptions, 
             memoryOptions,
-            result.sequenceFileProperties.nReads, 
+            result.totalInputFileProperties.nReads, 
             correctionOptions,
             result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);

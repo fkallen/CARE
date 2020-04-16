@@ -65,16 +65,17 @@ namespace care{
         TIMERSTARTCPU(load_and_build);
 
         BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
-                                                                correctionOptions,
-                                                                runtimeOptions,
-                                                                memoryOptions,
-                                                                fileOptions);
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions
+        );
 
         TIMERSTOPCPU(load_and_build);
 
         auto& readStorage = dataStructures.builtReadStorage.data;
         auto& minhasher = dataStructures.builtMinhasher.data;
-        auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
+        auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
@@ -84,7 +85,7 @@ namespace care{
             runtimeOptions, 
             fileOptions, 
             memoryOptions, 
-            sequenceFileProperties,
+            totalInputFileProperties,
             minhasher, 
             readStorage
         );

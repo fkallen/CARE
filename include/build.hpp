@@ -91,8 +91,8 @@ namespace care{
         BuiltDataStructure<cpu::ContiguousReadStorage> builtReadStorage;
         BuiltDataStructure<Minhasher> builtMinhasher;
 
-        SequenceFileProperties sequenceFileProperties;
-        std::vector<SequenceFileProperties> inputFileProperties;
+        SequenceFileProperties totalInputFileProperties;
+        //std::vector<SequenceFileProperties> inputFileProperties;
     };
 
     BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
@@ -132,8 +132,8 @@ namespace care{
             BuiltDataStructure<GpuReadStorageWithFlags> builtReadStorage;
             BuiltDataStructure<Minhasher> builtMinhasher;
 
-            SequenceFileProperties sequenceFileProperties;
-            std::vector<SequenceFileProperties> inputFileProperties;
+            SequenceFileProperties totalInputFileProperties;
+            //std::vector<SequenceFileProperties> inputFileProperties;
         };
 
         BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,

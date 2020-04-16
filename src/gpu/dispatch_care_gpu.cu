@@ -68,7 +68,7 @@ namespace care{
 
         auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
-        auto& sequenceFileProperties = dataStructuresgpu.sequenceFileProperties;
+        auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
@@ -78,7 +78,7 @@ namespace care{
             runtimeOptions, 
             fileOptions, 
             memoryOptions,
-            sequenceFileProperties,
+            totalInputFileProperties,
             minhasher, 
             readStorage
         );
