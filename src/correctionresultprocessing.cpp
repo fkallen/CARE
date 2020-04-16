@@ -978,6 +978,28 @@ void mergeResultFiles2_impl(
     auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults4NewHQLQ;
 
 
+    struct Task{
+        read_number readId;
+        SequenceFileWriter* writer;
+        Read read;
+
+        // Task() = default;
+        // Task(read_number id, SequenceFileWriter* w, Read r){
+        //     readId = id;
+        //     writer = w;
+        //     read = std::move(r);
+        // }
+        
+    };
+
+    auto processTask = [&](auto& task){
+        task.writer->writeRead(task.read.name, task.read.comment, task.read.sequence, task.read.quality);
+    };
+
+    const std::size_t batchsizetasks = 1000;
+    std::vector<Task> writeTasks;
+
+
     std::uint64_t currentReadId = 0;
     std::vector<TempCorrectedSequence> correctionVector;
     correctionVector.reserve(256);
@@ -1058,7 +1080,12 @@ void mergeResultFiles2_impl(
 
             if(inputReaderIsValid){
                 updateRead(read);
-                writerVector[outputFileId]->writeRead(read);
+                Task writeTask;
+                writeTask.readId = originalReadId;
+                writeTask.writer = writerVector[outputFileId].get();
+                writeTask.read = std::move(read);
+                processTask(writeTask);
+                // writerVector[outputFileId]->writeRead(read);
                 originalReadId++;
             }else{
                 inputFileId++;
@@ -1098,6 +1125,22 @@ void mergeResultFiles2_impl(
 
         assert(inputReaderIsValid);
 
+        // Task constructionTask;
+        // constructionTask.readId = currentReadId;
+        // constructionTask.writer = writerVector[outputFileId].get();
+        // constructionTask.correctionVector = std::move(correctionVector);
+        // constructionTask.read = std::move(read);
+
+
+        // constructionTasks.emplace_back(std::move(constructionTask));
+
+        // if(constructionTasks.size() >= batchsizetasks){
+        //     for(auto& task : constructionTasks){
+        //         processTask(task);
+        //     }
+        //     constructionTasks.clear();
+        // }
+
         //replace sequence of next read with corrected sequence
         for(auto& tmpres : correctionVector){
             if(tmpres.useEdits){
@@ -1113,18 +1156,37 @@ void mergeResultFiles2_impl(
             read.sequence
         );
 
+
         if(correctedSequence.second){
-            //assert(isValidSequence(correctedSequence.first));
             if(!isValidSequence(correctedSequence.first)){
                 std::cerr << "Warning. Corrected read " << currentReadId
                         << " with header " << read.name << " " << read.comment
                         << "does contain an invalid DNA base!\n"
                         << "Corrected sequence is: "  << correctedSequence.first << '\n';
             }
-            writerVector[outputFileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
-        }else{
-            writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
-        }
+            read.sequence = std::move(correctedSequence.first);
+        }      
+
+        //writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+
+        Task writeTask;
+        writeTask.readId = currentReadId;
+        writeTask.writer = writerVector[outputFileId].get();
+        writeTask.read = std::move(read);
+        processTask(writeTask);
+
+        // if(correctedSequence.second){
+        //     //assert(isValidSequence(correctedSequence.first));
+        //     if(!isValidSequence(correctedSequence.first)){
+        //         std::cerr << "Warning. Corrected read " << currentReadId
+        //                 << " with header " << read.name << " " << read.comment
+        //                 << "does contain an invalid DNA base!\n"
+        //                 << "Corrected sequence is: "  << correctedSequence.first << '\n';
+        //     }
+        //     writerVector[outputFileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
+        // }else{
+        //     writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+        // }
 
         correctionVector.clear();
         std::swap(correctionVector, correctionVector_tmp);
@@ -1134,84 +1196,10 @@ void mergeResultFiles2_impl(
         firstiter = false;
     }
 
-    // if(correctionVector.size() > 0){
-    //     //copy preceding reads from original file
-    //     while(originalReadId < currentReadId){
-    //         const int status = inputReaderVector[inputFileId].next();
-    //         inputReaderIsValid = status >= 0;
-
-    //         if(inputReaderIsValid){
-    //             updateRead(read);
-    //             writerVector[outputFileId]->writeRead(read);
-    //             originalReadId++;
-    //         }else{
-    //             inputFileId++;
-    //             if(inputFileId >= numFiles){
-    //                 throw std::runtime_error{"Cannot skip to read " + std::to_string(currentReadId)
-    //                     + " during merge."};
-    //             }
-
-    //             if(outputfiles.size() > 1){
-    //                 outputFileId++;
-    //             }
-    //         }
-    //     }
-
-    //     //get read with id currentReadId
-    //     int status = 0;
-    //     do{
-    //         status = inputReaderVector[inputFileId].next();
-    //         inputReaderIsValid = status >= 0;
-    //         if(inputReaderIsValid){
-    //             updateRead(read);
-    //             originalReadId++;
-    //             break;
-    //         }else{
-    //             inputFileId++;
-    //             if(inputFileId >= numFiles){
-    //                 throw std::runtime_error{"Could not find read " + std::to_string(currentReadId)
-    //                     + " during merge."};
-    //             }
-
-    //             if(outputfiles.size() > 1){
-    //                 outputFileId++;
-    //             }
-    //         }
-    //     }while(true);
-
-
-    //     assert(inputReaderIsValid);
-
-    //     //replace sequence of next read with corrected sequence
-    //     for(auto& tmpres : correctionVector){
-    //         if(tmpres.useEdits){
-    //             tmpres.sequence = read.sequence;
-    //             for(const auto& edit : tmpres.edits){
-    //                 tmpres.sequence[edit.pos] = edit.base;
-    //             }
-    //         }
-    //     }
-        
-    //     auto correctedSequence = combineMultipleCorrectionResultsFunction(
-    //         correctionVector, 
-    //         read.sequence
-    //     );
-
-    //     if(correctedSequence.second){
-    //         //assert(isValidSequence(correctedSequence.first));
-    //         if(!isValidSequence(correctedSequence.first)){
-    //             std::cerr << "Warning. Corrected read " << currentReadId
-    //                     << " with header " << read.name << " " << read.comment
-    //                     << "does contain an invalid DNA base!\n"
-    //                     << "Corrected sequence is: "  << correctedSequence.first << '\n';
-    //         }
-    //         writerVector[outputFileId]->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
-    //     }else{
-    //         writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
-    //     }
-
-    //     correctionVector.clear();
+    // for(auto& task : constructionTasks){
+    //     processTask(task);
     // }
+    // constructionTasks.clear();
 
     //copy remaining reads from original files
     while((inputReaderIsValid = (inputReaderVector[inputFileId].next() >= 0)) && inputFileId < numFiles){
