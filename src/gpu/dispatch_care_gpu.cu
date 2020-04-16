@@ -57,7 +57,7 @@ namespace care{
 
         TIMERSTARTCPU(set_up_datastructures);
 
-        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildGpuDataStructures2(
+        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
             correctionOptions,
             runtimeOptions,
             memoryOptions,

@@ -1288,7 +1288,7 @@ correct_cpu(
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    const std::string tmpfilename{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
 

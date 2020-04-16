@@ -45,11 +45,7 @@ namespace care{
     };
 
 	struct FileOptions{
-		FileFormat format = FileFormat::NONE;
-		std::string inputfile;
 		std::string outputdirectory;
-        std::string outputfilename;
-		std::string outputfile = "";
 		std::uint64_t nReads = 0;
         int minimum_sequence_length = -1;
         int maximum_sequence_length = 0;
@@ -60,7 +56,6 @@ namespace care{
         std::string tempdirectory;
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
-        std::vector<std::uint64_t> maxReadsPerFile;
 	};
 
     struct AllOptions{

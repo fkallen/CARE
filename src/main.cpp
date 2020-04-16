@@ -35,7 +35,7 @@ void printCommandlineArguments(std::ostream& out, const cxxopts::ParseResult& pa
 bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
-		"inputfile", "outdir", "outfile", "coverage"
+		"inputfiles", "outdir", "outputfilenames", "coverage"
 	};
 
 	bool success = true;
@@ -56,16 +56,17 @@ int main(int argc, char** argv){
 	cxxopts::Options options(argv[0], "CARE: Context-Aware Error Correction for Illumina reads");
 
 	options.add_options("Mandatory")
-		("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Input files are treated as unpaired. Paired information is not used.", cxxopts::value<std::string>())
+		//("inputfile", "The file to correct. Fasta or Fastq format. May be gzip'ed. Input files are treated as unpaired. Paired information is not used.", cxxopts::value<std::string>())
 		("outdir", "The output directory", cxxopts::value<std::string>())
-		("outfile", "The output file", cxxopts::value<std::string>())
-		("coverage", "Estimated coverage of input file", cxxopts::value<float>());
-
-	options.add_options("Optional")
-		("inputfiles", "The file(s) to correct. Fasta or Fastq format. May be gzip'ed. Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). Cannot mix fasta and fastq files. Input files are treated as unpaired.", 
+		//("outfile", "The output file", cxxopts::value<std::string>())
+		("coverage", "Estimated coverage of input file", cxxopts::value<float>())
+		("inputfiles", "The file(s) to correct. Fasta or Fastq format. May be gzip'ed. Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). Cannot mix fasta and fastq files. Input files are treated as unpaired.",
 			cxxopts::value<std::vector<std::string>>())
 		("outputfilenames", "The names of outputfiles. Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). Output files are uncompressed.", 
-			cxxopts::value<std::vector<std::string>>())			
+			cxxopts::value<std::vector<std::string>>());
+
+	options.add_options("Optional")
+			
 		("h", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
@@ -124,11 +125,11 @@ int main(int argc, char** argv){
 
 	//printCommandlineArguments(std::cerr, parseresults);
 
-	// const bool mandatoryPresent = checkMandatoryArguments(parseresults);
-	// if(!mandatoryPresent){
-	// 	std::cout << options.help({"Mandatory"}) << std::endl;
-	// 	std::exit(0);
-	// }
+	const bool mandatoryPresent = checkMandatoryArguments(parseresults);
+	if(!mandatoryPresent){
+		std::cout << options.help({"Mandatory"}) << std::endl;
+		std::exit(0);
+	}
 
 	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
 	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
@@ -204,21 +205,10 @@ int main(int argc, char** argv){
 	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
 
-	std::cout << "Input file: " << fileOptions.inputfile << "\n";
-	std::cout << "Input file type: ";
-	switch(fileOptions.format){
-		case FileFormat::FASTA: std::cout << "fasta \n"; break;
-		case FileFormat::FASTQ: std::cout << "fastq \n"; break;
-		case FileFormat::FASTAGZ: std::cout << "fasta.gz \n"; break;
-		case FileFormat::FASTQGZ: std::cout << "fastq.gz \n"; break;
-		default: std::cout << "unknown! \n"; break;
-	}
 	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
 	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";
 	std::cout << "Maximum number of reads: " << fileOptions.nReads << "\n";
 	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
-	std::cout << "Output filename: " << fileOptions.outputfilename << "\n";
-	std::cout << "Output file: " << fileOptions.outputfile << "\n";
 	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
 	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";
 	std::cout << "Load preprocessed reads from file: " << fileOptions.load_binary_reads_from << "\n";

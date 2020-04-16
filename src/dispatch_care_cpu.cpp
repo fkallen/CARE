@@ -78,11 +78,6 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-<<<<<<< HEAD
-        std::cout << "Running CARE CPU" << std::endl;
-
-=======
->>>>>>> development
         auto partialResults = cpu::correct_cpu(
             goodAlignmentProperties, 
             correctionOptions,

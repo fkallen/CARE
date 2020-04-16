@@ -177,22 +177,22 @@ namespace args{
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
         FileOptions result{};
 
-        result.format = FileFormat::NONE;
-        if(pr.count("inputfile")){
-		    result.inputfile = pr["inputfile"].as<std::string>();
-            result.format = getFileFormat(result.inputfile);
-        }
+        // result.format = FileFormat::NONE;
+        // if(pr.count("inputfile")){
+		//     result.inputfile = pr["inputfile"].as<std::string>();
+        //     result.format = getFileFormat(result.inputfile);
+        // }
         if(pr.count("outdir")){
 		    result.outputdirectory = pr["outdir"].as<std::string>();
         }
-        if(pr.count("outfile")){
-            result.outputfilename = pr["outfile"].as<std::string>();
-        }
+        // if(pr.count("outfile")){
+        //     result.outputfilename = pr["outfile"].as<std::string>();
+        // }
 
-        if(result.outputfilename == "")
-            result.outputfilename = "care_corrected_" + filehelpers::getFileName(result.inputfile);
+        // if(result.outputfilename == "")
+        //     result.outputfilename = "care_corrected_" + filehelpers::getFileName(result.inputfile);
 
-		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
+		// result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
         
         if(pr.count("nReads")){

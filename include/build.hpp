@@ -6,7 +6,6 @@
 #include <options.hpp>
 
 #include <minhasher.hpp>
-#include <minhasher_transform.hpp>
 #include "readstorage.hpp"
 #include <readlibraryio.hpp>
 #include "sequence.hpp"
@@ -31,22 +30,22 @@ namespace care{
 
     namespace detail{
 
-        inline
-        SequenceFileProperties getSequenceFilePropertiesFromFileOptions(const FileOptions& fileOptions){
-            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0 || fileOptions.minimum_sequence_length < 0) {
-                std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
+        // inline
+        // SequenceFileProperties getSequenceFilePropertiesFromFileOptions(const FileOptions& fileOptions){
+        //     if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0 || fileOptions.minimum_sequence_length < 0) {
+        //         std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
 
-                return getSequenceFileProperties(fileOptions.inputfile);
-            }else{
-                std::cout << "Using the supplied number of reads and min/max sequence length." << std::endl;
+        //         return getSequenceFileProperties(fileOptions.inputfile);
+        //     }else{
+        //         std::cout << "Using the supplied number of reads and min/max sequence length." << std::endl;
 
-                SequenceFileProperties sequenceFileProperties;
-                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-                sequenceFileProperties.minSequenceLength = fileOptions.minimum_sequence_length;
-                sequenceFileProperties.nReads = fileOptions.nReads;
-                return sequenceFileProperties;
-            }
-        }
+        //         SequenceFileProperties sequenceFileProperties;
+        //         sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+        //         sequenceFileProperties.minSequenceLength = fileOptions.minimum_sequence_length;
+        //         sequenceFileProperties.nReads = fileOptions.nReads;
+        //         return sequenceFileProperties;
+        //     }
+        // }
 
 
         inline
@@ -108,18 +107,6 @@ namespace care{
                                 			   std::uint64_t nReads,
                                 			   cpu::ContiguousReadStorage& readStorage);
 
-    BuiltDataStructures buildDataStructures(
-                                			const CorrectionOptions& correctionOptions,
-                                			const RuntimeOptions& runtimeOptions,
-                                            const MemoryOptions& memoryOptions,
-                                			const FileOptions& fileOptions);
-
-    BuiltDataStructures buildAndSaveDataStructures(
-                                			const CorrectionOptions& correctionOptions,
-                                			const RuntimeOptions& runtimeOptions,
-                                            const MemoryOptions& memoryOptions,
-                                			const FileOptions& fileOptions);
-
     BuiltDataStructures buildDataStructures2(
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
@@ -161,20 +148,14 @@ namespace care{
                                     			   std::uint64_t nReads,
                                     			   const GpuReadStorageWithFlags& readStorage);
 
-        BuiltGpuDataStructures buildGpuDataStructures(
-                                    			const CorrectionOptions& correctionOptions,
-                                    			const RuntimeOptions& runtimeOptions,
-                                                const MemoryOptions& memoryOptions,
-                                    			const FileOptions& fileOptions);
-
-        BuiltGpuDataStructures buildAndSaveGpuDataStructures(
-                                                            const CorrectionOptions& correctionOptions,
-                                                            const RuntimeOptions& runtimeOptions,
-                                                            const MemoryOptions& memoryOptions,
-                                                            const FileOptions& fileOptions);
-
 
         BuiltGpuDataStructures buildGpuDataStructures2(
+            const CorrectionOptions& correctionOptions,
+            const RuntimeOptions& runtimeOptions,
+            const MemoryOptions& memoryOptions,
+            const FileOptions& fileOptions);
+
+        BuiltGpuDataStructures buildAndSaveGpuDataStructures2(
             const CorrectionOptions& correctionOptions,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
