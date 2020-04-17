@@ -4,6 +4,7 @@
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
+#include <threadpool.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -11,6 +12,11 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+#include <array>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 
 namespace care{
 
@@ -595,7 +601,57 @@ void mergeResultFiles_impl(
 
 
 
+struct SyncFlag{
+    std::atomic<bool> busy{false};
+    std::mutex m;
+    std::condition_variable cv;
 
+    void setBusy(){
+        assert(busy == false);
+        busy = true;
+    }
+
+    bool isBusy() const{
+        return busy;
+    }
+
+    void wait(){
+        if(isBusy()){
+            std::unique_lock<std::mutex> l(m);
+            while(isBusy()){
+                cv.wait(l);
+            }
+        }
+    }
+
+    void signal(){
+        std::unique_lock<std::mutex> l(m);
+        busy = false;
+        cv.notify_all();
+    }        
+};
+
+template<class T>
+struct WaitableData{
+    T data;
+    SyncFlag syncFlag;
+
+    void setBusy(){
+        syncFlag.setBusy();
+    }
+
+    bool isBusy() const{
+        return syncFlag.isBusy();
+    }
+
+    void wait(){
+        syncFlag.wait();
+    }
+
+    void signal(){
+        syncFlag.signal();
+    } 
+};
 
 
 
@@ -996,8 +1052,13 @@ void mergeResultFiles2_impl(
         task.writer->writeRead(task.read.name, task.read.comment, task.read.sequence, task.read.quality);
     };
 
-    const std::size_t batchsizetasks = 1000;
-    std::vector<Task> writeTasks;
+    const std::size_t batchsizetasks = 10000;
+    //std::vector<Task> writeTasks;
+
+    std::array<WaitableData<std::vector<Task>>, 2> taskdblbuf;
+    int dblbufindex = 0;
+
+    BackgroundThread outputThread(true);
 
 
     std::uint64_t currentReadId = 0;
@@ -1046,7 +1107,18 @@ void mergeResultFiles2_impl(
         read.quality = inputReaderVector[inputFileId].getCurrentQuality();
     };
 
+    std::chrono::time_point<std::chrono::system_clock> timebegin, timeend;
+
+    std::chrono::duration<double> durationInOutputThread{0};
+    std::chrono::duration<double> durationPrload{0};
+    std::chrono::duration<double> durationCopyOrig{0};
+    std::chrono::duration<double> durationConstruction{0};
+
+    int origLessThanCurrent = 0;
+
     while(partialResultsReader.hasNext() || correctionVector.size() > 0){
+        timebegin = std::chrono::system_clock::now();
+
         if(partialResultsReader.hasNext()){
             TempCorrectedSequence tcs = *(partialResultsReader.next());
 
@@ -1072,20 +1144,54 @@ void mergeResultFiles2_impl(
             std::cerr << "partial results empty with currentReadId = " << currentReadId << "\n";
         }
 
-        
+        timeend = std::chrono::system_clock::now();
+
+        durationPrload += timeend - timebegin;
+
+        timebegin = std::chrono::system_clock::now();
+
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
+            origLessThanCurrent++;
             const int status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
 
             if(inputReaderIsValid){
+                // Task writeTask;
+                // writeTask.readId = originalReadId;
+                // writeTask.writer = writerVector[outputFileId].get();
+                // updateRead(writeTask.read);
+                // // writeTask.read = std::move(read);
+                // //processTask(writeTask);
+
+                // taskdblbuf[dblbufindex].data.emplace_back(std::move(writeTask));
+
+                // if(taskdblbuf[dblbufindex].data.size() >= batchsizetasks){
+                //     taskdblbuf[dblbufindex].setBusy();
+
+                //     outputThread.enqueue(
+                //         [&, index = dblbufindex](){
+                //             auto a = std::chrono::system_clock::now();
+                            
+                //             for(const auto& task : taskdblbuf[index].data){
+                //                 processTask(task);
+                //             }
+                //             taskdblbuf[index].data.clear();
+                //             taskdblbuf[index].signal();
+                //             auto b = std::chrono::system_clock::now();
+
+                //             durationInOutputThread += b-a;
+                //         }
+                //     ); 
+
+                //     dblbufindex = 1 - dblbufindex; 
+                //     taskdblbuf[dblbufindex].wait(); //avoid overtaking output thread
+                // }
+
+
                 updateRead(read);
-                Task writeTask;
-                writeTask.readId = originalReadId;
-                writeTask.writer = writerVector[outputFileId].get();
-                writeTask.read = std::move(read);
-                processTask(writeTask);
-                // writerVector[outputFileId]->writeRead(read);
+                writerVector[outputFileId]->writeRead(read);
+
                 originalReadId++;
             }else{
                 inputFileId++;
@@ -1099,6 +1205,12 @@ void mergeResultFiles2_impl(
                 }
             }
         }
+
+        timeend = std::chrono::system_clock::now();
+
+        durationCopyOrig += timeend - timebegin;
+
+        timebegin = std::chrono::system_clock::now();
 
         //get read with id currentReadId
         int status = 0;
@@ -1122,7 +1234,6 @@ void mergeResultFiles2_impl(
             }
         }while(true);
 
-
         assert(inputReaderIsValid);
 
         // Task constructionTask;
@@ -1142,6 +1253,10 @@ void mergeResultFiles2_impl(
         // }
 
         //replace sequence of next read with corrected sequence
+        
+
+        
+
         for(auto& tmpres : correctionVector){
             if(tmpres.useEdits){
                 tmpres.sequence = read.sequence;
@@ -1150,11 +1265,14 @@ void mergeResultFiles2_impl(
                 }
             }
         }
+
+        
         
         auto correctedSequence = combineMultipleCorrectionResultsFunction(
             correctionVector, 
             read.sequence
         );
+
 
 
         if(correctedSequence.second){
@@ -1167,13 +1285,54 @@ void mergeResultFiles2_impl(
             read.sequence = std::move(correctedSequence.first);
         }      
 
-        //writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+        
 
-        Task writeTask;
-        writeTask.readId = currentReadId;
-        writeTask.writer = writerVector[outputFileId].get();
-        writeTask.read = std::move(read);
-        processTask(writeTask);
+        writerVector[outputFileId]->writeRead(read.name, read.comment, read.sequence, read.quality);
+
+        // Task writeTask;
+        // writeTask.readId = currentReadId;
+        // writeTask.writer = writerVector[outputFileId].get();
+        // writeTask.read = std::move(read);
+
+        //processTask(writeTask);
+        // writeTasks.emplace_back(std::move(writeTask));
+
+        // if(writeTasks.size() >= batchsizetasks){
+        //     for(const auto& task : writeTasks){
+        //         processTask(task);
+        //     }
+        //     writeTasks.clear();
+        // }
+
+
+
+        //taskdblbuf[dblbufindex].data.emplace_back(std::move(writeTask));
+
+        timeend = std::chrono::system_clock::now();
+        durationConstruction += timeend - timebegin;
+
+
+        // if(taskdblbuf[dblbufindex].data.size() >= batchsizetasks){
+        //     taskdblbuf[dblbufindex].setBusy();
+
+        //     outputThread.enqueue(
+        //         [&, index = dblbufindex](){
+        //             auto a = std::chrono::system_clock::now();
+                    
+        //             for(const auto& task : taskdblbuf[index].data){
+        //                 processTask(task);
+        //             }
+        //             taskdblbuf[index].data.clear();
+        //             taskdblbuf[index].signal();
+        //             auto b = std::chrono::system_clock::now();
+
+        //             durationInOutputThread += b-a;
+        //         }
+        //     ); 
+
+        //     dblbufindex = 1 - dblbufindex; 
+        //     taskdblbuf[dblbufindex].wait(); //avoid overtaking output thread
+        // }
 
         // if(correctedSequence.second){
         //     //assert(isValidSequence(correctedSequence.first));
@@ -1196,11 +1355,36 @@ void mergeResultFiles2_impl(
         firstiter = false;
     }
 
+    TIMERSTARTCPU(waitforoutputthread);
+    taskdblbuf[0].wait();
+    taskdblbuf[1].wait();
+    TIMERSTOPCPU(waitforoutputthread);
+
+    std::cerr << "origLessThanCurrent = " << origLessThanCurrent << "\n";
+
+    std::cout << "# elapsed time (durationInOutputThread): " << durationInOutputThread.count()  << " s" << std::endl;
+    std::cout << "# elapsed time (durationPrload): " << durationPrload.count()  << " s" << std::endl;
+    std::cout << "# elapsed time (durationCopyOrig): " << durationCopyOrig.count()  << " s" << std::endl;
+    std::cout << "# elapsed time (durationConstruction): " << durationConstruction.count()  << " s" << std::endl;
+
+    // TIMERSTARTCPU(processremainingtasks);
+    // for(const auto& task : taskdblbuf[dblbufindex].data){
+    //     processTask(task);
+    // }
+    // taskdblbuf[dblbufindex].data.clear();
+    // TIMERSTOPCPU(processremainingtasks);
+
+    // for(const auto& task : writeTasks){
+    //     processTask(task);
+    // }
+    // writeTasks.clear();
+
     // for(auto& task : constructionTasks){
     //     processTask(task);
     // }
     // constructionTasks.clear();
 
+    TIMERSTARTCPU(copyremainingreads);
     //copy remaining reads from original files
     while((inputReaderIsValid = (inputReaderVector[inputFileId].next() >= 0)) && inputFileId < numFiles){
         if(inputReaderIsValid){
@@ -1215,6 +1399,9 @@ void mergeResultFiles2_impl(
             }
         }
     }
+    TIMERSTOPCPU(copyremainingreads);
+
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
     TIMERSTOPCPU(actualmerging);
 
