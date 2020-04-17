@@ -34,13 +34,13 @@ mkdir -p $tempdir
 
 k=20
 
-echo "$care --inputfile=$inputfile --tempdir=$tempdir --outdir=$outputdir --outfile=$outputfilenamenopath --threads=$numthreads \
+echo "$care -i $inputfile --tempdir=$tempdir -d $outputdir -o $outputfilenamenopath --threads=$numthreads \
       --hashmaps=48 --kmerlength=$k --batchsize=1000 --maxmismatchratio=0.20 --minalignmentoverlap=20 --minalignmentoverlapratio=0.20 \
       --useQualityScores --coverage=$coverage --errorfactortuning=0.06 --coveragefactortuning=0.6 \
       --candidateCorrection --candidateCorrectionNewColumns=15 --deviceIds=0 \
       --showProgress --nReads=0 --min_length=0 --max_length=0 --memTotal 27G"
 
-$care --inputfile=$inputfile --tempdir=$tempdir --outdir=$outputdir --outfile=$outputfilenamenopath --threads=$numthreads \
+$care -i $inputfile --tempdir=$tempdir -d $outputdir -o $outputfilenamenopath --threads=$numthreads \
       --hashmaps=48 --kmerlength=$k --batchsize=1000 --maxmismatchratio=0.20 --minalignmentoverlap=20 --minalignmentoverlapratio=0.20 \
       --useQualityScores --coverage=$coverage --errorfactortuning=0.06 --coveragefactortuning=0.6 \
       --candidateCorrection --candidateCorrectionNewColumns=15 --deviceIds=0 \
