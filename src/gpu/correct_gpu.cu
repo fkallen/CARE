@@ -67,7 +67,6 @@ constexpr int max_num_minimizations = 5;
 namespace care{
 namespace gpu{
 
-
     template<int gridsize, int blocksize>
     __global__
     void setAnchorIndicesOfCandidateskernel(
@@ -339,6 +338,8 @@ namespace gpu{
             nextData.d_candidates_per_subject.resize(2*batchsize);
             nextData.d_candidates_per_subject_tmp.resize(2*batchsize);
             nextData.d_candidates_per_subject_prefixsum.resize(batchsize+1);
+
+            cudaMemsetAsync(nextData.d_candidates_per_subject_prefixsum.get(), 0, sizeof(int), nextData.stream); CUERR;
     
             nextData.h_leftoverAnchorReadIds.resize(batchsize);
             nextData.d_leftoverAnchorReadIds.resize(batchsize);
@@ -888,7 +889,7 @@ namespace gpu{
             d_candidate_read_ids.resize(maxNumIds + maxCandidates);
             d_candidates_per_subject.resize(2*batchsize);
             d_candidates_per_subject_prefixsum.resize(batchsize+1);
-    
+            cudaMemsetAsync(d_candidates_per_subject_prefixsum.get(), 0, sizeof(int), streams[primary_stream_index]); CUERR;
     
             h_numAnchors.resize(1);
             h_numCandidates.resize(1);
@@ -908,8 +909,6 @@ namespace gpu{
             d_subject_sequences_lengths.resize(batchsize);
             d_candidate_sequences_lengths.resize(maxCandidates);
             d_anchorIndicesOfCandidates.resize(maxCandidates);
-    
-            
     
             //alignment output
     
@@ -1822,6 +1821,8 @@ namespace gpu{
             nvtx::pop_range();
         };
 
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = batchData.streams;
+
 #if 0
         batchData.nextIterationData.syncFlag.setBusy();
         getDataForNextIteration();
@@ -1843,7 +1844,7 @@ namespace gpu{
             
         batchData.nextIterationData.syncFlag.setBusy();
 
-        std::array<cudaStream_t, nStreamsPerBatch>& streams = batchData.streams;
+        
         std::array<cudaEvent_t, nEventsPerBatch>& events = batchData.events;
 
         cudaEventRecord(events[0], batchData.nextIterationData.stream); CUERR;
@@ -2011,7 +2012,7 @@ namespace gpu{
 
         const auto& transFuncData = *batch.transFuncData;
 
-		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
         const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
@@ -2021,10 +2022,10 @@ namespace gpu{
             int* d_anchorIndicesOfCandidates = batch.d_anchorIndicesOfCandidates.get();
             int* d_candidates_per_subject = batch.d_candidates_per_subject.get();
             int* d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get();
-
+            
             setAnchorIndicesOfCandidateskernel<1024, 128>
                     <<<1024, 128, 0, streams[primary_stream_index]>>>(
-                        batch.d_anchorIndicesOfCandidates.get(),
+                batch.d_anchorIndicesOfCandidates.get(),
                 batch.d_numAnchors.get(),
                 batch.d_candidates_per_subject.get(),
                 batch.d_candidates_per_subject_prefixsum.get()
