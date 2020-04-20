@@ -32,90 +32,6 @@
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
 
-// selects all elements e in inputIndices for which selector returns true
-template<int blocksize, class Index_t, class Selector>
-__global__
-void distrArrayCompactIndicesOfLocationKernel(
-    Index_t* __restrict__ outputIndices,
-    Index_t* __restrict__ numOutputIndices,
-    const Index_t* __restrict__ inputIndices,
-    Index_t numIds,
-    Selector selector
-){
-    constexpr int N = 4;
-
-    using BlockScan = cub::BlockScan<int, blocksize>;
-    using BlockLoad = cub::BlockLoad<Index_t, blocksize, N, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
-
-    __shared__ union{
-        typename BlockScan::TempStorage scan;
-        typename BlockLoad::TempStorage load;
-    } tempstorage;
-
-    __shared__ int numSelected;
-
-    if(threadIdx.x == 0){
-        numSelected = 0;
-    }
-
-    __syncthreads();
-
-    const Index_t iters = SDIV(numIds, N);
-
-    for(int iter = 0; iter < iters; iter++){
-        Index_t myelems[N];
-        int flags[N];
-        int ps[N];
-        int block_aggregate;                            
-        
-        const Index_t begin = blocksize * N * iter;
-        const Index_t end = min(blocksize * N * (iter+1), numIds);
-
-        BlockLoad(tempstorage.load).Load(
-            inputIndices + begin, 
-            myelems,
-            end - begin,
-            std::numeric_limits<Index_t>::max()
-        );
-
-        #pragma unroll
-        for(int i = 0; i < N; i++){
-            flags[i] = 0;
-
-            if(selector(myelems[i])){
-                flags[i] = 1;
-            }
-        }
-
-        __syncthreads();
-
-        BlockScan(tempstorage.scan).ExclusiveSum(
-            flags, 
-            ps, 
-            block_aggregate
-        );
-
-        #pragma unroll
-        for(int i = 0; i < N; i++){
-            if(flags[i] == 1){
-                const Index_t destPos = ps[i] + numSelected;
-                outputIndices[destPos] = myelems[i];
-            }
-        }
-
-        __syncthreads();
-
-        if(threadIdx.x == 0){
-            numSelected += block_aggregate;
-        }
-
-        __syncthreads();
-    }
-
-    if(threadIdx.x == 0){
-        *numOutputIndices = numSelected;
-    }
-}
 
 
 template<class Index_t, class Value_t>
@@ -137,30 +53,6 @@ void distrArrayGatherKernel(
                 = sourceData[size_t(inputrow) * numCols + col];
     }
 }
-
-template<class Index_t, class Value_t>
-__global__
-void distrArrayGatherKernel2(
-        Value_t* __restrict__ result, 
-        const Value_t* __restrict__ sourceData, 
-        const Index_t* __restrict__ indices, 
-        const Index_t* __restrict__ nIndicesPtr,
-        Index_t indexOffset, 
-        size_t resultPitchValueTs,
-        size_t numCols){
-
-    const Index_t nIndices = *nIndicesPtr;
-
-    for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-        const Index_t outputrow = i / numCols;
-        const Index_t inputrow = indices[outputrow] + indexOffset;
-        const Index_t col = i % numCols;
-        result[size_t(outputrow) * resultPitchValueTs + col] 
-                = sourceData[size_t(inputrow) * numCols + col];
-    }
-}
-
-
 
 namespace distarraykernels{
 
@@ -1576,28 +1468,6 @@ public:
         }
     }
 
-    template<class ParallelFor>
-    void gatherElementsInGpuMem(ParallelFor&& forLoop,
-                                const GatherHandle& handle,
-                                const Index_t* indices,
-                                const Index_t* d_indices,
-                                Index_t numIds,
-                                int deviceId,
-                                Value_t* d_result,
-                                size_t resultPitch // result element i begins at byte offset i * resultPitch
-                                ) const {
-        assert(resultPitch >= sizeOfElement);
-
-        cudaStream_t stream = 0;
-        int oldDevice = 0; cudaGetDevice(&oldDevice); CUERR;
-        wrapperCudaSetDevice(deviceId); CUERR;
-        cudaStreamCreate(&stream); CUERR;
-        gatherElementsInGpuMemAsync(std::forward<ParallelFor>(forLoop), handle, indices, d_indices, numIds, deviceId, d_result, resultPitch, stream);
-        cudaStreamSynchronize(stream); CUERR;
-        cudaStreamDestroy(stream); CUERR;
-        wrapperCudaSetDevice(oldDevice); CUERR;
-    }
-
     //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
     template<class ParallelFor>
     void gatherElementsInGpuMemAsync(ParallelFor&& forLoop,
@@ -2348,12 +2218,12 @@ public:
             h_gpu_gatherKernelParams.numCols = numColumns;
         }
 
-#if 1
+        #if 1
 
         cudaGraphExec_t execGraph = getNoHostExecutionGraph(handle, resultDeviceId);
         cudaGraphLaunch(execGraph, syncstream); CUERR;
 
- #else 
+        #else 
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             const int location = gpu;
@@ -2462,7 +2332,7 @@ public:
             }
         }
 
-#endif
+        #endif
         cudaSetDevice(oldId); CUERR;
 
     }    
@@ -2702,7 +2572,7 @@ public:
     }    
 
 
-    //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
+    //does not need host indices
     template<class ParallelFor>
     void gatherElementsInGpuMemAsyncGeneral(ParallelFor&& forLoop,
                                     const GatherHandle& handle,
