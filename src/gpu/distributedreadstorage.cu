@@ -658,8 +658,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             const read_number* d_readIds,
                             int nReadIds,
                             int deviceId,
-                            cudaStream_t stream,
-                            int) const{
+                            cudaStream_t stream) const{
 
     ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
 
@@ -685,8 +684,7 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             const read_number* d_readIds,
                             int nReadIds,
                             int deviceId,
-                            cudaStream_t stream,
-                            int) const{
+                            cudaStream_t stream) const{
 
     ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
 

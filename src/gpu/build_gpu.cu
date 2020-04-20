@@ -259,8 +259,7 @@ namespace gpu{
                 d_indices,
                 curBatchsize,
                 0,
-                stream,
-                numThreads
+                stream
             );
         
             readStorage.gatherSequenceLengthsToGpuBufferAsync(
@@ -431,8 +430,7 @@ namespace gpu{
                 d_readids.get(),
                 indicesBuffer.size(),
                 0,
-                stream,
-                16
+                stream
             );
             if(withQuality){
                 readStorage.gatherQualitiesToGpuBufferAsync(
@@ -444,8 +442,7 @@ namespace gpu{
                     d_readids.get(),
                     indicesBuffer.size(),
                     0,
-                    stream,
-                    16
+                    stream
                 );
             }
 
@@ -589,8 +586,7 @@ namespace gpu{
                 d_readids.get(),
                 indicesBuffer.size(),
                 0,
-                stream,
-                16
+                stream
             );
 
             readStorage.gatherSequenceLengthsToGpuBufferAsync(

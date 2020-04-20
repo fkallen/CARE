@@ -197,8 +197,7 @@ public:
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
+                                cudaStream_t stream) const;
 
     void gatherQualitiesToGpuBufferAsync(
                                 ThreadPool* threadPool,
@@ -209,8 +208,7 @@ public:
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
+                                cudaStream_t stream) const;
 
     void gatherSequenceLengthsToGpuBufferAsync(
                                 int* d_lengths,

@@ -1420,8 +1420,7 @@ namespace gpu{
             nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
             nextData.n_new_subjects,
             batchData.deviceId,
-            nextData.stream,
-            transFuncData.runtimeOptions.nCorrectorThreads
+            nextData.stream
         );
 
         readStorage.gatherSequenceLengthsToGpuBufferAsync(
@@ -1939,8 +1938,7 @@ namespace gpu{
             batch.d_candidate_read_ids,
             batch.n_queries,
             batch.deviceId,
-            streams[primary_stream_index],
-            transFuncData.runtimeOptions.nCorrectorThreads);
+            streams[primary_stream_index]);
 
         call_transpose_kernel(
             batch.d_transposedCandidateSequencesData.get(), 
@@ -1988,8 +1986,8 @@ namespace gpu{
                 batch.d_subject_read_ids,
                 batch.n_subjects,
                 batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
+                streams[primary_stream_index]);
+
             // std::cerr << "gather candidate qual\n";
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
@@ -2000,8 +1998,7 @@ namespace gpu{
                 batch.d_candidate_read_ids.get(),
                 batch.n_queries,
                 batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
+                streams[primary_stream_index]);
         }
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
