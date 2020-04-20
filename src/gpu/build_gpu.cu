@@ -755,25 +755,6 @@ namespace gpu{
                 return duration;
             };
 
-            auto getSequenceData = [&](char* dest, int sequencepitchInBytes, const read_number* indices, int numIndices){
-                readStorage.gatherSequenceDataToHostBuffer(
-                    sequencehandle,
-                    (unsigned int*)dest,
-                    sequencepitchInBytes / sizeof(unsigned int),
-                    indices,
-                    numIndices,
-                    1);          
-            };
-
-            auto getSequenceLength = [&](DistributedReadStorage::Length_t* dest, const read_number* indices, int numIndices){
-                readStorage.gatherSequenceLengthsToHostBuffer(
-                    dest,
-                    indices,
-                    numIndices);
-            };
-
-
-
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
@@ -850,19 +831,6 @@ namespace gpu{
                         runtimeOptions.threads,
                         readStorage
                     );
-
-                    // std::vector<Minhasher::Map_t> minhashTables = constructTables(
-                    //     minhasher, 
-                    //     currentIterNumTables, 
-                    //     numConstructedTables,
-                    //     readStorage.getNumberOfReads(),
-                    //     readStorage.getSequenceLengthUpperBound(),
-                    //     runtimeOptions.threads,
-                    //     getSequenceData,
-                    //     getSequenceLength,
-                    //     readStorage
-                    // );
-
 
                     //check free gpu mem for transformation
                     std::size_t estRequiredFreeGpuMem = estimateGpuMemoryForTransformKeyValueMap(minhashTables[0]);

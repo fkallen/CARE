@@ -212,38 +212,6 @@ public:
                                 cudaStream_t stream,
                                 int numCpuThreads) const;
 
-    std::future<void> gatherSequenceDataToHostBufferAsync(
-                                const GatherHandleSequences& handle,
-                                unsigned int* h_sequence_data,
-                                size_t outSequencePitchInInts,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    std::future<void> gatherQualitiesToHostBufferAsync(
-                                const GatherHandleQualities& handle,
-                                char* h_quality_data,
-                                size_t out_quality_pitch,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    void gatherSequenceDataToHostBuffer(
-                                const GatherHandleSequences& handle,
-                                unsigned int* h_sequence_data,
-                                size_t outSequencePitchInInts,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    void gatherQualitiesToHostBuffer(
-                                const GatherHandleQualities& handle,
-                                char* h_quality_data,
-                                size_t out_quality_pitch,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
     void gatherSequenceLengthsToGpuBufferAsync(
                                 int* d_lengths,
                                 int deviceId,

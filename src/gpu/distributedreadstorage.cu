@@ -703,67 +703,6 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
 }
 
 
-std::future<void> DistributedReadStorage::gatherSequenceDataToHostBufferAsync(
-                            const GatherHandleSequences& handle,
-                            unsigned int* h_sequence_data,
-                            size_t outSequencePitchInInts,
-                            const read_number* h_readIds,
-                            int nReadIds,
-                            int numCpuThreads) const{
-
-    return distributedSequenceData.gatherElementsInHostMemAsync(handle,
-                                                        h_readIds,
-                                                        nReadIds,
-                                                        h_sequence_data,
-                                                        outSequencePitchInInts * sizeof(unsigned int));
-}
-
-std::future<void> DistributedReadStorage::gatherQualitiesToHostBufferAsync(
-                            const GatherHandleQualities& handle,
-                            char* h_quality_data,
-                            size_t out_quality_pitch,
-                            const read_number* h_readIds,
-                            int nReadIds,
-                            int numCpuThreads) const{
-
-    return distributedQualities.gatherElementsInHostMemAsync(handle,
-                                                        h_readIds,
-                                                        nReadIds,
-                                                        h_quality_data,
-                                                        out_quality_pitch);
-}
-
-
-void DistributedReadStorage::gatherSequenceDataToHostBuffer(
-                            const GatherHandleSequences& handle,
-                            unsigned int* h_sequence_data,
-                            size_t outSequencePitchInInts,
-                            const read_number* h_readIds,
-                            int nReadIds,
-                            int numCpuThreads) const{
-
-    return distributedSequenceData.gatherElementsInHostMem(handle,
-                                                        h_readIds,
-                                                        nReadIds,
-                                                        h_sequence_data,
-                                                        outSequencePitchInInts * sizeof(unsigned int));
-}
-
-void DistributedReadStorage::gatherQualitiesToHostBuffer(
-                            const GatherHandleQualities& handle,
-                            char* h_quality_data,
-                            size_t out_quality_pitch,
-                            const read_number* h_readIds,
-                            int nReadIds,
-                            int numCpuThreads) const{
-
-    return distributedQualities.gatherElementsInHostMem(handle,
-                                                        h_readIds,
-                                                        nReadIds,
-                                                        h_quality_data,
-                                                        out_quality_pitch);
-}
-
 
 void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
                             int* d_lengths,
