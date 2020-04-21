@@ -1888,7 +1888,7 @@ namespace gpu{
     void getCandidateSequenceData(Batch& batch, const DistributedReadStorage& readStorage){
 
         cudaSetDevice(batch.deviceId); CUERR;
-        
+
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
@@ -4012,10 +4012,12 @@ correct_gpu(
                     printMemoryInfo(memInfo1);
                     std::cerr << "Memory usage candidateSequenceGatherHandle\n";
                     printMemoryInfo(memInfo2);
-                    std::cerr << "Memory usage subjectQualitiesGatherHandle\n";
-                    printMemoryInfo(memInfo3);
-                    std::cerr << "Memory usage candidateQualitiesGatherHandle\n";
-                    printMemoryInfo(memInfo4);
+                    if(runtimeOptions.useQualityScores){
+                        std::cerr << "Memory usage subjectQualitiesGatherHandle\n";
+                        printMemoryInfo(memInfo3);
+                        std::cerr << "Memory usage candidateQualitiesGatherHandle\n";
+                        printMemoryInfo(memInfo4);
+                    }
 
                     destroyBatchData(batchDataArray[i]);
                 }
