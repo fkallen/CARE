@@ -1888,9 +1888,7 @@ namespace gpu{
     void getCandidateSequenceData(Batch& batch, const DistributedReadStorage& readStorage){
 
         cudaSetDevice(batch.deviceId); CUERR;
-
-        const auto& transFuncData = *batch.transFuncData;
-
+        
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
@@ -3998,6 +3996,27 @@ correct_gpu(
                 for(int i = 0; i < max_num_batches; i++){
                     batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                     batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    auto memInfo1 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].subjectSequenceGatherHandle);
+                    auto memInfo2 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].candidateSequenceGatherHandle);
+                    auto memInfo3 = readStorage.getMemoryInfoOfGatherHandleQualities(batchDataArray[i].subjectQualitiesGatherHandle);
+                    auto memInfo4 = readStorage.getMemoryInfoOfGatherHandleQualities(batchDataArray[i].candidateQualitiesGatherHandle);
+
+                    auto printMemoryInfo = [](const auto& meminfo){
+                        std::cerr << "Host: " << meminfo.host << "\n";
+                        for(const auto& pair : meminfo.device){
+                            std::cerr << "Device " << pair.first << ": " << pair.second << "\n";
+                        }
+                    };
+
+                    std::cerr << "Memory usage subjectSequenceGatherHandle\n";
+                    printMemoryInfo(memInfo1);
+                    std::cerr << "Memory usage candidateSequenceGatherHandle\n";
+                    printMemoryInfo(memInfo2);
+                    std::cerr << "Memory usage subjectQualitiesGatherHandle\n";
+                    printMemoryInfo(memInfo3);
+                    std::cerr << "Memory usage candidateQualitiesGatherHandle\n";
+                    printMemoryInfo(memInfo4);
+
                     destroyBatchData(batchDataArray[i]);
                 }
             });

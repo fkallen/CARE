@@ -63,7 +63,6 @@ public:
     using Length_t = int;
 
     using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
-    using GatherHandleLengths = DistributedArray<Length_t, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
 
     using LengthStore_t = LengthStore<std::uint32_t>;
@@ -107,6 +106,8 @@ public:
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
 	MemoryUsage getMemoryInfo() const;
+    MemoryUsage getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const;
+    MemoryUsage getMemoryInfoOfGatherHandleQualities(const GatherHandleQualities& handle) const;
 
     Statistics getStatistics() const;
 

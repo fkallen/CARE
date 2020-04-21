@@ -311,6 +311,14 @@ MemoryUsage DistributedReadStorage::getMemoryInfo() const{
     return info;
 }
 
+MemoryUsage DistributedReadStorage::getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const{
+    return distributedSequenceData.getMemoryInfoOfHandle(handle);
+}
+
+MemoryUsage DistributedReadStorage::getMemoryInfoOfGatherHandleQualities(const GatherHandleQualities& handle) const{
+    return distributedQualities.getMemoryInfoOfHandle(handle);
+}
+
 
 DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const{
     return statistics;

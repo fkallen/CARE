@@ -379,13 +379,6 @@ public:
         std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_indicesForLocationsVector;
         std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_destinationPositionsForLocationsVector;
 
-        std::map<int, SimpleAllocationDevice<Index_t*>> map_d_indicesForLocationsPointers;
-        std::map<int, SimpleAllocationDevice<Index_t*>> map_d_destinationPositionsForLocationsPointers;
-
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndices;
-
-        // std::map<int, SimpleAllocationDevice<distarraykernels::Parameters>> map_d_kernelparams;
-        // std::map<int, SimpleAllocationPinned<distarraykernels::Parameters>> map_h_kernelparams;
 
         //kernel parameters per device id
         std::map<int, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
@@ -412,11 +405,6 @@ public:
         //
         std::map<int, cudaGraphExec_t> map_nohostExecutionGraph;
 
-        SimpleAllocationPinnedHost<Index_t*> pinnedPointersForLocations;
-        SimpleAllocationPinnedHost<Index_t*> pinnedPointersForLocations2;
-        SimpleAllocationPinnedHost<Index_t> pinnedNumIndices;
-
-
         std::vector<cudaStream_t> streamsPerGpuLocation;
         std::vector<cudaEvent_t> eventsPerGpuLocation;
 
@@ -430,6 +418,76 @@ public:
 
     using GatherHandle = std::unique_ptr<GatherHandleStruct>;
     using PeerAccess_t = PeerAccess;
+
+    MemoryUsage getMemoryInfoOfHandle(const GatherHandle& handle) const{
+
+        MemoryUsage result;
+        result.host += handle->pinnedIndicesOfHostLocation.capacityInBytes();
+        result.host += handle->numIndicesOfHostLocation.capacityInBytes();
+        result.host += handle->pinnedDestinationPositionsOfHostLocation.capacityInBytes();
+        result.host += handle->pinnedGatheredElementsOfHostLocation.capacityInBytes();
+        result.host += handle->h_packedpointersAndNumIndicesArg.capacityInBytes();
+        result.host += handle->h_packedKernelParamsPartPref.capacityInBytes();
+
+        for(size_t i = 0; i < handle->d_gatheredElementsOfGpuLocation.size(); i++){
+            result.device[deviceIds[i]] += handle->d_gatheredElementsOfGpuLocation[i].capacityInBytes();
+        }
+
+        auto processHostMap = [&](const auto& m){
+            for(const auto& pair : m){
+                result.host += pair.second.capacityInBytes();
+            }
+        };
+
+        auto processDeviceMap = [&](const auto& m){
+            for(const auto& pair : m){
+                result.device[pair.first] += pair.second.capacityInBytes();
+            }
+        };
+
+        processDeviceMap(handle->map_d_tmpResults);
+        processDeviceMap(handle->map_d_destinationPositionsOfGpu);
+        processDeviceMap(handle->map_d_elementsPerLocationPS);
+        processDeviceMap(handle->map_d_numIndicesPerLocation);
+        processDeviceMap(handle->map_d_numIndicesPerLocationPS);
+        processDeviceMap(handle->map_d_splitkernelparams);
+        processDeviceMap(handle->map_d_prefixsumkernelparams);
+        processDeviceMap(handle->map_d_gatherkernelparams);
+        processDeviceMap(handle->map_d_packedpointersAndNumIndicesArg);
+        processDeviceMap(handle->map_d_packedKernelParamsPartPref);
+
+        processHostMap(handle->map_h_splitkernelparams);
+        processHostMap(handle->map_h_prefixsumkernelparams);
+        processHostMap(handle->map_h_gatherkernelparams);
+
+
+
+        for(const auto& pair : handle->map_d_indicesForLocationsVector){
+            for(const auto& buf : pair.second){
+                result.device[pair.first] += buf.capacityInBytes();
+            }
+        }
+
+        for(const auto& pair : handle->map_d_destinationPositionsForLocationsVector){
+            for(const auto& buf : pair.second){
+                result.device[pair.first] += buf.capacityInBytes();
+            }
+        }
+
+        for(const auto& pair : handle->map_d_scatterkernelparams){
+            for(const auto& buf : pair.second){
+                result.device[pair.first] += buf.capacityInBytes();
+            }
+        }
+
+        for(const auto& pair : handle->map_h_scatterkernelparams){
+            for(const auto& buf : pair.second){
+                result.host += buf.capacityInBytes();
+            }
+        }
+
+        return result;
+    }
 
     struct SinglePartitionInfo{
         bool isSinglePartition = false;
@@ -868,9 +926,6 @@ public:
 
         handle->d_gatheredElementsOfGpuLocation.resize(numGpus);
         
-        handle->pinnedPointersForLocations.resize(numLocations);
-        handle->pinnedPointersForLocations2.resize(numLocations);
-        handle->pinnedNumIndices.resize(1);
         handle->numIndicesOfHostLocation.resize(1);
 
         handle->h_packedpointersAndNumIndicesArg.resize(
@@ -951,12 +1006,6 @@ public:
             ); CUERR; 
             cudaStreamSynchronize(handle->map_streams[deviceId]); CUERR;
 
-            handle->map_d_indicesForLocationsPointers.emplace(deviceId, SimpleAllocationDevice<Index_t*>(numLocations + 1));
-            handle->map_d_destinationPositionsForLocationsPointers.emplace(deviceId, SimpleAllocationDevice<Index_t*>(numLocations + 1));
-
-            handle->map_d_numIndices.emplace(deviceId, SimpleAllocationDevice<Index_t>(1));
-
-
             handle->map_d_splitkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
             handle->map_h_splitkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
 
@@ -1015,8 +1064,6 @@ public:
             handle->map_d_indicesForLocationsVector[deviceId].clear();
             handle->map_d_destinationPositionsForLocationsVector[deviceId].clear();
 
-            handle->map_d_indicesForLocationsPointers[deviceId].destroy();
-            handle->map_d_destinationPositionsForLocationsPointers[deviceId].destroy();
             handle->map_d_numIndices[deviceId].destroy();
 
             handle->map_d_splitkernelparams[deviceId].destroy();
@@ -1473,40 +1520,6 @@ public:
         for(int gpu = 0; gpu < numGpus; gpu++){
             handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
         }
-
-        // for(int i = 0; i < numLocations; i++){
-        //     handle->pinnedPointersForLocations[i] = d_indicesForLocationsVector[i].get();
-        // }
-
-        // cudaMemcpyAsync(
-        //     handle->map_d_indicesForLocationsPointers[resultDeviceId].get(),
-        //     handle->pinnedPointersForLocations.get(),
-        //     sizeof(Index_t*) * numLocations,
-        //     H2D,
-        //     syncstream
-        // ); CUERR;
-
-        // for(int i = 0; i < numLocations; i++){
-        //     handle->pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
-        // }
-
-        // cudaMemcpyAsync(
-        //     handle->map_d_destinationPositionsForLocationsPointers[resultDeviceId].get(),
-        //     handle->pinnedPointersForLocations2.get(),
-        //     sizeof(Index_t*) * numLocations,
-        //     H2D,
-        //     syncstream
-        // ); CUERR;
-
-        // handle->pinnedNumIndices[0] = numIds;
-
-        // cudaMemcpyAsync(
-        //     handle->map_d_numIndices[resultDeviceId].get(),
-        //     handle->pinnedNumIndices.get(),
-        //     sizeof(Index_t),
-        //     H2D,
-        //     syncstream
-        // ); CUERR;
 
         Index_t** const pinnedPointersForLocations = (Index_t**)handle->h_packedpointersAndNumIndicesArg.get();
         Index_t** const pinnedPointersForLocations2 = pinnedPointersForLocations + numLocations;
@@ -2093,7 +2106,8 @@ public:
 
         if(numIndicesForHost > 0){
             wrapperCudaSetDevice(resultDeviceId); CUERR;
-            handle->pinnedDestinationPositionsOfHostLocation.resize(numIndicesForHost * numColumns);
+
+            handle->pinnedGatheredElementsOfHostLocation.resize(numIndicesForHost * numColumns);
             handle->map_d_tmpResults[resultDeviceId].resize(numIndicesForHost * numColumns);
             handle->map_d_destinationPositionsOfGpu[resultDeviceId].resize(numIndicesForHost);
 
