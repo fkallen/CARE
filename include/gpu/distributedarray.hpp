@@ -363,16 +363,12 @@ public:
         std::mutex mutex;
         care::ThreadPool::ParallelForHandle pforHandle;
 
-        SimpleAllocationPinnedHost<Index_t> indicesOfHostLocation;
+        SimpleAllocationPinnedHost<Index_t> pinnedIndicesOfHostLocation;
         SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
-        std::vector<std::size_t> numIndicesPerLocation; //numLocations
-        std::vector<std::size_t> numIndicesPerLocationPS; //numLocations+1
 
+        SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostLocation;
+        SimpleAllocationPinnedHost<Value_t> pinnedGatheredElementsOfHostLocation; 
 
-        std::vector<SimpleAllocationPinnedHost<Index_t>> pinnedDestinationPositionsOfLocation; //numLocations
-        std::vector<SimpleAllocationDevice<Index_t>> d_destinationPositionsOfGpuLocation; //numGpus
-
-        std::vector<SimpleAllocationPinnedHost<Value_t>> pinnedGatheredElementsOfLocation; //numLocations
         std::vector<SimpleAllocationDevice<Value_t>> d_gatheredElementsOfGpuLocation; //numGpus
 
         std::map<int, SimpleAllocationDevice<Value_t>> map_d_tmpResults; //tmp buffers to store all gathered elements on the destination gpu
@@ -870,13 +866,8 @@ public:
         cudaGetDevice(&oldDevice); CUERR;
         //wrapperCudaSetDevice(oldDevice); CUERR;
 
-        handle->numIndicesPerLocation.resize(numLocations);
-        handle->numIndicesPerLocationPS.resize(numLocations+1);
-        handle->pinnedDestinationPositionsOfLocation.resize(numLocations);
-        handle->d_destinationPositionsOfGpuLocation.resize(numGpus);
-        handle->pinnedGatheredElementsOfLocation.resize(numLocations);
         handle->d_gatheredElementsOfGpuLocation.resize(numGpus);
-        handle->pinnedDestinationPositionsOfLocation.resize(numLocations);
+        
         handle->pinnedPointersForLocations.resize(numLocations);
         handle->pinnedPointersForLocations2.resize(numLocations);
         handle->pinnedNumIndices.resize(1);
@@ -1059,14 +1050,13 @@ public:
     void destroyGatherHandleStruct(const GatherHandle& handle) const{
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
-
+        handle->pinnedDestinationPositionsOfHostLocation.destroy();
         handle->h_packedpointersAndNumIndicesArg.destroy();
         handle->h_packedKernelParamsPartPref.destroy();
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
 
-            handle->d_destinationPositionsOfGpuLocation[gpu].destroy();
             handle->d_gatheredElementsOfGpuLocation[gpu].destroy();
 
             cudaStreamDestroy(handle->streamsPerGpuLocation[gpu]);
@@ -1176,9 +1166,9 @@ public:
         if(singlePartitionInfo.locationId == hostLocation){
             // if(debug) std::cerr << "single location array fasthpath on host\n";
 
-            handle->pinnedGatheredElementsOfLocation[hostLocation].resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
+            handle->pinnedGatheredElementsOfHostLocation.resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
 
-            Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();
+            Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
                 for(Index_t k = begin; k < end; k++){
@@ -1775,8 +1765,8 @@ public:
             handle->d_gatheredElementsOfGpuLocation[gpu].resize(numIds * numColumns);
         }
 
-        handle->indicesOfHostLocation.resize(numIds);
-        handle->pinnedGatheredElementsOfLocation[hostLocation].resize(numIds * numColumns);
+        handle->pinnedIndicesOfHostLocation.resize(numIds);
+        handle->pinnedGatheredElementsOfHostLocation.resize(numIds * numColumns);
 
         Index_t** const pinnedPointersForLocations = (Index_t**)handle->h_packedpointersAndNumIndicesArg.get();
         Index_t** const pinnedPointersForLocations2 = pinnedPointersForLocations + numLocations;
@@ -1793,7 +1783,7 @@ public:
             pinnedPointersForLocations2[i] = d_destinationPositionsForLocationsVector[i].get();
         }
         //fix indicesptr for host indices. kernel will write to it via pcie
-        pinnedPointersForLocations[hostLocation] = handle->indicesOfHostLocation.get();
+        pinnedPointersForLocations[hostLocation] = handle->pinnedIndicesOfHostLocation.get();
 
         *pinnedNumIndices = numIds;
 
@@ -1980,8 +1970,8 @@ public:
 
             
 
-            Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();
-            const Index_t* const myIndices = handle->indicesOfHostLocation.get();
+            Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
+            const Index_t* const myIndices = handle->pinnedIndicesOfHostLocation.get();
 
             // std::vector<Index_t> tmpvec(myIndices, myIndices + numIndicesForHost);
             // std::sort(tmpvec.begin(), tmpvec.end());
@@ -2021,7 +2011,7 @@ public:
             //     numHostIndices, 
             //     [&](int begin, int end, int threadId){
             //         for(int k = begin; k < end; k++){
-            //             const Index_t localId = handle->indicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
+            //             const Index_t localId = handle->pinnedIndicesOfHostLocation[k] - elementsPerLocationPS[hostLocation];
             //             const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
             //             Value_t* destPtr = myResult + size_t(k) * numColumns;
             //             std::copy_n(srcPtr, numColumns, destPtr);
@@ -2072,8 +2062,8 @@ public:
 
         registerDeviceIdForHandlenew(handle, resultDeviceId);
 
-        handle->indicesOfHostLocation.resize(numIds);        
-        handle->pinnedDestinationPositionsOfLocation[hostLocation].resize(numIds);
+        handle->pinnedIndicesOfHostLocation.resize(numIds);        
+        handle->pinnedDestinationPositionsOfHostLocation.resize(numIds);
 
         //handle elements in gpu locations
         gatherElementsInGpuMemAsyncNoHostPartition(
@@ -2095,15 +2085,15 @@ public:
             const int loc = getLocation(index);
 
             if(loc == hostLocation){
-                handle->indicesOfHostLocation[numIndicesForHost] = index;
-                handle->pinnedDestinationPositionsOfLocation[hostLocation][numIndicesForHost] = i;
+                handle->pinnedIndicesOfHostLocation[numIndicesForHost] = index;
+                handle->pinnedDestinationPositionsOfHostLocation[numIndicesForHost] = i;
                 numIndicesForHost++;
             }
         }
 
         if(numIndicesForHost > 0){
             wrapperCudaSetDevice(resultDeviceId); CUERR;
-            handle->pinnedGatheredElementsOfLocation[hostLocation].resize(numIndicesForHost * numColumns);
+            handle->pinnedDestinationPositionsOfHostLocation.resize(numIndicesForHost * numColumns);
             handle->map_d_tmpResults[resultDeviceId].resize(numIndicesForHost * numColumns);
             handle->map_d_destinationPositionsOfGpu[resultDeviceId].resize(numIndicesForHost);
 
@@ -2119,14 +2109,14 @@ public:
 
             cudaMemcpyAsync(
                 handle->map_d_destinationPositionsOfGpu[resultDeviceId].get(),
-                handle->pinnedDestinationPositionsOfLocation[hostLocation].get(),
+                handle->pinnedDestinationPositionsOfHostLocation.get(),
                 sizeof(Index_t) * numIndicesForHost,
                 H2D,
                 syncstream
             ); CUERR;
 
-            Value_t* const myResult = handle->pinnedGatheredElementsOfLocation[hostLocation].get();
-            const Index_t* const myIndices = handle->indicesOfHostLocation.get();
+            Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
+            const Index_t* const myIndices = handle->pinnedIndicesOfHostLocation.get();
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
                 nvtx::push_range("generalgather_host", 7);
