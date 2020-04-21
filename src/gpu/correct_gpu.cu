@@ -161,7 +161,7 @@ namespace gpu{
 
     constexpr int doNotUseEditsValue = -1;
 
-    struct TransitionFunctionData;
+    //struct TransitionFunctionData;
 
     struct SyncFlag{
         std::atomic<bool> busy{false};
@@ -596,7 +596,7 @@ namespace gpu{
         int n_queries;        
         int graphindex = 0;
         size_t msa_weights_pitch_floats = 0;
-        TransitionFunctionData* transFuncData;
+
         BackgroundThread* outputThread;
         BackgroundThread* backgroundWorker;
         BackgroundThread* unpackWorker;
@@ -722,6 +722,17 @@ namespace gpu{
         DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
+
+        cpu::RangeGenerator<read_number>* readIdGenerator;
+		const Minhasher* minhasher;
+        const DistributedReadStorage* readStorage;
+		CorrectionOptions correctionOptions;
+        GoodAlignmentProperties goodAlignmentProperties;
+        SequenceFileProperties sequenceFileProperties;
+        RuntimeOptions runtimeOptions;
+        FileOptions fileOptions;
+		std::atomic_uint8_t* correctionStatusFlagsPerRead;
+        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
 
         WaitableData<OutputData> waitableOutputData;
         NextIterationData nextIterationData;
@@ -1238,23 +1249,18 @@ namespace gpu{
 	};
 
 
-    struct TransitionFunctionData {
-		cpu::RangeGenerator<read_number>* readIdGenerator;
-		const Minhasher* minhasher;
-        const DistributedReadStorage* readStorage;
-		CorrectionOptions correctionOptions;
-        GoodAlignmentProperties goodAlignmentProperties;
-        SequenceFileProperties sequenceFileProperties;
-        RuntimeOptions runtimeOptions;
-        FileOptions fileOptions;
-		std::atomic_uint8_t* correctionStatusFlagsPerRead;
-        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
-		std::function<void(read_number)> lock;
-		std::function<void(read_number)> unlock;
-
-        std::condition_variable isFinishedCV;
-        std::mutex isFinishedMutex;
-	};
+    // struct TransitionFunctionData {
+	// 	cpu::RangeGenerator<read_number>* readIdGenerator;
+	// 	const Minhasher* minhasher;
+    //     const DistributedReadStorage* readStorage;
+	// 	CorrectionOptions correctionOptions;
+    //     GoodAlignmentProperties goodAlignmentProperties;
+    //     SequenceFileProperties sequenceFileProperties;
+    //     RuntimeOptions runtimeOptions;
+    //     FileOptions fileOptions;
+	// 	std::atomic_uint8_t* correctionStatusFlagsPerRead;
+    //     std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
+	// };
 
 
 
@@ -1300,7 +1306,7 @@ namespace gpu{
             removeCandidatesOfDifferentRegionFromMSA(batch);
             #endif
             correctSubjects(batch);
-            if(batch.transFuncData->correctionOptions.correctCandidates){
+            if(batch.correctionOptions.correctCandidates){
                 correctCandidates(batch);                
             }
 
@@ -1356,7 +1362,6 @@ namespace gpu{
 
     void prepareNewDataForCorrection(Batch& batchData, int batchsize, const Minhasher& minhasher, const DistributedReadStorage& readStorage){
         NextIterationData& nextData = batchData.nextIterationData;
-        const auto& transFuncData = *batchData.transFuncData;
 
         const int numCandidatesLimit = batchData.numCandidatesLimit;
 
@@ -1371,14 +1376,14 @@ namespace gpu{
         std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
         std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
 
-        const int resultsPerMap = calculateResultsPerMapThreshold(batchData.transFuncData->correctionOptions.estimatedCoverage);
+        const int resultsPerMap = calculateResultsPerMapThreshold(batchData.correctionOptions.estimatedCoverage);
         const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
 
         //data of new anchors is appended to leftover data
 
         const int numLeftoverAnchors = *nextData.h_numLeftoverAnchors.get();
         read_number* const readIdsBegin = nextData.h_leftoverAnchorReadIds.get();
-        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(
+        read_number* const readIdsEnd = batchData.readIdGenerator->next_n_into_buffer(
             batchsize - numLeftoverAnchors, 
             readIdsBegin + numLeftoverAnchors
         );
@@ -1436,7 +1441,7 @@ namespace gpu{
         NextIterationData* nextDataPtr = &nextData;
         const Minhasher* minhasherPtr = &minhasher;
 
-        const int kmerSize = batchData.transFuncData->correctionOptions.kmerlength;
+        const int kmerSize = batchData.correctionOptions.kmerlength;
         const int numHashFunctions = numMinhashMaps;
 
         callMinhashSignaturesKernel_async(
@@ -1807,9 +1812,9 @@ namespace gpu{
             nvtx::push_range("prepareNewDataForCorrection",1);
             prepareNewDataForCorrection(
                 *batchptr, 
-                batchptr->transFuncData->correctionOptions.batchsize,
-                *batchptr->transFuncData->minhasher,
-                *batchptr->transFuncData->readStorage                
+                batchptr->correctionOptions.batchsize,
+                *batchptr->minhasher,
+                *batchptr->readStorage                
             );
             cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
             if(batchptr->nextIterationData.n_subjects > 0){                
@@ -1892,7 +1897,7 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
 
         cudaMemcpyAsync(
@@ -1968,13 +1973,11 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        const auto& transFuncData = *batch.transFuncData;
-
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        const auto* gpuReadStorage = transFuncData.readStorage;
+        const auto* gpuReadStorage = batch.readStorage;
 
-		if(transFuncData.correctionOptions.useQualityScores) {
+		if(batch.correctionOptions.useQualityScores) {
             // std::cerr << "gather anchor qual\n";
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
@@ -2008,11 +2011,9 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        const auto& transFuncData = *batch.transFuncData;
-
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
 
         {
@@ -2051,12 +2052,12 @@ namespace gpu{
             batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
-            transFuncData.sequenceFileProperties.maxSequenceLength,
+            batch.sequenceFileProperties.maxSequenceLength,
             batch.encodedSequencePitchInInts,
-            transFuncData.goodAlignmentProperties.min_overlap,
-            transFuncData.goodAlignmentProperties.maxErrorRate,
-            transFuncData.goodAlignmentProperties.min_overlap_ratio,
-            transFuncData.correctionOptions.estimatedErrorrate,
+            batch.goodAlignmentProperties.min_overlap,
+            batch.goodAlignmentProperties.maxErrorRate,
+            batch.goodAlignmentProperties.min_overlap_ratio,
+            batch.correctionOptions.estimatedErrorrate,
             //batch.maxSubjectLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -2071,8 +2072,8 @@ namespace gpu{
             batch.d_numCandidates.get(),
             batchsize,
             maxCandidates,
-            transFuncData.correctionOptions.estimatedErrorrate,
-            transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
+            batch.correctionOptions.estimatedErrorrate,
+            batch.correctionOptions.estimatedCoverage * batch.correctionOptions.m_coverage,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
@@ -2109,11 +2110,9 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        const auto& transFuncData = *batch.transFuncData;
-
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
 
         callBuildMSAKernel_async(
@@ -2135,7 +2134,7 @@ namespace gpu{
             batch.d_candidate_sequences_lengths.get(),
             batch.d_subject_qualities.get(),
             batch.d_candidate_qualities.get(),
-            transFuncData.correctionOptions.useQualityScores,
+            batch.correctionOptions.useQualityScores,
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
             batch.msa_pitch,
@@ -2165,11 +2164,9 @@ namespace gpu{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        const auto& transFuncData = *batch.transFuncData;
-
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
 
         assert(batch.d_tempstorage.sizeInBytes() >= sizeof(bool) * batch.n_queries);
@@ -2219,14 +2216,14 @@ namespace gpu{
                 batch.d_numCandidates.get(),
                 batchsize,
                 maxCandidates,
-                transFuncData.correctionOptions.useQualityScores,
+                batch.correctionOptions.useQualityScores,
                 batch.encodedSequencePitchInInts,
                 batch.qualityPitchInBytes,
                 batch.msa_pitch,
                 batch.msa_weights_pitch / sizeof(float),
                 d_indices_dblbuf[(0 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(0 + iteration) % 2],
-                transFuncData.correctionOptions.estimatedCoverage,
+                batch.correctionOptions.estimatedCoverage,
                 batch.d_canExecute,
                 iteration,
                 batch.d_subject_read_ids.get(),
@@ -2245,20 +2242,18 @@ namespace gpu{
 
 	void correctSubjects(Batch& batch){
 
-        const auto& transFuncData = *batch.transFuncData;
-
         cudaSetDevice(batch.deviceId); CUERR;
 
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
 
-		const float avg_support_threshold = 1.0f-1.0f*transFuncData.correctionOptions.estimatedErrorrate;
-		const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
+		const float avg_support_threshold = 1.0f-1.0f*batch.correctionOptions.estimatedErrorrate;
+		const float min_support_threshold = 1.0f-3.0f*batch.correctionOptions.estimatedErrorrate;
 		// coverage is always >= 1
 		const float min_coverage_threshold = std::max(1.0f,
-					transFuncData.correctionOptions.m_coverage / 6.0f * transFuncData.correctionOptions.estimatedCoverage);
-        const float max_coverage_threshold = 0.5 * transFuncData.correctionOptions.estimatedCoverage;
+            batch.correctionOptions.m_coverage / 6.0f * batch.correctionOptions.estimatedCoverage);
+        const float max_coverage_threshold = 0.5 * batch.correctionOptions.estimatedCoverage;
 
 		// correct subjects
 #if 0
@@ -2549,15 +2544,15 @@ namespace gpu{
             batch.decodedSequencePitchInBytes,
             batch.msa_pitch,
             batch.msa_weights_pitch,
-            transFuncData.sequenceFileProperties.maxSequenceLength,
-            transFuncData.correctionOptions.estimatedErrorrate,
-            transFuncData.goodAlignmentProperties.maxErrorRate,
+            batch.sequenceFileProperties.maxSequenceLength,
+            batch.correctionOptions.estimatedErrorrate,
+            batch.goodAlignmentProperties.maxErrorRate,
             avg_support_threshold,
             min_support_threshold,
             min_coverage_threshold,
             max_coverage_threshold,
-            transFuncData.correctionOptions.kmerlength,
-            transFuncData.sequenceFileProperties.maxSequenceLength,
+            batch.correctionOptions.kmerlength,
+            batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
@@ -2598,7 +2593,7 @@ namespace gpu{
 
         // cudaMemcpyAsync(batch.h_uncorrected_positions_per_subject,
         //                 batch.d_uncorrected_positions_per_subject,
-        //                 sizeof(int) * transFuncData.sequenceFileProperties.maxSequenceLength * batchsize,
+        //                 sizeof(int) * batch.sequenceFileProperties.maxSequenceLength * batchsize,
         //                 D2H,
         //                 streams[secondary_stream_index]); CUERR;
 
@@ -2623,7 +2618,7 @@ namespace gpu{
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
             batch.d_numAnchors.get(),
-            batch.transFuncData->correctionOptions.batchsize,
+            batch.correctionOptions.batchsize,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
@@ -2653,21 +2648,19 @@ namespace gpu{
 
     void correctCandidates(Batch& batch){
 
-        const auto& transFuncData = *batch.transFuncData;
-
         cudaSetDevice(batch.deviceId); CUERR;
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        const auto batchsize = batch.transFuncData->correctionOptions.batchsize;
+        const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
 
-        const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
+        const float min_support_threshold = 1.0f-3.0f*batch.correctionOptions.estimatedErrorrate;
         // coverage is always >= 1
         const float min_coverage_threshold = std::max(1.0f,
-                    transFuncData.correctionOptions.m_coverage / 6.0f * transFuncData.correctionOptions.estimatedCoverage);
-        const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
+            batch.correctionOptions.m_coverage / 6.0f * batch.correctionOptions.estimatedCoverage);
+        const int new_columns_to_correct = batch.correctionOptions.new_columns_to_correct;
 
 
         bool* const d_candidateCanBeCorrected = batch.d_alignment_isValid.get(); //repurpose
@@ -2871,7 +2864,7 @@ namespace gpu{
             batch.decodedSequencePitchInBytes,
             batch.msa_pitch,
             batch.msa_weights_pitch,
-            transFuncData.sequenceFileProperties.maxSequenceLength,
+            batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );       
@@ -3054,8 +3047,6 @@ namespace gpu{
 
     void constructResults(Batch& batch){
 
-        const auto& transFuncData = *batch.transFuncData;
-
         auto& outputData = batch.waitableOutputData.data;
         auto& rawResults = outputData.rawResults;
 
@@ -3076,13 +3067,13 @@ namespace gpu{
             const bool isHQ = rawResults.h_is_high_quality_subject[subject_index].hq();
 
             if(isHQ){
-                transFuncData.correctionStatusFlagsPerRead[readId] |= readCorrectedAsHQAnchor;
+                batch.correctionStatusFlagsPerRead[readId] |= readCorrectedAsHQAnchor;
             }
 
             if(isCorrected){
                 subjectIndicesToProcess.emplace_back(subject_index);
             }else{
-                transFuncData.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
+                batch.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
             }
         }
 
@@ -3118,7 +3109,7 @@ namespace gpu{
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
                 bool savingIsOk = false;
-                const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
+                const std::uint8_t mask = batch.correctionStatusFlagsPerRead[candidate_read_id];
                 if(!(mask & readCorrectedAsHQAnchor)) {
                     savingIsOk = true;
                 }
@@ -3159,14 +3150,12 @@ namespace gpu{
         nvtx::pop_range();
 
         auto outputDataPtr = &outputData;
-        auto transFuncDataPtr = batch.transFuncData;
 
-        auto unpackAnchors = [outputDataPtr, transFuncDataPtr](int begin, int end){
+        auto unpackAnchors = [outputDataPtr](int begin, int end){
             nvtx::push_range("Anchor unpacking", 3);
             
             auto& outputData = *outputDataPtr;
             auto& rawResults = outputData.rawResults;
-            //const auto& transFuncData = *transFuncDataPtr;
             const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
@@ -3185,7 +3174,7 @@ namespace gpu{
 
                 // if(numUncorrectedPositions > 0){
                 //     tmp.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
-                //     std::copy_n(rawResults.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
+                //     std::copy_n(rawResults.h_uncorrected_positions_per_subject + subject_index * batch.sequenceFileProperties.maxSequenceLength,
                 //                 numUncorrectedPositions,
                 //                 tmp.uncorrectedPositionsNoConsensus.begin());
 
@@ -3231,13 +3220,15 @@ namespace gpu{
             nvtx::pop_range();
         };
 
-        auto unpackcandidates = [outputDataPtr, transFuncDataPtr](int begin, int end){
+        auto batchPtr = &batch;
+
+        auto unpackcandidates = [outputDataPtr, batchPtr](int begin, int end){
             nvtx::push_range("candidate unpacking", 3);
             //std::cerr << "\n\n unpack candidates \n\n";
             
             auto& outputData = *outputDataPtr;
             auto& rawResults = outputData.rawResults;
-            const auto& transFuncData = *transFuncDataPtr;
+            const auto& batch = *batchPtr;
 
             const auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
 
@@ -3269,18 +3260,18 @@ namespace gpu{
                 const int candidate_shift = rawResults.h_alignment_shifts[global_candidate_index];
                 
                 //TIMERSTOPCPU(setup);
-                if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                if(batch.correctionOptions.new_columns_to_correct < candidate_shift){
                     std::cerr << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
-                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                    << candidate_shift << " " << batch.correctionOptions.new_columns_to_correct <<"\n";
                 }
-                assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
+                assert(batch.correctionOptions.new_columns_to_correct >= candidate_shift);
                 
                 //TIMERSTARTCPU(tmp);
                 tmp.type = TempCorrectedSequence::Type::Candidate;
                 tmp.shift = candidate_shift;
                 tmp.readId = candidate_read_id;
                 //TIMERSTOPCPU(tmp);
-                //const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+                //const bool originalReadContainsN = batch.readStorage->readContainsN(candidate_read_id);
                 
                 
                 const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
@@ -3315,7 +3306,7 @@ namespace gpu{
         };
 
 
-        if(!transFuncData.correctionOptions.correctCandidates){
+        if(!batch.correctionOptions.correctCandidates){
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
@@ -3357,11 +3348,8 @@ namespace gpu{
 
  
     void saveResults(Batch& batch){
-
-        const auto& transFuncData = *batch.transFuncData;
             
         auto function = [batchPtr = &batch,
-            transFuncData = &transFuncData,
             id = batch.id](){
 
             auto& batch = *batchPtr;
@@ -3374,14 +3362,14 @@ namespace gpu{
                 + std::to_string(numA) + " " + std::to_string(numC), 4);
 
             for(int i = 0; i < numA; i++){
-                transFuncData->saveCorrectedSequence(
+                batch.saveCorrectedSequence(
                     std::move(outputData.anchorCorrections[i]), 
                     std::move(outputData.encodedAnchorCorrections[i])
                 );
             }
 
             for(int i = 0; i < numC; i++){
-                transFuncData->saveCorrectedSequence(
+                batch.saveCorrectedSequence(
                     std::move(outputData.candidateCorrections[i]), 
                     std::move(outputData.encodedCandidateCorrections[i])
                 );
@@ -3462,8 +3450,6 @@ correct_gpu(
 
       //std::mutex outputstreamlock;
 
-      TransitionFunctionData transFuncData;
-
       BackgroundThread outputThread;
 
       const int threadPoolSize = std::max(1, runtimeOptions.threads - 3*int(deviceIds.size()));
@@ -3492,51 +3478,10 @@ correct_gpu(
                 << " for device id " << deviceId << "\n";
         }
 
-        
-
-        
-   
-
-
-      //transFuncData.mybatchgen = &mybatchgen;
-      transFuncData.goodAlignmentProperties = goodAlignmentProperties;
-      transFuncData.correctionOptions = correctionOptions;
-      transFuncData.runtimeOptions = runtimeOptions;
-      transFuncData.fileOptions = fileOptions;
-      transFuncData.sequenceFileProperties = sequenceFileProperties;
-
-      transFuncData.readIdGenerator = &readIdGenerator;
-      transFuncData.minhasher = &minhasher;
-      transFuncData.readStorage = &readStorage;
-      transFuncData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
-
       //std::mutex outputstreammutex;
-      std::map<bool, int> useEditsCountMap;
-      std::map<bool, int> useEditsSavedCountMap;
-      std::map<int, int> numEditsHistogram;
-
-      transFuncData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
-          //useEditsCountMap[tmp.useEdits]++;
-            //std::cerr << tmp << "\n";
-          //std::unique_lock<std::mutex> l(outputstreammutex);
-          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              //outputstream << tmp << '\n';
-              partialResults.storeElement(std::move(encoded));
-              //useEditsSavedCountMap[tmp.useEdits]++;
-              //numEditsHistogram[tmp.edits.size()]++;
-
-             // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
-          }
-      };
-
-      transFuncData.lock = [&](read_number readId){
-                       // read_number index = readId % transFuncData.nLocksForProcessedFlags;
-                       // transFuncData.locksForProcessedFlags[index].lock();
-                   };
-      transFuncData.unlock = [&](read_number readId){
-                         // read_number index = readId % transFuncData.nLocksForProcessedFlags;
-                         // transFuncData.locksForProcessedFlags[index].unlock();
-                     };
+    //   std::map<bool, int> useEditsCountMap;
+    //   std::map<bool, int> useEditsSavedCountMap;
+    //   std::map<int, int> numEditsHistogram;
 
      outputThread.start();
 
@@ -3564,12 +3509,36 @@ correct_gpu(
             batchData.deviceId = deviceId;
             batchData.streams = std::move(streams);
             batchData.events = std::move(events);
+
+            batchData.goodAlignmentProperties = goodAlignmentProperties;
+            batchData.correctionOptions = correctionOptions;
+            batchData.runtimeOptions = runtimeOptions;
+            batchData.fileOptions = fileOptions;
+            batchData.sequenceFileProperties = sequenceFileProperties;
+            batchData.readIdGenerator = &readIdGenerator;
+            batchData.minhasher = &minhasher;
+            batchData.readStorage = &readStorage;
+            batchData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
+            batchData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
+                //useEditsCountMap[tmp.useEdits]++;
+                  //std::cerr << tmp << "\n";
+                //std::unique_lock<std::mutex> l(outputstreammutex);
+                if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+                    //outputstream << tmp << '\n';
+                    partialResults.storeElement(std::move(encoded));
+                    //useEditsSavedCountMap[tmp.useEdits]++;
+                    //numEditsHistogram[tmp.edits.size()]++;
+      
+                   // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
+                }
+            };
+
             batchData.kernelLaunchHandle = make_kernel_launch_handle(deviceId);
             batchData.subjectSequenceGatherHandle = readStorage.makeGatherHandleSequences();
             batchData.candidateSequenceGatherHandle = readStorage.makeGatherHandleSequences();
             batchData.subjectQualitiesGatherHandle = readStorage.makeGatherHandleQualities();
             batchData.candidateQualitiesGatherHandle = readStorage.makeGatherHandleQualities();
-            batchData.transFuncData = &transFuncData;
+
             batchData.outputThread = &outputThread;
             batchData.backgroundWorker = nullptr;
             batchData.unpackWorker = nullptr;
@@ -3723,11 +3692,11 @@ correct_gpu(
 
             pushrange("getCandidateSequenceData", 1);
 
-            getCandidateSequenceData(batchData, *transFuncData.readStorage);
+            getCandidateSequenceData(batchData, *batchData.readStorage);
 
             poprange();
 
-            if(transFuncData.correctionOptions.useQualityScores) {
+            if(batchData.correctionOptions.useQualityScores) {
                 pushrange("getQualities", 4);
 
                 getQualities(batchData);
@@ -3769,7 +3738,7 @@ correct_gpu(
 
             poprange();
 
-            if(transFuncData.correctionOptions.correctCandidates) {                        
+            if(batchData.correctionOptions.correctCandidates) {                        
 
                 pushrange("correctCandidates", 8);
 
@@ -4012,7 +3981,7 @@ correct_gpu(
                     printMemoryInfo(memInfo1);
                     std::cerr << "Memory usage candidateSequenceGatherHandle\n";
                     printMemoryInfo(memInfo2);
-                    if(runtimeOptions.useQualityScores){
+                    if(correctionOptions.useQualityScores){
                         std::cerr << "Memory usage subjectQualitiesGatherHandle\n";
                         printMemoryInfo(memInfo3);
                         std::cerr << "Memory usage candidateQualitiesGatherHandle\n";
@@ -4061,20 +4030,20 @@ correct_gpu(
     minhasher.destroy();
     readStorage.destroy();
 
-    std::cerr << "useEditsCountMap\n";
-    for(const auto& pair : useEditsCountMap){
-        std::cerr << int(pair.first) << " : " << pair.second << "\n";
-    }
+    // std::cerr << "useEditsCountMap\n";
+    // for(const auto& pair : useEditsCountMap){
+    //     std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    // }
 
-    std::cerr << "useEditsSavedCountMap\n";
-    for(const auto& pair : useEditsSavedCountMap){
-        std::cerr << int(pair.first) << " : " << pair.second << "\n";
-    }
+    // std::cerr << "useEditsSavedCountMap\n";
+    // for(const auto& pair : useEditsSavedCountMap){
+    //     std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    // }
 
-    std::cerr << "numEditsHistogram\n";
-    for(const auto& pair : numEditsHistogram){
-        std::cerr << int(pair.first) << " : " << pair.second << "\n";
-    }
+    // std::cerr << "numEditsHistogram\n";
+    // for(const auto& pair : numEditsHistogram){
+    //     std::cerr << int(pair.first) << " : " << pair.second << "\n";
+    // }
 
     return partialResults;
 
