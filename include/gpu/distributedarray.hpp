@@ -171,6 +171,30 @@ namespace distarraykernels{
         }
     }
 
+    template<class Index_t, class Value_t>
+    __global__
+    void copy2Dkernel(
+        Value_t* __restrict__ output,
+        const Value_t* __restrict__ input,
+        Index_t numRows,
+        Index_t numColumns,
+        size_t inputRowPitchElements,
+        size_t outputRowPitchElements
+    ){
+
+        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
+                i < numRows * numColumns; 
+                i += size_t(blockDim.x) * gridDim.x){
+
+            const Index_t inputRow = i / numColumns;
+            const Index_t col = i % numColumns;
+            const Index_t outputRow = inputRow;
+            
+            output[size_t(outputRow) * outputRowPitchElements + col] 
+                = input[size_t(inputRow) * inputRowPitchElements + col];
+        }
+    }
+
 
     // kernels with parameter object
     template<class Index_t>
@@ -1315,34 +1339,14 @@ public:
                     numColumns
                 ); CUERR;
 
-                //copy to result array (peer access)
-                {
-                    assert(resultPitch % sizeof(Value_t) == 0);
-
-                    size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
-                    size_t numCols = numColumns;
-
-                    const Value_t* const input = myGatherResult.get();
-                    Value_t* const output = d_result;
-
-                    dim3 block(256,1,1);
-                    dim3 grid(std::min(320ul, SDIV(numIds * numCols, block.x)),1,1);
-
-                    generic_kernel<<<grid, block, 0, mystream>>>([=] __device__ (){
-
-                        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; 
-                                i < numIds * numCols; 
-                                i += size_t(blockDim.x) * gridDim.x){
-
-                            const Index_t inputRow = i / numCols;
-                            const Index_t col = i % numCols;
-                            const Index_t outputRow = inputRow;
-                            
-                            output[size_t(outputRow) * resultPitchValueTs + col] 
-                                = input[size_t(inputRow) * numCols + col];
-                        }
-                    }); CUERR;
-                }
+                distarraykernels::copy2Dkernel<Index_t, Value_t><<<640, 128, 0, mystream>>>(
+                    d_result,
+                    myGatherResult.get(),
+                    numIds,
+                    numColumns,
+                    numColumns,
+                    resultPitch / sizeof(Value_t)
+                ); CUERR;
 
                 cudaEventRecord(myevent, mystream); CUERR;
                 cudaStreamWaitEvent(syncstream, myevent, 0); CUERR;
