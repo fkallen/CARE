@@ -359,31 +359,9 @@ public:
     
 
     struct GatherHandleStruct{
-        SimpleAllocationPinnedHost<Index_t> pinnedLocalIndices;
-        SimpleAllocationPinnedHost<Index_t> pinnedPermutationIndices;
-        SimpleAllocationPinnedHost<Value_t> pinnedResultData;
-        std::vector<SimpleAllocationDevice<Index_t>> deviceLocalIndicesPerLocation;
-        std::vector<SimpleAllocationDevice<Index_t>> numLocalIndicesPerLocation;
-        std::vector<SimpleAllocationDevice<Index_t*>> ptrsToNumIndicesPerLocation;
-        std::vector<SimpleAllocationDevice<Value_t>> dataPerGpu;
-
-        std::map<int, SimpleAllocationDevice<Value_t>> tmpResultsOfDevice;
-        std::map<int, SimpleAllocationDevice<Index_t>> permutationIndicesOfDevice;
-        std::map<int, SimpleAllocationDevice<Index_t>> localIndicesOnDevice;
-
-        std::vector<cudaStream_t> streamsPerGpu;
-        std::vector<cudaEvent_t> eventsPerGpu;
-
-        cudaEvent_t readyEvent;
-        care::ThreadPool::ParallelForHandle pforHandle;
-
-
-        // -------------------------------------------
 
         std::mutex mutex;
-
-        std::vector<SimpleAllocationPinnedHost<Index_t>> pinnedIndicesOfGpuLocation; //numGpus
-        std::vector<SimpleAllocationDevice<Index_t>> d_indicesOfGpuLocation; //numGpus
+        care::ThreadPool::ParallelForHandle pforHandle;
 
         SimpleAllocationPinnedHost<Index_t> indicesOfHostLocation;
         SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
@@ -887,49 +865,11 @@ public:
 
     GatherHandle makeGatherHandle() const{
         auto handle = std::make_unique<GatherHandleStruct>();
-        handle->deviceLocalIndicesPerLocation.resize(numLocations);
-        handle->numLocalIndicesPerLocation.resize(numLocations);
-        handle->ptrsToNumIndicesPerLocation.resize(numLocations);
-        handle->dataPerGpu.resize(numGpus);
-        handle->streamsPerGpu.resize(numGpus);
-        handle->eventsPerGpu.resize(numGpus);
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-            cudaStreamCreate(&(handle->streamsPerGpu[gpu])); CUERR;
-            cudaEventCreate(&(handle->eventsPerGpu[gpu])); CUERR;
 
-            handle->numLocalIndicesPerLocation[gpu].resize(1);
-            handle->ptrsToNumIndicesPerLocation[gpu].resize(numLocations);
-        }
+        int oldDevice;
+        cudaGetDevice(&oldDevice); CUERR;
+        //wrapperCudaSetDevice(oldDevice); CUERR;
 
-        std::vector<Index_t*> numPtrs(numLocations);
-        for(int loc = 0; loc < numLocations; loc++){
-            numPtrs[loc] = handle->numLocalIndicesPerLocation[loc].get();
-        }
-
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-
-            cudaMemcpyAsync(          
-                handle->ptrsToNumIndicesPerLocation[gpu].get(),
-                numPtrs.data(),
-                sizeof(Index_t*) * numLocations,
-                H2D,
-                handle->streamsPerGpu[gpu]
-            ); CUERR;
-
-            cudaStreamSynchronize(handle->streamsPerGpu[gpu]); CUERR;
-        }
-
-
-        cudaEventCreate(&(handle->readyEvent)); CUERR;
-
-        // -----------------------------------------
-        wrapperCudaSetDevice(oldDevice); CUERR;
-
-        handle->pinnedIndicesOfGpuLocation.resize(numGpus);
-        handle->d_indicesOfGpuLocation.resize(numGpus);
         handle->numIndicesPerLocation.resize(numLocations);
         handle->numIndicesPerLocationPS.resize(numLocations+1);
         handle->pinnedDestinationPositionsOfLocation.resize(numLocations);
@@ -1119,41 +1059,13 @@ public:
     void destroyGatherHandleStruct(const GatherHandle& handle) const{
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
-        handle->pinnedLocalIndices = std::move(SimpleAllocationPinnedHost<Index_t>{});
-        handle->pinnedResultData = std::move(SimpleAllocationPinnedHost<Value_t>{});
-        handle->pinnedResultData = std::move(SimpleAllocationPinnedHost<Value_t>{});
-
-        for(size_t gpu = 0; gpu < handle->dataPerGpu.size(); gpu++){
-            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-
-            handle->deviceLocalIndicesPerLocation[gpu] = std::move(SimpleAllocationDevice<Index_t>{});
-            handle->dataPerGpu[gpu] = std::move(SimpleAllocationDevice<Value_t>{});
-            cudaStreamDestroy(handle->streamsPerGpu[gpu]); CUERR;
-            cudaEventDestroy(handle->eventsPerGpu[gpu]); CUERR;
-        }
-
-        cudaEventDestroy(handle->readyEvent); CUERR;
-
-        for(auto& pair : handle->tmpResultsOfDevice){
-            wrapperCudaSetDevice(pair.first); CUERR;
-            pair.second = std::move(SimpleAllocationDevice<Value_t>{});
-        }
-
-        for(auto& pair : handle->permutationIndicesOfDevice){
-            wrapperCudaSetDevice(pair.first); CUERR;
-            pair.second = std::move(SimpleAllocationDevice<Index_t>{});
-        }
-
-        //    -----------------
-
-
 
         handle->h_packedpointersAndNumIndicesArg.destroy();
         handle->h_packedKernelParamsPartPref.destroy();
 
         for(int gpu = 0; gpu < numGpus; gpu++){
             wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
-            handle->d_indicesOfGpuLocation[gpu].destroy();
+
             handle->d_destinationPositionsOfGpuLocation[gpu].destroy();
             handle->d_gatheredElementsOfGpuLocation[gpu].destroy();
 
@@ -1298,8 +1210,8 @@ public:
             const int locationId = singlePartitionInfo.locationId;
             const int gpu = locationId;
             const int mydeviceId = deviceIds[gpu];
-            cudaStream_t mystream = handle->streamsPerGpu[gpu];
-            cudaEvent_t myevent = handle->eventsPerGpu[gpu];
+            cudaStream_t mystream = handle->streamsPerGpuLocation[gpu];
+            cudaEvent_t myevent = handle->eventsPerGpuLocation[gpu];
 
             int oldDevice; cudaGetDevice(&oldDevice); CUERR;
             
