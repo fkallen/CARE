@@ -1479,7 +1479,7 @@ public:
 
                 cudaStreamWaitEvent(mystream, handle->map_events[resultDeviceId], 0); CUERR;
 
-                distarraykernels::gatherKernel<<<640, 128, 0, syncstream>>>(
+                distarraykernels::gatherKernel<<<640, 128, 0, mystream>>>(
                     myGatherResult.get(), 
                     dataPtrPerLocation[gpu], 
                     d_indices, 
