@@ -16,29 +16,50 @@
 
 ## Build
 CPU version: This produces executable file errorcorrector_cpu
+```
 make / make cpu
+```
 
 GPU version: This produces executable file errorcorrector_gpu
+```
 make gpu
+```
 
 # Run   
 The simplest command which only includes mandatory options is
 
 ```
-./errorcorrector_cpu --inputfile reads.fastq --outdir . --outfile correctedreads.fastq --coverage=30 
+./errorcorrector_cpu -i reads.fastq -d outputdir -o correctedreads.fastq -c 30 
 ```
+
+This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30.
+The outputfile named correctedreads.fastq will be placed in the directory outputdir.
 
 Available program options:
 ```
  Mandatory options:
-      --inputfile arg  The file to correct. Fasta or Fastq format. May be
-                       gzip'ed. Always treated as single end.
-      --outdir arg     The output directory
-      --outfile arg    The output file
-      --coverage arg   Estimated coverage of input file
+  -d, --outdir arg           The output directory. Will be created if it does
+                             not exist yet
+  -c, --coverage arg         Estimated coverage of input file. (i.e.
+                             number_of_reads * read_length / genome_size)
+  -i, --inputfiles arg       The file(s) to correct. Fasta or Fastq format.
+                             May be gzip'ed. Repeat this option for each input
+                             file (e.g. -i file1.fastq -i file2.fastq). Must
+                             not mix fasta and fastq files. Input files are
+                             treated as unpaired.
+  -o, --outputfilenames arg  The names of outputfiles. Repeat this option for
+                             each output file (e.g. -o file1_corrected.fastq
+                             -o file2_corrected.fastq). If a single output
+                             file is specified, it will contain the concatenated
+                             results of all input files. If multiple output
+                             files are specified, the number of output files
+                             must be equal to the number of input files. In this
+                             case, output file i will contain the results of
+                             input file i. Output files are uncompressed.
 
  Optional options:
-  -h,                           Show this help message
+  -h, --help                    Show this help message
+
       --tempdir arg             Directory to store temporary files. Default
                                 is output directory
       --hashmaps arg            The number of hash maps. Must be greater than

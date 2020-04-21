@@ -56,18 +56,18 @@ int main(int argc, char** argv){
 	cxxopts::Options options(argv[0], "CARE: Context-Aware Error Correction for Illumina reads");
 
 	options.add_options("Mandatory")
-		("d,outdir", "The output directory", cxxopts::value<std::string>())
-		("c,coverage", "Estimated coverage of input file", cxxopts::value<float>())
+		("d,outdir", "The output directory. Will be created if it does not exist yet", cxxopts::value<std::string>())
+		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", cxxopts::value<float>())
 		("i,inputfiles", 
 			"The file(s) to correct. "
 			"Fasta or Fastq format. May be gzip'ed. "
-			"Multiple filenames must be separated by comma (e.g. file1.fastq,file2.fastq ). "
+			"Repeat this option for each input file (e.g. -i file1.fastq -i file2.fastq). "
 			"Must not mix fasta and fastq files. Input files are treated as unpaired.",
 			cxxopts::value<std::vector<std::string>>())
 		("o,outputfilenames", 
 			"The names of outputfiles. "
-			"Multiple filenames must be separated by comma (e.g. file1_corrected.fastq,file2_corrected.fastq ). "
-			"If a single output file is specified. It will contain the concatenated results of all input files. "
+			"Repeat this option for each output file (e.g. -o file1_corrected.fastq -o file2_corrected.fastq). "
+			"If a single output file is specified, it will contain the concatenated results of all input files. "
 			"If multiple output files are specified, the number of output files must be equal to the number of input files. "
 			"In this case, output file i will contain the results of input file i. "
 			"Output files are uncompressed.", 
@@ -75,7 +75,7 @@ int main(int argc, char** argv){
 
 	options.add_options("Optional")
 			
-		("h", "Show this help message", cxxopts::value<bool>(help))
+		("h,help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
 		("kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>())
