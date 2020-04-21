@@ -1,7 +1,6 @@
 #ifndef CARE_MINHASHER_HPP
 #define CARE_MINHASHER_HPP
 
-#include "options.hpp"
 #include "hpc_helpers.cuh"
 #include "util.hpp"
 
@@ -118,35 +117,71 @@ namespace care{
                 return !(*this == rhs);
             }
 
-			void insert(Key_t key, Index_t value) noexcept{
-				std::uint64_t probes = 0;
-				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
-                //std::uint32_t probes = 1;
-                //std::uint32_t pos = murmur_integer_finalizer_hash_uint32_t(key) % size;
-				while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
-					pos = (pos + 1) % size;
-					probes++;
-				}
-				keyToIndexMap[pos].first = key;
-				keyToIndexMap[pos].second = value;
+            void insert(Key_t key, Index_t value) noexcept{
+                std::uint64_t probes = 0;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
+                }
+                keyToIndexMap[pos].first = key;
+                keyToIndexMap[pos].second = value;
                 //std::cerr << "probes insert: " << probes << "\n";
 
                 maxProbes = std::max(maxProbes, probes);
-			}
+            }
 
-			Index_t get(Key_t key) const noexcept{
+            Index_t get(Key_t key) const noexcept{
                 std::uint64_t probes = 0;
-				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
-				while(keyToIndexMap[pos].first != key){
-					pos = (pos + 1) % size;
-					probes++;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos].first != key){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
                     if(maxProbes < probes){
                         return std::numeric_limits<Index_t>::max();
                     }
-				}
+                }
                 //std::cerr << "probes get: " << probes << "\n";
-				return keyToIndexMap[pos].second;
-			}
+                return keyToIndexMap[pos].second;
+            }
+
+            template<int N>
+            std::array<Index_t, N> getN(const Key_t* keys) const noexcept{
+
+                std::array<std::uint64_t, N> pos;
+                for(int i = 0; i < N; i++){
+                    pos[i] = murmur_hash_3_uint64_t(keys[i]) % size;
+                    __builtin_prefetch(&keyToIndexMap[pos], 0, 1);
+                }
+                std::array<std::uint64_t, N> probes{0};
+                std::array<Index_t, N> result;
+
+                for(int i = 0; i < N; i++){
+                    while(keyToIndexMap[pos[i]].first != keys[i]){
+                        pos[i]++;
+                        //wrap-around
+                        if(pos[i] == size){
+                            pos[i] = 0;
+                        }
+                        probes[i]++;
+                        if(maxProbes < probes[i]){
+                            result[i] = std::numeric_limits<Index_t>::max();
+                            break;
+                        }
+                    }
+                    result[i] = keyToIndexMap[pos[i]].second;
+                }
+
+                return result;
+            }
 
             std::size_t numBytes() const{
                 return keyToIndexMap.size() * sizeof(Pair_t);
@@ -182,8 +217,202 @@ namespace care{
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
                 keyToIndexMap.resize(size);
                 instream.read(reinterpret_cast<char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+                //std::cerr << "keyToIndexMap.size = " << size << ", bytes = " << (keyToIndexMap.size() * sizeof(Pair_t)) << '\n';
             }
 		};
+
+
+        /*
+		 * hash map to map keys to indices using linear probing
+		 */
+		template<class Key_t, class Index_t>
+		struct KeyToIndexLengthPairMap{
+            using IndexLengthPair_t = std::pair<Index_t, BucketSize>;
+            using Pair_t = std::pair<Key_t, IndexLengthPair_t>;
+			Pair_t EmptySlot{0, IndexLengthPair_t{std::numeric_limits<Index_t>::max(), std::numeric_limits<BucketSize>::max()}};
+
+			std::uint64_t murmur_hash_3_uint64_t(std::uint64_t x) const{
+				x ^= x >> 33;
+				x *= 0xff51afd7ed558ccd;
+				x ^= x >> 33;
+				x *= 0xc4ceb9fe1a85ec53;
+				x ^= x >> 33;
+
+				return x;
+			}
+
+            std::uint32_t mueller_hash_uint32_t(std::uint32_t x) const{
+                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                x = ((x >> 16) ^ x);
+
+				return x;
+			}
+
+            std::uint32_t murmur_integer_finalizer_hash_uint32_t(std::uint32_t x) const{
+                x ^= x >> 16;
+                x *= 0x85ebca6b;
+                x ^= x >> 13;
+                x *= 0xc2b2ae35;
+                x ^= x >> 16;
+
+				return x;
+			}
+
+            std::uint64_t maxProbes{0};
+            std::uint64_t size;
+			std::vector<Pair_t> keyToIndexMap;           
+
+			KeyToIndexLengthPairMap() : KeyToIndexLengthPairMap(0){}
+			KeyToIndexLengthPairMap(std::uint64_t size) : size(size){
+				if(size >= std::numeric_limits<Index_t>::max())
+					throw std::runtime_error("KeyToIndexLengthPairMap: too many keys!");
+
+				keyToIndexMap.resize(size, KeyToIndexLengthPairMap::EmptySlot);
+			}
+
+            KeyToIndexLengthPairMap(const KeyToIndexLengthPairMap&) = default;
+            KeyToIndexLengthPairMap(KeyToIndexLengthPairMap&&) = default;
+
+            KeyToIndexLengthPairMap& operator=(const KeyToIndexLengthPairMap& rhs){
+                maxProbes = rhs.maxProbes;
+                size = rhs.size;
+                keyToIndexMap = rhs.keyToIndexMap;
+                
+                return *this;
+            }
+
+            KeyToIndexLengthPairMap& operator=(KeyToIndexLengthPairMap&& rhs) noexcept{
+                maxProbes = std::move(rhs.maxProbes);
+                size = std::move(rhs.size);
+                keyToIndexMap = std::move(rhs.keyToIndexMap);
+
+                return *this;
+            }
+
+            bool operator==(const KeyToIndexLengthPairMap& rhs) const{
+                if(maxProbes != rhs.maxProbes){
+                    return false;
+                }
+                if(size != rhs.size)
+                    return false;
+                if(keyToIndexMap != rhs.keyToIndexMap)
+                    return false;
+                return true;
+            }
+
+            bool operator!=(const KeyToIndexLengthPairMap& rhs) const{
+                return !(*this == rhs);
+            }
+
+            void insert(Key_t key, Index_t index, BucketSize length) noexcept{
+                std::uint64_t probes = 0;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos] != KeyToIndexLengthPairMap::EmptySlot){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
+                }
+                keyToIndexMap[pos].first = key;
+                keyToIndexMap[pos].second.first = index;
+                keyToIndexMap[pos].second.second = length;
+                //std::cerr << "probes insert: " << probes << "\n";
+
+                maxProbes = std::max(maxProbes, probes);
+            }
+
+            IndexLengthPair_t get(Key_t key) const noexcept{
+                std::uint64_t probes = 0;
+                std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                while(keyToIndexMap[pos].first != key){
+                    pos++;
+                    //wrap-around
+                    if(pos == size){
+                        pos = 0;
+                    }
+                    probes++;
+                    if(maxProbes < probes){
+                        return {std::numeric_limits<Index_t>::max(), std::numeric_limits<BucketSize>::max()};
+                    }
+                }
+                //std::cerr << "probes get: " << probes << "\n";
+                return keyToIndexMap[pos].second;
+            }
+
+            template<int N>
+            std::array<IndexLengthPair_t, N> getN(const Key_t* keys) const noexcept{
+
+                std::array<std::uint64_t, N> pos;
+                for(int i = 0; i < N; i++){
+                    pos[i] = murmur_hash_3_uint64_t(keys[i]) % size;
+                    __builtin_prefetch(&keyToIndexMap[pos], 0, 1);
+                }
+                std::array<std::uint64_t, N> probes{0};
+                std::array<IndexLengthPair_t, N> result;
+
+                for(int i = 0; i < N; i++){
+                    while(keyToIndexMap[pos[i]].first != keys[i]){
+                        pos[i]++;
+                        //wrap-around
+                        if(pos[i] == size){
+                            pos[i] = 0;
+                        }
+                        probes[i]++;
+                        if(maxProbes < probes[i]){
+                            result[i].first = std::numeric_limits<Index_t>::max();
+                            result[i].second = std::numeric_limits<BucketSize>::max();
+                            break;
+                        }
+                    }
+                    result[i] = keyToIndexMap[pos[i]].second;
+                }
+
+                return result;
+            }
+
+            std::size_t numBytes() const{
+                return keyToIndexMap.size() * sizeof(Pair_t);
+            }
+
+            std::size_t allocationSizeInBytes() const{
+                return keyToIndexMap.capacity() * sizeof(Pair_t);
+            }
+
+            static std::size_t getRequiredSizeInBytes(std::uint64_t elements){
+                return elements * sizeof(Pair_t);
+            }
+
+			void clear() noexcept{
+				keyToIndexMap.clear();
+                maxProbes = 0;
+			}
+
+			void destroy() noexcept{
+				clear();
+				keyToIndexMap.shrink_to_fit();
+			}
+
+            void writeToStream(std::ofstream& outstream) const{
+                outstream.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::uint64_t));
+                outstream.write(reinterpret_cast<const char*>(&size), sizeof(std::uint64_t));
+                outstream.write(reinterpret_cast<const char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+            }
+
+            void readFromStream(std::ifstream& instream){
+                instream.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::uint64_t));
+
+                instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
+                keyToIndexMap.resize(size);
+                instream.read(reinterpret_cast<char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+                //std::cerr << "keyToIndexMap.size = " << size << ", bytes = " << (keyToIndexMap.size() * sizeof(Pair_t)) << '\n';
+            }
+		};
+
+
+
 
 		template<class key_t, class value_t, class index_t>
 		struct KeyValueMapFixedSize{
@@ -208,6 +437,7 @@ namespace care{
 
 			double load = 0.8;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
+            KeyToIndexLengthPairMap<Key_t, Index_t> keyToIndexLengthPairMap;
 
             KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
 			}
@@ -237,6 +467,7 @@ namespace care{
                 countsPrefixSum = other.countsPrefixSum;
                 keysWithoutValues = other.keysWithoutValues;
                 keyIndexMap = other.keyIndexMap;
+                keyToIndexLengthPairMap = other.keyToIndexLengthPairMap;
                 return *this;
             }
 
@@ -251,6 +482,7 @@ namespace care{
                 countsPrefixSum = std::move(other.countsPrefixSum);
                 keysWithoutValues = std::move(other.keysWithoutValues);
                 keyIndexMap = std::move(other.keyIndexMap);
+                keyToIndexLengthPairMap = std::move(other.keyToIndexLengthPairMap);
                 return *this;
             }
 
@@ -275,6 +507,9 @@ namespace care{
                     return false;
                 }
                 if(keyIndexMap != rhs.keyIndexMap){
+                    return false;
+                }
+                if(keyToIndexLengthPairMap != rhs.keyToIndexLengthPairMap){
                     return false;
                 }
                 return true;
@@ -312,6 +547,8 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(counts.data()), sizeof(Count_t) * elements);
 
                 keyIndexMap.writeToStream(outstream);
+
+                keyToIndexLengthPairMap.writeToStream(outstream);
             }
 
             void readFromStream(std::ifstream& instream){
@@ -351,6 +588,8 @@ namespace care{
                 instream.read(reinterpret_cast<char*>(counts.data()), sizeof(Count_t) * elements);
 
                 keyIndexMap.readFromStream(instream);
+
+                keyToIndexLengthPairMap.readFromStream(instream);
             }
 
             std::size_t numBytes() const{
@@ -359,7 +598,8 @@ namespace care{
                     + counts.size() * sizeof(Count_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
-                    + keyIndexMap.numBytes();
+                    + keyIndexMap.numBytes()
+                    + keyToIndexLengthPairMap.numBytes();
             }
 
             std::size_t allocationSizeInBytes() const{
@@ -368,7 +608,8 @@ namespace care{
                     + counts.capacity() * sizeof(Count_t)
                     + countsPrefixSum.capacity() * sizeof(Index_t)
                     + keysWithoutValues.capacity() * sizeof(Key_t)
-                    + keyIndexMap.allocationSizeInBytes();
+                    + keyIndexMap.allocationSizeInBytes()
+                    + keyToIndexLengthPairMap.allocationSizeInBytes();
             }
 
             static std::size_t getRequiredSizeInBytesBeforeCompaction(std::uint64_t elements){
@@ -397,6 +638,7 @@ namespace care{
 				countsPrefixSum.clear();
                 keysWithoutValues.clear();
 				keyIndexMap.clear();
+                keyToIndexLengthPairMap.clear();
 			}
 
 			void destroy() noexcept{
@@ -407,6 +649,7 @@ namespace care{
 				countsPrefixSum.shrink_to_fit();
                 keysWithoutValues.shrink_to_fit();
 				keyIndexMap.shrink_to_fit();
+                keyToIndexLengthPairMap.shrink_to_fit();
 			}
 
 			bool add(Key_t key, Value_t value, Index_t index) noexcept{
@@ -467,20 +710,30 @@ namespace care{
                 */
 
                //nvtx::push_range("fetch index",3);
-                const Index_t index = keyIndexMap.get(key);
 
-                if(size_t(index) >=  countsPrefixSum.size() || size_t(index+1) >= countsPrefixSum.size()) {
-                    std::cerr << "\ninvalid index returned by keyIndexMap: key = " << key << ", returned index = " << index << "cPS.size() = " << countsPrefixSum.size() << "\n";
-                    assert(false);
-                }else{
-                    if(size_t(countsPrefixSum[index]) > values.size() || size_t(countsPrefixSum[index+1]) > values.size()){
-                        std::cerr << "\ninvalid prefix sum at index " << index << " or " << (index+1) << ". cPS = " << countsPrefixSum[index] << " " << countsPrefixSum[index+1] << " values.size() = " << values.size() << "\n";
-                        assert(false);
-                    }
-                }
+                // const Index_t index = keyIndexMap.get(key);
 
+                // if(size_t(index) >=  countsPrefixSum.size() || size_t(index+1) >= countsPrefixSum.size()) {
+                //     std::cerr << "\ninvalid index returned by keyIndexMap: key = " << key << ", returned index = " << index << "cPS.size() = " << countsPrefixSum.size() << "\n";
+                // }else{
+                //     if(size_t(countsPrefixSum[index]) > values.size() || size_t(countsPrefixSum[index+1]) > values.size()){
+                //         std::cerr << "\ninvalid prefix sum at index " << index << " or " << (index+1) << ". cPS = " << countsPrefixSum[index] << " " << countsPrefixSum[index+1] << " values.size() = " << values.size() << "\n";
+                //         assert(false);
+                //     }
+                // }
+
+                // return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
                 
-                return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+
+                const auto indexLengthPair = keyToIndexLengthPairMap.get(key);                
+
+                if(size_t(indexLengthPair.first) > values.size() || size_t(indexLengthPair.first + indexLengthPair.second) > values.size()){
+                    std::cerr << "\n invalid indexLengthPair . cPS = " << indexLengthPair.first 
+                            << ", length " << indexLengthPair.second << " values.size() = " << values.size() << "\n";
+                    assert(false);
+                }
+                
+                return {&values[indexLengthPair.first], &values[indexLengthPair.first + indexLengthPair.second]};
                 //nvtx::pop_range("fetch index");
 			}
 
@@ -494,13 +747,14 @@ struct Minhasher {
     using Result_t = Index_t; // Return value for minhash query
     using Map_t = minhasherdetail::KeyValueMapFixedSize<kmer_type, Value_t, Index_t>; //internal map type
 
+    using Range_t = std::pair<const Value_t*, const Value_t*>;
+
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
     static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
-    struct Handle{
-        using Range_t = std::pair<const Value_t*, const Value_t*>;
+    struct Handle{        
         std::vector<Range_t> ranges;
 		std::vector<Value_t> allUniqueResults;
         SetUnionHandle<Value_t> suHandle;
@@ -528,6 +782,20 @@ struct Minhasher {
         // }
 	};
 
+    struct MinhashOptions {
+        int maps;
+        int k;
+        int numResultsPerMapQueryThreshold;
+
+        bool operator==(const MinhashOptions& other) const{
+            return maps == other.maps && k == other.k 
+                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
+        };
+        bool operator!=(const MinhashOptions& other) const{
+            return !(*this == other);
+        };
+    };
+
 	// the actual maps
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
@@ -548,6 +816,10 @@ struct Minhasher {
     bool operator==(const Minhasher& rhs) const;
 
     bool operator!=(const Minhasher& rhs) const;
+
+    int getNumberOfMaps() const{
+        return minparams.maps;
+    }
 
     std::size_t numBytes() const;
 
@@ -575,6 +847,12 @@ struct Minhasher {
                                             std::vector<Map_t>& tables,
                                             const std::vector<int>& hashIds) const;
 
+    void insertSequenceIntoExternalTables(const std::uint64_t* hashValues, 
+                                            int numHashValues,
+                                            read_number readnum,                                                     
+                                            const std::vector<int>& tableIds,
+                                            std::vector<Minhasher::Map_t>& tables) const;
+
     void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
 
 	void insertSequence(const std::string& sequence, read_number readnum);
@@ -596,7 +874,13 @@ struct Minhasher {
             const int* sequenceLengths,
             int sequencesPitch) const;
 
-    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const;   
+    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const; 
+
+    void queryPrecalculatedSignatures(
+        const std::uint64_t* signatures, //maximum_number_of_maps signatures per sequence
+        Minhasher::Range_t* ranges, //maximum_number_of_maps signatures per sequence
+        int* totalNumResultsInRanges, 
+        int numSequences) const;
 
     void makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const;                                      
 
@@ -656,17 +940,18 @@ struct Minhasher {
 
 
 private:
+
 	std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc(const std::string& sequence) const noexcept;
 
     std::array<std::uint64_t, maximum_number_of_maps> 
     minhashfunc(const char* sequence, int sequenceLength) const noexcept;
 
-    std::array<std::uint64_t, maximum_number_of_maps>
-    minhashfunc_other(const std::string& sequence) const noexcept;
+    // std::array<std::uint64_t, maximum_number_of_maps>
+    // minhashfunc_other(const std::string& sequence) const noexcept;
 
-    std::array<std::uint64_t, maximum_number_of_maps> 
-    minhashfunc_other(const char* sequence, int sequenceLength) const noexcept;
+    // std::array<std::uint64_t, maximum_number_of_maps> 
+    // minhashfunc_other(const char* sequence, int sequenceLength) const noexcept;
 
     void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
     void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;

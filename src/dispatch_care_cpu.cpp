@@ -11,8 +11,8 @@
 
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
-#include <candidatedistribution.hpp>
-
+//#include <candidatedistribution.hpp>
+#include <correctionresultprocessing.hpp>
 #include <sequence.hpp>
 
 #include <vector>
@@ -51,8 +51,7 @@ namespace care{
     }
 
 
-    void performCorrection(MinhashOptions minhashOptions,
-                            AlignmentOptions alignmentOptions,
+    void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
@@ -65,50 +64,68 @@ namespace care{
 
         TIMERSTARTCPU(load_and_build);
 
-        BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
-                                                                correctionOptions,
-                                                                runtimeOptions,
-                                                                memoryOptions,
-                                                                fileOptions);
+        BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions
+        );
 
         TIMERSTOPCPU(load_and_build);
 
         auto& readStorage = dataStructures.builtReadStorage.data;
         auto& minhasher = dataStructures.builtMinhasher.data;
-        auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
-
-        TIMERSTARTCPU(candidateestimation);
-        std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
-
-        // if(maxCandidatesPerRead == 0){
-        //     maxCandidatesPerRead = calculateMaxCandidatesPerReadThreshold(minhasher,
-        //                                             readStorage,
-        //                                             sequenceFileProperties.nReads / 10,
-        //                                             correctionOptions.hits_per_candidate,
-        //                                             runtimeOptions.threads
-        //                                             //,"ncandidates.txt"
-        //                                             );
-        //
-        //     std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
-        // }
-
-
-
-        TIMERSTOPCPU(candidateestimation);
+        auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        std::cout << "Running CARE CPU" << std::endl;
+        auto partialResults = cpu::correct_cpu(
+            goodAlignmentProperties, 
+            correctionOptions,
+            runtimeOptions, 
+            fileOptions, 
+            memoryOptions, 
+            totalInputFileProperties,
+            minhasher, 
+            readStorage
+        );
 
-        cpu::correct_cpu(minhashOptions, alignmentOptions,
-                    goodAlignmentProperties, correctionOptions,
-                    runtimeOptions, fileOptions, sequenceFileProperties,
-                    minhasher, readStorage,
-                    maxCandidatesPerRead);
 
-        TIMERSTARTCPU(finalizing_files);
+        std::cout << "Correction finished. Constructing result file." << std::endl;
 
-        TIMERSTOPCPU(finalizing_files);
+        const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes2 > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        std::vector<FileFormat> formats;
+        for(const auto& inputfile : fileOptions.inputfiles){
+            formats.emplace_back(getFileFormat(inputfile));
+        }
+        std::vector<std::string> outputfiles;
+        for(const auto& outputfilename : fileOptions.outputfilenames){
+            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        }
+        constructOutputFileFromResults2(
+            fileOptions.tempdirectory,
+            fileOptions.inputfiles,            
+            partialResults, 
+            memoryForSorting,
+            formats[0], 
+            outputfiles, 
+            false
+        );
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
+
     }
 
 }

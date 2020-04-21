@@ -13,10 +13,7 @@
 #include <msa.hpp>
 #include "qualityscoreweights.hpp"
 #include "rangegenerator.hpp"
-#include "featureextractor.hpp"
-#include "forestclassifier.hpp"
-//#include "nn_classifier.hpp"
-#include "cpu_correction_core.hpp"
+
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
 #include <util.hpp>
@@ -161,7 +158,7 @@ namespace cpu{
                 }            
             };
 
-        // data for all batch tasks within batch
+            // data for all batch tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
@@ -182,7 +179,7 @@ namespace cpu{
             std::vector<int> candidatesPerSubject;
             std::vector<int> candidatesPerSubjectPrefixSum;
             std::vector<read_number> filteredReadIds;
-        // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
+            // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
             std::vector<BestAlignment_t> alignmentFlags;
@@ -194,13 +191,10 @@ namespace cpu{
 
             OutputData outputData;
 
-
-            std::vector<MSAFeature> msaforestfeatures;
-
             std::vector<int> indicesOfCandidatesEqualToSubject;
 
 
-        // ------------------------------------------------
+            // ------------------------------------------------
             std::vector<Task> batchTasks;
 
             ContiguousReadStorage::GatherHandle readStorageGatherHandle;
@@ -257,6 +251,112 @@ namespace cpu{
         // std::vector<read_number> interestingReadIds;
         // std::mutex interestingMutex;
 
+        template<class Iter>
+        Iter findBestAlignmentDirection(
+                Iter result,
+                const SHDResult* forwardAlignments,
+                const SHDResult* revcAlignments,
+                int numCandidates,
+                const int subjectLength,
+                const int* candidateLengths,
+                const int min_overlap,
+                const float estimatedErrorrate,
+                const float min_overlap_ratio){
+
+
+            for(int i = 0; i < numCandidates; i++, ++result){
+                const SHDResult& forwardAlignment = forwardAlignments[i];
+                const SHDResult& revcAlignment = revcAlignments[i];
+                const int candidateLength = candidateLengths[i];
+
+                BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(forwardAlignment,
+                                                                                revcAlignment,
+                                                                                subjectLength,
+                                                                                candidateLength,
+                                                                                min_overlap_ratio,
+                                                                                min_overlap,
+                                                                                estimatedErrorrate);
+
+                *result = bestAlignmentFlag;
+            }
+
+            return result;
+        }
+
+        /*
+            Filters alignments by good mismatch ratio.
+
+            Returns an sorted index list to alignments which pass the filter.
+        */
+
+        template<class Iter, class Func>
+        Iter
+        filterAlignmentsByMismatchRatio(Iter result,
+                                        const SHDResult* alignments,
+                                        int numAlignments,
+                                        const float estimatedErrorrate,
+                                        const int estimatedCoverage,
+                                        const float m_coverage,
+                                        Func lastResortFunc){
+
+            const float mismatchratioBaseFactor = estimatedErrorrate * 1.0f;
+            const float goodAlignmentsCountThreshold = estimatedCoverage * m_coverage;
+
+            std::array<int, 3> counts({0,0,0});
+
+            for(int i = 0; i < numAlignments; i++){
+                const auto& alignment = alignments[i];
+                const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+
+                if (mismatchratio < 2 * mismatchratioBaseFactor) {
+                    counts[0] += 1;
+                }
+                if (mismatchratio < 3 * mismatchratioBaseFactor) {
+                    counts[1] += 1;
+                }
+                if (mismatchratio < 4 * mismatchratioBaseFactor) {
+                    counts[2] += 1;
+                }
+            }
+
+            //no correction possible without enough candidates
+            if(std::none_of(counts.begin(), counts.end(), [](auto c){return c > 0;})){
+                return result;
+            }
+
+            //std::cerr << "Read " << task.readId << ", good alignments after bining: " << std::accumulate(counts.begin(), counts.end(), int(0)) << '\n';
+            //std::cerr << "Read " << task.readId << ", bins: " << counts[0] << " " << counts[1] << " " << counts[2] << '\n';
+
+
+            float mismatchratioThreshold = 0;
+            if (counts[0] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 2 * mismatchratioBaseFactor;
+            } else if (counts[1] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 3 * mismatchratioBaseFactor;
+            } else if (counts[2] >= goodAlignmentsCountThreshold) {
+                mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+            } else {
+                if(lastResortFunc()){
+                    mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+                }else{
+                    return result; //no correction possible without good candidates
+                }
+            }
+
+            for(int i = 0; i < numAlignments; i++){
+                const auto& alignment = alignments[i];
+                const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+                const bool notremoved = mismatchratio < mismatchratioThreshold;
+
+                if(notremoved){
+                    *result = i;
+                    ++result;
+                }
+            }
+
+            return result;
+        }
+
 
         void getSubjectSequenceData(BatchData& data,
                                     const cpu::ContiguousReadStorage& readStorage){
@@ -289,8 +389,7 @@ namespace cpu{
         }
 
         void determineCandidateReadIds(BatchData& data,
-                                        const Minhasher& minhasher,
-                                        int requiredHitsPerCandidate){
+                                        const Minhasher& minhasher){
 
             const int numSubjects = data.subjectReadIds.size();
 
@@ -554,8 +653,8 @@ namespace cpu{
                 correctionOptions.estimatedErrorrate,
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage,
-                [hpc = correctionOptions.hits_per_candidate](){
-                return hpc > 1;
+                [](){
+                    return false;
                 }
             );
 
@@ -791,15 +890,16 @@ namespace cpu{
             auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
 
                 if(minimizationResult.performedMinimization){
-                    assert(minimizationResult.differentRegionCandidate.size() == task.numFilteredCandidates);
+                    const int numDifferentRegionCandidates = minimizationResult.differentRegionCandidate.size();
+                    assert(numDifferentRegionCandidates == task.numFilteredCandidates);
                     
                     if(0) /*if(task.subjectReadId == 1)*/{
                         std::cerr << "------\n";
                     }
 
                     //bool anyRemoved = false;
-                    size_t cur = 0;
-                    for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
+                    int cur = 0;
+                    for(int i = 0; i < numDifferentRegionCandidates; i++){
                         if(!minimizationResult.differentRegionCandidate[i]){
                             
                             if(0) /*if(task.subjectReadId == 1)*/{
@@ -1227,28 +1327,20 @@ namespace cpu{
         }
 
 
-void correct_cpu(const MinhashOptions& minhashOptions,
-                  const AlignmentOptions& alignmentOptions,
-                  const GoodAlignmentProperties& goodAlignmentProperties,
-                  const CorrectionOptions& correctionOptions,
-                  const RuntimeOptions& runtimeOptions,
-                  const FileOptions& fileOptions,
-                  const SequenceFileProperties& sequenceFileProperties,
-                  Minhasher& minhasher,
-                  cpu::ContiguousReadStorage& readStorage,
-                  std::uint64_t maxCandidatesPerRead){
-
-    int oldNumOMPThreads = 1;
-    #pragma omp parallel
-    {
-        #pragma omp single
-        oldNumOMPThreads = omp_get_num_threads();
-    }
+MemoryFileFixedSize<EncodedTempCorrectedSequence>
+correct_cpu(
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    const SequenceFileProperties& sequenceFileProperties,
+    Minhasher& minhasher,
+    cpu::ContiguousReadStorage& readStorage
+){
 
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 
-    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
-    std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
     // std::ofstream outputstream;
 
@@ -1257,22 +1349,46 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     //     throw std::runtime_error("Could not open output file " + tmpfiles[0]);
     // }
 
-    const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
+
+    #pragma omp parallel for
+    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+        correctionStatusFlagsPerRead[i] = 0;
+    }
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+
+    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
+        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
     if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfiles[0]);
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
-    std::ofstream featurestream;
-      //if(correctionOptions.extractFeatures){
-          featurestream = std::move(std::ofstream(featureTmpFiles[0]));
-          if(!featurestream && correctionOptions.extractFeatures){
-              throw std::runtime_error("Could not open output feature file");
-          }
-      //}
 
 #ifndef DO_PROFILE
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
@@ -1280,20 +1396,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-
-#if 0
-    NN_Correction_Classifier_Base nnClassifierBase;
-    NN_Correction_Classifier nnClassifier;
-    if(correctionOptions.correctionType == CorrectionType::Convnet){
-        nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
-        nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
-    }
-#endif 
-
-    ForestClassifier forestClassifier;
-    if(correctionOptions.correctionType == CorrectionType::Forest){
-        forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
-    }
 
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
@@ -1304,23 +1406,19 @@ void correct_cpu(const MinhashOptions& minhashOptions,
           }
       };
 
-    std::vector<std::uint8_t> correctionStatusFlagsPerRead;
-    std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-    std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+    // std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    // std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-    correctionStatusFlagsPerRead.resize(sequenceFileProperties.nReads, 0);
 
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
+    // auto lock = [&](read_number readId){
+    //     read_number index = readId % nLocksForProcessedFlags;
+    //     locksForProcessedFlags[index].lock();
+    // };
 
-    auto lock = [&](read_number readId){
-        read_number index = readId % nLocksForProcessedFlags;
-        locksForProcessedFlags[index].lock();
-    };
-
-    auto unlock = [&](read_number readId){
-        read_number index = readId % nLocksForProcessedFlags;
-        locksForProcessedFlags[index].unlock();
-    };
+    // auto unlock = [&](read_number readId){
+    //     read_number index = readId % nLocksForProcessedFlags;
+    //     locksForProcessedFlags[index].unlock();
+    // };
 
 
     BackgroundThread outputThread(true);
@@ -1372,7 +1470,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     #pragma omp parallel
     {
-        const int threadId = omp_get_thread_num();
+        //const int threadId = omp_get_thread_num();
 
         BatchData batchData;
         batchData.subjectReadIds.resize(correctionOptions.batchsize);
@@ -1406,7 +1504,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             tpa = std::chrono::system_clock::now();
             #endif
 
-            determineCandidateReadIds(batchData, minhasher, correctionOptions.hits_per_candidate);
+            determineCandidateReadIds(batchData, minhasher);
 
             #ifdef ENABLE_TIMING
             batchData.timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1482,8 +1580,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
             }
 
-            assert(correctionOptions.correctionType == CorrectionType::Classic);
-
             for(auto& batchTask : batchData.batchTasks){
 
                 #ifdef ENABLE_TIMING
@@ -1526,9 +1622,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 batchData.timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
-                setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.data());
+                setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.get());
 
-                if(batchTask.msaProperties.isHQ){
+                if(batchTask.msaProperties.isHQ && correctionOptions.correctCandidates){
 
                     #ifdef ENABLE_TIMING
                     tpa = std::chrono::system_clock::now();
@@ -1542,7 +1638,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 }
                 
-                makeOutputDataOfTask(batchData, batchTask, readStorage, correctionStatusFlagsPerRead.data());
+                makeOutputDataOfTask(batchData, batchTask, readStorage, correctionStatusFlagsPerRead.get());
             }
 
             //makeOutputData(batchData, readStorage, correctionStatusFlagsPerRead.data());
@@ -1582,7 +1678,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    featurestream.flush();
     //outputstream.flush();
     partialResults.flush();
 
@@ -1627,84 +1722,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 #endif
 
-    std::cout << "Correction finished. Constructing result file." << std::endl;
+    return partialResults;
 
-    if(!correctionOptions.extractFeatures){
-
-        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        std::size_t memoryForSorting = 0;
-
-        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
-            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
-        }
-
-        std::cout << "begin merging reads" << std::endl;
-
-        TIMERSTARTCPU(merge);
-
-        constructOutputFileFromResults(
-            fileOptions.tempdirectory,
-            sequenceFileProperties.nReads, 
-            fileOptions.inputfile, 
-            fileOptions.format, 
-            partialResults, 
-            memoryForSorting, 
-            fileOptions.outputfile, 
-            false
-        );
-
-        TIMERSTOPCPU(merge);
-
-        std::cout << "end merging reads" << std::endl;
-
-    }
-
-    filehelpers::deleteFiles(tmpfiles);
-
-    std::vector<std::string> featureFiles(tmpfiles);
-    for(auto& s : featureFiles){
-        s = s + "_features";
-    }
-    //concatenate feature files one file
-
-    if(correctionOptions.extractFeatures){
-        std::cout << "begin merging features" << std::endl;
-
-        std::stringstream commandbuilder;
-
-        commandbuilder << "cat";
-
-        for(const auto& featureFile : featureTmpFiles){
-            commandbuilder << " \"" << featureFile << "\"";
-        }
-
-        commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
-
-        const std::string command = commandbuilder.str();
-        TIMERSTARTCPU(concat_feature_files);
-        int r1 = std::system(command.c_str());
-        TIMERSTOPCPU(concat_feature_files);
-
-        if(r1 != 0){
-            std::cerr << "Warning. Feature files could not be concatenated!\n";
-            std::cerr << "This command returned a non-zero error value: \n";
-            std::cerr << command +  '\n';
-            std::cerr << "Please concatenate the following files manually\n";
-            for(const auto& s : featureTmpFiles){
-                std::cerr << s << '\n';
-            }
-        }else{
-            filehelpers::deleteFiles(featureTmpFiles);
-        }
-
-        std::cout << "end merging features" << std::endl;
-    }else{
-        filehelpers::deleteFiles(featureTmpFiles);
-    }
-
-    std::cout << "end merge" << std::endl;
-
-    omp_set_num_threads(oldNumOMPThreads);
 }
 
 

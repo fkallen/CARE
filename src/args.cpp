@@ -31,90 +31,81 @@ namespace args{
     	return result;
     }
 
-
-	template<>
-	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
-        const int coverage = pr["coverage"].as<float>();
-        MinhashOptions result{pr["hashmaps"].as<int>(),
-    					      pr["kmerlength"].as<int>(),
-                              calculateResultsPerMapThreshold(coverage)};
-
-        return result;
-	}
-
-
-	template<>
-	AlignmentOptions to<AlignmentOptions>(const cxxopts::ParseResult& pr){
-        AlignmentOptions result{
-            pr["matchscore"].as<int>(),
-            pr["subscore"].as<int>(),
-            pr["insertscore"].as<int>(),
-            pr["deletionscore"].as<int>()
-        };
-
-        return result;
-	}
-
 	template<>
 	GoodAlignmentProperties to<GoodAlignmentProperties>(const cxxopts::ParseResult& pr){
-        GoodAlignmentProperties result{
-            pr["minalignmentoverlap"].as<int>(),
-            pr["maxmismatchratio"].as<float>(),
-            pr["minalignmentoverlapratio"].as<float>(),
-        };
+
+        GoodAlignmentProperties result{};
+
+        if(pr.count("minalignmentoverlap")){
+            result.min_overlap = pr["minalignmentoverlap"].as<int>();
+        }
+        if(pr.count("maxmismatchratio")){
+            result.maxErrorRate = pr["maxmismatchratio"].as<float>();
+        }
+        if(pr.count("minalignmentoverlapratio")){
+            result.min_overlap_ratio = pr["minalignmentoverlapratio"].as<float>();
+        }
 
         return result;
 	}
 
 	template<>
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
-        CorrectionMode correctionMode = CorrectionMode::Hamming;
-        if(pr["indels"].as<bool>()){
-            correctionMode = CorrectionMode::Graph;
+        CorrectionOptions result{};
+
+        if(pr.count("candidateCorrection")){
+            result.correctCandidates = pr["candidateCorrection"].as<bool>();
         }
 
-        CorrectionType correctionType = CorrectionType::Classic;
-
-        switch(pr["correctionType"].as<int>()){
-        case 0: correctionType = CorrectionType::Classic; break;
-        case 1: correctionType = CorrectionType::Forest; break;
-        case 2: correctionType = CorrectionType::Convnet; break;
-        default: correctionType = CorrectionType::Classic;
+        if(pr.count("useQualityScores")){
+            result.useQualityScores = pr["useQualityScores"].as<bool>();
         }
 
-        CorrectionOptions result{
-            correctionMode,
-            correctionType,
-            pr["candidateCorrection"].as<bool>(),
-			pr["useQualityScores"].as<bool>(),
-            pr["coverage"].as<float>(),
-            pr["errorrate"].as<float>(),
-            pr["m_coverage"].as<float>(),
-            pr["alpha"].as<float>(),
-            pr["base"].as<float>(),
-            pr["kmerlength"].as<int>(),
-            pr["batchsize"].as<int>(),
-            pr["candidateCorrectionNewColumns"].as<int>(),
-            pr["extractFeatures"].as<bool>(),
-            pr["hits_per_candidate"].as<int>()
-        };
+        if(pr.count("coverage")){
+            result.estimatedCoverage = pr["coverage"].as<float>();
+        }
+        if(pr.count("errorfactortuning")){
+            result.estimatedErrorrate = pr["errorfactortuning"].as<float>();
+        }
+        if(pr.count("coveragefactortuning")){
+            result.m_coverage = pr["coveragefactortuning"].as<float>();
+        }
+
+        if(pr.count("kmerlength")){
+            result.kmerlength = pr["kmerlength"].as<int>();
+        }
+        if(pr.count("hashmaps")){
+            result.numHashFunctions = pr["hashmaps"].as<int>();
+        }        
+
+        if(pr.count("batchsize")){
+            result.batchsize = pr["batchsize"].as<int>();
+        }
+        if(pr.count("candidateCorrectionNewColumns")){
+            result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
+        }
 
         return result;
 	}
 
 	template<>
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr){
-        RuntimeOptions result;
+        RuntimeOptions result{};
 
-		result.threads = pr["threads"].as<int>();
-        //result.threadsForGPUs = pr["threadsForGPUs"].as<int>();
-		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
+        if(pr.count("threads")){
+            result.threads = pr["threads"].as<int>();
+        }
+        result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
-        result.showProgress = pr["progress"].as<bool>();
-        result.max_candidates = pr["maxCandidates"].as<int>();
-        result.gpuParallelBatches = pr["gpuParallelBatches"].as<int>();
+      
+        if(pr.count("showProgress")){
+            result.showProgress = pr["showProgress"].as<bool>();
+        }
 
-        auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
+        std::vector<std::string> deviceIdsStrings{};
+        if(pr.count("deviceIds")){
+            deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
+        }
 
         for(const auto& s : deviceIdsStrings){
             result.deviceIds.emplace_back(std::stoi(s));
@@ -127,7 +118,7 @@ namespace args{
 
     template<>
 	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
-        MemoryOptions result;
+        MemoryOptions result{};
 
         auto parseMemoryString = [](const auto& string) -> std::size_t{
             if(string.length() > 0){
@@ -150,7 +141,7 @@ namespace args{
             }
         };
 
-        if(pr.count("memTotal") > 0){
+        if(pr.count("memTotal")){
             const auto memoryTotalLimitString = pr["memTotal"].as<std::string>();
             result.memoryTotalLimit = parseMemoryString(memoryTotalLimitString);
         }else{
@@ -162,7 +153,7 @@ namespace args{
             result.memoryTotalLimit = availableMemoryInBytes;
         }
 
-        if(pr.count("memHashtables") > 0){
+        if(pr.count("memHashtables")){
             const auto memoryForHashtablesString = pr["memHashtables"].as<std::string>();
             result.memoryForHashtables = parseMemoryString(memoryForHashtablesString);
         }else{
@@ -184,78 +175,64 @@ namespace args{
 
 	template<>
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
-        FileOptions result;
+        FileOptions result{};
 
-		result.inputfile = pr["inputfile"].as<std::string>();
-		result.outputdirectory = pr["outdir"].as<std::string>();
-        result.outputfilename = pr["outfile"].as<std::string>();
+        // result.format = FileFormat::NONE;
+        // if(pr.count("inputfile")){
+		//     result.inputfile = pr["inputfile"].as<std::string>();
+        //     result.format = getFileFormat(result.inputfile);
+        // }
+        if(pr.count("outdir")){
+		    result.outputdirectory = pr["outdir"].as<std::string>();
+        }
+        // if(pr.count("outfile")){
+        //     result.outputfilename = pr["outfile"].as<std::string>();
+        // }
 
-        if(result.outputfilename == "")
-            result.outputfilename = "corrected_" + filehelpers::getFileName(result.inputfile);
+        // if(result.outputfilename == "")
+        //     result.outputfilename = "care_corrected_" + filehelpers::getFileName(result.inputfile);
 
-		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
+		// result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
-		result.fileformatstring = pr["fileformat"].as<std::string>();
-
-        result.format = FileFormat::NONE;
-		if (result.fileformatstring == "fasta"){
-			result.format = FileFormat::FASTA;
-        }else if(result.fileformatstring == "fastq"){
-			result.format = FileFormat::FASTQ;
-        }else if(result.fileformatstring == "fastagz"){
-			result.format = FileFormat::FASTAGZ;
-        }else if(result.fileformatstring == "fastqgz"){
-			result.format = FileFormat::FASTQGZ;
-        };
-
-        if(result.format == FileFormat::NONE){
-            result.format = getFileFormat(result.inputfile);
+        
+        if(pr.count("nReads")){
+		    result.nReads = pr["nReads"].as<std::uint64_t>();
+        }
+        if(pr.count("min_length")){
+            result.minimum_sequence_length = pr["min_length"].as<int>();
+        }
+        if(pr.count("max_length")){
+            result.maximum_sequence_length = pr["max_length"].as<int>();
+        }
+        if(pr.count("save-preprocessedreads-to")){
+            result.save_binary_reads_to = pr["save-preprocessedreads-to"].as<std::string>();
+        }
+        if(pr.count("load-preprocessedreads-from")){
+            result.load_binary_reads_from = pr["load-preprocessedreads-from"].as<std::string>();
+        }
+        if(pr.count("save-hashtables-to")){
+            result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
+        }
+        if(pr.count("load-hashtables-from")){
+            result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
         }
 
-		result.nReads = pr["nReads"].as<std::uint64_t>();
-        result.minimum_sequence_length = pr["min_length"].as<int>();
-        result.maximum_sequence_length = pr["max_length"].as<int>();
-        result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
-        result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
-        result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
-        result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
-        result.forestfilename = pr["forest"].as<std::string>();
-        result.nnmodelfilename = pr["nnmodel"].as<std::string>();
-
-        if(pr.count("tempdir") > 0){
+        if(pr.count("tempdir")){
             result.tempdirectory = pr["tempdir"].as<std::string>();
         }else{
             result.tempdirectory = result.outputdirectory;
         }
 
+        if(pr.count("inputfiles")){
+            result.inputfiles = pr["inputfiles"].as<std::vector<std::string>>();
+        }
+        if(pr.count("outputfilenames")){
+            result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
+        }
+
         return result;
 	}
 
-
-
-    template<>
-    bool isValid<MinhashOptions>(const MinhashOptions& opt){
-        bool valid = true;
-
-        if(opt.maps < 1){
-            valid = false;
-            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.maps) << std::endl;
-        }
-
-        if(opt.k < 1 || opt.k > 32){
-            valid = false;
-            std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(opt.k) << std::endl;
-        }
-
-        return valid;
-    }
-
-    template<>
-    bool isValid<AlignmentOptions>(const AlignmentOptions& opt){
-        bool valid = true;
-
-        return valid;
-    }
 
     template<>
     bool isValid<GoodAlignmentProperties>(const GoodAlignmentProperties& opt){
@@ -299,9 +276,16 @@ namespace args{
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
         }
 
-        if(opt.hits_per_candidate < 1){
+
+        if(opt.numHashFunctions < 1){
             valid = false;
-            std::cout << "Error: hits_per_candidate must be greater than 0, is " + std::to_string(opt.hits_per_candidate) << std::endl;
+            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.numHashFunctions) << std::endl;
+        }
+
+        if(opt.kmerlength < 1 || opt.kmerlength > max_k<kmer_type>::value){
+            valid = false;
+            std::cout << "Error: kmer length must be in range [1, " << max_k<kmer_type>::value 
+                << "], is " + std::to_string(opt.kmerlength) << std::endl;
         }
 
         return valid;
@@ -340,13 +324,13 @@ namespace args{
     bool isValid<FileOptions>(const FileOptions& opt){
         bool valid = true;
 
-        {
-            std::ifstream is(opt.inputfile);
-            if(!(bool)is){
-                valid = false;
-                std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
-            }
-        }
+        // {
+        //     std::ifstream is(opt.inputfile);
+        //     if(!(bool)is){
+        //         valid = false;
+        //         std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
+        //     }
+        // }
 
         if(!filesys::exists(opt.tempdirectory)){
             bool created = filesys::create_directories(opt.tempdirectory);
@@ -365,10 +349,45 @@ namespace args{
         }
 
         {
-            std::ofstream os(opt.outputfile);
-            if(!(bool)os){
+            for(const auto& inputfile : opt.inputfiles){
+                std::ifstream is(inputfile);
+                if(!(bool)is){
+                    valid = false;
+                    std::cout << "Error: cannot find input file " << inputfile << std::endl;
+                }
+            }            
+        }
+
+        {
+            for(const auto& outputfilename : opt.outputfilenames){
+                const std::string outputfile = opt.outputdirectory + "/" + outputfilename;
+                std::ofstream os(outputfile);
+                if(!(bool)os){
+                    valid = false;
+                    std::cout << "Error: cannot open output file " << outputfile << std::endl;
+                }
+            }            
+        }
+
+        {
+            std::vector<FileFormat> formats;
+            for(const auto& inputfile : opt.inputfiles){
+                FileFormat f = getFileFormat(inputfile);
+                if(f == FileFormat::FASTQGZ)
+                    f = FileFormat::FASTQ;
+                if(f == FileFormat::FASTAGZ)
+                    f = FileFormat::FASTA;
+                formats.emplace_back(f);
+            }
+            bool sameFormats = std::all_of(
+                formats.begin()+1, 
+                formats.end(), [&](const auto f){
+                    return f == formats[0];
+                }
+            );
+            if(!sameFormats){
                 valid = false;
-                std::cout << "Error: cannot open output file " << opt.outputfile << std::endl;
+                std::cout << "Error: Must not specify both fasta and fastq files!" << std::endl;
             }
         }
 
@@ -379,6 +398,13 @@ namespace args{
                 std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
             }else{
                 filehelpers::removeFile(opt.tempdirectory+"/tmptest");
+            }
+        }
+
+        {
+            if(opt.outputfilenames.size() > 1 && opt.inputfiles.size() != opt.outputfilenames.size()){
+                valid = false;
+                std::cout << "Error: An output file name must be specified for each input file. Number of input files : " << opt.inputfiles.size() << ", number of output file names: " << opt.outputfilenames.size() << "\n";
             }
         }
         

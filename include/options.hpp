@@ -10,63 +10,32 @@
 
 namespace care{
 
-    enum class CorrectionMode {Hamming, Graph};
-    enum class CorrectionType {Classic, Forest, Convnet};
-
 	//Options which can be parsed from command-line arguments
 
-    struct MinhashOptions {
-        int maps = 2;
-        int k = 16;
-        int numResultsPerMapQueryThreshold = 100;
-        bool operator==(const MinhashOptions& other) const{
-            return maps == other.maps && k == other.k 
-                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
-        };
-        bool operator!=(const MinhashOptions& other) const{
-            return !(*this == other);
-        };
-    };
-
-    struct AlignmentOptions{
-        int alignmentscore_match = 1;
-        int alignmentscore_sub = -1;
-        int alignmentscore_ins = -100;
-        int alignmentscore_del = -100;
-    };
-
     struct GoodAlignmentProperties{
-        int min_overlap = 35;
+        int min_overlap = 20;
         float maxErrorRate = 0.2f;
-        float min_overlap_ratio = 0.35f;
+        float min_overlap_ratio = 0.20f;
     };
 
     struct CorrectionOptions{
-        CorrectionMode correctionMode = CorrectionMode::Hamming;
-        CorrectionType correctionType = CorrectionType::Classic;
         bool correctCandidates = false;
-        bool useQualityScores = true;
+        bool useQualityScores = false;
         float estimatedCoverage = 1.0f;
-        float estimatedErrorrate = 0.01f;
+        float estimatedErrorrate = 0.06f; //this is not the error rate of the dataset
         float m_coverage = 0.6f;
-        float graphalpha = 1.0f;
-        float graphx = 1.5f;
-        int kmerlength = 16;
-		int batchsize = 5;
-        int new_columns_to_correct = 0;
-        bool extractFeatures = false;
-        int hits_per_candidate = 1;
+		int batchsize = 1000;
+        int new_columns_to_correct = 15;
+        int kmerlength = 20;
+        int numHashFunctions = 32;
     };
 
 	struct RuntimeOptions{
 		int threads = 1;
-        //int threadsForGPUs = 0;
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
-        bool showProgress = true;
+        bool showProgress = false;
         bool canUseGpu = false;
-        int max_candidates = 0;
-        int gpuParallelBatches = 1;
         std::vector<int> deviceIds;
 	};
 
@@ -76,27 +45,20 @@ namespace care{
     };
 
 	struct FileOptions{
-		FileFormat format;
-		std::string fileformatstring;
-		std::string inputfile;
 		std::string outputdirectory;
-        std::string outputfilename;
-		std::string outputfile;
-		std::uint64_t nReads;
-        int minimum_sequence_length;
-        int maximum_sequence_length;
-        std::string save_binary_reads_to;
-        std::string load_binary_reads_from;
-        std::string save_hashtables_to;
-        std::string load_hashtables_from;
-        std::string forestfilename;
-        std::string nnmodelfilename;
+		std::uint64_t nReads = 0;
+        int minimum_sequence_length = -1;
+        int maximum_sequence_length = 0;
+        std::string save_binary_reads_to = "";
+        std::string load_binary_reads_from = "";
+        std::string save_hashtables_to = "";
+        std::string load_hashtables_from = "";
         std::string tempdirectory;
+        std::vector<std::string> inputfiles;
+        std::vector<std::string> outputfilenames;
 	};
 
     struct AllOptions{
-        MinhashOptions minhashOptions;
-        AlignmentOptions alignmentOptions;
         GoodAlignmentProperties goodAlignmentProperties;
         CorrectionOptions correctionOptions;
         RuntimeOptions runtimeOptions;

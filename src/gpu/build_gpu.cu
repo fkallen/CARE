@@ -13,6 +13,9 @@
 #include <sequence.hpp>
 #include <threadsafe_buffer.hpp>
 
+#include <gpu/simpleallocation.cuh>
+#include <gpu/minhashkernels.hpp>
+
 #include <threadpool.hpp>
 
 
@@ -52,7 +55,8 @@ namespace gpu{
                                                     int upperBoundSequenceLength,
                                                     int numThreads,
                                                     SequenceProviderFunc&& getSequenceData,
-                                                    SequenceLengthProviderFunc&& getSequenceLength){
+                                                    SequenceLengthProviderFunc&& getSequenceLength,
+                                                    const DistributedReadStorage& readStorage){
 
         constexpr read_number parallelReads = 10000000;
         read_number numReads = numberOfReads;
@@ -165,6 +169,172 @@ namespace gpu{
     }
 
 
+    std::vector<Minhasher::Map_t> constructTablesWithGpuHashing(const Minhasher& minhasher, 
+                                                    int numTables, 
+                                                    int firstTableId,
+                                                    int kmersize,
+                                                    std::int64_t numberOfReads,
+                                                    int upperBoundSequenceLength,
+                                                    int numThreads,
+                                                    const DistributedReadStorage& readStorage){
+
+        constexpr read_number parallelReads = 1000000;
+        read_number numReads = numberOfReads;
+        const int numIters = SDIV(numReads, parallelReads);
+        const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+
+        cudaSetDevice(0); CUERR;
+
+        const int numHashFuncs = numTables;
+        const int firstHashFunc = firstTableId;
+        const std::size_t signaturesRowPitchElements = numHashFuncs;
+
+        ThreadPool::ParallelForHandle pforHandle;
+
+        std::vector<Minhasher::Map_t> minhashTables(numTables);
+
+        std::vector<int> tableIds(numTables);                
+        std::vector<int> hashIds(numTables);
+        
+        std::iota(tableIds.begin(), tableIds.end(), 0);
+
+        std::cout << "Constructing maps: ";
+        for(int i = 0; i < numTables; i++){
+            std::cout << (firstTableId + i) << ' ';
+        }
+        std::cout << '\n';
+
+        for(auto& table : minhashTables){
+            Minhasher::Map_t tmp(numReads);
+            table = std::move(tmp);
+        }
+
+        auto showProgress = [&](auto totalCount, auto seconds){
+            std::cerr << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                        << seconds << " seconds." << '\r';
+            if(totalCount == numReads){
+                std::cerr << '\n';
+            }
+        };
+
+        auto updateShowProgressInterval = [](auto duration){
+            return duration;
+        };
+
+        ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+        ThreadPool threadPool(numThreads);
+
+        SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+        SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+
+        SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+        SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+
+        SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+        SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+        auto sequencehandle = readStorage.makeGatherHandleSequences();
+
+
+        for (int iter = 0; iter < numIters; iter++){
+            read_number readIdBegin = iter * parallelReads;
+            read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+            const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+            readStorage.gatherSequenceDataToGpuBufferAsync(
+                &threadPool,
+                sequencehandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_indices,
+                d_indices,
+                curBatchsize,
+                0,
+                stream
+            );
+        
+            readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                0,
+                d_indices,
+                curBatchsize,
+                stream
+            );
+
+            callMinhashSignaturesKernel_async(
+                d_signatures,
+                signaturesRowPitchElements,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                curBatchsize,
+                d_lengths,
+                kmersize,
+                numHashFuncs,
+                firstHashFunc,
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_signatures, 
+                d_signatures, 
+                signaturesRowPitchElements * sizeof(std::uint64_t) * curBatchsize, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+
+            auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                std::uint64_t countlimit = 10000;
+                std::uint64_t count = 0;
+
+                for (read_number readId = begin; readId < end; readId++){
+                    read_number localId = readId - readIdBegin;
+
+                    minhasher.insertSequenceIntoExternalTables(h_signatures + signaturesRowPitchElements * localId, 
+                        numHashFuncs,
+                        readId,                                                     
+                        tableIds,
+                        minhashTables
+                    );
+                    
+                    count++;
+                    if(count == countlimit){
+                        progressThread.addProgress(count);
+                        count = 0;                                                         
+                    }
+                }
+                if(count > 0){
+                    progressThread.addProgress(count);
+                }
+            };
+
+            threadPool.parallelFor(
+                pforHandle,
+                readIdBegin,
+                readIdEnd,
+                std::move(lambda));
+
+            //TIMERSTOPCPU(insert);
+        }
+
+        progressThread.finished();
+
+        cudaStreamDestroy(stream); CUERR;
+
+        return minhashTables;
+    }
+
     int loadTablesFromFileAndAssignToMinhasher(const std::string& filename, 
                                             Minhasher& minhasher, 
                                             int numTablesToLoad, 
@@ -260,8 +430,7 @@ namespace gpu{
                 d_readids.get(),
                 indicesBuffer.size(),
                 0,
-                stream,
-                16
+                stream
             );
             if(withQuality){
                 readStorage.gatherQualitiesToGpuBufferAsync(
@@ -273,8 +442,7 @@ namespace gpu{
                     d_readids.get(),
                     indicesBuffer.size(),
                     0,
-                    stream,
-                    16
+                    stream
                 );
             }
 
@@ -294,11 +462,13 @@ namespace gpu{
                     //         std::cerr << h_qualities[qualityPitchInBytes * i + l];
                     //     }
                     //     std::cerr << "\n";
+
+                    const int sequenceLength = readsBuffer[i].sequence.size();
     
-                    std::string seqstring = get2BitString(h_sequences.get() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+                    std::string seqstring = get2BitString(h_sequences.get() + i * sequencePitchInInts, sequenceLength);
     
                     bool ok = true;
-                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){                                
+                    for(int k = 0; k < sequenceLength && ok; k++){                                
     
                         if(isValidBase(readsBuffer[i].sequence[k]) && readsBuffer[i].sequence[k] != seqstring[k]){
                             ok = false;
@@ -308,14 +478,16 @@ namespace gpu{
                         }
                     }
                     if(withQuality){
+                        const int qualityLength = readsBuffer[i].sequence.size();
+
                         ok = true;
-                        for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){    
+                        for(int k = 0; k < qualityLength && ok; k++){    
                             if(readsBuffer[i].quality[k] != h_qualities[qualityPitchInBytes * i + k]){
                                 ok = false;
                                 std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
                                 std::cerr << "expected " << readsBuffer[i].quality << "\n";
                                 std::cerr << "got      ";
-                                for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                for(int l = 0; l < qualityLength; l++){
                                     std::cerr << h_qualities[qualityPitchInBytes * i + l];
                                 }
                                 std::cerr << "\n";
@@ -338,19 +510,26 @@ namespace gpu{
             readsBuffer.clear();
         };
 
-        forEachReadInFile(fileOptions.inputfile,
-                        [&](auto readnum, const auto& read){
+        read_number globalReadId = 0;
 
-            if(oneIter){
-                indicesBuffer.emplace_back(readnum);
-                readsBuffer.emplace_back(read);         
+        for(const auto& inputfile : fileOptions.inputfiles){
 
-                if(indicesBuffer.size() >= batchsize){
-                    validateBatch();
+            forEachReadInFile(inputfile,
+                            [&](auto /*readnum*/, const auto& read){
+
+                if(oneIter){
+                    indicesBuffer.emplace_back(globalReadId);
+                    readsBuffer.emplace_back(read);         
+
+                    if(indicesBuffer.size() >= batchsize){
+                        validateBatch();
+                    }
+
+                    ++globalReadId;
                 }
-            }
 
-        });
+            });
+        }
 
         if(indicesBuffer.size() >= 1){
             validateBatch();
@@ -391,8 +570,6 @@ namespace gpu{
         cudaStream_t stream;
         cudaStreamCreate(&stream); CUERR;
 
-        bool oneIter = true;
-
         auto validateBatch = [&](){
 
             ThreadPool::ParallelForHandle pforHandle;
@@ -409,8 +586,7 @@ namespace gpu{
                 d_readids.get(),
                 indicesBuffer.size(),
                 0,
-                stream,
-                16
+                stream
             );
 
             readStorage.gatherSequenceLengthsToGpuBufferAsync(
@@ -465,8 +641,6 @@ namespace gpu{
             //func1(0, int(indicesBuffer.size()), func1);
             threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func1);
 
-            //oneIter = false;
-
             indicesBuffer.clear();
             readsBuffer.clear();
         };
@@ -489,351 +663,11 @@ namespace gpu{
     }
 
 
-
-    BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
-                                                const RuntimeOptions& runtimeOptions,
-                                                bool useQualityScores,
-                                                read_number expectedNumberOfReads,
-                                                int expectedMinimumReadLength,
-                                                int expectedMaximumReadLength){
-
-        
-
-
-
-        if(fileOptions.load_binary_reads_from != ""){
-            BuiltDataStructure<GpuReadStorageWithFlags> result;
-            auto& readStorage = result.data.readStorage;
-
-            TIMERSTARTCPU(load_from_file);
-            readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
-            TIMERSTOPCPU(load_from_file);
-            result.builtType = BuiltType::Loaded;
-
-            if(useQualityScores && !readStorage.canUseQualityScores())
-                throw std::runtime_error("Quality scores are required but not present in compressed sequence file!");
-            if(!useQualityScores && readStorage.canUseQualityScores())
-                std::cerr << "Warning. The loaded compressed read file contains quality scores, but program does not use them!\n";
-
-            std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
-
-            readStorage.constructionIsComplete();
-
-            return result;
-        }else{
-            //int nThreads = std::max(1, std::min(runtimeOptions.threads, 2));
-            const int nThreads = std::max(1, runtimeOptions.threads);
-
-            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
-            int Ncount = 0;
-            //std::map<int,int> nmap{};
-
-            BuiltDataStructure<GpuReadStorageWithFlags> result;
-            DistributedReadStorage& readstorage = result.data.readStorage;
-            //auto& validFlags = result.data.readIsValidFlags;
-
-            readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, 
-                                                            expectedMinimumReadLength, expectedMaximumReadLength});
-            //validFlags.resize(expectedNumberOfReads, false);
-            result.builtType = BuiltType::Constructed;
-
-#if 0
-            auto flushBuffers = [&](std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
-                if(indicesBuffer.size() > 0){
-                    readstorage.setReads(indicesBuffer, readsBuffer);
-                    indicesBuffer.clear();
-                    readsBuffer.clear();
-                }
-            };
-
-            auto handle_read = [&](std::uint64_t readIndex, Read& read, std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
-                const int readLength = int(read.sequence.size());
-
-                if(readIndex >= expectedNumberOfReads){
-                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
-                                            + " reads, but file contains at least "
-                                            + std::to_string(readIndex) + " reads.");
-                }
-
-                if(readLength > expectedMaximumReadLength){
-                    throw std::runtime_error("Error! Expected maximum read length = "
-                                            + std::to_string(expectedMaximumReadLength)
-                                            + ", but read " + std::to_string(readIndex)
-                                            + "has length " + std::to_string(readLength));
-                }
-
-                auto isValidBase = [](char c){
-                    constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
-                    return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
-                };
-
-                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
-                    return !isValidBase(c);
-                });
-
-                if(undeterminedBasesInRead > 0){
-                    readstorage.setReadContainsN(readIndex, true);
-                }
-
-                for(auto& c : read.sequence){
-                    if(c == 'a') c = 'A';
-                    else if(c == 'c') c = 'C';
-                    else if(c == 'g') c = 'G';
-                    else if(c == 't') c = 'T';
-                    else if(!isValidBase(c)){
-                        c = bases[Ncount];
-                        Ncount = (Ncount + 1) % 4;
-                    }
-                }
-
-                indicesBuffer.emplace_back(readIndex);
-                readsBuffer.emplace_back(read);
-            };
-
-            constexpr size_t maxbuffersize = 1000000;
-
-            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-            std::chrono::duration<double> duration;
-            std::uint64_t countlimit = 1000000;
-		    std::uint64_t count = 0;
-		    std::uint64_t totalCount = 0;
-
-            std::vector<read_number> indicesBuffer;
-            std::vector<Read> readsBuffer;
-
-            indicesBuffer.reserve(maxbuffersize);
-            readsBuffer.reserve(maxbuffersize);
-
-            tpa = std::chrono::system_clock::now();
-
-            forEachReadInFile(fileOptions.inputfile,
-                            [&](auto readnum, auto& read){
-
-                    handle_read(readnum, read, indicesBuffer, readsBuffer);
-
-                    ++count;
-                    ++totalCount;
-
-                    if(count == countlimit){
-                        tpb = std::chrono::system_clock::now();
-                        duration = tpb - tpa;
-                        std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                << duration.count() << " seconds." << std::endl;
-                        countlimit *= 2;
-                    }
-
-                    if(indicesBuffer.size() >= maxbuffersize){
-                        flushBuffers(indicesBuffer, readsBuffer);
-                    }
-                }
-            );
-
-            if(indicesBuffer.size() > 0){
-                flushBuffers(indicesBuffer, readsBuffer);
-            }
-
-            if(count > 0){
-                tpb = std::chrono::system_clock::now();
-                duration = tpb - tpa;
-                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                        << duration.count() << " seconds." << std::endl;
-            }
-
-#else 
-
-            auto checkRead = [&](read_number readIndex, Read& read, int& Ncount){
-                const int readLength = int(read.sequence.size());
-
-                if(readIndex >= expectedNumberOfReads){
-                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
-                                            + " reads, but file contains at least "
-                                            + std::to_string(readIndex+1) + " reads.");
-                }
-
-                if(readLength > expectedMaximumReadLength){
-                    throw std::runtime_error("Error! Expected maximum read length = "
-                                            + std::to_string(expectedMaximumReadLength)
-                                            + ", but read " + std::to_string(readIndex)
-                                            + "has length " + std::to_string(readLength));
-                }
-
-                auto isValidBase = [](char c){
-                    constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
-                    return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
-                };
-
-                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
-                    return !isValidBase(c);
-                });
-
-                //nmap[undeterminedBasesInRead]++;
-
-                if(undeterminedBasesInRead > 0){
-                    readstorage.setReadContainsN(readIndex, true);
-                }
-
-                for(auto& c : read.sequence){
-                    if(c == 'a') c = 'A';
-                    else if(c == 'c') c = 'C';
-                    else if(c == 'g') c = 'G';
-                    else if(c == 't') c = 'T';
-                    else if(!isValidBase(c)){
-                        c = bases[Ncount];
-                        Ncount = (Ncount + 1) % 4;
-                    }
-                }
-            };
-
-
-            constexpr size_t maxbuffersize = 1000000;
-            constexpr int numBuffers = 2;
-
-            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-            std::chrono::duration<double> duration;
-            std::uint64_t countlimit = 1000000;
-		    std::uint64_t count = 0;
-		    std::uint64_t totalCount = 0;
-
-            std::array<std::vector<read_number>, numBuffers> indicesBuffers;
-            std::array<std::vector<Read>, numBuffers> readsBuffers;
-            std::array<bool, numBuffers> canBeUsed;
-            std::array<std::mutex, numBuffers> mutex;
-            std::array<std::condition_variable, numBuffers> cv;
-
-            ThreadPool threadPool(runtimeOptions.threads);
-
-            for(int i = 0; i < numBuffers; i++){
-                indicesBuffers[i].reserve(maxbuffersize);
-                readsBuffers[i].reserve(maxbuffersize);
-                canBeUsed[i] = true;
-            }
-
-            int bufferindex = 0;
-
-            tpa = std::chrono::system_clock::now();
-
-            forEachReadInFile(fileOptions.inputfile,
-                            [&](auto readnum, const auto& read){
-
-                    if(!canBeUsed[bufferindex]){
-                        std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                        if(!canBeUsed[bufferindex]){
-                            //std::cerr << "waiting for other buffer\n";
-                            cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                        }
-                    }
-
-                    auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                    auto readsBufferPtr = &readsBuffers[bufferindex];
-                    indicesBufferPtr->emplace_back(readnum);
-                    readsBufferPtr->emplace_back(read);
-
-                    ++count;
-                    ++totalCount;
-
-                    if(count == countlimit){
-                        tpb = std::chrono::system_clock::now();
-                        duration = tpb - tpa;
-                        std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                << duration.count() << " seconds." << std::endl;
-                        countlimit *= 2;
-                    }
-            
-
-                    if(indicesBufferPtr->size() >= maxbuffersize){
-                        canBeUsed[bufferindex] = false;
-
-                        //std::cerr << "launch other thread\n";
-                        threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                            //std::cerr << "buffer " << bufferindex << " running\n";
-                            int nmodcounter = 0;
-
-                            for(int i = 0; i < int(readsBufferPtr->size()); i++){
-                                read_number readId = (*indicesBufferPtr)[i];
-                                auto& read = (*readsBufferPtr)[i];
-                                checkRead(readId, read, nmodcounter);
-                            }
-
-                            readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
-
-                            //TIMERSTARTCPU(clear);
-                            indicesBufferPtr->clear();
-                            readsBufferPtr->clear();
-                            //TIMERSTOPCPU(clear);
-                            
-                            std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                            canBeUsed[bufferindex] = true;
-                            cv[bufferindex].notify_one();
-
-                            //std::cerr << "buffer " << bufferindex << " finished\n";
-                        });
-
-                        bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-                    }
-
-            });
-
-            auto indicesBufferPtr = &indicesBuffers[bufferindex];
-            auto readsBufferPtr = &readsBuffers[bufferindex];
-
-            if(int(readsBufferPtr->size()) > 0){
-                if(!canBeUsed[bufferindex]){
-                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                    if(!canBeUsed[bufferindex]){
-                        //std::cerr << "waiting for other buffer\n";
-                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                    }
-                }
-
-                int nmodcounter = 0;
-
-                for(int i = 0; i < int(readsBufferPtr->size()); i++){
-                    read_number readId = (*indicesBufferPtr)[i];
-                    auto& read = (*readsBufferPtr)[i];
-                    checkRead(readId, read, nmodcounter);
-                }
-
-                readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
-
-                indicesBufferPtr->clear();
-                readsBufferPtr->clear();
-            }
-
-            for(int i = 0; i < numBuffers; i++){
-                std::unique_lock<std::mutex> ul(mutex[i]);
-                if(!canBeUsed[i]){
-                    //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
-                    cv[i].wait(ul, [&](){ return canBeUsed[i]; });
-                }
-            }
-
-            if(count > 0){
-                tpb = std::chrono::system_clock::now();
-                duration = tpb - tpa;
-                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                << duration.count() << " seconds." << std::endl;
-            }
-
-#endif
-
-            // std::cerr << "occurences of n/N:\n";
-            // for(const auto& p : nmap){
-            //     std::cerr << p.first << " " << p.second << '\n';
-            // }
-
-            readstorage.constructionIsComplete();
-
-            return result;
-        }
-
-    }
-
-
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions &fileOptions,
                                                 const RuntimeOptions &runtimeOptions,
                                                 const MemoryOptions& memoryOptions,
                                                 std::uint64_t nReads,
-                                                const MinhashOptions &minhashOptions,
+                                                const CorrectionOptions &correctionOptions,
                                                 const GpuReadStorageWithFlags &readStoragewFlags)
     {
 
@@ -841,6 +675,13 @@ namespace gpu{
         auto &minhasher = result.data;
 
         auto identity = [](auto i) { return i; };
+
+        Minhasher::MinhashOptions minhashOptions;
+        minhashOptions.k = correctionOptions.kmerlength;
+        minhashOptions.maps = correctionOptions.numHashFunctions;
+        minhashOptions.numResultsPerMapQueryThreshold 
+            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+
 
         minhasher = std::move(Minhasher{minhashOptions});
 
@@ -860,9 +701,7 @@ namespace gpu{
             const auto &readStorage = readStoragewFlags.readStorage;
             //const auto& validFlags = readStoragewFlags.readIsValidFlags;
 
-            constexpr read_number parallelReads = 10000000;
             read_number numReads = readStorage.getNumberOfReads();
-            int numIters = SDIV(numReads, parallelReads);
 
             auto sequencehandle = readStorage.makeGatherHandleSequences();
             //auto lengthhandle = readStorage.makeGatherHandleLengths();
@@ -900,12 +739,6 @@ namespace gpu{
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
 
-
-            
-            std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
-            std::mutex progressMutex;
-		    std::uint64_t totalCount = 0;
-
             auto showProgress = [&](auto totalCount, auto seconds){
                 std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
                             << seconds << " seconds." << '\r';
@@ -917,25 +750,6 @@ namespace gpu{
             auto updateShowProgressInterval = [](auto duration){
                 return duration;
             };
-
-            auto getSequenceData = [&](char* dest, int sequencepitchInBytes, const read_number* indices, int numIndices){
-                readStorage.gatherSequenceDataToHostBuffer(
-                    sequencehandle,
-                    (unsigned int*)dest,
-                    sequencepitchInBytes / sizeof(unsigned int),
-                    indices,
-                    numIndices,
-                    1);          
-            };
-
-            auto getSequenceLength = [&](DistributedReadStorage::Length_t* dest, const read_number* indices, int numIndices){
-                readStorage.gatherSequenceLengthsToHostBuffer(
-                    dest,
-                    indices,
-                    numIndices);
-            };
-
-
 
             int numSavedTables = 0;
 
@@ -1003,16 +817,16 @@ namespace gpu{
 
                     int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
 
-
-                    std::vector<Minhasher::Map_t> minhashTables = constructTables(minhasher, 
-                                                                                    currentIterNumTables, 
-                                                                                    numConstructedTables,
-                                                                                    readStorage.getNumberOfReads(),
-                                                                                    readStorage.getSequenceLengthUpperBound(),
-                                                                                    runtimeOptions.threads,
-                                                                                    getSequenceData,
-                                                                                    getSequenceLength);
-
+                    std::vector<Minhasher::Map_t> minhashTables = constructTablesWithGpuHashing(
+                        minhasher, 
+                        currentIterNumTables, 
+                        numConstructedTables,
+                        minhasher.minparams.k,
+                        readStorage.getNumberOfReads(),
+                        readStorage.getSequenceLengthUpperBound(),
+                        runtimeOptions.threads,
+                        readStorage
+                    );
 
                     //check free gpu mem for transformation
                     std::size_t estRequiredFreeGpuMem = estimateGpuMemoryForTransformKeyValueMap(minhashTables[0]);
@@ -1182,28 +996,324 @@ namespace gpu{
 
 
 
-    BuiltGpuDataStructures buildGpuDataStructuresImpl(const MinhashOptions& minhashOptions,
-                                                        const CorrectionOptions& correctionOptions,
-                                                        const RuntimeOptions& runtimeOptions,
-                                                        const MemoryOptions& memoryOptions,
-                                                        const FileOptions& fileOptions,
-                                                        bool saveDataStructuresToFile){                                                     
+
+
+
+
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+//###########################################################################
+
+
+
+
+
+
+
+
+BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptions& fileOptions,
+                                                const RuntimeOptions& runtimeOptions,
+                                                bool useQualityScores,
+                                                read_number expectedNumberOfReads,
+                                                int expectedMinimumReadLength,
+                                                int expectedMaximumReadLength){
+
+        
+
+
+
+        if(fileOptions.load_binary_reads_from != ""){
+            BuiltDataStructure<GpuReadStorageWithFlags> result;
+            auto& readStorage = result.data.readStorage;
+
+            TIMERSTARTCPU(load_from_file);
+            readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
+            TIMERSTOPCPU(load_from_file);
+            result.builtType = BuiltType::Loaded;
+
+            if(useQualityScores && !readStorage.canUseQualityScores())
+                throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
+            if(!useQualityScores && readStorage.canUseQualityScores())
+                std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
+
+            std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
+
+            readStorage.constructionIsComplete();
+
+            return result;
+        }else{
+            //int nThreads = std::max(1, std::min(runtimeOptions.threads, 2));
+            const int nThreads = std::max(1, runtimeOptions.threads);
+
+            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
+            //int Ncount = 0;
+            //std::map<int,int> nmap{};
+
+            BuiltDataStructure<GpuReadStorageWithFlags> result;
+            DistributedReadStorage& readstorage = result.data.readStorage;
+            //auto& validFlags = result.data.readIsValidFlags;
+
+            readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, 
+                                                            expectedMinimumReadLength, expectedMaximumReadLength});
+            //validFlags.resize(expectedNumberOfReads, false);
+            result.builtType = BuiltType::Constructed;
+
+
+            auto checkRead = [&](read_number readIndex, Read& read, int& Ncount){
+                const int readLength = int(read.sequence.size());
+
+                if(readIndex >= expectedNumberOfReads){
+                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
+                                            + " reads, but file contains at least "
+                                            + std::to_string(readIndex+1) + " reads.");
+                }
+
+                if(readLength > expectedMaximumReadLength){
+                    throw std::runtime_error("Error! Expected maximum read length = "
+                                            + std::to_string(expectedMaximumReadLength)
+                                            + ", but read " + std::to_string(readIndex)
+                                            + "has length " + std::to_string(readLength));
+                }
+
+                auto isValidBase = [](char c){
+                    constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
+                    return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+                };
+
+                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
+                    return !isValidBase(c);
+                });
+
+                //nmap[undeterminedBasesInRead]++;
+
+                if(undeterminedBasesInRead > 0){
+                    readstorage.setReadContainsN(readIndex, true);
+                }
+
+                for(auto& c : read.sequence){
+                    if(c == 'a') c = 'A';
+                    else if(c == 'c') c = 'C';
+                    else if(c == 'g') c = 'G';
+                    else if(c == 't') c = 'T';
+                    else if(!isValidBase(c)){
+                        c = bases[Ncount];
+                        Ncount = (Ncount + 1) % 4;
+                    }
+                }
+            };
+
+
+            constexpr size_t maxbuffersize = 1000000;
+            constexpr int numBuffers = 2;
+
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+            std::chrono::duration<double> duration;
+            std::uint64_t countlimit = 1000000;
+		    std::uint64_t count = 0;
+		    std::uint64_t totalCount = 0;
+
+            std::array<std::vector<read_number>, numBuffers> indicesBuffers;
+            std::array<std::vector<Read>, numBuffers> readsBuffers;
+            std::array<bool, numBuffers> canBeUsed;
+            std::array<std::mutex, numBuffers> mutex;
+            std::array<std::condition_variable, numBuffers> cv;
+
+            ThreadPool threadPool(runtimeOptions.threads);
+
+            for(int i = 0; i < numBuffers; i++){
+                indicesBuffers[i].reserve(maxbuffersize);
+                readsBuffers[i].reserve(maxbuffersize);
+                canBeUsed[i] = true;
+            }
+
+            int bufferindex = 0;
+            read_number globalReadId = 0;
+
+            tpa = std::chrono::system_clock::now();
+
+            for(const auto& inputfile : fileOptions.inputfiles){
+                std::cout << "Parsing " << inputfile << "\n";
+
+                forEachReadInFile(inputfile,
+                                [&](auto /*readnum*/, const auto& read){
+
+                        if(!canBeUsed[bufferindex]){
+                            std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+                            if(!canBeUsed[bufferindex]){
+                                //std::cerr << "waiting for other buffer\n";
+                                cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+                            }
+                        }
+
+                        auto indicesBufferPtr = &indicesBuffers[bufferindex];
+                        auto readsBufferPtr = &readsBuffers[bufferindex];
+                        indicesBufferPtr->emplace_back(globalReadId);
+                        readsBufferPtr->emplace_back(read);
+
+                        ++globalReadId;
+
+                        ++count;
+                        ++totalCount;
+
+                        if(count == countlimit){
+                            tpb = std::chrono::system_clock::now();
+                            duration = tpb - tpa;
+                            std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                    << duration.count() << " seconds." << std::endl;
+                            countlimit *= 2;
+                        }
+                
+
+                        if(indicesBufferPtr->size() >= maxbuffersize){
+                            canBeUsed[bufferindex] = false;
+
+                            //std::cerr << "launch other thread\n";
+                            threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                                //std::cerr << "buffer " << bufferindex << " running\n";
+                                int nmodcounter = 0;
+
+                                for(int i = 0; i < int(readsBufferPtr->size()); i++){
+                                    read_number readId = (*indicesBufferPtr)[i];
+                                    auto& read = (*readsBufferPtr)[i];
+                                    checkRead(readId, read, nmodcounter);
+                                }
+
+                                readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
+
+                                //TIMERSTARTCPU(clear);
+                                indicesBufferPtr->clear();
+                                readsBufferPtr->clear();
+                                //TIMERSTOPCPU(clear);
+                                
+                                std::lock_guard<std::mutex> l(mutex[bufferindex]);
+                                canBeUsed[bufferindex] = true;
+                                cv[bufferindex].notify_one();
+
+                                //std::cerr << "buffer " << bufferindex << " finished\n";
+                            });
+
+                            bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
+                        }
+
+                });
+            }
+
+            auto indicesBufferPtr = &indicesBuffers[bufferindex];
+            auto readsBufferPtr = &readsBuffers[bufferindex];
+
+            if(int(readsBufferPtr->size()) > 0){
+                if(!canBeUsed[bufferindex]){
+                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+                    if(!canBeUsed[bufferindex]){
+                        //std::cerr << "waiting for other buffer\n";
+                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+                    }
+                }
+
+                int nmodcounter = 0;
+
+                for(int i = 0; i < int(readsBufferPtr->size()); i++){
+                    read_number readId = (*indicesBufferPtr)[i];
+                    auto& read = (*readsBufferPtr)[i];
+                    checkRead(readId, read, nmodcounter);
+                }
+
+                readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
+
+                indicesBufferPtr->clear();
+                readsBufferPtr->clear();
+            }
+
+            for(int i = 0; i < numBuffers; i++){
+                std::unique_lock<std::mutex> ul(mutex[i]);
+                if(!canBeUsed[i]){
+                    //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
+                    cv[i].wait(ul, [&](){ return canBeUsed[i]; });
+                }
+            }
+
+            if(count > 0){
+                tpb = std::chrono::system_clock::now();
+                duration = tpb - tpa;
+                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                << duration.count() << " seconds." << std::endl;
+            }
+
+            // std::cerr << "occurences of n/N:\n";
+            // for(const auto& p : nmap){
+            //     std::cerr << p.first << " " << p.second << '\n';
+            // }
+
+            readstorage.constructionIsComplete();
+
+            return result;
+        }
+
+    }
+
+
+
+BuiltGpuDataStructures buildGpuDataStructuresImpl2(
+                        const CorrectionOptions& correctionOptions,
+                        const RuntimeOptions& runtimeOptions,
+                        const MemoryOptions& memoryOptions,
+                        const FileOptions& fileOptions,
+                        bool saveDataStructuresToFile){                                                     
 
         BuiltGpuDataStructures result;
 
-        auto& sequenceFileProperties = result.sequenceFileProperties;
+        std::uint64_t maximumNumberOfReads = fileOptions.nReads;
+        int maximumSequenceLength = fileOptions.maximum_sequence_length;
+        int minimumSequenceLength = fileOptions.minimum_sequence_length;
+        bool scanned = false;
 
-        if(fileOptions.load_binary_reads_from == "") {
-            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
+        if(fileOptions.load_binary_reads_from == ""){
+
+            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength < 0) {
+                std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
+
+                maximumNumberOfReads = 0;
+                maximumSequenceLength = 0;
+                minimumSequenceLength = std::numeric_limits<int>::max();
+
+                for(const auto& inputfile : fileOptions.inputfiles){
+                    auto prop = getSequenceFileProperties(inputfile);
+                    maximumNumberOfReads += prop.nReads;
+                    maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
+                    minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
+
+                    std::cout << "----------------------------------------\n";
+                    std::cout << "File: " << inputfile << "\n";
+                    std::cout << "Reads: " << prop.nReads << "\n";
+                    std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
+                    std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
+                    std::cout << "----------------------------------------\n";
+
+                    //result.inputFileProperties.emplace_back(prop);
+                }
+
+                scanned = true;
+            }else{
+                //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
+            }
         }
 
         TIMERSTARTCPU(build_readstorage);
-        result.builtReadStorage = buildGpuReadStorage(fileOptions,
-                                                  runtimeOptions,
-                                                  correctionOptions.useQualityScores,
-                                                  sequenceFileProperties.nReads,
-                                                  sequenceFileProperties.minSequenceLength,
-                                                  sequenceFileProperties.maxSequenceLength);
+        result.builtReadStorage = buildGpuReadStorage2(
+            fileOptions,
+            runtimeOptions,
+            correctionOptions.useQualityScores,
+            maximumNumberOfReads,
+            minimumSequenceLength,
+            maximumSequenceLength
+        );
         TIMERSTOPCPU(build_readstorage);
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
@@ -1212,7 +1322,7 @@ namespace gpu{
         validateReadstorage(readStorage, fileOptions);
 #endif 
 
-        std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
+        //std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
 
         if(saveDataStructuresToFile && fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
@@ -1222,14 +1332,22 @@ namespace gpu{
     		std::cout << "Saved reads" << std::endl;
     	}
 
-        sequenceFileProperties.nReads = readStorage.getNumberOfReads();
-        sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-        sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+        result.totalInputFileProperties.nReads = readStorage.getNumberOfReads();
+        result.totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        result.totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
 
-        std::cout << "After construction of read storage, the following file properties are known "
-                    << "which may be different from supplied parameters" << std::endl;      
+        if(!scanned){
+            std::cout << "Determined the following read properties:\n";
+            std::cout << "----------------------------------------\n";
+            std::cout << "Total number of reads: " << result.totalInputFileProperties.nReads << "\n";
+            std::cout << "Minimum sequence length: " << result.totalInputFileProperties.minSequenceLength << "\n";
+            std::cout << "Maximum sequence length: " << result.totalInputFileProperties.maxSequenceLength << "\n";
+            std::cout << "----------------------------------------\n";
+        }
 
-        detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
+        
+
+ 
 
         std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
@@ -1237,8 +1355,8 @@ namespace gpu{
         result.builtMinhasher = build_minhasher(fileOptions, 
             runtimeOptions, 
             memoryOptions,
-            sequenceFileProperties.nReads, 
-            minhashOptions, 
+            result.totalInputFileProperties.nReads, 
+            correctionOptions,
             result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 
@@ -1248,52 +1366,45 @@ namespace gpu{
     		std::cout << "Saved minhasher" << std::endl;
         }
         
-        const auto& minhasher = result.builtMinhasher.data;
-
+        
 #ifdef VALIDATE_MINHASHER        
+        const auto& minhasher = result.builtMinhasher.data;
         validateMinhasher(minhasher, readStorage, fileOptions);
 #endif        
-        // const auto histograms = minhasher.getBinSizeHistogramsOfMaps();
-
-        // std::ofstream outhist("histograms.txt");
-        // for(int i = 0; i < int(histograms.size()); i++){
-        //     outhist << "table " << i << '\n';
-        //     for(auto pair : histograms[i]){
-        //         outhist << pair.first << ' '  << pair.second << '\n';
-        //     }
-        //     outhist << '\n';
-        // }
 
         return result;
     }
 
 
-    BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
-                                			const CorrectionOptions& correctionOptions,
-                                            const RuntimeOptions& runtimeOptions,
-                                            const MemoryOptions& memoryOptions,
-                                			const FileOptions& fileOptions){
 
-        return buildGpuDataStructuresImpl(minhashOptions,
-                                        correctionOptions,
-                                        runtimeOptions,
-                                        memoryOptions,
-                                        fileOptions,
-                                        false);
+    BuiltGpuDataStructures buildGpuDataStructures2(
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        const FileOptions& fileOptions){
+
+        return buildGpuDataStructuresImpl2(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions,
+            false
+        );
     }
 
-    BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
-                                                        const CorrectionOptions& correctionOptions,
-                                                        const RuntimeOptions& runtimeOptions,
-                                                        const MemoryOptions& memoryOptions,
-                                                        const FileOptions& fileOptions){                                                     
+    BuiltGpuDataStructures buildAndSaveGpuDataStructures2(
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        const FileOptions& fileOptions){                                                     
 
-        return buildGpuDataStructuresImpl(minhashOptions,
-                                        correctionOptions,
-                                        runtimeOptions,
-                                        memoryOptions,
-                                        fileOptions,
-                                        true);
+        return buildGpuDataStructuresImpl2(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions,
+            true
+        );
     }
 
 }

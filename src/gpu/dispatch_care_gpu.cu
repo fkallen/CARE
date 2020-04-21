@@ -7,6 +7,7 @@
 #include <build.hpp>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/correct_gpu.hpp>
+#include <correctionresultprocessing.hpp>
 
 #include <algorithm>
 #include <iostream>
@@ -38,17 +39,7 @@ namespace care{
     	std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB on host." << std::endl;
     }
 
-    void printFileProperties(const std::string& filename, const SequenceFileProperties& props){
-    	std::cout << "----------------------------------------" << std::endl;
-    	std::cout << "File: " << filename << std::endl;
-    	std::cout << "Reads: " << props.nReads << std::endl;
-    	std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
-    	std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    	std::cout << "----------------------------------------" << std::endl;
-    }
-
-    void performCorrection(MinhashOptions minhashOptions,
-                            AlignmentOptions alignmentOptions,
+    void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
@@ -66,56 +57,67 @@ namespace care{
 
         TIMERSTARTCPU(set_up_datastructures);
 
-        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures(minhashOptions,
-                                                                                    correctionOptions,
-                                                                                    runtimeOptions,
-                                                                                    memoryOptions,
-                                                                                    fileOptions);
+        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions
+        );
 
         TIMERSTOPCPU(set_up_datastructures);
 
         auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
-        auto& sequenceFileProperties = dataStructuresgpu.sequenceFileProperties;
-
-        TIMERSTARTCPU(candidateestimation);
-        std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
-
-        //if(maxCandidatesPerRead == 0){
-            // maxCandidatesPerRead = cpu::calculateMaxCandidatesPerReadThreshold(minhasher,
-            //                                         readStorage,
-            //                                         sequenceFileProperties.nReads / 10,
-            //                                         correctionOptions.hits_per_candidate,
-            //                                         runtimeOptions.threads
-            //                                         //,"ncandidates.txt"
-            //                                         );
-            //assert(maxCandidatesPerRead != 0);
-            //std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
-        //}
-
-
-
-        TIMERSTOPCPU(candidateestimation);
+        auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        //gpu::correct_gpu(minhashOptions, alignmentOptions,
-        gpu::correct_gpu(
-            minhashOptions, 
-            alignmentOptions,
+        auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
             correctionOptions,
             runtimeOptions, 
             fileOptions, 
             memoryOptions,
-            sequenceFileProperties,
+            totalInputFileProperties,
             minhasher, 
-            readStorage,
-            maxCandidatesPerRead);
+            readStorage
+        );
 
-        TIMERSTARTCPU(finalizing_files);
+        //Merge corrected reads with input file to generate output file
 
-        TIMERSTOPCPU(finalizing_files);
+        const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        std::vector<FileFormat> formats;
+        for(const auto& inputfile : fileOptions.inputfiles){
+            formats.emplace_back(getFileFormat(inputfile));
+        }
+        std::vector<std::string> outputfiles;
+        for(const auto& outputfilename : fileOptions.outputfilenames){
+            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        }
+        constructOutputFileFromResults2(
+            fileOptions.tempdirectory,
+            fileOptions.inputfiles, 
+            partialResults, 
+            memoryForSorting,
+            formats[0],
+            outputfiles, 
+            false
+        );
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
+
     }
 
 }

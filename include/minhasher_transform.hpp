@@ -294,11 +294,20 @@ namespace care{
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyIndexMap.insert(map.keys[i], i);
         }
+        map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
+        for(Index_t i = 0; i < map.nKeys; i++){
+            map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
+        }
 
         {
             std::vector<Key_t> tmp;
             map.keys.swap(tmp);
         }
+
+        // {
+        //     std::vector<Index_t> tmp;
+        //     map.countsPrefixSum.swap(tmp);
+        // }
 
         /*keyIndexMap = KeyIndexMap(nKeys / load);
         for(Index_t i = 0; i < nKeys; i++){
@@ -712,13 +721,16 @@ namespace care{
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyIndexMap.insert(map.keys[i], i);
         }
-
-        //std::cerr << "maxProbes = " << map.keyIndexMap.maxProbes << "\n";
+        map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
+        for(Index_t i = 0; i < map.nKeys; i++){
+            map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
+        }
 
         {
             std::vector<Key_t> tmp;
             map.keys.swap(tmp);
         }
+
         /*for(Index_t i = 0; i < nKeys; i++){
             assert(keyIndexMap.get(keys[i]) == i);
         }*/

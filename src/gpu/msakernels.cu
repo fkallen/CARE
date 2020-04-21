@@ -6,7 +6,6 @@
 //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
 #include <gpu/utility_kernels.cuh>
-#include <gpu/cubcachingallocator.cuh>
 
 #include <msa.hpp>
 #include <sequence.hpp>
@@ -965,7 +964,8 @@ namespace gpu{
 
     __global__
     void msa_update_properties_kernel(
-                MSAPointers d_msapointers,
+                MSAColumnProperties* __restrict__ msaColumnProperties,
+                const int* __restrict__ coverage,
                 const int* __restrict__ d_indices_per_subject,
                 size_t msa_weights_pitch,
                 int n_subjects,
@@ -976,7 +976,7 @@ namespace gpu{
             const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
-                MSAColumnProperties* const properties_ptr = d_msapointers.msaColumnProperties + subjectIndex;
+                MSAColumnProperties* const properties_ptr = msaColumnProperties + subjectIndex;
                 const int firstColumn_incl = properties_ptr->firstColumn_incl;
                 const int lastColumn_excl = properties_ptr->lastColumn_excl;
 
@@ -984,7 +984,7 @@ namespace gpu{
                 const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
 
                 if(num_indices_for_this_subject > 0){
-                    const int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_pitch_floats;
+                    const int* const my_coverage = coverage + subjectIndex * msa_weights_pitch_floats;
 
                     for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl-1; column += blockDim.x){
                         assert(my_coverage[column] >= 0);
@@ -1166,7 +1166,7 @@ namespace gpu{
     __global__
     void msa_add_sequences_kernel_multiblock(
             int* __restrict__ coverage,
-            MSAColumnProperties* __restrict__ msaColumnProperties,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
             int* __restrict__ counts,
             float* __restrict__ weights,
             const int* __restrict__ overlaps,
@@ -1468,8 +1468,8 @@ namespace gpu{
             const unsigned int* __restrict__ candidateSequencesTransposedData,
             const char* __restrict__ subjectQualities,
             const char* __restrict__ candidateQualities,
-            int n_subjects,
-            int n_candidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1486,6 +1486,8 @@ namespace gpu{
 
         if(*canExecute){
 
+            const int n_subjects = *d_numAnchors;
+            const int n_candidates = *d_numCandidates;
             typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
             float* const shared_weights = sharedmem;
@@ -1640,9 +1642,18 @@ namespace gpu{
             int* __restrict__ d_newIndices,
             int* __restrict__ d_newNumIndicesPerSubject,
             int* __restrict__ d_newNumIndices,
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const char* __restrict__ consensus,
+            const int* __restrict__ counts,
+            const float* __restrict__ weights,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const int* __restrict__ shifts,
+            const int* __restrict__ nOps,
+            const int* __restrict__ overlaps,
+            const unsigned int* __restrict__ subjectSequencesData,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const int* __restrict__ subjectSequencesLength,
+            const int* __restrict__ candidateSequencesLength,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             int n_subjects,
@@ -1653,9 +1664,7 @@ namespace gpu{
             const int* __restrict__ d_indices,
             const int* __restrict__ d_indices_per_subject,
             int dataset_coverage,
-            const bool* __restrict__ canExecute,
-            const unsigned int* d_readids,
-            bool debug = false){
+            const bool* __restrict__ canExecute){
 
         if(*canExecute){
 
@@ -1684,23 +1693,23 @@ namespace gpu{
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;
 
-                    const MSAColumnProperties* const myMsaColumnProperties = d_msapointers.msaColumnProperties + subjectIndex;
-                    const char* const myConsensus = d_msapointers.consensus + msa_pitch * subjectIndex;
-                    const int* const myCounts = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                    const float* const myWeights = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
+                    const char* const myConsensus = consensus + msa_pitch * subjectIndex;
+                    const int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
 
-                    const BestAlignment_t* const myAlignmentFlags = d_alignmentresultpointers.bestAlignmentFlags + globalOffset;
-                    const int* const myShifts = d_alignmentresultpointers.shifts + globalOffset;
-                    const int* const myNops = d_alignmentresultpointers.nOps + globalOffset;
-                    const int* const myOverlaps = d_alignmentresultpointers.overlaps + globalOffset;
+                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                    const int* const myShifts = shifts + globalOffset;
+                    const int* const myNops = nOps + globalOffset;
+                    const int* const myOverlaps = overlaps + globalOffset;
 
-                    const unsigned int* const myAnchorSequenceData = d_sequencePointers.subjectSequencesData 
+                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
                                                                         + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const unsigned int* const myCandidateSequencesData = d_sequencePointers.candidateSequencesData 
+                    const unsigned int* const myCandidateSequencesData = candidateSequencesData 
                                                                         + std::size_t(globalOffset) * encodedSequencePitchInInts;
 
-                    const int subjectLength = d_sequencePointers.subjectSequencesLength[subjectIndex];
-                    const int* const myCandidateLengths = d_sequencePointers.candidateSequencesLength + globalOffset;
+                    const int subjectLength = subjectSequencesLength[subjectIndex];
+                    const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
 
                     findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
                         (int2*)&temp_storage.int2reduce,
@@ -1769,8 +1778,8 @@ namespace gpu{
             const char* __restrict__ candidateQualities,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_candidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1800,6 +1809,9 @@ namespace gpu{
             extern __shared__ float externsharedmem[];
 
             constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
+
+            const int n_subjects = *d_numAnchors;
+            const int n_candidates = *d_numCandidates;
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){                
                 const int myNumIndices = d_indices_per_subject[subjectIndex];                
@@ -2501,7 +2513,8 @@ namespace gpu{
     }
 
     void call_msa_update_properties_kernel_async(
-                    MSAPointers d_msapointers,
+                    MSAColumnProperties* d_msaColumnProperties,
+                    const int* d_coverage,
                     const int* d_indices_per_subject,
                     int n_subjects,
                     size_t msa_weights_pitch,
@@ -2547,11 +2560,14 @@ namespace gpu{
     	dim3 block(blocksize, 1, 1);
     	dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
 
-        msa_update_properties_kernel<<<grid, block, 0, stream>>>(d_msapointers,
-                                                                d_indices_per_subject,
-                                                                msa_weights_pitch,
-                                                                n_subjects,
-                                                                d_canExecute); CUERR;
+        msa_update_properties_kernel<<<grid, block, 0, stream>>>(
+            d_msaColumnProperties,
+            d_coverage,
+            d_indices_per_subject,
+            msa_weights_pitch,
+            n_subjects,
+            d_canExecute
+        ); CUERR;
 
 
 
@@ -2689,6 +2705,8 @@ namespace gpu{
 
     template<MemoryType memType>
     void call_msaAddSequencesKernelMultiBlock_async(
+                void* d_tempstorage,
+                size_t tempstoragebytes,
                 const MSAColumnProperties* d_msaColumnProperties,
                 int* d_coverage,
                 int* d_counts,
@@ -2716,6 +2734,50 @@ namespace gpu{
                 const bool* d_canExecute,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
+        
+        constexpr int blocksize = 128;
+        
+        const std::size_t d_blocksPerSubjectPrefixSumBytes = SDIV(sizeof(int) * (n_subjects+1), 512) * 512;
+        std::size_t cubBytes = 0;
+        
+        auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
+            return SDIV(indices_for_subject, blocksize);
+        };
+        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), const int*>
+        d_blocksPerSubject(d_indices_per_subject,
+                           getBlocksPerSubject);
+        
+        cub::DeviceScan::InclusiveSum(
+            nullptr,
+            cubBytes,
+            d_blocksPerSubject,
+            (int*)nullptr,
+            n_subjects,
+            stream
+        ); CUERR;
+    
+        {
+            
+            const std::size_t requiredTempBytes 
+            = d_blocksPerSubjectPrefixSumBytes
+            + cubBytes;
+            
+            if(d_tempstorage == 0){
+                tempstoragebytes = requiredTempBytes;
+                return;
+            }else{
+                assert(tempstoragebytes >= requiredTempBytes);
+            }
+            
+        }
+                
+        //Alias temp storage 
+        int* const d_blocksPerSubjectPrefixSum = (int*)d_tempstorage;
+        void* const cubTempStorage  
+            = (void*)(((char*)d_blocksPerSubjectPrefixSum) 
+                + cubBytes);
+
+        
 
         const KernelId kernelId = (memType == MemoryType::Global
                      ? KernelId::MSAAddSequencesGlobalMultiBlock
@@ -2747,7 +2809,7 @@ namespace gpu{
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
-        constexpr int blocksize = 128;
+        
         
         const std::size_t smem = (memType == MemoryType::Global ? 0
                                     : sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
@@ -2798,18 +2860,18 @@ namespace gpu{
     		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
         }
         
-        int* d_blocksPerSubjectPrefixSum;
-        cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerSubjectPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+        //int* d_blocksPerSubjectPrefixSum;
+        //cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerSubjectPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
 
         // calculate blocks per subject prefixsum
-        auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
+        /*auto getBlocksPerSubject = [=] __device__ (int indices_for_subject){
             return SDIV(indices_for_subject, blocksize);
         };
         cub::TransformInputIterator<int,decltype(getBlocksPerSubject), const int*>
             d_blocksPerSubject(d_indices_per_subject,
-                          getBlocksPerSubject);
+                          getBlocksPerSubject);*/
 
-        void* tempstorage = nullptr;
+        /*void* tempstorage = nullptr;
         size_t tempstoragesize = 0;
 
         cub::DeviceScan::InclusiveSum(nullptr,
@@ -2819,16 +2881,18 @@ namespace gpu{
                     n_subjects,
                     stream); CUERR;
 
-        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;*/
 
-        cub::DeviceScan::InclusiveSum(tempstorage,
-                    tempstoragesize,
-                    d_blocksPerSubject,
-                    d_blocksPerSubjectPrefixSum+1,
-                    n_subjects,
-                    stream); CUERR;
+        cub::DeviceScan::InclusiveSum(
+            cubTempStorage,
+            cubBytes,
+            d_blocksPerSubject,
+            d_blocksPerSubjectPrefixSum+1,
+            n_subjects,
+            stream
+        ); CUERR;
 
-        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+        //cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_blocksPerSubjectPrefixSum,
                                 0,
@@ -2868,11 +2932,13 @@ namespace gpu{
             d_canExecute
         ); CUERR;
 
-        cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum);
+        //cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum);
     }
 
 
     void call_msa_add_sequences_kernel_implicit_async(
+                void* d_tempstorage,
+                size_t& tempstoragebytes,
                 const MSAColumnProperties* d_msaColumnProperties,
                 int* d_coverage,
                 int* d_counts,
@@ -2906,9 +2972,13 @@ namespace gpu{
         constexpr MemoryType memType = MemoryType::Shared;
 
 #if 0
-
+        if(d_tempstorage == nullptr){
+            tempstoragebytes = 0;
+        }
 
         call_msaAddSequencesKernelMultiBlock_async<memType>(
+            d_tempstorage,
+            tempstoragebytes,
             d_msaColumnProperties,
             d_coverage,
             d_counts,
@@ -2937,6 +3007,10 @@ namespace gpu{
             stream,
             handle
         );
+        
+        if(d_tempstorage == nullptr){
+            return;
+        }
 
         check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(
             d_msaColumnProperties,
@@ -2949,6 +3023,10 @@ namespace gpu{
         ); CUERR;
 
 #else 
+        if(d_tempstorage == nullptr){
+            tempstoragebytes = 0;
+            return;
+        }
 
         call_msaAddSequencesKernelSingleBlock_async<memType>(
             d_msaColumnProperties,
@@ -3010,7 +3088,7 @@ namespace gpu{
         constexpr int blocksize = 128;
 
         const std::size_t smem = 0;
-
+#if 0
         int max_blocks_per_device = 1;
 
         KernelLaunchConfig kernelLaunchConfig;
@@ -3056,6 +3134,7 @@ namespace gpu{
             // std::cerr << max_blocks_per_device 
             //         << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << "\n";
         }
+#endif        
   #if 0      
         //std::cerr << grid.x << " " << max_blocks_per_device << " " << n_subjects << "\n";
 
@@ -3081,7 +3160,7 @@ namespace gpu{
         dim3 grid(n_subjects, 1, 1);
 
         msaFindConsensusKernel<(blocksize)>
-                <<<grid, block, 0, stream>>>(
+                <<<grid, block, smem, stream>>>(
             d_msaColumnProperties,
             d_counts,
             d_weights,
@@ -3107,9 +3186,18 @@ namespace gpu{
                 int* d_newIndices,
                 int* d_newIndicesPerSubject,
                 int* d_newNumIndices,
-                MSAPointers d_msapointers,
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                const MSAColumnProperties* d_msaColumnProperties,
+                const char* d_consensus,
+                const int* d_counts,
+                const float* d_weights,
+                const BestAlignment_t* d_bestAlignmentFlags,
+                const int* d_shifts,
+                const int* d_nOps,
+                const int* d_overlaps,
+                const unsigned int* d_subjectSequencesData,
+                const unsigned int* d_candidateSequencesData,
+                const int* d_subjectSequencesLength,
+                const int* d_candidateSequencesLength,
                 bool* d_shouldBeKept,
                 const int* d_candidates_per_subject_prefixsum,
                 int n_subjects,
@@ -3122,9 +3210,7 @@ namespace gpu{
                 int dataset_coverage,
                 const bool* d_canExecute,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle,
-                const unsigned int* d_readids,
-                bool debug){
+    			KernelLaunchHandle& handle){
 
         cudaMemsetAsync(d_newNumIndices, 0, sizeof(int), stream); CUERR;
         cudaMemsetAsync(d_newIndicesPerSubject, 0, sizeof(int) * n_subjects, stream); CUERR;
@@ -3186,9 +3272,18 @@ namespace gpu{
                     d_newIndices, \
                     d_newIndicesPerSubject, \
                     d_newNumIndices, \
-                    d_msapointers, \
-                    d_alignmentresultpointers, \
-                    d_sequencePointers, \
+                    d_msaColumnProperties, \
+                    d_consensus, \
+                    d_counts, \
+                    d_weights, \
+                    d_bestAlignmentFlags, \
+                    d_shifts, \
+                    d_nOps, \
+                    d_overlaps, \
+                    d_subjectSequencesData, \
+                    d_candidateSequencesData, \
+                    d_subjectSequencesLength, \
+                    d_candidateSequencesLength, \
                     d_shouldBeKept, \
                     d_candidates_per_subject_prefixsum, \
                     n_subjects, \
@@ -3199,9 +3294,7 @@ namespace gpu{
                     d_indices, \
                     d_indices_per_subject, \
                     dataset_coverage, \
-                    d_canExecute, \
-                    d_readids, \
-                    debug); CUERR;
+                    d_canExecute); CUERR;
 
     	assert(blocksize > 0 && blocksize <= max_block_size);
 
@@ -3249,8 +3342,10 @@ namespace gpu{
             const char* d_candidateQualities,
             bool* d_shouldBeKept,
             const int* d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -3263,7 +3358,7 @@ namespace gpu{
             int iteration,
             const read_number* d_subjectReadIds,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle){
+            KernelLaunchHandle& handle){
 
         call_fill_kernel_async(
             d_newNumIndices,
@@ -3271,12 +3366,6 @@ namespace gpu{
             0,
             stream
         );
-        // call_fill_kernel_async(
-        //     d_newNumIndicesPerSubject,
-        //     n_subjects,
-        //     0,
-        //     stream
-        // );
 
         constexpr int blocksize = 128;
 
@@ -3290,10 +3379,41 @@ namespace gpu{
                                                     + sizeof(int) * msa_weights_pitch_floats // coverages
                                                 : 0);
 
-        int smem = smemAddSequences;
+        const std::size_t smem = smemAddSequences;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSAFindCandidatesOfDifferentRegionAndRemoveThem);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel<blocksize, addSequencesMemType>,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSAFindCandidatesOfDifferentRegionAndRemoveThem] = std::move(mymap);
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
+        //dim3 grid(maxNumAnchors, 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
+
 
         msa_findCandidatesOfDifferentRegionAndRemoveThem_kernel<blocksize, addSequencesMemType><<<grid, block, smem, stream>>>(
             d_newIndices,
@@ -3320,8 +3440,8 @@ namespace gpu{
             d_candidateQualities,
             d_shouldBeKept,
             d_candidates_per_subject_prefixsum,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3360,8 +3480,10 @@ namespace gpu{
             const unsigned int* d_candidateSequencesTransposedData,
             const char* d_subjectQualities,
             const char* d_candidateQualities,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -3369,13 +3491,13 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             const bool* d_canExecute,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle){
+            KernelLaunchHandle& handle){
+                
 
         constexpr MemoryType addSequencesMemType = MemoryType::Shared;
-
         constexpr bool addSequencesUsesSmem = addSequencesMemType == MemoryType::Shared;
-
         constexpr int BLOCKSIZE = 128;
+
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
         using BlockReduceIntStorage = typename BlockReduceInt::TempStorage;
 
@@ -3388,8 +3510,38 @@ namespace gpu{
 
         const std::size_t smem = std::max(smemCub, smemAddSequences);
 
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = BLOCKSIZE;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSABuildSingleBlock);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            KernelProperties kernelProperties;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &kernelProperties.max_blocks_per_SM,
+                buildMSASingleBlockKernel<BLOCKSIZE, addSequencesMemType>,
+                kernelLaunchConfig.threads_per_block, 
+                kernelLaunchConfig.smem
+            ); CUERR;
+
+            mymap[kernelLaunchConfig] = kernelProperties;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSABuildSingleBlock] = std::move(mymap);
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
         dim3 block(BLOCKSIZE, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
+        //dim3 grid(maxNumAnchors, 1, 1);
+        dim3 grid(max_blocks_per_device, 1, 1);
         
         buildMSASingleBlockKernel<BLOCKSIZE, addSequencesMemType><<<grid, block, smem, stream>>>(
             d_msaColumnProperties,
@@ -3413,8 +3565,8 @@ namespace gpu{
             d_candidateSequencesTransposedData,
             d_subjectQualities,
             d_candidateQualities,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3457,8 +3609,10 @@ namespace gpu{
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_candidatesPerSubjectPrefixSum,
-            int n_subjects,
-            int n_candidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& kernelLaunchHandle){
@@ -3554,8 +3708,10 @@ namespace gpu{
             d_candidateSequencesTransposedData,
             d_subjectQualities,
             d_candidateQualities,
-            n_subjects,
-            n_candidates,
+            d_numAnchors,
+            d_numCandidates,
+            maxNumAnchors,
+            maxNumCandidates,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,

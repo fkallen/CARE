@@ -63,7 +63,6 @@ public:
     using Length_t = int;
 
     using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
-    using GatherHandleLengths = DistributedArray<Length_t, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
 
     using LengthStore_t = LengthStore<std::uint32_t>;
@@ -97,6 +96,8 @@ public:
     DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, 
                             int minimum_sequence_length, int maximum_sequence_length);
 
+    DistributedReadStorage(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
+
     DistributedReadStorage(const DistributedReadStorage& other) = delete;
     DistributedReadStorage& operator=(const DistributedReadStorage& other) = delete;
 
@@ -105,6 +106,8 @@ public:
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
 	MemoryUsage getMemoryInfo() const;
+    MemoryUsage getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const;
+    MemoryUsage getMemoryInfoOfGatherHandleQualities(const GatherHandleQualities& handle) const;
 
     Statistics getStatistics() const;
 
@@ -195,8 +198,7 @@ public:
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
+                                cudaStream_t stream) const;
 
     void gatherQualitiesToGpuBufferAsync(
                                 ThreadPool* threadPool,
@@ -207,40 +209,7 @@ public:
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
-
-    std::future<void> gatherSequenceDataToHostBufferAsync(
-                                const GatherHandleSequences& handle,
-                                unsigned int* h_sequence_data,
-                                size_t outSequencePitchInInts,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    std::future<void> gatherQualitiesToHostBufferAsync(
-                                const GatherHandleQualities& handle,
-                                char* h_quality_data,
-                                size_t out_quality_pitch,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    void gatherSequenceDataToHostBuffer(
-                                const GatherHandleSequences& handle,
-                                unsigned int* h_sequence_data,
-                                size_t outSequencePitchInInts,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
-    void gatherQualitiesToHostBuffer(
-                                const GatherHandleQualities& handle,
-                                char* h_quality_data,
-                                size_t out_quality_pitch,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
+                                cudaStream_t stream) const;
 
     void gatherSequenceLengthsToGpuBufferAsync(
                                 int* d_lengths,
@@ -258,6 +227,8 @@ public:
     private:
         void init(const std::vector<int>& deviceIds, read_number nReads, bool b, 
                     int minimum_sequence_length, int maximum_sequence_length);
+
+        void init(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setSequences(const std::vector<read_number>& indices, const char* data);

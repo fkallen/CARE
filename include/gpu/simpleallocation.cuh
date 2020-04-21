@@ -220,15 +220,40 @@ namespace detail{
 
 
         //size is number of elements of type T
-		void resize(size_t newsize){
+        //return true if reallocation occured
+		bool resize(size_t newsize){
+            size_ = newsize;
+
 			if(capacity_ < newsize){
 				Allocator alloc;
 				alloc.deallocate(data_);
 				data_ = alloc.allocate(newsize * allocFactor);
-				capacity_ = newsize * allocFactor;
-			}
-			size_ = newsize;
-		}
+                capacity_ = newsize * allocFactor;
+
+                return true;
+			}else{
+                return false;
+            }			
+        }
+        
+        //reserve enough memory for at least max(newCapacity,newSize) elements, and set size to newSize
+        //return true if reallocation occured
+        bool reserveAndResize(size_t newCapacity, size_t newSize){
+            size_ = newSize;
+
+            newCapacity = std::max(newCapacity, newSize);
+
+            if(capacity_ < newCapacity){
+				Allocator alloc;
+				alloc.deallocate(data_);
+				data_ = alloc.allocate(newCapacity);
+                capacity_ = newCapacity;
+
+                return true;
+			}else{
+                return false;
+            }
+        }
 
 		T* get() const{
 			return data_;

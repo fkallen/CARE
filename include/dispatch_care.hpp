@@ -6,8 +6,7 @@
 
 namespace care{
 
-    void performCorrection(MinhashOptions minhashOptions,
-                            AlignmentOptions alignmentOptions,
+    void performCorrection(
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
