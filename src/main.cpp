@@ -73,16 +73,16 @@ int main(int argc, char** argv){
 			"Output files are uncompressed.", 
 			cxxopts::value<std::vector<std::string>>());
 
-	options.add_options("Optional")
+	options.add_options("Additional")
 			
-		("h,help", "Show this help message", cxxopts::value<bool>(help))
+		("help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
-		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
-		("kmerlength", "The kmer length for minhashing. Must be greater than 0. If not set, it is automatically determined.", cxxopts::value<int>())
-		("threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
+		("h,hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
+		("k,kmerlength", "The kmer length for minhashing. Must be greater than 0. If not set, it is automatically determined.", cxxopts::value<int>())
+		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
 		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
 		cxxopts::value<int>())
-		("useQualityScores", "If set, quality scores (if any) are considered during read correction",
+		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction",
 		cxxopts::value<bool>()->implicit_value("true"))
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",
 		cxxopts::value<bool>()->implicit_value("true"))
@@ -98,7 +98,7 @@ int main(int argc, char** argv){
 		cxxopts::value<float>())
 		("coveragefactortuning", "coveragefactortuning",
 		cxxopts::value<float>())
-		("gpu", "One or more GPU device ids to be used for correction. "
+		("g,gpu", "One or more GPU device ids to be used for correction. "
 				"When running the CARE GPU, at least one valid device id is required.", cxxopts::value<std::vector<int>>())
 		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>())
@@ -106,7 +106,7 @@ int main(int argc, char** argv){
 		cxxopts::value<int>())
 		("max_length", "Upper bound for read length in file. If missing or set 0, the input file is parsed to find the exact maximum length before any work is done.",
 		cxxopts::value<int>())
-		("showProgress", "If set, progress bar is shown during correction",
+		("p,showProgress", "If set, progress bar is shown during correction",
 		cxxopts::value<bool>()->implicit_value("true"))
 		("save-preprocessedreads-to", "Save binary dump of data structure which stores input reads to disk",
 		cxxopts::value<std::string>())
@@ -118,7 +118,7 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("memHashtables", "Memory limit in bytes for hash tables and hash table construction. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: A bit less than memTotal.",
 		cxxopts::value<std::string>())
-		("memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
+		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
 		
 	;
