@@ -138,17 +138,6 @@ namespace care{
         ...
     */
 
-
-    void constructOutputFileFromResults(
-                        const std::string& tempdir,
-                        std::uint32_t expectedNumReads, 
-                        const std::string& originalReadFile,
-                        FileFormat originalFormat,
-                        MemoryFileFixedSize<EncodedTempCorrectedSequence>& partialResults, 
-                        std::size_t memoryForSorting,
-                        const std::string& outputfile,
-                        bool isSorted);
-
     void constructOutputFileFromResults2(
                     const std::string& tempdir,
                     const std::vector<std::string>& originalReadFiles,
