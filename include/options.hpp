@@ -48,7 +48,7 @@ namespace care{
 	struct FileOptions{
 		std::string outputdirectory;
 		std::uint64_t nReads = 0;
-        int minimum_sequence_length = -1;
+        int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;
         std::string save_binary_reads_to = "";
         std::string load_binary_reads_from = "";

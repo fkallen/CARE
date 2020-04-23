@@ -1276,7 +1276,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
 
         if(fileOptions.load_binary_reads_from == ""){
 
-            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength < 0) {
+            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
                 std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
 
                 maximumNumberOfReads = 0;

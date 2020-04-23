@@ -102,7 +102,7 @@ int main(int argc, char** argv){
 				"When running the CARE GPU, at least one valid device id is required.", cxxopts::value<std::vector<int>>())
 		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>())
-		("min_length", "Lower bound for read length in file. If missing or set negative, the input file is parsed to find the exact minimum length before any work is done.",
+		("min_length", "Lower bound for read length in file. If missing or set 0, the input file is parsed to find the exact minimum length before any work is done.",
 		cxxopts::value<int>())
 		("max_length", "Upper bound for read length in file. If missing or set 0, the input file is parsed to find the exact maximum length before any work is done.",
 		cxxopts::value<int>())
