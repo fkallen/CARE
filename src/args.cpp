@@ -105,13 +105,8 @@ namespace args{
             result.showProgress = pr["showProgress"].as<bool>();
         }
 
-        std::vector<std::string> deviceIdsStrings{};
-        if(pr.count("deviceIds")){
-            deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
-        }
-
-        for(const auto& s : deviceIdsStrings){
-            result.deviceIds.emplace_back(std::stoi(s));
+        if(pr.count("gpu")){
+            result.deviceIds = pr["gpu"].as<std::vector<int>>();
         }
 
         result.canUseGpu = result.deviceIds.size() > 0;

@@ -35,7 +35,7 @@ The simplest command which only includes mandatory options is
 This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30.
 The outputfile named correctedreads.fastq will be placed in the directory outputdir.
 
-Available program options:
+Available program parameters:
 ```
  Mandatory options:
   -d, --outdir arg           The output directory. Will be created if it does
@@ -59,13 +59,13 @@ Available program options:
 
  Optional options:
   -h, --help                    Show this help message
-
       --tempdir arg             Directory to store temporary files. Default
                                 is output directory
       --hashmaps arg            The number of hash maps. Must be greater than
                                 0.
       --kmerlength arg          The kmer length for minhashing. Must be
-                                greater than 0.
+                                greater than 0. If not set, it is automatically
+                                determined.
       --threads arg             Maximum number of thread to use. Must be
                                 greater than 0
       --batchsize arg           Number of reads to correct in a single batch.
@@ -91,6 +91,8 @@ Available program options:
       --errorfactortuning arg   errorfactortuning
       --coveragefactortuning arg
                                 coveragefactortuning
+      --gpu arg                 One or more GPU device ids to be used for
+                                correction.
       --nReads arg              Upper bound for number of reads in the
                                 inputfile. If missing or set 0, the input file is
                                 parsed to find the exact number of reads before
@@ -123,6 +125,16 @@ Available program options:
                                 K,M,G , e.g. 20G means 20 gigabyte. This option
                                 is not a hard limit. Default: All free
                                 memory.
+```
+
+If an option allows multiple values to be specified, the option can be repeated with different values.
+As an alternative, multiple values can be separated by comma (,). Both ways can be used simulatneously.
+For example, to specify three input files the following options are equivalent:
+
+```
+-i file1,file2,file3
+-i file1 -i file2 -i file3
+-i file1 -i file2,file3
 ```
 
 # Algorithm

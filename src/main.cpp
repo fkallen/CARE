@@ -98,7 +98,8 @@ int main(int argc, char** argv){
 		cxxopts::value<float>())
 		("coveragefactortuning", "coveragefactortuning",
 		cxxopts::value<float>())
-		("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string> >()->default_value({}))
+		("gpu", "One or more GPU device ids to be used for correction. "
+				"When running the CARE GPU, at least one valid device id is required.", cxxopts::value<std::vector<int>>())
 		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>())
 		("min_length", "Lower bound for read length in file. If missing or set negative, the input file is parsed to find the exact minimum length before any work is done.",
@@ -122,7 +123,7 @@ int main(int argc, char** argv){
 		
 	;
 
-	options.parse_positional({"deviceIds"});
+	//options.parse_positional({"deviceIds"});
 
 	auto parseresults = options.parse(argc, argv);
 
