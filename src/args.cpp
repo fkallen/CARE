@@ -73,6 +73,9 @@ namespace args{
 
         if(pr.count("kmerlength")){
             result.kmerlength = pr["kmerlength"].as<int>();
+            result.autodetectKmerlength = false;
+        }else{
+            result.autodetectKmerlength = true;
         }
         if(pr.count("hashmaps")){
             result.numHashFunctions = pr["hashmaps"].as<int>();

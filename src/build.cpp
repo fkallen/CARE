@@ -796,13 +796,24 @@ BuiltDataStructures buildDataStructuresImpl2(
             std::cout << "----------------------------------------\n";
         }
 
+        auto corOpts = correctionOptions;
+        if(corOpts.autodetectKmerlength){
+            const int maxlength = result.totalInputFileProperties.maxSequenceLength;
+
+            corOpts.kmerlength = builddetail::getKmerSizeForHashing(maxlength);
+
+            std::cout << "Will use k-mer length = " << corOpts.kmerlength << " for hashing.\n";
+
+            result.kmerlength = corOpts.kmerlength;
+        } 
+
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(
             fileOptions, 
             runtimeOptions, 
             memoryOptions,
             result.totalInputFileProperties.nReads, 
-            correctionOptions, 
+            corOpts, 
             readStorage
         );
         TIMERSTOPCPU(build_minhasher);

@@ -1345,9 +1345,16 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
             std::cout << "----------------------------------------\n";
         }
 
-        
+        auto corOpts = correctionOptions;
+        if(corOpts.autodetectKmerlength){
+            const int maxlength = result.totalInputFileProperties.maxSequenceLength;
 
- 
+            corOpts.kmerlength = builddetail::getKmerSizeForHashing(maxlength);
+
+            std::cout << "Will use k-mer length = " << corOpts.kmerlength << " for hashing.\n";
+
+            result.kmerlength = corOpts.kmerlength;
+        } 
 
         std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
@@ -1356,7 +1363,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
             runtimeOptions, 
             memoryOptions,
             result.totalInputFileProperties.nReads, 
-            correctionOptions,
+            corOpts,
             result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 

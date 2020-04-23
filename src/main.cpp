@@ -78,7 +78,7 @@ int main(int argc, char** argv){
 		("h,help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
-		("kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>())
+		("kmerlength", "The kmer length for minhashing. Must be greater than 0. If not set, it is automatically determined.", cxxopts::value<int>())
 		("threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
 		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
 		cxxopts::value<int>())
@@ -190,7 +190,12 @@ int main(int argc, char** argv){
 	std::cout << "Alignment max relative number of mismatches in overlap: " << goodAlignmentProperties.maxErrorRate << "\n";
 
 	std::cout << "Number of hash tables / hash functions: " << correctionOptions.numHashFunctions << "\n";
-	std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
+	if(correctionOptions.autodetectKmerlength){
+		std::cout << "K-mer size for hashing: auto\n";
+	}else{
+		std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
+	}
+	
 	std::cout << "Correct candidate reads: " << std::boolalpha << correctionOptions.correctCandidates << "\n";
 	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
 	std::cout << "Use quality scores: " << std::boolalpha << correctionOptions.useQualityScores << "\n";

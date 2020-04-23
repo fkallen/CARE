@@ -28,55 +28,15 @@
 
 namespace care{
 
-    namespace detail{
-
-        // inline
-        // SequenceFileProperties getSequenceFilePropertiesFromFileOptions(const FileOptions& fileOptions){
-        //     if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0 || fileOptions.minimum_sequence_length < 0) {
-        //         std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
-
-        //         return getSequenceFileProperties(fileOptions.inputfile);
-        //     }else{
-        //         std::cout << "Using the supplied number of reads and min/max sequence length." << std::endl;
-
-        //         SequenceFileProperties sequenceFileProperties;
-        //         sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-        //         sequenceFileProperties.minSequenceLength = fileOptions.minimum_sequence_length;
-        //         sequenceFileProperties.nReads = fileOptions.nReads;
-        //         return sequenceFileProperties;
-        //     }
-        // }
-
-
-        inline
-        std::vector<SequenceFileProperties> getSequenceFilePropertiesFromFileOptions2(const FileOptions& fileOptions){
-            std::vector<SequenceFileProperties> result;
-
-            std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
-
-            for(const auto& inputfile : fileOptions.inputfiles){
-                result.emplace_back(getSequenceFileProperties(inputfile));
-
-                std::cout << "----------------------------------------\n";
-                std::cout << "File: " << inputfile << "\n";
-                std::cout << "Reads: " << result.back().nReads << "\n";
-                std::cout << "Minimum sequence length: " << result.back().minSequenceLength << "\n";
-                std::cout << "Maximum sequence length: " << result.back().maxSequenceLength << "\n";
-                std::cout << "----------------------------------------\n";
+    namespace builddetail{
+        inline 
+        int getKmerSizeForHashing(int maximumReadLength){
+            if(maximumReadLength < 160){
+                return 20;
+            }else{
+                return 32;
             }
-            return result;
         }
-
-        inline
-        void printInputFileProperties(std::ostream& os, const std::string& filename, const SequenceFileProperties& props){
-            os << "----------------------------------------\n";
-            os << "File: " << filename << "\n";
-            os << "Reads: " << props.nReads << "\n";
-            os << "Minimum sequence length: " << props.minSequenceLength << "\n";
-            os << "Maximum sequence length: " << props.maxSequenceLength << "\n";
-            os << "----------------------------------------\n";
-        }; 
-
     }
 
     enum class BuiltType {Constructed, Loaded};
@@ -88,6 +48,8 @@ namespace care{
     };
 
     struct BuiltDataStructures{
+        int kmerlength;
+
         BuiltDataStructure<cpu::ContiguousReadStorage> builtReadStorage;
         BuiltDataStructure<Minhasher> builtMinhasher;
 
@@ -129,6 +91,8 @@ namespace care{
         };
 
         struct BuiltGpuDataStructures{
+            int kmerlength;
+            
             BuiltDataStructure<GpuReadStorageWithFlags> builtReadStorage;
             BuiltDataStructure<Minhasher> builtMinhasher;
 

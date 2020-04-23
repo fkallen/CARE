@@ -66,6 +66,10 @@ namespace care{
 
         TIMERSTOPCPU(set_up_datastructures);
 
+        if(correctionOptions.autodetectKmerlength){
+            correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
+        }
+
         auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
         auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
