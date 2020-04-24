@@ -1037,6 +1037,32 @@ namespace gpu{
                 tgroup.sync();
             }
 
+            // { 
+            //     // leave positions untouched which did not overlap anchor
+
+            //     auto get = [] (const unsigned int* data, int length, int index){
+            //         return getEncodedNuc2Bit(data, length, index);
+            //     };
+
+            //     const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+            //             + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+            //     for(int i = queryColumnsBegin_incl + tgroup.thread_rank(); i < subjectColumnsBegin_incl; i += tgroup.size()) {
+            //         const char encodedBase = get(encUncorrectedCandidate, queryColumnsEnd_excl - queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+            //         const char base = to_nuc(encodedBase);
+            //         shared_correctedCandidate[i - queryColumnsBegin_incl] = base;
+            //     }
+
+            //     const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+
+            //     for(int i = subjectColumnsEnd_excl + tgroup.thread_rank(); i < queryColumnsEnd_excl; i += tgroup.size()) {
+            //         const char encodedBase = get(encUncorrectedCandidate, queryColumnsEnd_excl - queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+            //         const char base = to_nuc(encodedBase);
+            //         shared_correctedCandidate[i - queryColumnsBegin_incl] = base;
+            //     }
+
+            // }
+
             
             //copy from smem to global output
             const int fullInts1 = candidate_length / sizeof(int);
