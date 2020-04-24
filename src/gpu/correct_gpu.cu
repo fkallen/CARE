@@ -52,7 +52,13 @@
 
 #define USE_MSA_MINIMIZATION
 
-constexpr int max_num_minimizations = 5;
+#ifdef USE_MSA_MINIMIZATION
+    constexpr int max_num_minimizations = 5;
+#else     
+    constexpr int max_num_minimizations = 0;
+#endif   
+
+
 
 //#define DO_PROFILE
 
