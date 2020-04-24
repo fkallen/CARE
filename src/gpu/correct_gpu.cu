@@ -902,6 +902,8 @@ namespace gpu{
             d_candidates_per_subject_prefixsum.resize(batchsize+1);
             cudaMemsetAsync(d_candidates_per_subject_prefixsum.get(), 0, sizeof(int), streams[primary_stream_index]); CUERR;
     
+            h_candidates_per_subject_prefixsum.resize(batchsize+1);
+
             h_numAnchors.resize(1);
             h_numCandidates.resize(1);
             d_numAnchors.resize(1);
@@ -929,6 +931,7 @@ namespace gpu{
             d_alignment_nOps.resize(maxCandidates);
             d_alignment_isValid.resize(maxCandidates);
             d_alignment_best_alignment_flags.resize(maxCandidates);
+            h_alignment_best_alignment_flags.resize(maxCandidates);
     
             // candidate indices
     
@@ -2257,21 +2260,29 @@ namespace gpu{
 
 		// correct subjects
 #if 0
-        cudaMemcpyAsync(batch.h_num_indices,
-                        batch.d_num_indices,
-                        batch.d_num_indices.sizeInBytes(),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
+
+        std::array<int*,2> d_indices_dblbuf_msa{
+            batch.d_indices.get(), 
+            batch.d_indices_tmp.get()
+        };
+        std::array<int*,2> d_indices_per_subject_dblbuf_msa{
+            batch.d_indices_per_subject.get(), 
+            batch.d_indices_per_subject_tmp.get()
+        };
+
+        const int* d_indices_per_subject_msa = d_indices_per_subject_dblbuf_msa[(max_num_minimizations % 2)];
+        const int* d_indices_msa = d_indices_dblbuf_msa[(max_num_minimizations % 2)];
+
 
         cudaMemcpyAsync(batch.h_indices,
-                        batch.d_indices,
-                        batch.d_indices.sizeInBytes(),
+                        d_indices_msa,
+                        batch.h_indices.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(batch.h_indices_per_subject,
-                        batch.d_indices_per_subject,
-                        batch.d_indices_per_subject.sizeInBytes(),
+                        d_indices_per_subject_msa,
+                        batch.h_indices_per_subject.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
@@ -2295,44 +2306,66 @@ namespace gpu{
                         batch.d_subject_sequences_data.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(batch.h_subject_sequences_lengths,
+            batch.d_subject_sequences_lengths,
+            batch.d_subject_sequences_lengths.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(batch.h_candidate_sequences_data,
                         batch.d_candidate_sequences_data,
                         batch.d_candidate_sequences_data.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(batch.h_candidate_sequences_lengths,
+            batch.d_candidate_sequences_lengths,
+            batch.d_candidate_sequences_lengths.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]); CUERR;
         cudaMemcpyAsync(batch.h_consensus,
                         batch.d_consensus,
                         batch.d_consensus.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(batch.h_candidates_per_subject_prefixsum,
+            batch.d_candidates_per_subject_prefixsum,
+            batch.d_candidates_per_subject_prefixsum.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]); CUERR;
         cudaDeviceSynchronize(); CUERR;
 
         auto identity = [](auto i){return i;};
 
 
         for(int i = 0; i < batch.n_subjects; i++){
-            std::cout << "Subject  : " << batch.tasks[i].subject_string << ", subject id " <<  batch.tasks[i].readId << std::endl;
+            std::cout << "anchor id " <<  batch.h_subject_read_ids[i] << "\n";
             int numind = batch.h_indices_per_subject[i];
             if(numind > 0){
                 std::vector<char> cands;
-                cands.resize(128 * numind, 'F');
+                cands.resize(batch.decodedSequencePitchInBytes * numind, 'F');
                 std::vector<int> candlengths;
                 candlengths.resize(numind);
                 std::vector<int> candshifts;
                 candshifts.resize(numind);
+
+                std::string anchorString = get2BitString(
+                    batch.h_subject_sequences_data.get() + i * batch.encodedSequencePitchInInts,
+                    batch.h_subject_sequences_lengths[i]
+                );
+
                 for(int j = 0; j < numind; j++){
-                    int index = batch.h_indices[batch.h_indices_per_subject_prefixsum[i] + j];
-                    char* dst = cands.data() + 128 * j;
-                    candlengths[j] = batch.h_candidate_sequences_lengths[index];
-                    candshifts[j] = batch.h_alignment_shifts[index];
+                    const size_t anchoroffset = batch.h_candidates_per_subject_prefixsum[i];
+                    int index = batch.h_indices[anchoroffset + j];
+                    char* dst = cands.data() + batch.decodedSequencePitchInBytes * j;
+                    candlengths[j] = batch.h_candidate_sequences_lengths[anchoroffset + index];
+                    candshifts[j] = batch.h_alignment_shifts[anchoroffset + index];
 
-                    const unsigned int* candidateSequencePtr = batch.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts;
+                    const unsigned int* candidateSequencePtr = batch.h_candidate_sequences_data.get() + (anchoroffset + index) * batch.encodedSequencePitchInInts;
 
-                    assert(batch.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
+                    assert(batch.h_alignment_best_alignment_flags[anchoroffset + index] != BestAlignment_t::None);
 
-                    std::string candidatestring = get2BitString((unsigned int*)candidateSequencePtr, batch.h_candidate_sequences_lengths[index]);
-                    if(batch.h_alignment_best_alignment_flags[index] == BestAlignment_t::ReverseComplement){
+                    std::string candidatestring = get2BitString((unsigned int*)candidateSequencePtr, candlengths[j]);
+                    if(batch.h_alignment_best_alignment_flags[anchoroffset + index] == BestAlignment_t::ReverseComplement){
                         candidatestring = reverseComplementString(candidatestring.c_str(), candidatestring.length());
                     }
 
@@ -2341,32 +2374,45 @@ namespace gpu{
                     //std::cout << "Candidate: " << s << std::endl;
                 }
 
+                // std::cerr << "subjectColumnsBegin_incl = " << batch.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
+                // std::cerr << "subjectColumnsEnd_excl = " << batch.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
+                // std::cerr << "firstColumn_incl = " << batch.h_msa_column_properties[i].firstColumn_incl << "\n";
+                // std::cerr << "lastColumn_excl = " << batch.h_msa_column_properties[i].lastColumn_excl << "\n";
+                // std::cerr << "candshifts:\n";
+
+                // for(int j = 0; j < numind; j++){
+                //     std::cerr << candshifts[j] << " ";
+                // }
+                // std::cerr << "\n";
+
+                const int msacolumns = batch.h_msa_column_properties[i].lastColumn_excl - batch.h_msa_column_properties[i].firstColumn_incl;
+
                 printSequencesInMSA(std::cout,
-                                         batch.tasks[i].subject_string.c_str(),
-                                         batch.h_subject_sequences_lengths[i],
-                                         cands.data(),
-                                         candlengths.data(),
-                                         numind,
-                                         candshifts.data(),
-                                         batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
-                                         batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
-                                         batch.h_msa_column_properties[i].lastColumn_excl - batch.h_msa_column_properties[i].firstColumn_incl,
-                                         128);
-                 std::cout << "\n";
-                 std::string consensus = std::string{batch.h_consensus + i * batch.msa_pitch, batch.h_consensus + (i+1) * batch.msa_pitch};
-                 std::cout << "Consensus:\n   " << consensus << "\n\n";
-                 printSequencesInMSAConsEq(std::cout,
-                                          batch.tasks[i].subject_string.c_str(),
-                                          batch.h_subject_sequences_lengths[i],
-                                          cands.data(),
-                                          candlengths.data(),
-                                          numind,
-                                          candshifts.data(),
-                                          consensus.c_str(),
-                                          batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
-                                          batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
-                                          batch.h_msa_column_properties[i].lastColumn_excl - batch.h_msa_column_properties[i].firstColumn_incl,
-                                          128);
+                    anchorString.c_str(),
+                    batch.h_subject_sequences_lengths[i],
+                    cands.data(),
+                    candlengths.data(),
+                    numind,
+                    candshifts.data(),
+                    batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
+                    batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
+                    msacolumns,
+                    batch.decodedSequencePitchInBytes);
+                std::cout << "\n";
+                std::string consensus = std::string{batch.h_consensus + i * batch.msa_pitch, batch.h_consensus + i * batch.msa_pitch + msacolumns};
+                std::cout << "Consensus:\n   " << consensus << "\n\n";
+                printSequencesInMSAConsEq(std::cout,
+                    anchorString.c_str(),
+                    batch.h_subject_sequences_lengths[i],
+                    cands.data(),
+                    candlengths.data(),
+                    numind,
+                    candshifts.data(),
+                    consensus.c_str(),
+                    batch.h_msa_column_properties[i].subjectColumnsBegin_incl,
+                    batch.h_msa_column_properties[i].subjectColumnsEnd_excl,
+                    msacolumns,
+                    batch.decodedSequencePitchInBytes);
                 std::cout << "\n";
 
                 //std::exit(0);
