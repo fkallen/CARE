@@ -19,6 +19,7 @@ namespace care{
     };
 
     struct CorrectionOptions{
+        bool excludeAmbiguousReads = false;
         bool correctCandidates = false;
         bool useQualityScores = false;
         bool autodetectKmerlength = false;

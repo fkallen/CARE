@@ -53,6 +53,10 @@ namespace args{
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
         CorrectionOptions result{};
 
+        if(pr.count("excludeAmbiguous")){
+            result.excludeAmbiguousReads = pr["excludeAmbiguous"].as<bool>();
+        }
+
         if(pr.count("candidateCorrection")){
             result.correctCandidates = pr["candidateCorrection"].as<bool>();
         }

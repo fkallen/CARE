@@ -141,6 +141,10 @@ namespace gpu{
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 const int* __restrict__ numAnchorsPtr,
                 const int* __restrict__ numCandidatesPtr,
+                const bool* __restrict__ anchorContainsN,
+                bool removeAmbiguousAnchors,
+                const bool* __restrict__ candidateContainsN,
+                bool removeAmbiguousCandidates,
                 int encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
@@ -270,151 +274,155 @@ namespace gpu{
 
 
             if(candidateIndex < maxCandidateIndex_excl){
+                if(!(removeAmbiguousAnchors && anchorContainsN[subjectIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
+                    const int querybases = candidateSequencesLength[candidateIndex];
+                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int totalbases = subjectbases + querybases;
+                    const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
-                const int querybases = candidateSequencesLength[candidateIndex];
-                const int queryints = getEncodedNumInts2BitHiLo(querybases);
-                const int totalbases = subjectbases + querybases;
-                const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
+                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
 
-                const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
-
-                //save query in shared memory
-                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
-                    //transposed
-                    queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
-                }
-
-                const unsigned int* const subjectBackup_hi = subjectBackup;
-                const unsigned int* const subjectBackup_lo = subjectBackup + identity(subjectints/2);
-                const unsigned int* const queryBackup_hi = queryBackup;
-                const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
-
-                int bestScore[2];
-                int bestShift[2];
-                int overlapsize[2];
-                int opnr[2];
-
-                #pragma unroll
-                for(int orientation = 0; orientation < 2; orientation++){
-                    const bool isReverseComplement = orientation == 1;
-
-                    if(isReverseComplement) {
-                        make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
+                    //save query in shared memory
+                    for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
+                        //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
+                        //transposed
+                        queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
                     }
 
-                    //begin SHD algorithm
+                    const unsigned int* const subjectBackup_hi = subjectBackup;
+                    const unsigned int* const subjectBackup_lo = subjectBackup + identity(subjectints/2);
+                    const unsigned int* const queryBackup_hi = queryBackup;
+                    const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
 
-                    bestScore[orientation] = totalbases;     // score is number of mismatches
-                    bestShift[orientation] = -querybases;    // shift of query relative to subject. shift < 0 if query begins before subject
+                    int bestScore[2];
+                    int bestShift[2];
+                    int overlapsize[2];
+                    int opnr[2];
 
-                    auto handle_shift = [&](int shift, int overlapsize,
-                                                unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                                int shiftptr_size,
-                                                const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                                auto transfunc2){
+                    #pragma unroll
+                    for(int orientation = 0; orientation < 2; orientation++){
+                        const bool isReverseComplement = orientation == 1;
 
-                        //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                        const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                        bestScore[orientation] - totalbases + 2*overlapsize);
+                        if(isReverseComplement) {
+                            make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
+                        }
 
-                        if(max_errors_excl > 0){
+                        //begin SHD algorithm
 
-                            int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                                shiftptr_hi,shiftptr_lo, transfunc1,
-                                                shiftptr_size,
-                                                otherptr_hi, otherptr_lo, transfunc2);
+                        bestScore[orientation] = totalbases;     // score is number of mismatches
+                        bestShift[orientation] = -querybases;    // shift of query relative to subject. shift < 0 if query begins before subject
 
-                            
+                        auto handle_shift = [&](int shift, int overlapsize,
+                                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
+                                                    int shiftptr_size,
+                                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
+                                                    auto transfunc2){
 
-                            // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
+                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
+                            bestScore[orientation] - totalbases + 2*overlapsize);
 
-                            // printf("%d %d %d %d | %d %d %d %d --- ", 
-                            //     shiftptr_hi[transfunc1(0)], shiftptr_hi[transfunc1(1)], shiftptr_hi[transfunc1(2)], shiftptr_hi[transfunc1(3)],
-                            //     shiftptr_lo[transfunc1(0)], shiftptr_lo[transfunc1(1)], shiftptr_lo[transfunc1(2)], shiftptr_lo[transfunc1(3)]);
+                            if(max_errors_excl > 0){
 
-                            // printf("%d %d %d %d | %d %d %d %d\n", 
-                            //     otherptr_hi[transfunc2(0)], otherptr_hi[transfunc2(1)], otherptr_hi[transfunc2(2)], otherptr_hi[transfunc2(3)],
-                            //     otherptr_lo[transfunc2(0)], otherptr_lo[transfunc2(1)], otherptr_lo[transfunc2(2)], otherptr_lo[transfunc2(3)]);
+                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
+                                                    shiftptr_hi,shiftptr_lo, transfunc1,
+                                                    shiftptr_size,
+                                                    otherptr_hi, otherptr_lo, transfunc2);
 
-                            score = (score < max_errors_excl ?
-                                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                    : std::numeric_limits<int>::max()); // too many errors, discard
+                                
 
-                            if(score < bestScore[orientation]){
-                                bestScore[orientation] = score;
-                                bestShift[orientation] = shift;
+                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+
+                                // printf("%d %d %d %d | %d %d %d %d --- ", 
+                                //     shiftptr_hi[transfunc1(0)], shiftptr_hi[transfunc1(1)], shiftptr_hi[transfunc1(2)], shiftptr_hi[transfunc1(3)],
+                                //     shiftptr_lo[transfunc1(0)], shiftptr_lo[transfunc1(1)], shiftptr_lo[transfunc1(2)], shiftptr_lo[transfunc1(3)]);
+
+                                // printf("%d %d %d %d | %d %d %d %d\n", 
+                                //     otherptr_hi[transfunc2(0)], otherptr_hi[transfunc2(1)], otherptr_hi[transfunc2(2)], otherptr_hi[transfunc2(3)],
+                                //     otherptr_lo[transfunc2(0)], otherptr_lo[transfunc2(1)], otherptr_lo[transfunc2(2)], otherptr_lo[transfunc2(3)]);
+
+                                score = (score < max_errors_excl ?
+                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                                        : std::numeric_limits<int>::max()); // too many errors, discard
+
+                                if(score < bestScore[orientation]){
+                                    bestScore[orientation] = score;
+                                    bestShift[orientation] = shift;
+                                }
+
+                                return true;
+                            }else{
+                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
+                                return false;
                             }
+                        };
 
-                            return true;
-                        }else{
-                            //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-                            return false;
+                        //initialize threadlocal smem array with subject
+                        for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
+                            mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
                         }
-                    };
 
-                    //initialize threadlocal smem array with subject
-                    for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                        mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
-                    }
+                        unsigned int* mySequence_hi = mySequence;
+                        unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
 
-                    unsigned int* mySequence_hi = mySequence;
-                    unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
+                        for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
+                            const int overlapsize = min(subjectbases - shift, querybases);
 
-                    for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
-                        const int overlapsize = min(subjectbases - shift, querybases);
-
-                        bool b = handle_shift(shift, overlapsize,
-                                        mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                        subjectints,
-                                        queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
-                        if(!b){
-                            break;
+                            bool b = handle_shift(shift, overlapsize,
+                                            mySequence_hi, mySequence_lo, no_bank_conflict_index,
+                                            subjectints,
+                                            queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
+                            if(!b){
+                                break;
+                            }
                         }
-                    }
 
-                    //initialize threadlocal smem array with query
-                    for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                        mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
-                    }
-
-                    mySequence_hi = mySequence;
-                    mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
-
-                    for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                        const int overlapsize = min(subjectbases, querybases + shift);
-
-                        bool b = handle_shift(shift, overlapsize,
-                                        mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                        queryints,
-                                        subjectBackup_hi, subjectBackup_lo, identity);
-                        if(!b){
-                            break;
+                        //initialize threadlocal smem array with query
+                        for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
+                            mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
                         }
+
+                        mySequence_hi = mySequence;
+                        mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
+
+                        for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
+                            const int overlapsize = min(subjectbases, querybases + shift);
+
+                            bool b = handle_shift(shift, overlapsize,
+                                            mySequence_hi, mySequence_lo, no_bank_conflict_index,
+                                            queryints,
+                                            subjectBackup_hi, subjectBackup_lo, identity);
+                            if(!b){
+                                break;
+                            }
+                        }
+
+                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
+                        const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
+                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
+                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
 
-                    const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                    const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
-                    overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                    opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
+                    const BestAlignment_t flag = alignmentComparator(
+                        overlapsize[0],
+                        overlapsize[1],
+                        opnr[0],
+                        opnr[1],
+                        bestShift[0] != -querybases,
+                        bestShift[1] != -querybases,
+                        subjectbases,
+                        querybases
+                    );
+
+                    d_alignment_best_alignment_flags[candidateIndex] = flag;
+                    d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
+                    d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
+                    d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
+                    d_alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                }else{
+                    d_alignment_best_alignment_flags[candidateIndex] = BestAlignment_t::None;
+                    d_alignment_isValid[candidateIndex] = false;
                 }
-
-                const BestAlignment_t flag = alignmentComparator(
-                    overlapsize[0],
-                    overlapsize[1],
-                    opnr[0],
-                    opnr[1],
-                    bestShift[0] != -querybases,
-                    bestShift[1] != -querybases,
-                    subjectbases,
-                    querybases
-                );
-
-                d_alignment_best_alignment_flags[candidateIndex] = flag;
-                d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-                d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-                d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-                d_alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
             }
         }
     }
@@ -444,6 +452,10 @@ namespace gpu{
                 const int* __restrict__ d_anchorIndicesOfCandidates,
                 const int* __restrict__ numAnchorsPtr,
                 const int* __restrict__ numCandidatesPtr,
+                const bool* __restrict__ anchorContainsN,
+                bool removeAmbiguousAnchors,
+                const bool* __restrict__ candidateContainsN,
+                bool removeAmbiguousCandidates,
                 size_t encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
@@ -671,158 +683,171 @@ namespace gpu{
 
         for(int candidateIndex = threadIdx.x + blocksize * blockIdx.x; candidateIndex < n_candidates; candidateIndex += blocksize * gridDim.x){
 
-            const int subjectIndex = d_anchorIndicesOfCandidates[candidateIndex];          
-            const int subjectbases = subjectSequencesLength[subjectIndex];
-            const int querybases = candidateSequencesLength[candidateIndex];
+            if(!(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
 
-            const unsigned int* subjectptr = subjectDataHiLoTransposed + std::size_t(subjectIndex);
+                const int subjectIndex = d_anchorIndicesOfCandidates[candidateIndex];  
 
-            #pragma unroll 
-            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                subjectBackupHi[i] = subjectptr[(i) * n_subjects];
-                subjectBackupLo[i] = subjectptr[(i + maxValidIntsPerSequence / 2) * n_subjects];
-            }
+                if(!(removeAmbiguousAnchors && anchorContainsN[subjectIndex])){
 
-            maskBitArray(subjectBackupHi, subjectBackupLo, subjectbases);
+                    const int subjectbases = subjectSequencesLength[subjectIndex];
+                    const int querybases = candidateSequencesLength[candidateIndex];
 
-            const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
+                    const unsigned int* subjectptr = subjectDataHiLoTransposed + std::size_t(subjectIndex);
 
-            //save query in reg
+                    #pragma unroll 
+                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                        subjectBackupHi[i] = subjectptr[(i) * n_subjects];
+                        subjectBackupLo[i] = subjectptr[(i + maxValidIntsPerSequence / 2) * n_subjects];
+                    }
 
-            #pragma unroll 
-            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                queryBackupHi[i] = candidateptr[i * n_candidates];
-                queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
-            }
+                    maskBitArray(subjectBackupHi, subjectBackupLo, subjectbases);
 
-            maskBitArray(queryBackupHi, queryBackupLo, querybases);
+                    const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(candidateIndex);
 
-            //begin SHD algorithm
+                    //save query in reg
 
-            const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
-            const int queryints = getEncodedNumInts2BitHiLo(querybases);
-            const int totalbases = subjectbases + querybases;
-            const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
+                    #pragma unroll 
+                    for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                        queryBackupHi[i] = candidateptr[i * n_candidates];
+                        queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
+                    }
 
-            int bestScore[2];
-            int bestShift[2];
-            int overlapsize[2];
-            int opnr[2];
+                    maskBitArray(queryBackupHi, queryBackupLo, querybases);
 
-            #pragma unroll
-            for(int orientation = 0; orientation < 2; orientation++){
-                const bool isReverseComplement = orientation == 1;
+                    //begin SHD algorithm
 
-                if(isReverseComplement){
-                    reverseComplementQuery(querybases, queryints);
-                }
+                    const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
+                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int totalbases = subjectbases + querybases;
+                    const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
-                bestScore[orientation] = totalbases;     // score is number of mismatches
-                bestShift[orientation] = -querybases;    // shift of query relative to subject. shift < 0 if query begins before subject
+                    int bestScore[2];
+                    int bestShift[2];
+                    int overlapsize[2];
+                    int opnr[2];
 
-                auto handle_shift = [&](int shift, int overlapsize,
-                                        auto& shiftptr_hi, auto& shiftptr_lo,
-                                        const auto& otherptr_hi, const auto& otherptr_lo){
+                    #pragma unroll
+                    for(int orientation = 0; orientation < 2; orientation++){
+                        const bool isReverseComplement = orientation == 1;
 
-                    //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                    const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                                                    bestScore[orientation] - totalbases + 2*overlapsize);
-
-                    if(max_errors_excl > 0){
-
-                        int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                            shiftptr_hi, shiftptr_lo,
-                                            otherptr_hi, otherptr_lo);
-
-                        
-                        // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                        // printf("%d %d %d %d | %d %d %d %d --- ", 
-                        //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
-                        //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
-
-                        // printf("%d %d %d %d | %d %d %d %d\n", 
-                        //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
-                        //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
-
-                        score = (score < max_errors_excl ?
-                                score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                : std::numeric_limits<int>::max()); // too many errors, discard
-
-                        if(score < bestScore[orientation]){
-                            bestScore[orientation] = score;
-                            bestShift[orientation] = shift;
+                        if(isReverseComplement){
+                            reverseComplementQuery(querybases, queryints);
                         }
 
-                        return true;
-                    }else{
-                        //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
+                        bestScore[orientation] = totalbases;     // score is number of mismatches
+                        bestShift[orientation] = -querybases;    // shift of query relative to subject. shift < 0 if query begins before subject
 
-                        return false;
+                        auto handle_shift = [&](int shift, int overlapsize,
+                                                auto& shiftptr_hi, auto& shiftptr_lo,
+                                                const auto& otherptr_hi, const auto& otherptr_lo){
+
+                            //const int max_errors = int(float(overlapsize) * maxErrorRate);
+                            const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
+                                                            bestScore[orientation] - totalbases + 2*overlapsize);
+
+                            if(max_errors_excl > 0){
+
+                                int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
+                                                    shiftptr_hi, shiftptr_lo,
+                                                    otherptr_hi, otherptr_lo);
+
+                                
+                                // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+
+                                // printf("%d %d %d %d | %d %d %d %d --- ", 
+                                //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
+                                //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
+
+                                // printf("%d %d %d %d | %d %d %d %d\n", 
+                                //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
+                                //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
+
+                                score = (score < max_errors_excl ?
+                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                                        : std::numeric_limits<int>::max()); // too many errors, discard
+
+                                if(score < bestScore[orientation]){
+                                    bestScore[orientation] = score;
+                                    bestShift[orientation] = shift;
+                                }
+
+                                return true;
+                            }else{
+                                //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
+
+                                return false;
+                            }
+                        };
+
+                        #pragma unroll 
+                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                            mySequenceHi[i] = subjectBackupHi[i];
+                            mySequenceLo[i] = subjectBackupLo[i];
+                        }
+
+                        for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
+                            const int overlapsize = min(subjectbases - shift, querybases);
+
+                            bool b = handle_shift(
+                                shift, overlapsize,
+                                mySequenceHi, mySequenceLo,
+                                queryBackupHi, queryBackupLo
+                            );
+                            if(!b){
+                                break;
+                            }
+                        }
+
+                        //initialize threadlocal smem array with query
+                        #pragma unroll 
+                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                            mySequenceHi[i] = queryBackupHi[i];
+                            mySequenceLo[i] = queryBackupLo[i];
+                        }
+
+                        for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
+                            const int overlapsize = min(subjectbases, querybases + shift);
+
+                            bool b = handle_shift(
+                                shift, overlapsize,
+                                mySequenceHi, mySequenceLo,
+                                subjectBackupHi, subjectBackupLo
+                            );
+                            if(!b){
+                                break;
+                            }
+                        }
+
+                        const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
+                        const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
+                        overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
+                        opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
-                };
 
-                #pragma unroll 
-                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                    mySequenceHi[i] = subjectBackupHi[i];
-                    mySequenceLo[i] = subjectBackupLo[i];
-                }
-
-                for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
-                    const int overlapsize = min(subjectbases - shift, querybases);
-
-                    bool b = handle_shift(
-                        shift, overlapsize,
-                        mySequenceHi, mySequenceLo,
-                        queryBackupHi, queryBackupLo
+                    const BestAlignment_t flag = alignmentComparator(
+                        overlapsize[0],
+                        overlapsize[1],
+                        opnr[0],
+                        opnr[1],
+                        bestShift[0] != -querybases,
+                        bestShift[1] != -querybases,
+                        subjectbases,
+                        querybases
                     );
-                    if(!b){
-                        break;
-                    }
+
+                    bestAlignmentFlags[candidateIndex] = flag;
+                    alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
+                    alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
+                    alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
+                    alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
+                }else{
+                    bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                    alignment_isValid[candidateIndex] = false;
                 }
-
-                //initialize threadlocal smem array with query
-                #pragma unroll 
-                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                    mySequenceHi[i] = queryBackupHi[i];
-                    mySequenceLo[i] = queryBackupLo[i];
-                }
-
-                for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                    const int overlapsize = min(subjectbases, querybases + shift);
-
-                    bool b = handle_shift(
-                        shift, overlapsize,
-                        mySequenceHi, mySequenceLo,
-                        subjectBackupHi, subjectBackupLo
-                    );
-                    if(!b){
-                        break;
-                    }
-                }
-
-                const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
-                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
-                overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
-                opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
+            }else{
+                bestAlignmentFlags[candidateIndex] = BestAlignment_t::None;
+                alignment_isValid[candidateIndex] = false;
             }
-
-            const BestAlignment_t flag = alignmentComparator(
-                overlapsize[0],
-                overlapsize[1],
-                opnr[0],
-                opnr[1],
-                bestShift[0] != -querybases,
-                bestShift[1] != -querybases,
-                subjectbases,
-                querybases
-            );
-
-            bestAlignmentFlags[candidateIndex] = flag;
-            alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
-            alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
-            alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
-            alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
         }
     }
 
@@ -970,6 +995,10 @@ namespace gpu{
         const int* d_anchorIndicesOfCandidates,
         const int* d_numAnchors,
         const int* d_numCandidates,
+        const bool* d_anchorContainsN,
+        bool removeAmbiguousAnchors,
+        const bool* d_candidateContainsN,
+        bool removeAmbiguousCandidates,
         int maxNumAnchors,
         int maxNumCandidates,
         int maximumSequenceLength,
@@ -1083,6 +1112,10 @@ namespace gpu{
                 d_anchorIndicesOfCandidates,
                 d_numAnchors,
                 d_numCandidates,
+                d_anchorContainsN,
+                removeAmbiguousAnchors,
+                d_candidateContainsN,
+                removeAmbiguousCandidates,
                 intsPerSequence2BitHiLo, 
                 min_overlap,
                 maxErrorRate,
@@ -1110,6 +1143,10 @@ namespace gpu{
             const int* d_anchorIndicesOfCandidates,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            const bool* d_anchorContainsN,
+            bool removeAmbiguousAnchors,
+            const bool* d_candidateContainsN,
+            bool removeAmbiguousCandidates,
             int maxNumAnchors,
             int maxNumCandidates,
             int maximumSequenceLength,
@@ -1331,6 +1368,10 @@ namespace gpu{
                                             d_tiles_per_subject_prefixsum, \
                                             d_numAnchors, \
                                             d_numCandidates, \
+                                            d_anchorContainsN, \
+                                            removeAmbiguousAnchors, \
+                                            d_candidateContainsN, \
+                                            removeAmbiguousCandidates, \
                                             intsPerSequence2BitHiLo, \
                                             min_overlap, \
                                             maxErrorRate, \
@@ -1365,6 +1406,10 @@ namespace gpu{
             const int* d_anchorIndicesOfCandidates,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            const bool* d_anchorContainsN,
+            bool removeAmbiguousAnchors,
+            const bool* d_candidateContainsN,
+            bool removeAmbiguousCandidates,
             int maxNumAnchors,
             int maxNumCandidates,
             int maximumSequenceLength,
@@ -1394,6 +1439,10 @@ namespace gpu{
                     d_anchorIndicesOfCandidates, \
                     d_numAnchors, \
                     d_numCandidates, \
+                    d_anchorContainsN, \
+                    removeAmbiguousAnchors, \
+                    d_candidateContainsN, \
+                    removeAmbiguousCandidates, \
                     maxNumAnchors, \
                     maxNumCandidates, \
                     maximumSequenceLength, \
@@ -1467,6 +1516,10 @@ namespace gpu{
                         d_anchorIndicesOfCandidates,
                         d_numAnchors,
                         d_numCandidates,
+                        d_anchorContainsN,
+                        removeAmbiguousAnchors,
+                        d_candidateContainsN,
+                        removeAmbiguousCandidates,
                         maxNumAnchors,
                         maxNumCandidates,
                         maximumSequenceLength,

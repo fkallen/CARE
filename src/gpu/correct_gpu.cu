@@ -1043,6 +1043,9 @@ namespace gpu{
             std::size_t flagTemp = sizeof(bool) * maxCandidates;
             std::size_t popcountShdTempBytes = 0; 
             
+            const bool removeAmbiguousAnchors = correctionOptions.excludeAmbiguousReads;
+            const bool removeAmbiguousCandidates = correctionOptions.excludeAmbiguousReads;
+    
             call_popcount_shifted_hamming_distance_kernel_async(
                 nullptr,
                 popcountShdTempBytes,
@@ -1060,17 +1063,20 @@ namespace gpu{
                 d_anchorIndicesOfCandidates.get(),
                 d_numAnchors.get(),
                 d_numCandidates.get(),
+                d_anchorContainsN.get(),
+                removeAmbiguousAnchors,
+                d_candidateContainsN.get(),
+                removeAmbiguousCandidates,
                 batchsize,
                 maxCandidates,
                 sequenceFileProperties.maxSequenceLength,
-                batchData.encodedSequencePitchInInts,
+                encodedSequencePitchInInts,
                 goodAlignmentProperties.min_overlap,
                 goodAlignmentProperties.maxErrorRate,
                 goodAlignmentProperties.min_overlap_ratio,
-                correctionOptions.estimatedErrorrate,
-                //batchData.maxSubjectLength,
+                correctionOptions.estimatedErrorrate,                
                 streams[primary_stream_index],
-                batchData.kernelLaunchHandle
+                kernelLaunchHandle
             );
             
             // this buffer will also serve as temp storage for cub. The required memory for cub 
@@ -2042,6 +2048,9 @@ namespace gpu{
 
         std::size_t tempBytes = batch.d_tempstorage.sizeInBytes();
 
+        const bool removeAmbiguousAnchors = batch.correctionOptions.excludeAmbiguousReads;
+        const bool removeAmbiguousCandidates = batch.correctionOptions.excludeAmbiguousReads;
+
         call_popcount_shifted_hamming_distance_kernel_async(
             batch.d_tempstorage.get(),
             tempBytes,
@@ -2059,6 +2068,10 @@ namespace gpu{
             batch.d_anchorIndicesOfCandidates.get(),
             batch.d_numAnchors.get(),
             batch.d_numCandidates.get(),
+            batch.d_anchorContainsN.get(),
+            removeAmbiguousAnchors,
+            batch.d_candidateContainsN.get(),
+            removeAmbiguousCandidates,
             batchsize,
             maxCandidates,
             batch.sequenceFileProperties.maxSequenceLength,

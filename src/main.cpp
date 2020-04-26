@@ -84,6 +84,9 @@ int main(int argc, char** argv){
 		cxxopts::value<int>())
 		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction",
 		cxxopts::value<bool>()->implicit_value("true"))
+		("excludeAmbiguous", 
+			"If set, reads which contain at least one ambiguous nucleotide will not be corrected.",
+		cxxopts::value<bool>()->implicit_value("true"))
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",
 		cxxopts::value<bool>()->implicit_value("true"))
         ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected",
@@ -181,6 +184,7 @@ int main(int argc, char** argv){
 	}
 
 	//print all options that will be used
+	std::cout << std::boolalpha;
 	std::cout << "CARE will be started with the following parameters:\n";
 
 	std::cout << "--------------------------------\n";
@@ -197,17 +201,18 @@ int main(int argc, char** argv){
 		std::cout << "K-mer size for hashing: " << correctionOptions.kmerlength << "\n";
 	}
 	
-	std::cout << "Correct candidate reads: " << std::boolalpha << correctionOptions.correctCandidates << "\n";
+	std::cout << "Exclude ambigious reads from correction: " << correctionOptions.excludeAmbiguousReads << "\n";
+	std::cout << "Correct candidate reads: " << correctionOptions.correctCandidates << "\n";
 	std::cout << "Max shift for candidate correction: " << correctionOptions.new_columns_to_correct << "\n";
-	std::cout << "Use quality scores: " << std::boolalpha << correctionOptions.useQualityScores << "\n";
+	std::cout << "Use quality scores: " << correctionOptions.useQualityScores << "\n";
 	std::cout << "Estimated dataset coverage: " << correctionOptions.estimatedCoverage << "\n";
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
-	std::cout << "Show progress bar: " << std::boolalpha << runtimeOptions.showProgress << "\n";
-	std::cout << "Can use GPU(s): " << std::boolalpha << runtimeOptions.canUseGpu << "\n";
+	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
+	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";
 	if(runtimeOptions.canUseGpu){
 		std::cout << "GPU device ids: ";
 		for(int id : runtimeOptions.deviceIds){
@@ -239,9 +244,10 @@ int main(int argc, char** argv){
 	}
 	std::cout << "\n";
 	std::cout << "--------------------------------\n";
+	std::cout << std::noboolalpha;
 
 
-    const int numThreads = parseresults["threads"].as<int>();
+    const int numThreads = runtimeOptions.threads;
 
 	omp_set_num_threads(numThreads);
 
