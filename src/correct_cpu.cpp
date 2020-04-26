@@ -239,7 +239,11 @@ namespace cpu{
                 task.bestAlignmentWeights = data.bestAlignmentWeights.data() + offset;
                 task.bestCandidateReadIds = task.candidateReadIds;
                 task.bestCandidateLengths = task.candidateSequencesLengths;
-                task.bestCandidateData = task.candidateSequencesData;                               
+                task.bestCandidateData = task.candidateSequencesData;  
+
+                if(task.numCandidates == 0){
+                    task.active = false;
+                }                             
             }
         }
 
@@ -389,7 +393,9 @@ namespace cpu{
         }
 
         void determineCandidateReadIds(BatchData& data,
-                                        const Minhasher& minhasher){
+                                        const Minhasher& minhasher,
+                                        const cpu::ContiguousReadStorage& readStorage,
+                                        const CorrectionOptions& correctionOptions){
 
             const int numSubjects = data.subjectReadIds.size();
 
@@ -405,47 +411,71 @@ namespace cpu{
 
             for(int i = 0; i < numSubjects; i++){
                 const read_number readId = data.subjectReadIds[i];
-                const int length = data.subjectSequencesLengths[i];
-                char* const decodedBegin = &data.decodedSubjectSequences[i * data.decodedSequencePitchInBytes];
 
-                decode2BitSequence(decodedBegin,
-                                    &data.subjectSequencesData[i * data.encodedSequencePitchInInts],
-                                    length);
-                //TODO modify minhasher to work with char ptr + size instead of string
-                std::string sequence(decodedBegin, length);
+                const bool containsN = readStorage.readContainsN(readId);
 
-                minhasher.getCandidates_any_map(
-                    data.minhashHandle,
-                    sequence,
-                    0
-                );
+                //exclude anchors with ambiguous bases
+                if(!(correctionOptions.excludeAmbiguousReads && containsN)){
 
-                auto readIdPos = std::lower_bound(data.minhashHandle.result().begin(),
-                                                data.minhashHandle.result().end(),
-                                                readId);
+                    const int length = data.subjectSequencesLengths[i];
+                    char* const decodedBegin = &data.decodedSubjectSequences[i * data.decodedSequencePitchInBytes];
 
-                if(readIdPos != data.minhashHandle.result().end() && *readIdPos == readId){
-                    data.minhashHandle.result().erase(readIdPos);
-                }
+                    decode2BitSequence(decodedBegin,
+                                        &data.subjectSequencesData[i * data.encodedSequencePitchInInts],
+                                        length);
+                    //TODO modify minhasher to work with char ptr + size instead of string
+                    std::string sequence(decodedBegin, length);
 
-                //auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 32141191);
-                // if(readId != 32141191 && debugit == data.minhashHandle.result().end()){
-                //     const int candidatesPerSubject = 0;
-                //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
-                //     data.candidatesPerSubject[i] = candidatesPerSubject;
-                // }else{
-                    //std::cerr << "found id 32141191 as candidate of read " << readId << "\n";
-                    data.candidateReadIds.insert(
-                        data.candidateReadIds.end(),
-                        data.minhashHandle.result().begin(),
-                        data.minhashHandle.result().end()
+                    minhasher.getCandidates_any_map(
+                        data.minhashHandle,
+                        sequence,
+                        0
                     );
 
-                    const int candidatesPerSubject = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
+                    auto readIdPos = std::lower_bound(data.minhashHandle.result().begin(),
+                                                    data.minhashHandle.result().end(),
+                                                    readId);
+
+                    if(readIdPos != data.minhashHandle.result().end() && *readIdPos == readId){
+                        data.minhashHandle.result().erase(readIdPos);
+                    }
+
+                    auto minhashResultsEnd = data.minhashHandle.result().end();
+                    //exclude candidates with ambiguous bases
+
+                    if(correctionOptions.excludeAmbiguousReads){
+                        minhashResultsEnd = std::remove_if(
+                            data.minhashHandle.result().begin(),
+                            data.minhashHandle.result().end(),
+                            [&](read_number readId){
+                                return readStorage.readContainsN(readId);
+                            }
+                        );
+                    }
+
+                    //auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 32141191);
+                    // if(readId != 32141191 && debugit == data.minhashHandle.result().end()){
+                    //     const int candidatesPerSubject = 0;
+                    //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
+                    //     data.candidatesPerSubject[i] = candidatesPerSubject;
+                    // }else{
+                        //std::cerr << "found id 32141191 as candidate of read " << readId << "\n";
+                        data.candidateReadIds.insert(
+                            data.candidateReadIds.end(),
+                            data.minhashHandle.result().begin(),
+                            minhashResultsEnd
+                        );
+
+                        const int candidatesPerSubject = std::distance(data.minhashHandle.result().begin(), minhashResultsEnd);
+                        maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
+                        data.candidatesPerSubject[i] = candidatesPerSubject;
+
+                    // }
+                }else{
+                    const int candidatesPerSubject = 0;
                     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
                     data.candidatesPerSubject[i] = candidatesPerSubject;
-
-                // }
+                }
             }
 
             data.forwardAlignments.resize(maxCandidatesPerSubject);
@@ -1504,7 +1534,7 @@ correct_cpu(
             tpa = std::chrono::system_clock::now();
             #endif
 
-            determineCandidateReadIds(batchData, minhasher);
+            determineCandidateReadIds(batchData, minhasher, readStorage, correctionOptions);
 
             #ifdef ENABLE_TIMING
             batchData.timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1523,45 +1553,49 @@ correct_cpu(
             makeBatchTasks(batchData);
 
             for(auto& batchTask : batchData.batchTasks){
-                #ifdef ENABLE_TIMING
-                tpa = std::chrono::system_clock::now();
-                #endif
+                if(batchTask.active){
 
-                getCandidateAlignments(
-                    batchData,
-                    batchTask,
-                    goodAlignmentProperties,
-                    correctionOptions
-                );
+                    #ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+                    #endif
 
-                #ifdef ENABLE_TIMING
-                batchData.timings.getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
-                #endif
+                    getCandidateAlignments(
+                        batchData,
+                        batchTask,
+                        goodAlignmentProperties,
+                        correctionOptions
+                    );
 
-                #ifdef ENABLE_TIMING
-                tpa = std::chrono::system_clock::now();
-                #endif
+                    #ifdef ENABLE_TIMING
+                    batchData.timings.getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
+                    #endif
 
-                gatherBestAlignmentData(batchData, batchTask);
+                    #ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+                    #endif
 
-                #ifdef ENABLE_TIMING
-                batchData.timings.gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
-                #endif
+                    gatherBestAlignmentData(batchData, batchTask);
 
-                #ifdef ENABLE_TIMING
-                tpa = std::chrono::system_clock::now();
-                #endif
+                    #ifdef ENABLE_TIMING
+                    batchData.timings.gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+                    #endif
 
-                filterBestAlignmentsByMismatchRatio(
-                    batchData,
-                    batchTask,
-                    correctionOptions,
-                    goodAlignmentProperties
-                );
+                    #ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+                    #endif
 
-                #ifdef ENABLE_TIMING
-                batchData.timings.mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
-                #endif
+                    filterBestAlignmentsByMismatchRatio(
+                        batchData,
+                        batchTask,
+                        correctionOptions,
+                        goodAlignmentProperties
+                    );
+
+                    #ifdef ENABLE_TIMING
+                    batchData.timings.mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
+                    #endif
+
+                }
             }
 
             removeInactiveTasks(batchData);
