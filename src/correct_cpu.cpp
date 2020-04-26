@@ -428,7 +428,7 @@ namespace cpu{
                     data.minhashHandle.result().erase(readIdPos);
                 }
 
-                auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 32141191);
+                //auto debugit = std::find(data.minhashHandle.result().begin(), data.minhashHandle.result().end(), 32141191);
                 // if(readId != 32141191 && debugit == data.minhashHandle.result().end()){
                 //     const int candidatesPerSubject = 0;
                 //     maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
