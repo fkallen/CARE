@@ -78,7 +78,7 @@ int main(int argc, char** argv){
 		("help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
 		("h,hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
-		("k,kmerlength", "The kmer length for minhashing. Must be greater than 0. If not set, it is automatically determined.", cxxopts::value<int>())
+		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
 		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
 		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
 		cxxopts::value<int>())
@@ -131,7 +131,7 @@ int main(int argc, char** argv){
 	auto parseresults = options.parse(argc, argv);
 
 	if(help) {
-		std::cout << options.help({"", "Mandatory", "Optional"}) << std::endl;
+		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
 		exit(0);
 	}
 

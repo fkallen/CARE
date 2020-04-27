@@ -77,7 +77,11 @@ namespace args{
 
         if(pr.count("kmerlength")){
             result.kmerlength = pr["kmerlength"].as<int>();
-            result.autodetectKmerlength = false;
+            if(result.kmerlength == 0){
+                result.autodetectKmerlength = true;
+            }else{
+                result.autodetectKmerlength = false;
+            }
         }else{
             result.autodetectKmerlength = true;
         }
@@ -284,9 +288,9 @@ namespace args{
             std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.numHashFunctions) << std::endl;
         }
 
-        if(opt.kmerlength < 1 || opt.kmerlength > max_k<kmer_type>::value){
+        if(opt.kmerlength < 0 || opt.kmerlength > max_k<kmer_type>::value){
             valid = false;
-            std::cout << "Error: kmer length must be in range [1, " << max_k<kmer_type>::value 
+            std::cout << "Error: kmer length must be in range [0, " << max_k<kmer_type>::value 
                 << "], is " + std::to_string(opt.kmerlength) << std::endl;
         }
 
