@@ -129,19 +129,27 @@ namespace args{
         auto parseMemoryString = [](const auto& string) -> std::size_t{
             if(string.length() > 0){
                 std::size_t factor = 1;
+                bool foundSuffix = false;
                 switch(string.back()){
                     case 'K':{
                         factor = std::size_t(1) << 10; 
+                        foundSuffix = true;
                     }break;
                     case 'M':{
                         factor = std::size_t(1) << 20;
+                        foundSuffix = true;
                     }break;
                     case 'G':{
                         factor = std::size_t(1) << 30;
+                        foundSuffix = true;
                     }break;
                 }
-                const auto numberString = string.substr(0, string.size()-1);
-                return factor * std::stoull(numberString);
+                if(foundSuffix){
+                    const auto numberString = string.substr(0, string.size()-1);
+                    return factor * std::stoull(numberString);
+                }else{
+                    return std::stoull(string);
+                }
             }else{
                 return 0;
             }
