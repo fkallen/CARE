@@ -29,13 +29,11 @@ namespace care{
 		int batchsize = 1000;
         int new_columns_to_correct = 15;
         int kmerlength = 20;
-        int numHashFunctions = 32;
+        int numHashFunctions = 48;
     };
 
 	struct RuntimeOptions{
 		int threads = 1;
-		int nInserterThreads = 1;
-		int nCorrectorThreads = 1;
         bool showProgress = false;
         bool canUseGpu = false;
         std::vector<int> deviceIds;

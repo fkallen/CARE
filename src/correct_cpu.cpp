@@ -1369,7 +1369,7 @@ correct_cpu(
     cpu::ContiguousReadStorage& readStorage
 ){
 
-    omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+    omp_set_num_threads(runtimeOptions.threads);
 
 
     // std::ofstream outputstream;
@@ -1436,7 +1436,7 @@ correct_cpu(
           }
       };
 
-    // std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    // std::size_t nLocksForProcessedFlags = runtimeOptions.threads * 1000;
     // std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
 
@@ -1496,7 +1496,7 @@ correct_cpu(
 
     ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
-    const int numThreads = runtimeOptions.nCorrectorThreads;
+    const int numThreads = runtimeOptions.threads;
 
     #pragma omp parallel
     {
@@ -1510,10 +1510,13 @@ correct_cpu(
 
         while(!(readIdGenerator.empty())){
 
+            batchData.subjectReadIds.resize(correctionOptions.batchsize);
+
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
                 correctionOptions.batchsize, 
                 batchData.subjectReadIds.begin()
             );
+            
             batchData.subjectReadIds.erase(readIdsEnd, batchData.subjectReadIds.end());
 
             if(batchData.subjectReadIds.empty()){

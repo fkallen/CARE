@@ -106,8 +106,7 @@ namespace args{
         if(pr.count("threads")){
             result.threads = pr["threads"].as<int>();
         }
-        result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
-		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
+        result.threads = std::min(result.threads, (int)std::thread::hardware_concurrency());
       
         if(pr.count("showProgress")){
             result.showProgress = pr["showProgress"].as<bool>();

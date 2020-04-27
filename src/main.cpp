@@ -49,20 +49,33 @@ bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 	return success;
 }
 
+template<class T>
+std::string tostring(const T& t){
+	return std::to_string(t);
+}
+
+template<>
+std::string tostring(const bool& b){
+	return b ? "true" : "false";
+}
+
 int main(int argc, char** argv){
 
 	bool help = false;
 
-	cxxopts::Options options(argv[0], "CARE: Context-Aware Error Correction for Illumina reads");
+	cxxopts::Options options(argv[0], "CARE: Context-Aware Read Error Correction for Illumina reads");
 
 	options.add_options("Mandatory")
-		("d,outdir", "The output directory. Will be created if it does not exist yet", cxxopts::value<std::string>())
-		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", cxxopts::value<float>())
+		("d,outdir", "The output directory. Will be created if it does not exist yet.", 
+		cxxopts::value<std::string>())
+		("c,coverage", "Estimated coverage of input file. (i.e. number_of_reads * read_length / genome_size)", 
+		cxxopts::value<float>())
 		("i,inputfiles", 
 			"The file(s) to correct. "
 			"Fasta or Fastq format. May be gzip'ed. "
 			"Repeat this option for each input file (e.g. -i file1.fastq -i file2.fastq). "
-			"Must not mix fasta and fastq files. Input files are treated as unpaired.",
+			"Must not mix fasta and fastq files. Input files are treated as unpaired. "
+			"The collection of input files is treated as a single read library",
 			cxxopts::value<std::vector<std::string>>())
 		("o,outputfilenames", 
 			"The names of outputfiles. "
@@ -73,33 +86,48 @@ int main(int argc, char** argv){
 			"Output files are uncompressed.", 
 			cxxopts::value<std::vector<std::string>>());
 
+
 	options.add_options("Additional")
 			
 		("help", "Show this help message", cxxopts::value<bool>(help))
-		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>())
-		("h,hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>())
+		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
+		("h,hashmaps", "The number of hash maps. Must be greater than 0. Default: " + tostring(CorrectionOptions{}.numHashFunctions), 
+			cxxopts::value<int>())
 		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
 		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
-		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
+		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
+			"In CARE CPU, one batch per thread is used. In CARE GPU, two batches per GPU are used. "
+			"Default: " + tostring(CorrectionOptions{}.batchsize),
 		cxxopts::value<int>())
-		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction",
+		("q,useQualityScores", "If set, quality scores (if any) are considered during read correction. "
+			"Default: " + tostring(CorrectionOptions{}.useQualityScores),
 		cxxopts::value<bool>()->implicit_value("true"))
 		("excludeAmbiguous", 
-			"If set, reads which contain at least one ambiguous nucleotide will not be corrected.",
+			"If set, reads which contain at least one ambiguous nucleotide will not be corrected. "
+			"Default: " + tostring(CorrectionOptions{}.excludeAmbiguousReads),
 		cxxopts::value<bool>()->implicit_value("true"))
-		("candidateCorrection", "If set, candidate reads will be corrected,too.",
+		("candidateCorrection", "If set, candidate reads will be corrected,too. "
+			"Default: " + tostring(CorrectionOptions{}.correctCandidates),
 		cxxopts::value<bool>()->implicit_value("true"))
-        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected",
+        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected. "
+			"Default: " + tostring(CorrectionOptions{}.new_columns_to_correct),
 		cxxopts::value<int>())
-		("maxmismatchratio", "Overlap between anchor and candidate must contain at most maxmismatchratio * overlapsize mismatches",
+		("maxmismatchratio", "Overlap between anchor and candidate must contain at "
+			"most (maxmismatchratio * overlapsize) mismatches. "
+			"Default: " + tostring(GoodAlignmentProperties{}.maxErrorRate),
 		cxxopts::value<float>())
-		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long", 
+		("minalignmentoverlap", "Overlap between anchor and candidate must be at least this long. "
+			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap),
 		cxxopts::value<int>())
-		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as long as minalignmentoverlapratio * querylength",
+		("minalignmentoverlapratio", "Overlap between anchor and candidate must be at least as "
+			"long as (minalignmentoverlapratio * candidatelength). "
+			"Default: " + tostring(GoodAlignmentProperties{}.min_overlap_ratio),
 		cxxopts::value<float>())
-		("errorfactortuning", "errorfactortuning",
+		("errorfactortuning", "errorfactortuning. "
+			"Default: " + tostring(CorrectionOptions{}.estimatedErrorrate),
 		cxxopts::value<float>())
-		("coveragefactortuning", "coveragefactortuning",
+		("coveragefactortuning", "coveragefactortuning. "
+			"Default: " + tostring(CorrectionOptions{}.m_coverage),
 		cxxopts::value<float>())
 		("g,gpu", "One or more GPU device ids to be used for correction. "
 				"When running the CARE GPU, at least one valid device id is required.", cxxopts::value<std::vector<int>>())
@@ -132,7 +160,7 @@ int main(int argc, char** argv){
 
 	if(help) {
 		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
-		exit(0);
+		std::exit(0);
 	}
 
 	//printCommandlineArguments(std::cerr, parseresults);
