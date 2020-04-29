@@ -176,6 +176,7 @@ namespace gpu{
                                                     std::int64_t numberOfReads,
                                                     int upperBoundSequenceLength,
                                                     int numThreads,
+                                                    const std::vector<int>& deviceIds,
                                                     const DistributedReadStorage& readStorage){
 
         constexpr read_number parallelReads = 1000000;
@@ -183,7 +184,11 @@ namespace gpu{
         const int numIters = SDIV(numReads, parallelReads);
         const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
 
-        cudaSetDevice(0); CUERR;
+        assert(deviceIds.size() > 0);
+
+        const int deviceId = deviceIds[0];
+
+        cudaSetDevice(deviceId); CUERR;
 
         const int numHashFuncs = numTables;
         const int firstHashFunc = firstTableId;
@@ -258,13 +263,13 @@ namespace gpu{
                 h_indices,
                 d_indices,
                 curBatchsize,
-                0,
+                deviceId,
                 stream
             );
         
             readStorage.gatherSequenceLengthsToGpuBufferAsync(
                 d_lengths,
-                0,
+                deviceId,
                 d_indices,
                 curBatchsize,
                 stream
@@ -384,7 +389,17 @@ namespace gpu{
     }
 
 
-    void validateReadstorage(const DistributedReadStorage& readStorage, const FileOptions& fileOptions){
+    void validateReadstorage(
+        const DistributedReadStorage& readStorage, 
+        const FileOptions& fileOptions,
+        const std::vector<int>& deviceIds
+    ){
+
+        assert(deviceIds.size() > 0);
+
+        const int deviceId = deviceIds[0];
+        cudaSetDevice(0); CUERR;
+
         std::cerr << "validating data in readstorage\n";
 
         std::vector<read_number> indicesBuffer;
@@ -429,7 +444,7 @@ namespace gpu{
                 h_readids.get(),
                 d_readids.get(),
                 indicesBuffer.size(),
-                0,
+                deviceId,
                 stream
             );
             if(withQuality){
@@ -441,7 +456,7 @@ namespace gpu{
                     h_readids.get(),
                     d_readids.get(),
                     indicesBuffer.size(),
-                    0,
+                    deviceId,
                     stream
                 );
             }
@@ -542,8 +557,19 @@ namespace gpu{
 
 
 
-    void validateMinhasher(const Minhasher& minhasher, const DistributedReadStorage& readStorage, const FileOptions& fileOptions){
+    void validateMinhasher(
+        const Minhasher& minhasher, 
+        const DistributedReadStorage& readStorage, 
+        const FileOptions& fileOptions,
+        const std::vector<int>& deviceIds
+    ){
+        assert(deviceIds.size() > 0);
+        const int deviceId = deviceIds[0];
+        cudaSetDevice(deviceId); CUERR;
+
         std::cerr << "validating data in minhasher\n";
+
+        
 
         std::vector<read_number> indicesBuffer;
         std::vector<Read> readsBuffer;
@@ -585,13 +611,13 @@ namespace gpu{
                 h_readids.get(),
                 d_readids.get(),
                 indicesBuffer.size(),
-                0,
+                deviceId,
                 stream
             );
 
             readStorage.gatherSequenceLengthsToGpuBufferAsync(
                 d_lengths.get(),
-                0,
+                deviceId,
                 d_readids.get(),
                 indicesBuffer.size(),            
                 stream
@@ -825,6 +851,7 @@ namespace gpu{
                         readStorage.getNumberOfReads(),
                         readStorage.getSequenceLengthUpperBound(),
                         runtimeOptions.threads,
+                        runtimeOptions.deviceIds,
                         readStorage
                     );
 
@@ -1319,7 +1346,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
         const auto& readStorage = result.builtReadStorage.data.readStorage;
 
 #ifdef VALIDATE_READSTORAGE
-        validateReadstorage(readStorage, fileOptions);
+        validateReadstorage(readStorage, fileOptions, runtimeOptions.deviceIds);
 #endif 
 
         //std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
@@ -1376,7 +1403,7 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
         
 #ifdef VALIDATE_MINHASHER        
         const auto& minhasher = result.builtMinhasher.data;
-        validateMinhasher(minhasher, readStorage, fileOptions);
+        validateMinhasher(minhasher, readStorage, fileOptions, runtimeOptions.deviceIds);
 #endif        
 
         return result;
