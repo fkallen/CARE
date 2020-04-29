@@ -73,6 +73,10 @@ namespace care{
 
         TIMERSTOPCPU(load_and_build);
 
+        if(correctionOptions.autodetectKmerlength){
+            correctionOptions.kmerlength = dataStructures.kmerlength;
+        }
+
         auto& readStorage = dataStructures.builtReadStorage.data;
         auto& minhasher = dataStructures.builtMinhasher.data;
         auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
