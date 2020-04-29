@@ -77,6 +77,12 @@ namespace care{
         auto& minhasher = dataStructures.builtMinhasher.data;
         auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
 
+        if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
+            std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
         printDataStructureMemoryUsage(minhasher, readStorage);
 
         auto partialResults = cpu::correct_cpu(

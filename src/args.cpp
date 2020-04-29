@@ -65,6 +65,10 @@ namespace args{
             result.useQualityScores = pr["useQualityScores"].as<bool>();
         }
 
+        if(pr.count("enforceHashmapCount")){
+            result.mustUseAllHashfunctions = pr["enforceHashmapCount"].as<bool>();
+        }
+
         if(pr.count("coverage")){
             result.estimatedCoverage = pr["coverage"].as<float>();
         }

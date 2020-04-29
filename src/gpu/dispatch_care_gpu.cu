@@ -55,7 +55,7 @@ namespace care{
 
         std::cout << "loading file and building data structures..." << std::endl;
 
-        TIMERSTARTCPU(set_up_datastructures);
+        TIMERSTARTCPU(load_and_build);
 
         gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
             correctionOptions,
@@ -64,7 +64,7 @@ namespace care{
             fileOptions
         );
 
-        TIMERSTOPCPU(set_up_datastructures);
+        TIMERSTOPCPU(load_and_build);
 
         if(correctionOptions.autodetectKmerlength){
             correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
@@ -73,6 +73,12 @@ namespace care{
         auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
         auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
+
+        if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
+            std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 

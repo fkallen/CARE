@@ -91,9 +91,16 @@ int main(int argc, char** argv){
 			
 		("help", "Show this help message", cxxopts::value<bool>(help))
 		("tempdir", "Directory to store temporary files. Default: output directory", cxxopts::value<std::string>())
-		("h,hashmaps", "The number of hash maps. Must be greater than 0. Default: " + tostring(CorrectionOptions{}.numHashFunctions), 
+		("h,hashmaps", "The requested number of hash maps. Must be greater than 0. "
+			"The actual number of used hash maps may be lower to respect the set memory limit. "
+			"Default: " + tostring(CorrectionOptions{}.numHashFunctions), 
 			cxxopts::value<int>())
 		("k,kmerlength", "The kmer length for minhashing. If 0 or missing, it is automatically determined.", cxxopts::value<int>())
+		("enforceHashmapCount",
+			"If the requested number of hash maps cannot be fullfilled, the program terminates without error correction. "
+			"Default: " + tostring(CorrectionOptions{}.mustUseAllHashfunctions),
+			cxxopts::value<bool>()->implicit_value("true")
+		)
 		("t,threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>())
 		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0. "
 			"In CARE CPU, one batch per thread is used. In CARE GPU, two batches per GPU are used. "
