@@ -63,7 +63,12 @@ struct ProgressThread{
             const std::chrono::duration<double> duration = now - starttime;
             showProgress(currentProgress, duration.count());
 
-            std::this_thread::sleep_for(sleepPeriod);
+            int sleepiters = sleepPeriod.count();
+            while(sleepiters > 0 && !doCancel){
+                std::this_thread::sleep_for(std::chrono::seconds{1});
+                sleepiters--;
+            }
+            
             sleepPeriod = updateSleepPeriod(sleepPeriod);
         }
     }
