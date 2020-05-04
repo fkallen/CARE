@@ -3,6 +3,7 @@
 #include <config.hpp>
 #include <threadsafe_buffer.hpp>
 #include <sequence.hpp>
+#include <util.hpp>
 
 #include <iterator>
 #include <iostream>
@@ -195,24 +196,32 @@ void GZipWriter::writeImpl(const std::string& data){
     }
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename){
-        //std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+        return getSequenceFileProperties(filename, false);
+    }
 
-
+    SequenceFileProperties getSequenceFileProperties(const std::string& filename, bool printProgress){
         SequenceFileProperties prop;
 
         prop.maxSequenceLength = 0;
         prop.minSequenceLength = std::numeric_limits<int>::max();
 
-		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+        auto showProgress = [&](auto totalCount, auto seconds){
+            if(printProgress){
+                std::cerr << "Found " << totalCount << " reads. Elapsed time: " << seconds << " seconds.\n";
+            }
+        };
 
-		std::chrono::duration<double> duration;
+        auto updateShowProgressInterval = [](auto duration){
+            return duration * 2;
+        };
 
-        //Read r;
+        ProgressThread<read_number> progressThread(
+            std::numeric_limits<read_number>::max(), 
+            showProgress, 
+            updateShowProgressInterval
+        );
 
-		std::uint64_t countlimit = 1000000;
-		std::uint64_t count = 0;
 		std::uint64_t totalCount = 0;
-		tpa = std::chrono::system_clock::now();
 
         forEachReadInFile(
             filename, 
@@ -223,25 +232,16 @@ void GZipWriter::writeImpl(const std::string& data){
                 if(len < prop.minSequenceLength)
                     prop.minSequenceLength = len;
 
-                ++count;
                 ++totalCount;
 
-                if(count == countlimit){
-                    tpb = std::chrono::system_clock::now();
-                    duration = tpb - tpa;
-                    std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-                    countlimit *= 2;
-                }
+                progressThread.addProgress(1);
             }
         );
 
-        if(count > 0){
-            tpb = std::chrono::system_clock::now();
-		    duration = tpb - tpa;
-		    std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-        }
+        progressThread.finished();
 
         prop.nReads = totalCount;
+
 
         return prop;
     }

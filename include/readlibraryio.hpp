@@ -141,6 +141,8 @@ FileFormat getFileFormat(const std::string& filename);
 
 
 SequenceFileProperties getSequenceFileProperties(const std::string& filename);
+SequenceFileProperties getSequenceFileProperties(const std::string& filename, bool printProgress);
+
 std::uint64_t getNumberOfReads(const std::string& filename);
 
 template<class Func>

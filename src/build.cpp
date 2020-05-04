@@ -739,7 +739,7 @@ BuiltDataStructures buildDataStructuresImpl2(
                 minimumSequenceLength = std::numeric_limits<int>::max();
 
                 for(const auto& inputfile : fileOptions.inputfiles){
-                    auto prop = getSequenceFileProperties(inputfile);
+                    auto prop = getSequenceFileProperties(inputfile, runtimeOptions.showProgress);
                     maximumNumberOfReads += prop.nReads;
                     maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
                     minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
