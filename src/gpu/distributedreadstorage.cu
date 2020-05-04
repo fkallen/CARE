@@ -92,9 +92,9 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                 const size_t usableMem = freeMemPerGpu[gpu] > headRoom ? freeMemPerGpu[gpu] - headRoom : 0;
                 maximumUsableBytesPerGpu[gpu] = usableMem;
             }
-            std::cerr << "Usable memory per gpu : ";
-            std::copy(maximumUsableBytesPerGpu.begin(), maximumUsableBytesPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
-            std::cerr << "\n";
+            // std::cerr << "Usable memory per gpu : ";
+            // std::copy(maximumUsableBytesPerGpu.begin(), maximumUsableBytesPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
+            // std::cerr << "\n";
         };
 
         
@@ -120,9 +120,9 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
         getGpuMemoryInfo();
 
-        std::cerr << "Free memory per gpu after construction of distributed readstorage: ";
-        std::copy(freeMemPerGpu.begin(), freeMemPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
-        std::cerr << "\n";
+        // std::cerr << "Free memory per gpu after construction of distributed readstorage: ";
+        // std::copy(freeMemPerGpu.begin(), freeMemPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
+        // std::cerr << "\n";
 
     }
     cudaSetDevice(oldId); CUERR;

@@ -622,7 +622,7 @@ public:
             singlePartitionInfo.isSinglePartition = singlepartitioniter != elementsPerLocation.end();
             singlePartitionInfo.locationId = std::distance(elementsPerLocation.begin(), singlepartitioniter);
 
-            if(true){
+            if(debug){
                 std::cerr << "DistributedArray:\n";
                 std::cerr << "device ids: [";
                 std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));

@@ -577,12 +577,6 @@ namespace care{
             constexpr size_t maxbuffersize = 1000000;
             constexpr int numBuffers = 2;
 
-            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-            std::chrono::duration<double> duration;
-            std::uint64_t countlimit = 1000000;
-		    std::uint64_t count = 0;
-		    std::uint64_t totalCount = 0;
-
             std::array<std::vector<read_number>, numBuffers> indicesBuffers;
             std::array<std::vector<Read>, numBuffers> readsBuffers;
             std::array<bool, numBuffers> canBeUsed;
@@ -600,15 +594,25 @@ namespace care{
             int bufferindex = 0;
             read_number globalReadId = 0;
 
-            tpa = std::chrono::system_clock::now();
-
-            auto updateProgress = [](auto totalCount, auto seconds){
-                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                            << seconds << " seconds." << std::endl;
+            auto showProgress = [show = runtimeOptions.showProgress](auto totalCount, auto seconds){
+                if(show){
+                    std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                    << seconds << " seconds." << std::endl;
+                }
             };
+    
+            auto updateShowProgressInterval = [](auto duration){
+                return duration * 2;
+            };
+    
+            ProgressThread<read_number> progressThread(
+                expectedNumberOfReads, 
+                showProgress, 
+                updateShowProgressInterval
+            );
 
             for(const auto& inputfile : fileOptions.inputfiles){
-                std::cout << "Parsing " << inputfile << "\n";
+                std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
 
                 forEachReadInFile(inputfile,
                                 [&](auto /*readnum*/, const auto& read){
@@ -627,16 +631,8 @@ namespace care{
                         readsBufferPtr->emplace_back(read);
 
                         ++globalReadId;
-                        ++count;
-                        ++totalCount;
 
-                        if(count == countlimit){
-                            tpb = std::chrono::system_clock::now();
-                            duration = tpb - tpa;
-                            updateProgress(totalCount, duration.count());
-                            countlimit *= 2;
-                        }
-                
+                        progressThread.addProgress(1);                
 
                         if(indicesBufferPtr->size() >= maxbuffersize){
                             canBeUsed[bufferindex] = false;
@@ -704,11 +700,7 @@ namespace care{
                 }
             }
 
-            if(count > 0){
-                tpb = std::chrono::system_clock::now();
-                duration = tpb - tpa;
-                updateProgress(totalCount, duration.count());
-            }
+            progressThread.finished();
 
             return result;
         }

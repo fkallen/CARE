@@ -207,7 +207,7 @@ void GZipWriter::writeImpl(const std::string& data){
 
         auto showProgress = [&](auto totalCount, auto seconds){
             if(printProgress){
-                std::cerr << "Found " << totalCount << " reads. Elapsed time: " << seconds << " seconds.\n";
+                std::cout << "Found " << totalCount << " reads. Elapsed time: " << seconds << " seconds.\n";
             }
         };
 

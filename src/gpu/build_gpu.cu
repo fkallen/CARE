@@ -1085,11 +1085,17 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
 
             BuiltDataStructure<GpuReadStorageWithFlags> result;
             DistributedReadStorage& readstorage = result.data.readStorage;
-            //auto& validFlags = result.data.readIsValidFlags;
 
-            readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, 
-                                                            expectedMinimumReadLength, expectedMaximumReadLength});
-            //validFlags.resize(expectedNumberOfReads, false);
+            readstorage = std::move(
+                DistributedReadStorage{
+                    runtimeOptions.deviceIds, 
+                    expectedNumberOfReads, 
+                    useQualityScores, 
+                    expectedMinimumReadLength, 
+                    expectedMaximumReadLength
+                }
+            );
+
             result.builtType = BuiltType::Constructed;
 
 
@@ -1140,12 +1146,6 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
             constexpr size_t maxbuffersize = 1000000;
             constexpr int numBuffers = 2;
 
-            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-            std::chrono::duration<double> duration;
-            std::uint64_t countlimit = 1000000;
-		    std::uint64_t count = 0;
-		    std::uint64_t totalCount = 0;
-
             std::array<std::vector<read_number>, numBuffers> indicesBuffers;
             std::array<std::vector<Read>, numBuffers> readsBuffers;
             std::array<bool, numBuffers> canBeUsed;
@@ -1163,10 +1163,25 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
             int bufferindex = 0;
             read_number globalReadId = 0;
 
-            tpa = std::chrono::system_clock::now();
+            auto showProgress = [show = runtimeOptions.showProgress](auto totalCount, auto seconds){
+                if(show){
+                    std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                    << seconds << " seconds." << std::endl;
+                }
+            };
+    
+            auto updateShowProgressInterval = [](auto duration){
+                return duration * 2;
+            };
+    
+            ProgressThread<read_number> progressThread(
+                expectedNumberOfReads, 
+                showProgress, 
+                updateShowProgressInterval
+            );
 
             for(const auto& inputfile : fileOptions.inputfiles){
-                std::cout << "Parsing " << inputfile << "\n";
+                std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
 
                 forEachReadInFile(inputfile,
                                 [&](auto /*readnum*/, const auto& read){
@@ -1186,17 +1201,7 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
 
                         ++globalReadId;
 
-                        ++count;
-                        ++totalCount;
-
-                        if(count == countlimit){
-                            tpb = std::chrono::system_clock::now();
-                            duration = tpb - tpa;
-                            std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                    << duration.count() << " seconds." << std::endl;
-                            countlimit *= 2;
-                        }
-                
+                        progressThread.addProgress(1);
 
                         if(indicesBufferPtr->size() >= maxbuffersize){
                             canBeUsed[bufferindex] = false;
@@ -1266,12 +1271,7 @@ BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage2(const FileOptio
                 }
             }
 
-            if(count > 0){
-                tpb = std::chrono::system_clock::now();
-                duration = tpb - tpa;
-                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                << duration.count() << " seconds." << std::endl;
-            }
+            progressThread.finished();
 
             // std::cerr << "occurences of n/N:\n";
             // for(const auto& p : nmap){
