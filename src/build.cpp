@@ -376,12 +376,18 @@ namespace care{
                 const read_number readIdBegin = 0;
                 const read_number readIdEnd = readStorage.getNumberOfReads();
 
+                auto showProgress = [&](auto totalCount, auto seconds){
+                    std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                                << seconds << " seconds.\n";
+                };
+
+                auto updateShowProgressInterval = [](auto duration){
+                    return duration * 2;
+                };
+
                 ProgressThread<std::uint64_t> progressThread(nReads, 
-                        [&](auto totalCount, auto seconds){
-                            std::cout << "progress: Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
-                                        << seconds << " seconds." << std::endl;
-                        },
-                        [](auto seconds){return seconds * 2;});
+                        showProgress,
+                        updateShowProgressInterval);
 
                 auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
 

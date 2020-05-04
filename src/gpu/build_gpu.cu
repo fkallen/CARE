@@ -216,14 +216,11 @@ namespace gpu{
 
         auto showProgress = [&](auto totalCount, auto seconds){
             std::cerr << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
-                        << seconds << " seconds." << '\r';
-            if(totalCount == numReads){
-                std::cerr << '\n';
-            }
+                        << seconds << " seconds.\n";
         };
 
         auto updateShowProgressInterval = [](auto duration){
-            return duration;
+            return duration * 2;
         };
 
         ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
@@ -754,28 +751,16 @@ namespace gpu{
                 throw std::runtime_error("Not enough memory available for hash tables. Abort!");
             }
             std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
-            std::cerr << "available: " << maxMemoryForTables 
-                    << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
-                    << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
-                    << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
+            // std::cerr << "available: " << maxMemoryForTables 
+            //         << ",memoryForHashtables: " << memoryOptions.memoryForHashtables
+            //         << ", memoryTotalLimit: " << memoryOptions.memoryTotalLimit
+            //         << ", rsHostUsage: " << memoryUsageOfReadStorage.host << "\n";
 
             maxMemoryForTables = std::min(maxMemoryForTables, 
                                     std::min(memoryOptions.memoryForHashtables, totalLimit));
 
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
-
-            auto showProgress = [&](auto totalCount, auto seconds){
-                std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
-                            << seconds << " seconds." << '\r';
-                if(totalCount == nReads){
-                    std::cerr << '\n';
-                }
-            };
-
-            auto updateShowProgressInterval = [](auto duration){
-                return duration;
-            };
 
             int numSavedTables = 0;
 
@@ -878,7 +863,7 @@ namespace gpu{
                         }
                     }               
                     
-                    std::cerr << "availableMemoryToSaveGpuPartitions: " << availableMemoryToSaveGpuPartitions << "\n";
+                    // std::cerr << "availableMemoryToSaveGpuPartitions: " << availableMemoryToSaveGpuPartitions << "\n";
 
                     DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
                     const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";

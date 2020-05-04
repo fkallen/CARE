@@ -110,9 +110,9 @@ namespace care{
             memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
         }
 
-        std::cout << "begin merging reads" << std::endl;
+        std::cout << "Constructing output file(s) from correction results" << std::endl;
 
-        TIMERSTARTCPU(merge);
+        TIMERSTARTCPU(outputfileconstruction);
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -132,9 +132,9 @@ namespace care{
             false
         );
 
-        TIMERSTOPCPU(merge);
+        TIMERSTOPCPU(outputfileconstruction);
 
-        std::cout << "end merging reads" << std::endl;
+        std::cout << "Construction of output file(s) finished." << std::endl;
 
     }
 

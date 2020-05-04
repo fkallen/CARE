@@ -283,7 +283,7 @@ MemoryUsage DistributedReadStorage::getMemoryInfo() const{
         for(int location = 0; location < distributedSequenceData.numLocations; location++){
             
             size_t bytes = partitions[location] * array.sizeOfElement;
-            std::cerr << "location " << location << " " << bytes << "\n";
+            //std::cerr << "location " << location << " " << bytes << "\n";
             if(location == array.hostLocation){
                 info.host += bytes;
             }else{

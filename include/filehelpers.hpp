@@ -11,7 +11,7 @@
 
 #include <experimental/filesystem>
 
-#define FILE_HELPERS_DEBUG
+//#define FILE_HELPERS_DEBUG
 
 namespace filesys = std::experimental::filesystem;
 

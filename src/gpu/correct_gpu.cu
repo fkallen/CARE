@@ -1302,7 +1302,7 @@ namespace gpu{
         auto& graphwrap = batch.executionGraphs[batch.graphindex];
 
         if(!graphwrap.valid){
-            std::cerr << "rebuild graph\n";
+            // std::cerr << "rebuild graph\n";
 
             if(graphwrap.execgraph != nullptr){
                 cudaGraphExecDestroy(graphwrap.execgraph); CUERR;
@@ -3669,6 +3669,7 @@ correct_gpu(
                 minhasher.getNumberOfMaps()
             );
 
+#if 0
             MemoryUsage infobatch = batchData.getMemoryInfo();
             std::cerr << "Batch memory usage:\n";
             std::cerr << "host: " << infobatch.host << "\n";
@@ -3689,7 +3690,7 @@ correct_gpu(
             for(auto pair : infooutputdata.device){
                 std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
             }
-            
+#endif            
         };
 
         auto destroyBatchData = [&](auto& batchData){
@@ -4040,6 +4041,7 @@ correct_gpu(
                 for(int i = 0; i < max_num_batches; i++){
                     batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                     batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+#if 0                    
                     auto memInfo1 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].subjectSequenceGatherHandle);
                     auto memInfo2 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].candidateSequenceGatherHandle);
                     auto memInfo3 = readStorage.getMemoryInfoOfGatherHandleQualities(batchDataArray[i].subjectQualitiesGatherHandle);
@@ -4062,7 +4064,7 @@ correct_gpu(
                         std::cerr << "Memory usage candidateQualitiesGatherHandle\n";
                         printMemoryInfo(memInfo4);
                     }
-
+#endif
                     destroyBatchData(batchDataArray[i]);
                 }
             });

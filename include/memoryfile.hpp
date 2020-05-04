@@ -417,7 +417,7 @@ struct MemoryFileFixedSize{
 
     ~MemoryFileFixedSize(){
         if(filename != ""){
-            std::cerr << "Deleting file " << filename << " of MemoryFileFixedSize\n";
+            //std::cerr << "Deleting file " << filename << " of MemoryFileFixedSize\n";
             filehelpers::deleteFiles({filename});
         }
     }

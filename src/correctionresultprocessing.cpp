@@ -110,13 +110,12 @@ void mergeResultFiles2_impl(
             return l.readId < r.readId;
         };
 
-        TIMERSTARTCPU(sort_during_merge);
+        TIMERSTARTCPU(sort_results_by_read_id);
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_during_merge);
+        TIMERSTOPCPU(sort_results_by_read_id);
     }
 
-    //loop over correction sequences
-    TIMERSTARTCPU(actualmerging);
+    TIMERSTARTCPU(merging);
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -125,7 +124,7 @@ void mergeResultFiles2_impl(
     };
 
     int numberOfHQCorrections = 0;
-    int numberOfEqualHQCorrections = 0;
+    //int numberOfEqualHQCorrections = 0;
     int numberOfLQCorrections = 0;
     int numberOfUsableLQCorrectionsWithCandidates = 0;
     int numberOfUsableLQCorrectionsOnlyAnchor = 0;
@@ -470,15 +469,15 @@ void mergeResultFiles2_impl(
         
     };
 
-    auto processTask = [&](auto& task){
-        task.writer->writeRead(task.read.name, task.read.comment, task.read.sequence, task.read.quality);
-    };
+    // auto processTask = [&](auto& task){
+    //     task.writer->writeRead(task.read.name, task.read.comment, task.read.sequence, task.read.quality);
+    // };
 
-    const std::size_t batchsizetasks = 10000;
+    // const std::size_t batchsizetasks = 10000;
     //std::vector<Task> writeTasks;
 
     std::array<WaitableData<std::vector<Task>>, 2> taskdblbuf;
-    int dblbufindex = 0;
+    //int dblbufindex = 0;
 
     BackgroundThread outputThread(true);
 
@@ -536,8 +535,6 @@ void mergeResultFiles2_impl(
     std::chrono::duration<double> durationCopyOrig{0};
     std::chrono::duration<double> durationConstruction{0};
 
-    int origLessThanCurrent = 0;
-
     while(partialResultsReader.hasNext() || correctionVector.size() > 0){
         timebegin = std::chrono::system_clock::now();
 
@@ -563,7 +560,7 @@ void mergeResultFiles2_impl(
                 correctionVector_tmp.emplace_back(std::move(tcs));
             }
         }else{
-            std::cerr << "partial results empty with currentReadId = " << currentReadId << "\n";
+            //std::cerr << "partial results empty with currentReadId = " << currentReadId << "\n";
         }
 
         timeend = std::chrono::system_clock::now();
@@ -574,7 +571,6 @@ void mergeResultFiles2_impl(
 
         //copy preceding reads from original file
         while(originalReadId < currentReadId){
-            origLessThanCurrent++;
             const int status = inputReaderVector[inputFileId].next();
             inputReaderIsValid = status >= 0;
 
@@ -777,17 +773,15 @@ void mergeResultFiles2_impl(
         firstiter = false;
     }
 
-    TIMERSTARTCPU(waitforoutputthread);
+    //TIMERSTARTCPU(waitforoutputthread);
     taskdblbuf[0].wait();
     taskdblbuf[1].wait();
-    TIMERSTOPCPU(waitforoutputthread);
+    //TIMERSTOPCPU(waitforoutputthread);
 
-    std::cerr << "origLessThanCurrent = " << origLessThanCurrent << "\n";
-
-    std::cout << "# elapsed time (durationInOutputThread): " << durationInOutputThread.count()  << " s" << std::endl;
-    std::cout << "# elapsed time (durationPrload): " << durationPrload.count()  << " s" << std::endl;
-    std::cout << "# elapsed time (durationCopyOrig): " << durationCopyOrig.count()  << " s" << std::endl;
-    std::cout << "# elapsed time (durationConstruction): " << durationConstruction.count()  << " s" << std::endl;
+    // std::cerr << "# elapsed time (durationInOutputThread): " << durationInOutputThread.count()  << " s" << std::endl;
+    // std::cerr << "# elapsed time (durationPrload): " << durationPrload.count()  << " s" << std::endl;
+    // std::cerr << "# elapsed time (durationCopyOrig): " << durationCopyOrig.count()  << " s" << std::endl;
+    // std::cerr << "# elapsed time (durationConstruction): " << durationConstruction.count()  << " s" << std::endl;
 
     // TIMERSTARTCPU(processremainingtasks);
     // for(const auto& task : taskdblbuf[dblbufindex].data){
@@ -806,7 +800,7 @@ void mergeResultFiles2_impl(
     // }
     // constructionTasks.clear();
 
-    TIMERSTARTCPU(copyremainingreads);
+    //TIMERSTARTCPU(copyremainingreads);
     //copy remaining reads from original files
     while((inputReaderIsValid = (inputReaderVector[inputFileId].next() >= 0)) && inputFileId < numFiles){
         if(inputReaderIsValid){
@@ -821,17 +815,17 @@ void mergeResultFiles2_impl(
             }
         }
     }
-    TIMERSTOPCPU(copyremainingreads);
+    //TIMERSTOPCPU(copyremainingreads);
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    TIMERSTOPCPU(actualmerging);
+    TIMERSTOPCPU(merging);
 
-    std::cerr << "numberOfHQCorrections " << numberOfHQCorrections << "\n";
-    std::cerr << "numberOfEqualHQCorrections " << numberOfEqualHQCorrections << "\n";
-    std::cerr << "numberOfLQCorrections " << numberOfLQCorrections << "\n";
-    std::cerr << "numberOfUsableLQCorrectionsWithCandidates " << numberOfUsableLQCorrectionsWithCandidates << "\n";
-    std::cerr << "numberOfUsableLQCorrectionsOnlyAnchor " << numberOfUsableLQCorrectionsOnlyAnchor << "\n";
+    // std::cerr << "numberOfHQCorrections " << numberOfHQCorrections << "\n";
+    // std::cerr << "numberOfEqualHQCorrections " << numberOfEqualHQCorrections << "\n";
+    // std::cerr << "numberOfLQCorrections " << numberOfLQCorrections << "\n";
+    // std::cerr << "numberOfUsableLQCorrectionsWithCandidates " << numberOfUsableLQCorrectionsWithCandidates << "\n";
+    // std::cerr << "numberOfUsableLQCorrectionsOnlyAnchor " << numberOfUsableLQCorrectionsOnlyAnchor << "\n";
 
     //deleteFiles({tempfile});
 
