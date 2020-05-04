@@ -259,6 +259,10 @@ namespace cpu{
             return b2;
         }
 
+        std::int64_t getNumberOfReadsWithN() const{
+            return readIdsOfReadsWithUndeterminedBase.size();
+        }
+
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info;
             info.host = sequence_data_bytes;

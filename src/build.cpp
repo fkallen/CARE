@@ -797,7 +797,9 @@ BuiltDataStructures buildDataStructuresImpl2(
             std::cout << "Will use k-mer length = " << corOpts.kmerlength << " for hashing.\n";
 
             result.kmerlength = corOpts.kmerlength;
-        } 
+        }
+
+        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(
