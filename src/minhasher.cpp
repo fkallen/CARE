@@ -5,8 +5,6 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 
-#include <ntHash/nthash.hpp>
-
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -1038,39 +1036,10 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 			table->resize(nReads_);
 		}
 	}
-
-
-    std::array<std::uint64_t, maximum_number_of_maps> 
-    minhashfunc1(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
-        std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
-        std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
-
-		std::uint64_t fhVal = 0;
-        std::uint64_t rhVal = 0;
-		bool isForward = false;
-		// calc hash values of first canonical kmer
-		NTMC64(sequence, kmerLength, numHashFuncs, minhashSignature.data(), fhVal, rhVal, isForward);
-
-		//calc hash values of remaining canonical kmers
-		for (int i = 0; i < sequenceLength - kmerLength; ++i) {
-			NTMC64(fhVal, rhVal, sequence[i], sequence[i + kmerLength], kmerLength, numHashFuncs, 
-                    kmerHashValues.data(), isForward);
-
-			for (int j = 0; j < numHashFuncs; ++j) {
-				if (minhashSignature[j] > kmerHashValues[j]){
-					minhashSignature[j] = kmerHashValues[j];
-				}
-			}
-		}
-
-        return minhashSignature;
-	}
-
-
-    
+   
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    minhashfunc2(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
+    minhashfunction(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
 
         const int length = sequenceLength;
 
@@ -1165,7 +1134,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
     std::array<std::uint64_t, maximum_number_of_maps> 
     Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
-        return minhashfunc2(sequence, sequenceLength, minparams.k, minparams.maps);
+        return minhashfunction(sequence, sequenceLength, minparams.k, minparams.maps);
 	}
 
     int Minhasher::getResultsPerMapThreshold() const{

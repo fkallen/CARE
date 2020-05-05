@@ -947,12 +947,6 @@ private:
     std::array<std::uint64_t, maximum_number_of_maps> 
     minhashfunc(const char* sequence, int sequenceLength) const noexcept;
 
-    // std::array<std::uint64_t, maximum_number_of_maps>
-    // minhashfunc_other(const std::string& sequence) const noexcept;
-
-    // std::array<std::uint64_t, maximum_number_of_maps> 
-    // minhashfunc_other(const char* sequence, int sequenceLength) const noexcept;
-
     void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
     void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;
 };
