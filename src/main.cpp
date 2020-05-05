@@ -222,7 +222,7 @@ int main(int argc, char** argv){
 	std::cout << std::boolalpha;
 	std::cout << "CARE will be started with the following parameters:\n";
 
-	std::cout << "--------------------------------\n";
+	std::cout << "----------------------------------------\n";
 
 
 	std::cout << "Alignment absolute required overlap: " << goodAlignmentProperties.min_overlap << "\n";
@@ -278,7 +278,7 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
-	std::cout << "--------------------------------\n";
+	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
 

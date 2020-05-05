@@ -3669,28 +3669,28 @@ correct_gpu(
                 minhasher.getNumberOfMaps()
             );
 
-#if 0
-            MemoryUsage infobatch = batchData.getMemoryInfo();
-            std::cerr << "Batch memory usage:\n";
-            std::cerr << "host: " << infobatch.host << "\n";
-            for(auto pair : infobatch.device){
-                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
-            }
+            #if 0
+                MemoryUsage infobatch = batchData.getMemoryInfo();
+                std::cerr << "Batch memory usage:\n";
+                std::cerr << "host: " << infobatch.host << "\n";
+                for(auto pair : infobatch.device){
+                    std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+                }
 
-            MemoryUsage infonextiterdata = batchData.nextIterationData.getMemoryInfo();
-            std::cerr << "nextiterationdata memory usage:\n";
-            std::cerr << "host: " << infonextiterdata.host << "\n";
-            for(auto pair : infonextiterdata.device){
-                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
-            }
+                MemoryUsage infonextiterdata = batchData.nextIterationData.getMemoryInfo();
+                std::cerr << "nextiterationdata memory usage:\n";
+                std::cerr << "host: " << infonextiterdata.host << "\n";
+                for(auto pair : infonextiterdata.device){
+                    std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+                }
 
-            MemoryUsage infooutputdata = batchData.waitableOutputData.data.rawResults.getMemoryInfo();
-            std::cerr << "outputdata memory usage:\n";
-            std::cerr << "host: " << infooutputdata.host << "\n";
-            for(auto pair : infooutputdata.device){
-                std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
-            }
-#endif            
+                MemoryUsage infooutputdata = batchData.waitableOutputData.data.rawResults.getMemoryInfo();
+                std::cerr << "outputdata memory usage:\n";
+                std::cerr << "host: " << infooutputdata.host << "\n";
+                for(auto pair : infooutputdata.device){
+                    std::cerr << "device id " << pair.first << ": " << pair.second << "\n";
+                }
+            #endif            
         };
 
         auto destroyBatchData = [&](auto& batchData){
@@ -3738,6 +3738,8 @@ correct_gpu(
         auto updateShowProgressInterval = [](auto duration){
             return duration;
         };
+
+        std::cout << "Error correction started.\n";
 
         ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 

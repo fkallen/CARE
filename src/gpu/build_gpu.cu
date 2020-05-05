@@ -53,7 +53,7 @@ namespace gpu{
                                                     int firstTableId,
                                                     std::int64_t numberOfReads,
                                                     int upperBoundSequenceLength,
-                                                    int numThreads,
+                                                    const RuntimeOptions& runtimeOptions,
                                                     SequenceProviderFunc&& getSequenceData,
                                                     SequenceLengthProviderFunc&& getSequenceLength,
                                                     const DistributedReadStorage& readStorage){
@@ -62,6 +62,8 @@ namespace gpu{
         read_number numReads = numberOfReads;
         const int numIters = SDIV(numReads, parallelReads);
         const size_t sequencepitch = getEncodedNumInts2Bit(upperBoundSequenceLength) * sizeof(int);
+
+        const int numThreads = runtimeOptions.threads;
 
         ThreadPool::ParallelForHandle pforHandle;
 
@@ -85,10 +87,9 @@ namespace gpu{
         }
 
         auto showProgress = [&](auto totalCount, auto seconds){
-            std::cerr << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
-                        << seconds << " seconds." << '\r';
-            if(totalCount == numReads){
-                std::cerr << '\n';
+            if(runtimeOptions.showProgress){
+                std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                        << seconds << " seconds.\n";
             }
         };
 
@@ -175,14 +176,16 @@ namespace gpu{
                                                     int kmersize,
                                                     std::int64_t numberOfReads,
                                                     int upperBoundSequenceLength,
-                                                    int numThreads,
-                                                    const std::vector<int>& deviceIds,
+                                                    const RuntimeOptions& runtimeOptions,
                                                     const DistributedReadStorage& readStorage){
 
         constexpr read_number parallelReads = 1000000;
         read_number numReads = numberOfReads;
         const int numIters = SDIV(numReads, parallelReads);
         const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+
+        const auto& deviceIds = runtimeOptions.deviceIds;
+        const int numThreads = runtimeOptions.threads;
 
         assert(deviceIds.size() > 0);
 
@@ -215,8 +218,10 @@ namespace gpu{
         }
 
         auto showProgress = [&](auto totalCount, auto seconds){
-            std::cerr << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+            if(runtimeOptions.showProgress){
+                std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
                         << seconds << " seconds.\n";
+            }
         };
 
         auto updateShowProgressInterval = [](auto duration){
@@ -835,8 +840,7 @@ namespace gpu{
                         minhasher.minparams.k,
                         readStorage.getNumberOfReads(),
                         readStorage.getSequenceLengthUpperBound(),
-                        runtimeOptions.threads,
-                        runtimeOptions.deviceIds,
+                        runtimeOptions,
                         readStorage
                     );
 
@@ -886,9 +890,23 @@ namespace gpu{
 
                         for(int i = 0; i < int(minhashTables.size()); i++){
                             int globalTableId = numConstructedTables;
-                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                            std::cerr << "Transforming table " << globalTableId << ". ";
-                            transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold();
+
+                            if(runtimeOptions.showProgress){
+                                std::cout << "Constructing hash table " << globalTableId << ". ";
+                            }
+                            auto transformresult = transform_keyvaluemap_gpu(
+                                minhashTables[i], 
+                                runtimeOptions.deviceIds, 
+                                maxValuesPerKey
+                            );
+                            if(runtimeOptions.showProgress){
+                                std::cout << "Construction complete. \n";
+                                std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                                std::cout << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                                std::cout << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                            }
+
                             numConstructedTables++;
                             minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
                         }
@@ -904,9 +922,22 @@ namespace gpu{
 
                         for(int i = 0; i < int(minhashTables.size()); i++){
                             int globalTableId = numConstructedTables;
-                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                            std::cerr << "Transforming table " << globalTableId << ". ";
-                            transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold(); 
+
+                            if(runtimeOptions.showProgress){
+                                std::cout << "Constructing hash table " << globalTableId << ". ";
+                            }
+                            auto transformresult = transform_keyvaluemap_gpu(
+                                minhashTables[i], 
+                                runtimeOptions.deviceIds, 
+                                maxValuesPerKey
+                            );
+                            if(runtimeOptions.showProgress){
+                                std::cout << "Construction complete. \n";
+                                std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                                std::cout << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                                std::cout << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                            }
 
                             numConstructedTables++;
 

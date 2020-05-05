@@ -377,8 +377,10 @@ namespace care{
                 const read_number readIdEnd = readStorage.getNumberOfReads();
 
                 auto showProgress = [&](auto totalCount, auto seconds){
-                    std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                    if(runtimeOptions.showProgress){
+                        std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
                                 << seconds << " seconds.\n";
+                    }
                 };
 
                 auto updateShowProgressInterval = [](auto duration){

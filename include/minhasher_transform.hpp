@@ -25,6 +25,17 @@
 
 namespace care{
 
+    struct MinhashTransformResult{
+        std::uint64_t numberOfUniqueKeys = 0;
+        std::uint64_t numberOfRemovedKeys = 0;
+        std::uint64_t numberOfRemovedValues = 0;
+    };
+
+    struct MinhashTransformRemoveKeysResult{
+        std::uint64_t numberOfRemovedKeys = 0;
+        std::uint64_t numberOfRemovedValues = 0;
+    };
+
     void transform_minhasher(Minhasher& minhasher);
     void transform_minhasher(Minhasher& minhasher, int map);
 
@@ -33,8 +44,9 @@ namespace care{
     void transform_minhasher_gpu(Minhasher& minhasher, int map, const std::vector<int>& deviceIds);
 #endif
 
+
     template<class Key_t, class Value_t, class Index_t>
-    void minhasherTransformCPUCompactKeys(std::vector<Key_t>& keys,
+    std::uint64_t minhasherTransformCPUCompactKeys(std::vector<Key_t>& keys,
                                         std::vector<Value_t>& values,
                                         std::vector<Index_t>& countsPrefixSum){
 
@@ -103,7 +115,7 @@ namespace care{
                                             thrust::plus<Key_t>(),
                                             thrust::not_equal_to<Key_t>());
 
-        std::cout << "unique keys " << nUniqueKeys << ". ";
+        //std::cout << "unique keys " << nUniqueKeys << ". ";
 
         std::vector<Key_t> histogram_keys(nUniqueKeys);
         std::vector<Index_t> histogram_counts(nUniqueKeys);
@@ -128,10 +140,12 @@ namespace care{
 
         keys.swap(histogram_keys);
 
+        return nUniqueKeys;
+
     }
 
     template<class Key_t, class Value_t, class Index_t>
-    void minhasherTransformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
+    MinhashTransformRemoveKeysResult minhasherTransformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
                                                         std::vector<Value_t>& values, 
                                                         std::vector<Index_t>& countsPrefixSum,
                                                         std::vector<Key_t>& keysWithoutValues,
@@ -141,6 +155,8 @@ namespace care{
             T tmp{};
             vec.swap(tmp);
         };
+
+        MinhashTransformRemoveKeysResult result;
 
         auto policy = thrust::omp::par;
 
@@ -182,7 +198,9 @@ namespace care{
                                                 });         
         }
 
-        std::cout << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
+        result.numberOfRemovedKeys = numKeysToRemove;
+
+        //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
 
         //handle values
         int numValuesToRemove = 0;
@@ -222,7 +240,9 @@ namespace care{
             values.swap(values_tmp);
         }
 
-        std::cout << "Removed corresponding values: " << numValuesToRemove << ". "; 
+        result.numberOfRemovedValues = numValuesToRemove;
+
+        //std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
 
         //handle counts prefix sum
         {
@@ -245,43 +265,56 @@ namespace care{
                                     counts.end(),
                                     countsPrefixSum.begin() + 1);              
         }
+
+        return result;
     }
 
     template<class Key_t, class Value_t, class Index_t, class Count_t>
-    void cpu_transformation(std::vector<Key_t>& keys,
+    MinhashTransformResult cpu_transformation(std::vector<Key_t>& keys,
                             std::vector<Value_t>& values,
                             std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum,
                             std::vector<Key_t>& keysWithoutValues,
                             int maxValuesPerKey){
 
-        // int oldNumOmpThreads = 0;
-        // #pragma omp parallel
-        // {
-        //     #pragma omp master
-        //     oldNumOmpThreads = omp_get_num_threads();
-        // }
+        std::uint64_t uniqueKeys = minhasherTransformCPUCompactKeys(
+            keys, 
+            values, 
+            countsPrefixSum
+        );
 
-        //omp_set_num_threads(numThreads);
+        MinhashTransformRemoveKeysResult removeKeysResult = minhasherTransformCPURemoveKeysWithToManyValues(
+            keys, 
+            values, 
+            countsPrefixSum, 
+            keysWithoutValues, 
+            maxValuesPerKey
+        );
 
-        minhasherTransformCPUCompactKeys(keys, values, countsPrefixSum);
+        MinhashTransformResult result;
+        result.numberOfUniqueKeys = uniqueKeys;
+        result.numberOfRemovedKeys = removeKeysResult.numberOfRemovedKeys;
+        result.numberOfRemovedValues = removeKeysResult.numberOfRemovedValues;
 
-        minhasherTransformCPURemoveKeysWithToManyValues(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey);
-
-        std::cout << "Transformation done." << std::endl;
-
-        //omp_set_num_threads(oldNumOmpThreads);
+        return result;
     };
 
     template<class KeyValueMap>
-    void transform_keyvaluemap(KeyValueMap& map, int maxValuesPerKey){
-        if(map.noMoreWrites) return;
+    MinhashTransformResult transform_keyvaluemap(KeyValueMap& map, int maxValuesPerKey){
+        MinhashTransformResult result;
 
-        if(map.size == 0) return;
+        if(map.noMoreWrites) return result;
 
-        cpu_transformation(map.keys, map.values, 
-                            map.counts, map.countsPrefixSum, 
-                            map.keysWithoutValues, maxValuesPerKey);
+        if(map.size == 0) return result;
+
+        result = cpu_transformation(
+            map.keys, 
+            map.values, 
+            map.counts, 
+            map.countsPrefixSum, 
+            map.keysWithoutValues, 
+            maxValuesPerKey
+        );
 
         map.nKeys = map.keys.size();
         map.nValues = map.values.size();
@@ -316,6 +349,8 @@ namespace care{
         for(Index_t i = 0; i < nKeys; i++){
             assert(keyIndexMap.get(keys[i]) == i);
         }*/
+
+        return result;
     }
 
 #ifdef __NVCC__
@@ -347,7 +382,7 @@ namespace care{
         }
 
         template<class Key_t, class Value_t, class Index_t>
-        static void execute(std::vector<Key_t>& keys, 
+        static std::uint64_t execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
                             std::vector<Index_t>& countsPrefixSum,
                             const std::vector<int>& /*deviceIds*/){
@@ -419,7 +454,7 @@ namespace care{
                 thrust::plus<Key_t>(),
                 thrust::not_equal_to<Key_t>());
 
-            std::cout << "unique keys " << nUniqueKeys << ". ";
+            //std::cerr << "unique keys " << nUniqueKeys << ". ";
 
             //histogram storage
             thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_histogram_keys(nUniqueKeys);
@@ -454,6 +489,8 @@ namespace care{
             thrust::copy(d_histogram_keys.begin(),
                         d_histogram_keys.end(),
                         keys.begin());
+
+            return nUniqueKeys;
         }
     };
 
@@ -464,7 +501,7 @@ namespace care{
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
         template<class Key_t, class Value_t, class Index_t>
-        static void execute(std::vector<Key_t>& keys, 
+        static MinhashTransformRemoveKeysResult execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
                             std::vector<Index_t>& countsPrefixSum,
                             std::vector<Key_t>& keysWithoutValues,
@@ -476,6 +513,8 @@ namespace care{
                 T tmp{};
                 vec.swap(tmp);
             };
+
+            MinhashTransformRemoveKeysResult result;
 
             const Index_t maxValuesPerKey = maxValuesPerKey_;
 
@@ -517,7 +556,9 @@ namespace care{
                                                         });
             }
 
-            std::cout << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
+            result.numberOfRemovedKeys = numKeysToRemove;
+            
+            //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
 
             //handle values
             int numValuesToRemove = 0;
@@ -571,7 +612,9 @@ namespace care{
                 thrust::copy(d_values_tmp.begin(), d_values_tmp.end(), values.begin());
             }
 
-            std::cout << "Removed corresponding values: " << numValuesToRemove << ". "; 
+            result.numberOfRemovedValues = numValuesToRemove;
+
+            // std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
 
             //handle counts prefix sum
             {
@@ -600,6 +643,8 @@ namespace care{
                 countsPrefixSum[0] = 0;
                 thrust::copy(d_countsPrefixSum.begin(), psend, countsPrefixSum.begin() + 1);                
             }
+
+            return result;
         }
     };
 
@@ -609,7 +654,7 @@ namespace care{
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
         template<class Key_t, class Value_t, class Index_t, class Count_t>
-        static bool execute(std::vector<Key_t>& keys, 
+        static std::pair<bool, MinhashTransformResult> execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
                             std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum, 
@@ -620,6 +665,8 @@ namespace care{
             assert(keys.size() == values.size());
             assert(std::numeric_limits<Index_t>::max() >= keys.size());
             assert(deviceIds.size() > 0);
+
+            std::pair<bool, MinhashTransformResult> result;
 
             if(keys.empty()){
                 std::cerr << "Want to transform empty map!\n";
@@ -636,14 +683,20 @@ namespace care{
             if(setupStatus != cudaSuccess) //we cannot recover from this.
                 throw std::runtime_error("Could not set device id!");
 
-            bool success = false;
+            bool& success = result.first;
+            MinhashTransformResult& transformresult = result.second;
+
+            success = false;
 
             try{           
-                MinhasherTransformGPUCompactKeys<allowFallback>
+                transformresult.numberOfUniqueKeys = MinhasherTransformGPUCompactKeys<allowFallback>
                         ::execute(keys, values, countsPrefixSum, deviceIds);
 
-                MinhasherTransformGPURemoveKeysWithToManyValues<allowFallback>
-                        ::execute(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey, deviceIds);                
+                auto removeresult = MinhasherTransformGPURemoveKeysWithToManyValues<allowFallback>
+                        ::execute(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey, deviceIds);  
+
+                transformresult.numberOfRemovedKeys = removeresult.numberOfRemovedKeys;
+                transformresult.numberOfRemovedValues = removeresult.numberOfRemovedValues;
 
                 success = true;
 
@@ -664,9 +717,7 @@ namespace care{
             if(setupStatus != cudaSuccess) //we cannot recover from this.
                 throw std::runtime_error("Could not revert device id!");
 
-            if(success)
-                std::cout << "Transformation done." << std::endl;
-            return success;
+            return result;
         }
 
     };
@@ -677,35 +728,67 @@ namespace care{
     }
 
     template<class KeyValueMap>
-    void transform_keyvaluemap_gpu(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
-        if(map.noMoreWrites) return;
+    MinhashTransformResult transform_keyvaluemap_gpu(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
+        MinhashTransformResult result;
 
-        if(map.size == 0) return;
+        if(map.noMoreWrites) return result;
+
+        if(map.size == 0) return result;
 
         if(deviceIds.size() == 0){
 
-            cpu_transformation(map.keys, map.values, 
-                                map.counts, map.countsPrefixSum, 
-                                map.keysWithoutValues, maxValuesPerKey);
+            result = cpu_transformation(
+                map.keys, 
+                map.values, 
+                map.counts, 
+                map.countsPrefixSum, 
+                map.keysWithoutValues, 
+                maxValuesPerKey
+            );
 
         }else{
-            bool success = GPUTransformation<false>::execute(map.keys, map.values, 
-                                                            map.counts, map.countsPrefixSum, 
-                                                            map.keysWithoutValues, deviceIds, maxValuesPerKey);
+            
+            std::pair<bool, MinhashTransformResult> pair = GPUTransformation<false>::execute(
+                map.keys, 
+                map.values, 
+                map.counts, 
+                map.countsPrefixSum, 
+                map.keysWithoutValues, 
+                deviceIds, 
+                maxValuesPerKey
+            );
+
+            bool success = pair.first;
+            result = pair.second;
 
             if(!success){
-                std::cout << "\nFallback to managed memory transformation. ";
-                success = GPUTransformation<true>::execute(map.keys, map.values, 
-                                                            map.counts, map.countsPrefixSum, 
-                                                            map.keysWithoutValues, deviceIds, maxValuesPerKey);
+                std::cerr << "Fallback to managed memory transformation.\n";
+
+                pair = GPUTransformation<true>::execute(
+                    map.keys, 
+                    map.values, 
+                    map.counts, 
+                    map.countsPrefixSum, 
+                    map.keysWithoutValues, 
+                    deviceIds, 
+                    maxValuesPerKey
+                );
+
+                success = pair.first;
+                result = pair.second;
             }
 
             if(!success){
-                std::cout << "\nFallback to cpu transformation. ";
-                std::cout.flush();
-                cpu_transformation(map.keys, map.values, 
-                                map.counts, map.countsPrefixSum, 
-                                map.keysWithoutValues, maxValuesPerKey);
+                std::cerr << "\nFallback to cpu transformation.\n";
+                
+                result = cpu_transformation(
+                    map.keys, 
+                    map.values, 
+                    map.counts, 
+                    map.countsPrefixSum, 
+                    map.keysWithoutValues, 
+                    maxValuesPerKey
+                );
             }
         }
 
@@ -734,6 +817,8 @@ namespace care{
         /*for(Index_t i = 0; i < nKeys; i++){
             assert(keyIndexMap.get(keys[i]) == i);
         }*/
+
+        return result;
     }
 
 #endif
