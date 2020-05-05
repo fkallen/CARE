@@ -18,6 +18,10 @@
 
 namespace kseqpp{
 
+/*
+    The following code for parsing sequence files is adapted from klib/kseq.h which is available under MIT license
+*/
+
 struct KseqPP{    
 
 public:
