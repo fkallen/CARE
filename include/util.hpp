@@ -90,9 +90,9 @@ struct ProgressThread{
     }
 
     void addProgress(T add){
-        if(std::is_signed<T>::value){
-            assert(add >= 0);
-        }
+        // if(std::is_signed<T>::value){
+        //     assert(add >= 0);
+        // }
         
         currentProgress += add;
     }

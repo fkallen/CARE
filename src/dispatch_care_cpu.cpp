@@ -60,9 +60,9 @@ namespace care{
 
         std::cout << "Running CARE CPU" << std::endl;
 
-        std::cout << "loading file and building data structures..." << std::endl;
+        std::cout << "STEP 1: Database construction" << std::endl;
 
-        TIMERSTARTCPU(load_and_build);
+        TIMERSTARTCPU(STEP1);
 
         BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
             correctionOptions,
@@ -71,7 +71,7 @@ namespace care{
             fileOptions
         );
 
-        TIMERSTOPCPU(load_and_build);
+        TIMERSTOPCPU(STEP1);
 
         if(correctionOptions.autodetectKmerlength){
             correctionOptions.kmerlength = dataStructures.kmerlength;
@@ -89,6 +89,10 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
+        std::cout << "STEP 2: Error correction" << std::endl;
+
+        TIMERSTARTCPU(STEP2);
+
         auto partialResults = cpu::correct_cpu(
             goodAlignmentProperties, 
             correctionOptions,
@@ -100,8 +104,8 @@ namespace care{
             readStorage
         );
 
+        TIMERSTOPCPU(STEP2);
 
-        std::cout << "Correction finished. Constructing result file." << std::endl;
 
         const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
         std::size_t memoryForSorting = 0;
@@ -110,9 +114,9 @@ namespace care{
             memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
         }
 
-        std::cout << "Constructing output file(s) from correction results" << std::endl;
+        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
-        TIMERSTARTCPU(outputfileconstruction);
+        TIMERSTARTCPU(STEP3);
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -132,7 +136,7 @@ namespace care{
             false
         );
 
-        TIMERSTOPCPU(outputfileconstruction);
+        TIMERSTOPCPU(STEP3);
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

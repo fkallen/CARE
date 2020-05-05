@@ -91,11 +91,6 @@ void mergeResultFiles2_impl(
 
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
-    bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
-
-    //sort the result files and save sorted result file in tempfile.
-    //Then, merge original file and tempfile, replacing the reads in
-    //original file by the corresponding reads in the tempfile.
 
     if(!isSorted){
         auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
@@ -826,10 +821,6 @@ void mergeResultFiles2_impl(
     // std::cerr << "numberOfLQCorrections " << numberOfLQCorrections << "\n";
     // std::cerr << "numberOfUsableLQCorrectionsWithCandidates " << numberOfUsableLQCorrectionsWithCandidates << "\n";
     // std::cerr << "numberOfUsableLQCorrectionsOnlyAnchor " << numberOfUsableLQCorrectionsOnlyAnchor << "\n";
-
-    //deleteFiles({tempfile});
-
-    std::ios::sync_with_stdio(oldsyncflag);
 }
 
 

@@ -893,7 +893,7 @@ namespace gpu{
                             int maxValuesPerKey = minhasher.getResultsPerMapThreshold();
 
                             if(runtimeOptions.showProgress){
-                                std::cout << "Constructing hash table " << globalTableId << ". ";
+                                std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                             }
                             auto transformresult = transform_keyvaluemap_gpu(
                                 minhashTables[i], 
@@ -901,10 +901,9 @@ namespace gpu{
                                 maxValuesPerKey
                             );
                             if(runtimeOptions.showProgress){
-                                std::cout << "Construction complete. \n";
-                                std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
-                                std::cout << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
-                                std::cout << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                                // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                                // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                                // std::cerr << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
                             }
 
                             numConstructedTables++;
@@ -925,7 +924,7 @@ namespace gpu{
                             int maxValuesPerKey = minhasher.getResultsPerMapThreshold(); 
 
                             if(runtimeOptions.showProgress){
-                                std::cout << "Constructing hash table " << globalTableId << ". ";
+                                std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                             }
                             auto transformresult = transform_keyvaluemap_gpu(
                                 minhashTables[i], 
@@ -933,10 +932,10 @@ namespace gpu{
                                 maxValuesPerKey
                             );
                             if(runtimeOptions.showProgress){
-                                std::cout << "Construction complete. \n";
-                                std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
-                                std::cout << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
-                                std::cout << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                                // std::cout << "Construction complete. \n";
+                                // std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                                // std::cout << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                                // std::cout << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
                             }
 
                             numConstructedTables++;

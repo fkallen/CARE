@@ -53,9 +53,9 @@ namespace care{
             return;
         }
 
-        std::cout << "loading file and building data structures..." << std::endl;
+        std::cout << "STEP 1: Database construction" << std::endl;
 
-        TIMERSTARTCPU(load_and_build);
+        TIMERSTARTCPU(STEP1);
 
         gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
             correctionOptions,
@@ -64,7 +64,7 @@ namespace care{
             fileOptions
         );
 
-        TIMERSTOPCPU(load_and_build);
+        TIMERSTOPCPU(STEP1);
 
         if(correctionOptions.autodetectKmerlength){
             correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
@@ -82,6 +82,10 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
+        std::cout << "STEP 2: Error correction" << std::endl;
+
+        TIMERSTARTCPU(STEP2);
+
         auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
             correctionOptions,
@@ -93,6 +97,8 @@ namespace care{
             readStorage
         );
 
+        TIMERSTOPCPU(STEP2);
+
         //Merge corrected reads with input file to generate output file
 
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
@@ -102,9 +108,9 @@ namespace care{
             memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
         }
 
-        std::cout << "Constructing output file(s) from correction results" << std::endl;
+        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
-        TIMERSTARTCPU(outputfileconstruction);
+        TIMERSTARTCPU(STEP3);
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -124,7 +130,7 @@ namespace care{
             false
         );
 
-        TIMERSTOPCPU(outputfileconstruction);
+        TIMERSTOPCPU(STEP3);
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

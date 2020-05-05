@@ -3727,19 +3727,12 @@ correct_gpu(
                 printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
                 totalCount, sequenceFileProperties.nReads,
                 hours, minutes, seconds);
-                
-                if(totalCount == std::int64_t(sequenceFileProperties.nReads)){
-                    std::cerr << '\n';
-                }
-
             }
         };
 
         auto updateShowProgressInterval = [](auto duration){
             return duration;
         };
-
-        std::cout << "Error correction started.\n";
 
         ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
@@ -4076,7 +4069,10 @@ correct_gpu(
             executor.join();
         }
 
-        progressThread.finished();        
+        progressThread.finished(); 
+        
+        std::cout << std::endl;
+
         threadPool.wait();
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 

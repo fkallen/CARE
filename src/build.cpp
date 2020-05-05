@@ -423,8 +423,19 @@ namespace care{
                     for(int i = 0; i < int(minhashTables.size()); i++){
                         int globalTableId = globalTableIds[i];
                         int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        if(runtimeOptions.showProgress){
+                            std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
+                        }
+
                         transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+
+                        if(runtimeOptions.showProgress){
+                            //std::cout << "Construction complete. \n";
+                            // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                            // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                            // std::cerr << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                        }
+
                         numConstructedTables++;
                         minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
                     }
@@ -432,8 +443,20 @@ namespace care{
                     for(int i = 0; i < int(minhashTables.size()); i++){
                         int globalTableId = globalTableIds[i];
                         int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        if(runtimeOptions.showProgress){
+                            std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
+                        }
+
                         transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+
+                        if(runtimeOptions.showProgress){
+                            //std::cout << "Construction complete. \n";
+                            // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                            // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                            // std::cerr << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                        }
+
+
                         numConstructedTables++;
                         
                         minhashTables[i].writeToStream(outstream);
