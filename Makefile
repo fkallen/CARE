@@ -25,13 +25,13 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out src/build.cpp src/correct_cpu.cpp src/cpugpuproxy_cpu.cpp src/dispatch_care_cpu.cpp,$(SOURCES_CPU_AND_GPU_))
+SOURCES_CPU_AND_GPU = $(filter-out src/build.cpp src/correct_cpu.cpp src/dispatch_care_cpu.cpp,$(SOURCES_CPU_AND_GPU_))
 
 # sources which are used by gpu version exclusively
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
-SOURCES_ONLY_CPU = src/build.cpp src/correct_cpu.cpp src/cpugpuproxy_cpu.cpp src/dispatch_care_cpu.cpp
+SOURCES_ONLY_CPU = src/build.cpp src/correct_cpu.cpp src/dispatch_care_cpu.cpp
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))

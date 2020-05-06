@@ -4,7 +4,11 @@
 #include <config.hpp>
 #include <options.hpp>
 
+#include <vector>
+
 namespace care{
+
+    std::vector<int> getUsableDeviceIds(std::vector<int> deviceIds);
 
     void performCorrection(
                             CorrectionOptions correctionOptions,

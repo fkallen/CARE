@@ -6,8 +6,6 @@
 #include <options.hpp>
 #include <dispatch_care.hpp>
 
-#include <cpugpuproxy.hpp>
-
 #include <threadpool.hpp>
 
 #include <readlibraryio.hpp>

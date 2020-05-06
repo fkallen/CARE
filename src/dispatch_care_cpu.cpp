@@ -29,6 +29,10 @@ namespace filesys = std::experimental::filesystem;
 
 namespace care{
 
+    std::vector<int> getUsableDeviceIds(std::vector<int> deviceIds){
+        return std::vector<int>{};
+    }
+
     template<class minhasher_t,
              class readStorage_t>
     void printDataStructureMemoryUsage(const minhasher_t& minhasher, const readStorage_t& readStorage){
