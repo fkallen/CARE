@@ -427,7 +427,8 @@ namespace care{
                             std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                         }
 
-                        transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        auto transformresult = transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        (void)transformresult;
 
                         if(runtimeOptions.showProgress){
                             //std::cout << "Construction complete. \n";
@@ -447,7 +448,8 @@ namespace care{
                             std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                         }
 
-                        transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        auto transformresult = transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        (void)transformresult;
 
                         if(runtimeOptions.showProgress){
                             //std::cout << "Construction complete. \n";

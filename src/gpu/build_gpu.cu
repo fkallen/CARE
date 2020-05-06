@@ -900,6 +900,8 @@ namespace gpu{
                                 runtimeOptions.deviceIds, 
                                 maxValuesPerKey
                             );
+                            (void)transformresult;
+
                             if(runtimeOptions.showProgress){
                                 // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
                                 // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
@@ -931,6 +933,8 @@ namespace gpu{
                                 runtimeOptions.deviceIds, 
                                 maxValuesPerKey
                             );
+                            (void)transformresult;
+                            
                             if(runtimeOptions.showProgress){
                                 // std::cout << "Construction complete. \n";
                                 // std::cout << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
