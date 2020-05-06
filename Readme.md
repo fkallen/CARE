@@ -28,12 +28,12 @@ First, run the configure script to specify include paths and directories.
 
 Then, run make to generate the executables.
 
-CPU version: This produces executable file care-cpu in the top-level directory of care
+CPU version: This produces an executable file care-cpu in the top-level directory of CARE
 ```
 make / make cpu
 ```
 
-GPU version: This produces executable file care-gpu in the top-level directory of care
+GPU version: This produces an executable file care-gpu in the top-level directory of CARE
 ```
 make gpu
 ```
