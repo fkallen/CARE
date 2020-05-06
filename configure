@@ -1,0 +1,80 @@
+
+#!/bin/sh
+
+PREFIX=/usr/local
+CUB_INCDIR=/usr/local/cuda/include/
+THRUST_INCDIR=/usr/local/cuda/include/
+CUDA_DIR=/usr/local/cuda/
+
+HELP="Usage: ./configure [OPTION]...
+Installation directories:
+  --prefix=PREFIX         install files in PREFIX
+                          [$PREFIX]
+By default, \`make install' will install all the files in
+\`$PREFIX/bin'. You can specify
+an installation prefix other than \`$PREFIX' using \`--prefix',
+for instance \`--prefix=\$HOME'.
+The following options can be used to manually specify the
+locations of dependencies:
+  --with-cuda-dir=DIR      The installation directory of the CUDA toolkit. [$CUDA_DIR]
+  --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [$CUB_INCDIR]
+  --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [$THRUST_INCDIR]
+" 
+
+
+
+for var in "$@"
+do
+	if [ "$var" = "--help" -o "$var" = "-h" ]; then
+		echo "$HELP"
+		exit 0
+	fi
+
+	TMP=`echo "$var" | sed -n 's/^--prefix=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then PREFIX="$TMP"; continue; fi
+
+    TMP=`echo "$var" | sed -n 's/^--with-cuda-dir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CUDA_DIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-cub-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CUB_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-thrust-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then THRUST_INCDIR="$TMP"; continue; fi
+
+	echo "config.sh: Unknown or malformed option '$var'" 1>&2
+	exit 1
+done
+
+
+if ! test -f "$CUDA_DIR/bin/nvcc" ; then
+    echo "Warning! 
+          Could not find CUDA compiler $CUDA_DIR/bin/nvcc. 
+          care-gpu cannot be compiled without nvcc.
+          Please check that the CUDA directory is correct if you intend to use the GPU version.
+          "
+fi 
+
+if ! test -f "$CUB_INCDIR/cub/cub.cuh" ; then
+    echo "Warning! 
+          Could not find file $CUB_INCDIR/cub/cub.cuh. 
+          care-gpu cannot be compiled without cub.
+          Please check that the CUB include directory is correct if you intend to use the GPU version.
+          "
+fi
+
+if ! test -f "$THRUST_INCDIR/thrust/version.h" ; then
+    echo "Error! 
+          Could not find file $THRUST_INCDIR/thrust/version.h. 
+          Both care-cpu and care-gpu require THRUST.
+          Please check that the THRUST include directory is correct."
+fi   
+
+
+echo $PREFIX > .PREFIX
+echo $CUDA_DIR > .CUDA_DIR
+echo $CUB_INCDIR > .CUB_INCDIR
+echo $THRUST_INCDIR > .THRUST_INCDIR
+
+
+

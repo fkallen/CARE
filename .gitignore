@@ -1,6 +1,10 @@
 buildcpu/
 buildgpu/
-errorcorrector_cpu
-errorcorrector_gpu
-errorcorrector_cpu_debug
-errorcorrector_gpu_debug
+care-cpu
+care-gpu
+care-cpu-debug
+care-gpu-debug
+.CUB_INCDIR
+.CUDA_DIR
+.PREFIX
+.THRUST_INCDIR
