@@ -2,9 +2,9 @@
 #!/bin/sh
 
 PREFIX=/usr/local
-CUB_INCDIR=/usr/local/cuda/include/
-THRUST_INCDIR=/usr/local/cuda/include/
-CUDA_DIR=/usr/local/cuda/
+CUB_INCDIR=/usr/local/cuda/include
+THRUST_INCDIR=/usr/local/cuda/include
+CUDA_DIR=/usr/local/cuda
 
 HELP="Usage: ./configure [OPTION]...
 Installation directories:
