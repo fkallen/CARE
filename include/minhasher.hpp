@@ -90,6 +90,8 @@ namespace care{
                 maxProbes = rhs.maxProbes;
                 size = rhs.size;
                 keyToIndexMap = rhs.keyToIndexMap;
+
+                assert(size == keyToIndexMap.size());
                 
                 return *this;
             }
@@ -98,6 +100,10 @@ namespace care{
                 maxProbes = std::move(rhs.maxProbes);
                 size = std::move(rhs.size);
                 keyToIndexMap = std::move(rhs.keyToIndexMap);
+
+                rhs.size = 0;
+
+                assert(size == keyToIndexMap.size());
 
                 return *this;
             }
@@ -118,6 +124,7 @@ namespace care{
             }
 
             void insert(Key_t key, Index_t value) noexcept{
+                
                 std::uint64_t probes = 0;
                 std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
                 while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
@@ -197,6 +204,7 @@ namespace care{
 
 			void clear() noexcept{
 				keyToIndexMap.clear();
+                size = 0;
                 maxProbes = 0;
 			}
 
@@ -223,7 +231,7 @@ namespace care{
 
 
         /*
-		 * hash map to map keys to indices using linear probing
+		 * hash map to map keys to std::pair<Index_t, BucketSize>
 		 */
 		template<class Key_t, class Index_t>
 		struct KeyToIndexLengthPairMap{
@@ -278,6 +286,8 @@ namespace care{
                 maxProbes = rhs.maxProbes;
                 size = rhs.size;
                 keyToIndexMap = rhs.keyToIndexMap;
+
+                assert(size == keyToIndexMap.size());
                 
                 return *this;
             }
@@ -286,6 +296,10 @@ namespace care{
                 maxProbes = std::move(rhs.maxProbes);
                 size = std::move(rhs.size);
                 keyToIndexMap = std::move(rhs.keyToIndexMap);
+
+                rhs.size = 0;
+
+                assert(size == keyToIndexMap.size());
 
                 return *this;
             }
@@ -388,6 +402,7 @@ namespace care{
 			void clear() noexcept{
 				keyToIndexMap.clear();
                 maxProbes = 0;
+                size = 0;
 			}
 
 			void destroy() noexcept{
@@ -436,7 +451,6 @@ namespace care{
             std::vector<Key_t> keysWithoutValues;
 
 			double load = 0.8;
-			KeyIndexMap<Key_t, Index_t> keyIndexMap;
             KeyToIndexLengthPairMap<Key_t, Index_t> keyToIndexLengthPairMap;
 
             KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
@@ -466,7 +480,6 @@ namespace care{
                 counts = other.counts;
                 countsPrefixSum = other.countsPrefixSum;
                 keysWithoutValues = other.keysWithoutValues;
-                keyIndexMap = other.keyIndexMap;
                 keyToIndexLengthPairMap = other.keyToIndexLengthPairMap;
                 return *this;
             }
@@ -481,8 +494,12 @@ namespace care{
                 counts = std::move(other.counts);
                 countsPrefixSum = std::move(other.countsPrefixSum);
                 keysWithoutValues = std::move(other.keysWithoutValues);
-                keyIndexMap = std::move(other.keyIndexMap);
                 keyToIndexLengthPairMap = std::move(other.keyToIndexLengthPairMap);
+
+                other.size = 0;
+                other.nKeys = 0;
+                other.nValues = 0;
+
                 return *this;
             }
 
@@ -506,9 +523,6 @@ namespace care{
                 if(keysWithoutValues != rhs.keysWithoutValues){
                     return false;
                 }
-                if(keyIndexMap != rhs.keyIndexMap){
-                    return false;
-                }
                 if(keyToIndexLengthPairMap != rhs.keyToIndexLengthPairMap){
                     return false;
                 }
@@ -528,7 +542,7 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&noMoreWrites), sizeof(bool));
                 outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
 
-                assert(nKeys == keys.size() || nKeys <= keyIndexMap.keyToIndexMap.size());
+                assert(nKeys == keys.size());
                 assert(nValues == values.size());
 
                 //outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
@@ -545,8 +559,6 @@ namespace care{
                 std::size_t elements = counts.size();
                 outstream.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
                 outstream.write(reinterpret_cast<const char*>(counts.data()), sizeof(Count_t) * elements);
-
-                keyIndexMap.writeToStream(outstream);
 
                 keyToIndexLengthPairMap.writeToStream(outstream);
             }
@@ -587,8 +599,6 @@ namespace care{
                 counts.resize(elements);
                 instream.read(reinterpret_cast<char*>(counts.data()), sizeof(Count_t) * elements);
 
-                keyIndexMap.readFromStream(instream);
-
                 keyToIndexLengthPairMap.readFromStream(instream);
             }
 
@@ -598,7 +608,6 @@ namespace care{
                     + counts.size() * sizeof(Count_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
-                    + keyIndexMap.numBytes()
                     + keyToIndexLengthPairMap.numBytes();
             }
 
@@ -608,7 +617,6 @@ namespace care{
                     + counts.capacity() * sizeof(Count_t)
                     + countsPrefixSum.capacity() * sizeof(Index_t)
                     + keysWithoutValues.capacity() * sizeof(Key_t)
-                    + keyIndexMap.allocationSizeInBytes()
                     + keyToIndexLengthPairMap.allocationSizeInBytes();
             }
 
@@ -637,7 +645,6 @@ namespace care{
                 counts.clear();
 				countsPrefixSum.clear();
                 keysWithoutValues.clear();
-				keyIndexMap.clear();
                 keyToIndexLengthPairMap.clear();
 			}
 
@@ -648,7 +655,6 @@ namespace care{
                 counts.shrink_to_fit();
 				countsPrefixSum.shrink_to_fit();
                 keysWithoutValues.shrink_to_fit();
-				keyIndexMap.shrink_to_fit();
                 keyToIndexLengthPairMap.shrink_to_fit();
 			}
 
@@ -672,58 +678,11 @@ namespace care{
                 assert(noMoreWrites);
 
                 const auto pair = get_ranged(key);
-                return {pair.first, pair.second};                
+                return {pair.first, pair.second};
 			}
 
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
-                assert(noMoreWrites);
-
-				// auto range = std::equal_range(keys.begin(), keys.end(), key);
-				// if(range.first == keys.end()) return {};
-                //
-				// Index_t index = std::distance(keys.begin(), range.first);
-
-                // auto lb = std::lower_bound(keys.begin(), keys.end(), key);
-                // if(lb == keys.end() || *lb != key) {
-                //     return {};
-                // }
-                // const Index_t index = std::distance(keys.begin(), lb);
-
-                /*
-                //nvtx::push_range("check empty key", 6);
-                auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
-                //nvtx::pop_range("check empty key");
-
-                if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
-                    //nvtx::push_range("fetch index",3);
-                    const Index_t index = keyIndexMap.get(key);
-                    //nvtx::pop_range("fetch index");
-
-				    //if(index != std::numeric_limits<Index_t>::max()){
-				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
-                    //}else{
-                    //    return {};
-                    //}
-                }else{
-                    return {}; //key has no values
-                }
-                */
-
-               //nvtx::push_range("fetch index",3);
-
-                // const Index_t index = keyIndexMap.get(key);
-
-                // if(size_t(index) >=  countsPrefixSum.size() || size_t(index+1) >= countsPrefixSum.size()) {
-                //     std::cerr << "\ninvalid index returned by keyIndexMap: key = " << key << ", returned index = " << index << "cPS.size() = " << countsPrefixSum.size() << "\n";
-                // }else{
-                //     if(size_t(countsPrefixSum[index]) > values.size() || size_t(countsPrefixSum[index+1]) > values.size()){
-                //         std::cerr << "\ninvalid prefix sum at index " << index << " or " << (index+1) << ". cPS = " << countsPrefixSum[index] << " " << countsPrefixSum[index+1] << " values.size() = " << values.size() << "\n";
-                //         assert(false);
-                //     }
-                // }
-
-                // return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
-                
+                assert(noMoreWrites);                
 
                 const auto indexLengthPair = keyToIndexLengthPairMap.get(key);                
 
