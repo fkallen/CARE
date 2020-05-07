@@ -131,6 +131,9 @@ namespace care{
 
         TIMERSTOPCPU(STEP2);
 
+        minhasher.destroy();
+        readStorage.destroy();
+
         //Merge corrected reads with input file to generate output file
 
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;

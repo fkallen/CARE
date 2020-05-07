@@ -4102,9 +4102,6 @@ correct_gpu(
 
     //size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
 
-    minhasher.destroy();
-    readStorage.destroy();
-
     // std::cerr << "useEditsCountMap\n";
     // for(const auto& pair : useEditsCountMap){
     //     std::cerr << int(pair.first) << " : " << pair.second << "\n";

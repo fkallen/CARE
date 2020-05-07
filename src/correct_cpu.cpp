@@ -1718,9 +1718,6 @@ correct_cpu(
     //outputstream.flush();
     partialResults.flush();
 
-    minhasher.destroy();
-    readStorage.destroy();
-
     #ifdef ENABLE_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();

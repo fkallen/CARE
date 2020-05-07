@@ -110,6 +110,8 @@ namespace care{
 
         TIMERSTOPCPU(STEP2);
 
+        minhasher.destroy();
+        readStorage.destroy();
 
         const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
         std::size_t memoryForSorting = 0;
