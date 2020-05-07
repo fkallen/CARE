@@ -323,32 +323,23 @@ namespace care{
         using Key_t = typename KeyValueMap::Key_t;
         using Index_t = typename KeyValueMap::Index_t;
 
-        map.keyIndexMap = minhasherdetail::KeyIndexMap<Key_t, Index_t>(map.nKeys / map.load);
-        for(Index_t i = 0; i < map.nKeys; i++){
-            map.keyIndexMap.insert(map.keys[i], i);
-        }
+
         map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
         }
 
+        // keys and prefixsums have been stored in as in keyToPairMap.
+        // can free the memory.
         {
             std::vector<Key_t> tmp;
             map.keys.swap(tmp);
         }
 
-        // {
-        //     std::vector<Index_t> tmp;
-        //     map.countsPrefixSum.swap(tmp);
-        // }
-
-        /*keyIndexMap = KeyIndexMap(nKeys / load);
-        for(Index_t i = 0; i < nKeys; i++){
-            keyIndexMap.insert(keys[i], i);
+        {
+            std::vector<Index_t> tmp;
+            map.countsPrefixSum.swap(tmp);
         }
-        for(Index_t i = 0; i < nKeys; i++){
-            assert(keyIndexMap.get(keys[i]) == i);
-        }*/
 
         return result;
     }
@@ -799,24 +790,22 @@ namespace care{
         using Key_t = typename KeyValueMap::Key_t;
         using Index_t = typename KeyValueMap::Index_t;
 
-
-        map.keyIndexMap = minhasherdetail::KeyIndexMap<Key_t, Index_t>(map.nKeys / map.load);
-        for(Index_t i = 0; i < map.nKeys; i++){
-            map.keyIndexMap.insert(map.keys[i], i);
-        }
         map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
         }
 
+        // keys and prefixsums have been stored in as in keyToPairMap.
+        // can free the memory.
         {
             std::vector<Key_t> tmp;
             map.keys.swap(tmp);
         }
 
-        /*for(Index_t i = 0; i < nKeys; i++){
-            assert(keyIndexMap.get(keys[i]) == i);
-        }*/
+        {
+            std::vector<Index_t> tmp;
+            map.countsPrefixSum.swap(tmp);
+        }
 
         return result;
     }
