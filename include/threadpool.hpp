@@ -213,6 +213,14 @@ struct ThreadPool{
         pq->wait();
     }
 
+    bool complete() const noexcept{
+        return pq->complete();
+    }
+
+    bool empty() const noexcept{
+        return pq->empty();
+    }
+
     //don't call this in a situation where another thread could insert work
     void setConcurrency(int numThreads){
         pq->wait();

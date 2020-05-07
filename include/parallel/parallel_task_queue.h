@@ -241,18 +241,18 @@ public:
     {
         std::unique_lock<std::recursive_mutex> enqueuelock{enqueueMtx_};
 
-        int barrierCount = concurrency();
+        auto barrierCount = std::make_shared<std::atomic<int>>(int(concurrency()));
         
         std::condition_variable cv;
 
-        auto barrierFunc = [&](){
+        auto barrierFunc = [&, barrierCount](){
             std::unique_lock<std::mutex> lock{waitMtx_};
-            --barrierCount;
+            --(*barrierCount);
 
-            if(barrierCount == 0){
+            if((*barrierCount) == 0){
                 cv.notify_all();
             }else{
-                cv.wait(lock, [&](){return barrierCount == 0;});
+                cv.wait(lock, [&](){return (*barrierCount) == 0;});
             }
         };
 
@@ -263,7 +263,9 @@ public:
         enqueuelock.unlock(); 
 
         std::unique_lock<std::mutex> lock{waitMtx_};
-        cv.wait(lock, [&](){return barrierCount == 0;});
+        if((*barrierCount) != 0){
+            cv.wait(lock, [&](){return (*barrierCount) == 0;});
+        }
     }
 
 

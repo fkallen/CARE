@@ -4076,6 +4076,8 @@ correct_gpu(
         threadPool.wait();
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
+        assert(threadPool.empty());
+
       //outputstream.flush();
       partialResults.flush();
 
