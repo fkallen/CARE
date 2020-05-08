@@ -13,9 +13,9 @@ namespace care{
 	//Options which can be parsed from command-line arguments
 
     struct GoodAlignmentProperties{
-        int min_overlap = 20;
+        int min_overlap = 30;
         float maxErrorRate = 0.2f;
-        float min_overlap_ratio = 0.20f;
+        float min_overlap_ratio = 0.30f;
     };
 
     struct CorrectionOptions{
