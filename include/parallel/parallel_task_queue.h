@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <iostream>
 #include <functional>
+#include <memory>
+#include <atomic>
 
 #include "task_thread.h"
 
