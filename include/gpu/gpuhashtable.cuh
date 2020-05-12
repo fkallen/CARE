@@ -18,25 +18,31 @@ namespace gpu{
 
     template<class Key, class Value>
     class NaiveCpuSingleValueHashTable{
-        static_assert(std::is_assignable<std::uint64_t, Key>::value, "Key must be assignable to uint64_t!");
         static_assert(std::is_integral<Key>::value, "Key must be integral!");
-        static_assert(std::is_integral<Value>::value, "Value must be integral!");
 
     public:
         class QueryResult{
         public:
+            QueryResult() = default;
+            QueryResult(const QueryResult&) = default;
+            QueryResult(QueryResult&&) = default;
+            QueryResult& operator=(const QueryResult&) = default;
+            QueryResult& operator=(QueryResult&&) = default;
+
+            QueryResult(bool b, Value v) : keyFound(b), val(std::move(v)){}
+
             bool valid() const{
                 return keyFound;
             }
             const Value& value() const{
-                return v;
+                return val;
             }
             Value& value(){
-                return v;
+                return val;
             }
         private:
             bool keyFound;
-            Value v;
+            Value val;
         };
 
         NaiveCpuSingleValueHashTable() = default;
@@ -74,7 +80,7 @@ namespace gpu{
 
         QueryResult query(const Key& key) const{
             std::size_t probes = 0;
-            std::size_t pos = murmur_hash_3_uint64_t(key) % size;
+            std::size_t pos = hashfunc(key) % size;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
                     return {false, Value{}};
@@ -93,7 +99,7 @@ namespace gpu{
         }
 
     private:
-        std::uint64_t hashfunc(const Key& key){
+        std::uint64_t hashfunc(const Key& key) const{
             //murmur64
 
             std::uint64_t x = key;
@@ -121,7 +127,6 @@ namespace gpu{
     template<class Key, class Value>
     class CpuReadOnlyMultiValueHashTable{
         static_assert(std::is_integral<Key>::value, "Key must be integral!");
-        static_assert(std::is_integral<Value>::value, "Value must be integral!");
     public:
 
         struct QueryResult{
@@ -141,7 +146,7 @@ namespace gpu{
             int maxValuesPerKey,
             const std::vector<int>& gpuIds
         ){
-            construct(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds);
+            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds);
         }
 
         CpuReadOnlyMultiValueHashTable(
@@ -149,7 +154,100 @@ namespace gpu{
             std::vector<Value> vals, 
             int maxValuesPerKey
         ){
-            construct(std::move(keys), std::move(vals), maxValuesPerKey);
+            init(std::move(keys), std::move(vals), maxValuesPerKey);
+        }
+
+        void init(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey
+        ){
+            init(std::move(keys), std::move(vals), maxValuesPerKey, {});
+        }
+
+        void init(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey,
+            const std::vector<int>& gpuIds
+        ){
+            assert(keys.size() == values.size());
+
+            std::vector<Key> tmpunused;
+            std::vector<read_number> counts;
+            std::vector<read_number> countsPrefixSum;
+            values = std::move(vals);
+
+            MinhashTransformResult result;
+
+            if(keys.size() == 0) return;
+
+            #ifdef __NVCC__            
+            if(gpuIds.size() == 0){
+            #endif
+                result = cpu_transformation(
+                    keys, 
+                    values, 
+                    counts, 
+                    countsPrefixSum, 
+                    tmpunused, 
+                    maxValuesPerKey
+                );
+            #ifdef __NVCC__
+            }else{
+                
+                std::pair<bool, MinhashTransformResult> pair = GPUTransformation<false>::execute(
+                    keys, 
+                    values, 
+                    counts, 
+                    countsPrefixSum, 
+                    tmpunused, 
+                    gpuIds, 
+                    maxValuesPerKey
+                );
+
+                bool success = pair.first;
+                result = pair.second;
+
+                if(!success){
+                    std::cerr << "Fallback to managed memory transformation.\n";
+
+                    pair = GPUTransformation<true>::execute(
+                        keys, 
+                        values, 
+                        counts, 
+                        countsPrefixSum, 
+                        tmpunused, 
+                        gpuIds, 
+                        maxValuesPerKey
+                    );
+
+                    success = pair.first;
+                    result = pair.second;
+                }
+
+                if(!success){
+                    std::cerr << "\nFallback to cpu transformation.\n";
+                    
+                    result = cpu_transformation(
+                        keys, 
+                        values, 
+                        counts, 
+                        countsPrefixSum, 
+                        tmpunused, 
+                        maxValuesPerKey
+                    );
+                }
+            }
+            #endif
+
+            lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
+            for(std::size_t i = 0; i < keys.size(); i++){
+                lookup.insert(
+                    keys[i], 
+                    ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
+                );
+            }
         }
 
         QueryResult query(const Key& key) const{
@@ -181,98 +279,7 @@ namespace gpu{
 
     private:
 
-        void construct(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey
-        ){
-            construct(std::move(keys), std::move(vals), maxValuesPerKey, {});
-        }
 
-        void construct(
-            std::vector<Key> keys, 
-            std::vector<Value> vals, 
-            int maxValuesPerKey
-            const std::vector<int>& gpuIds,
-        ){
-            assert(keys.size() == values.size());
-
-            std::vector<Key> tmpunused;
-            std::vector<read_number> counts;
-            std::vector<read_number> countsPrefixSum;
-            values = std::move(vals);
-
-            MinhashTransformResult result;
-
-            if(keys.size() == 0) return;
-
-            #ifdef __NVCC__            
-            if(deviceIds.size() == 0){
-            #endif
-                result = cpu_transformation(
-                    keys, 
-                    values, 
-                    counts, 
-                    countsPrefixSum, 
-                    tmpunused, 
-                    maxValuesPerKey
-                );
-            #ifdef __NVCC__
-            }else{
-                
-                std::pair<bool, MinhashTransformResult> pair = GPUTransformation<false>::execute(
-                    keys, 
-                    values, 
-                    counts, 
-                    countsPrefixSum, 
-                    tmpunused, 
-                    deviceIds, 
-                    maxValuesPerKey
-                );
-
-                bool success = pair.first;
-                result = pair.second;
-
-                if(!success){
-                    std::cerr << "Fallback to managed memory transformation.\n";
-
-                    pair = GPUTransformation<true>::execute(
-                        keys, 
-                        values, 
-                        counts, 
-                        countsPrefixSum, 
-                        tmpunused, 
-                        deviceIds, 
-                        maxValuesPerKey
-                    );
-
-                    success = pair.first;
-                    result = pair.second;
-                }
-
-                if(!success){
-                    std::cerr << "\nFallback to cpu transformation.\n";
-                    
-                    result = cpu_transformation(
-                        keys, 
-                        values, 
-                        counts, 
-                        countsPrefixSum, 
-                        tmpunused, 
-                        maxValuesPerKey
-                    );
-                }
-            }
-            #endif
-
-            lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
-            for(std::size_t i = 0; i < keys.size(); i++){
-                lookup.insert(
-                    keys[i], 
-                    ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]};
-                );
-            }
-        }
 
         using ValueIndex = std::pair<read_number, BucketSize>;
 
@@ -294,4 +301,4 @@ namespace gpu{
 }
 }
 
-#endif CARE_GPUHASHTABLE_CUH
+#endif // CARE_GPUHASHTABLE_CUH

@@ -43,7 +43,7 @@ namespace care{
 
     private:
         std::vector<Key> keys;
-        std::vector<Values> values;        
+        std::vector<Value> values;        
     };
 
 } //namespace care
