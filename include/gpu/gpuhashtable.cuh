@@ -4,6 +4,9 @@
 #include <config.hpp>
 #include <kvtable.hpp>
 #include <minhasher_transform.hpp>
+#include <memorymanagement.hpp>
+
+
 
 #include <vector>
 #include <cassert>
@@ -96,6 +99,49 @@ namespace gpu{
                 }
             }
             return {true, storage[pos].second};
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+            result.host = sizeof(Data) * capacity;
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+            os.write(reinterpret_cast<const char*>(&load), sizeof(float));
+            os.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(&size), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(&capacity), sizeof(std::size_t));
+
+            const std::size_t elements = storage.size();
+            const std::size_t bytes = sizeof(Data) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(storage.data()), bytes);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            is.read(reinterpret_cast<char*>(&load), sizeof(float));
+            is.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::size_t));
+            is.read(reinterpret_cast<char*>(&size), sizeof(std::size_t));
+            is.read(reinterpret_cast<char*>(&capacity), sizeof(std::size_t));
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            storage.resize(elements);
+            const std::size_t bytes = sizeof(Data) * elements;
+            is.read(reinterpret_cast<char*>(storage.data()), bytes);
+        }
+
+        void destroy(){
+            std::vector<Data> tmp;
+            std::swap(storage, tmp);
+
+            maxProbes = 0;
+            size = 0;
+            capacity = 0;
         }
 
     private:
@@ -275,6 +321,56 @@ namespace gpu{
             for(std::size_t i = 0; i < numKeys; i++){
                 resultsOutput[i] = query(keys[i]);
             }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+            result.host = sizeof(Value) * values.capacity();
+            result.host += lookup.getMemoryInfo().host;
+
+            result.device = lookup.getMemoryInfo().device;
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+
+            const std::size_t elements = values.size();
+            const std::size_t bytes = sizeof(Value) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(values.data()), bytes);
+
+            lookup.writeToStream(os);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            values.resize(elements);
+            const std::size_t bytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(values.data()), bytes);
+
+            lookup.loadFromStream(is);
+        }
+
+        void destroy(){
+            std::vector<Value> tmp;
+            std::swap(values, tmp);
+
+            lookup.destroy();
+        }
+
+        static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements) const{
+
+            std::size_t mem = 0;
+            mem += sizeof(Key) * numElements; //d_keys
+            mem += sizeof(Value) * numElements; //d_values
+            mem += sizeof(read_number) * numElements; //d_indices
+            mem += std::max(sizeof(read_number), sizeof(Value)) * numElements; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
+
+            return mem;
         }
 
     private:
