@@ -1436,10 +1436,18 @@ namespace gpu{
         }
     }
 
-    #if __CUDA_ARCH__ >= 610
-        #define buildMSASingleBlockKernel_MIN_BLOCKS   8
+    #ifdef __CUDACC_DEBUG__
+
+        #define buildMSASingleBlockKernel_MIN_BLOCKS   1
+        
     #else
-        #define buildMSASingleBlockKernel_MIN_BLOCKS   4
+
+        #if __CUDA_ARCH__ >= 610
+            #define buildMSASingleBlockKernel_MIN_BLOCKS   8
+        #else
+            #define buildMSASingleBlockKernel_MIN_BLOCKS   4
+        #endif
+
     #endif
 
 
