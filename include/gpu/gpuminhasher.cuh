@@ -91,10 +91,6 @@ namespace gpu{
             return resultsPerMapThreshold;
         }
 
-        void addHashTable(HashTable&& hm){
-            minhashTables.emplace_back(std::make_unique<HashTable>(std::move(hm)));
-        }
-
         int calculateResultsPerMapThreshold(int coverage){
             int result = int(coverage * 2.5f);
             result = std::min(result, int(std::numeric_limits<BucketSize>::max()));
@@ -488,6 +484,10 @@ namespace gpu{
             return std::make_pair(qr.valuesBegin, qr.valuesBegin + qr.numValues);
         }
 
+        void addHashTable(HashTable&& hm){
+            minhashTables.emplace_back(std::make_unique<HashTable>(std::move(hm)));
+        }
+
         std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
         constructTablesWithGpuHashing(
             int numTables, 
@@ -520,6 +520,14 @@ namespace gpu{
 
             std::vector<std::vector<kmer_type>> kmersPerFunc(numTables);
             std::vector<std::vector<read_number>> readIdsPerFunc(numTables);
+
+            for(auto& v : kmersPerFunc){
+                v.resize(numberOfReads);
+            }
+
+            for(auto& v : readIdsPerFunc){
+                v.resize(numberOfReads);
+            }
 
             std::vector<int> tableIds(numTables);                
             std::vector<int> hashIds(numTables);

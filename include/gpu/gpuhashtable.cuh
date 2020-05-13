@@ -160,7 +160,7 @@ namespace gpu{
 
         using Data = std::pair<Key,Value>;
 
-        static constexpr Data emptySlot 
+        Data emptySlot 
             = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
 
         float load;
@@ -225,8 +225,8 @@ namespace gpu{
             values = std::move(vals);
 
             MinhashTransformResult result;
-            (void)result;
             
+
             if(keys.size() == 0) return;
 
             #ifdef __NVCC__            
@@ -295,6 +295,8 @@ namespace gpu{
                     ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
                 );
             }
+
+            (void)result;
         }
 
         QueryResult query(const Key& key) const{
