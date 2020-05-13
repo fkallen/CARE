@@ -225,7 +225,8 @@ namespace gpu{
             values = std::move(vals);
 
             MinhashTransformResult result;
-
+            (void)result;
+            
             if(keys.size() == 0) return;
 
             #ifdef __NVCC__            
@@ -362,7 +363,7 @@ namespace gpu{
             lookup.destroy();
         }
 
-        static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements) const{
+        static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
 
             std::size_t mem = 0;
             mem += sizeof(Key) * numElements; //d_keys

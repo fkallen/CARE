@@ -197,7 +197,7 @@ namespace gpu{
             std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
 
-
+            std::size_t writtenTableBytes = 0;
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
@@ -236,11 +236,14 @@ namespace gpu{
 
                         std::cerr << "saving cached constructed tables to file to make room for more tables\n";
                         for(int i = 0; i < int(cachedConstructedTables.size()); i++){                            
-                            cachedConstructedTables[i].writeToStream(outstream);
+                            const auto& hashTable = cachedConstructedTables[i];
+
+                            auto memoryUsage = hashTable.getMemoryInfo();
+                            hashTable.writeToStream(outstream);
                             numSavedTables++;
                             writtenTableBytes = outstream.tellp();
         
-                            std::cerr << "tablesize = " << cachedConstructedTables[i].numBytes() << "\n";
+                            std::cerr << "tablesize = " << memoryUsage.host << "\n";
                             std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
                             std::cerr << "numSavedTables = " << numSavedTables << "\n";
         
@@ -433,12 +436,9 @@ namespace gpu{
                             }
                             cachedConstructedTables.erase(cachedConstructedTables.begin() + end, cachedConstructedTables.end());
                             
-                            //TODO implement
-                            int usableNumMaps = loadTablesFromFileAndAssignToMinhasher(
+                            int usableNumMaps = loadConstructedTablesFromFile(
                                                         tmpmapsFilename, 
-                                                        minhasher, 
                                                         numSavedTables, 
-                                                        0,
                                                         maxMemoryForTables);
 
                             for(int i = 0; i < int(cachedConstructedTables.size()) && usableNumMaps < requestedNumberOfMaps; i++){
@@ -462,12 +462,10 @@ namespace gpu{
                     //all constructed tables have been saved to file, and no table is cached
 
                     outstream.flush();
-                    //TODO implement
-                    int usableNumMaps = loadTablesFromFileAndAssignToMinhasher(
+
+                    int usableNumMaps = loadConstructedTablesFromFile(
                                                     tmpmapsFilename, 
-                                                    minhasher, 
                                                     numSavedTables, 
-                                                    0,
                                                     maxMemoryForTables);
 
                     std::cout << "Can use " << usableNumMaps 
@@ -657,6 +655,56 @@ namespace gpu{
 
             return {std::move(kmersPerFunc), std::move(readIdsPerFunc)};
         }
+
+        int loadConstructedTablesFromFile(
+            const std::string& filename,
+            int numTablesToLoad, 
+            std::size_t availableMemory
+        ){
+
+            std::cerr << "available before loading maps: " << availableMemory << "\n";
+            
+            int assignedNumMaps = 0;
+
+            //load as many transformed tables from file as possible and move them to minhasher
+            std::ifstream instream(filename, std::ios::binary);
+            for(int i = 0; i < numTablesToLoad; i++){
+                try{
+                    std::cerr << "try loading table " << i << "\n";
+                    HashTable table;
+                    table.loadFromStream(instream);
+                    const auto memoryUsage = table.getMemoryInfo();
+                    const std::size_t tablesize = memoryUsage.host;
+
+                    if(availableMemory > tablesize){
+                        availableMemory -= tablesize;
+
+                        addHashTable(std::move(table));
+
+                        std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                        assignedNumMaps++;
+                        std::cerr << "usable num maps = " << assignedNumMaps << "\n";
+                    }else if(availableMemory == tablesize){
+                        availableMemory -= tablesize;
+
+                        addHashTable(std::move(table));
+                        
+                        std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                        assignedNumMaps++;
+                        std::cerr << "usable num maps = " << assignedNumMaps << "\n";
+                        break;
+                    }else{
+                        std::cerr << "Loading table " << i << " failed\n";
+                        break;
+                    }
+                }catch(...){
+                    std::cerr << "Loading table " << i << " failed\n";
+                    break;
+                }                        
+            }
+
+            return assignedNumMaps;
+    }
 
 
 
