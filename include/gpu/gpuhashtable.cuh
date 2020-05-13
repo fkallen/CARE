@@ -217,7 +217,7 @@ namespace gpu{
             int maxValuesPerKey,
             const std::vector<int>& gpuIds
         ){
-            assert(keys.size() == values.size());
+            assert(keys.size() == vals.size());
 
             std::vector<Key> tmpunused;
             std::vector<read_number> counts;
