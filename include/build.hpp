@@ -11,9 +11,6 @@
 #include "sequence.hpp"
 #include "threadsafe_buffer.hpp"
 
-#ifdef __NVCC__
-#include <gpu/distributedreadstorage.hpp>
-#endif
 
 #include <string>
 #include <stdexcept>
@@ -81,51 +78,7 @@ namespace care{
                                             const MemoryOptions& memoryOptions,
                                             const FileOptions& fileOptions);
 
-#ifdef __NVCC__
 
-    namespace gpu{
-
-        struct GpuReadStorageWithFlags{
-            //std::vector<bool> readIsValidFlags;
-            DistributedReadStorage readStorage;
-        };
-
-        struct BuiltGpuDataStructures{
-            int kmerlength;
-            
-            BuiltDataStructure<GpuReadStorageWithFlags> builtReadStorage;
-            BuiltDataStructure<Minhasher> builtMinhasher;
-
-            SequenceFileProperties totalInputFileProperties;
-            //std::vector<SequenceFileProperties> inputFileProperties;
-        };
-
-        BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
-                                                                        const RuntimeOptions& runtimeOptions,
-                                                                        bool useQualityScores,
-                                                                        read_number expectedNumberOfReads,
-                                                                        int expectedMaximumReadLength);
-
-        BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
-                                    			   const RuntimeOptions& runtimeOptions,
-                                                   const MemoryOptions& memoryOptions,
-                                    			   std::uint64_t nReads,
-                                    			   const GpuReadStorageWithFlags& readStorage);
-
-
-        BuiltGpuDataStructures buildGpuDataStructures2(
-            const CorrectionOptions& correctionOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            const FileOptions& fileOptions);
-
-        BuiltGpuDataStructures buildAndSaveGpuDataStructures2(
-            const CorrectionOptions& correctionOptions,
-            const RuntimeOptions& runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            const FileOptions& fileOptions);
-    }
-#endif
 }
 
 
