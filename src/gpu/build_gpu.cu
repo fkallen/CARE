@@ -1428,26 +1428,26 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
 
         std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
 
-        TIMERSTARTCPU(build_minhasher);
-        result.builtMinhasher = build_minhasher(fileOptions, 
-            runtimeOptions, 
-            memoryOptions,
-            result.totalInputFileProperties.nReads, 
-            corOpts,
-            result.builtReadStorage.data);
-        TIMERSTOPCPU(build_minhasher);
+//         TIMERSTARTCPU(build_minhasher);
+//         result.builtMinhasher = build_minhasher(fileOptions, 
+//             runtimeOptions, 
+//             memoryOptions,
+//             result.totalInputFileProperties.nReads, 
+//             corOpts,
+//             result.builtReadStorage.data);
+//         TIMERSTOPCPU(build_minhasher);
 
-        if(saveDataStructuresToFile && fileOptions.save_hashtables_to != "") {
-            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-    		result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
-    		std::cout << "Saved minhasher" << std::endl;
-        }
+//         if(saveDataStructuresToFile && fileOptions.save_hashtables_to != "") {
+//             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+//     		result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
+//     		std::cout << "Saved minhasher" << std::endl;
+//         }
         
         
-#ifdef VALIDATE_MINHASHER        
-        const auto& minhasher = result.builtMinhasher.data;
-        validateMinhasher(minhasher, readStorage, fileOptions, runtimeOptions.deviceIds);
-#endif   
+// #ifdef VALIDATE_MINHASHER        
+//         const auto& minhasher = result.builtMinhasher.data;
+//         validateMinhasher(minhasher, readStorage, fileOptions, runtimeOptions.deviceIds);
+// #endif   
 
 #if 0
 

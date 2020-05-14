@@ -125,14 +125,44 @@ namespace care{
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );
 
-        newGpuMinhasher.construct(
-            fileOptions,
-            runtimeOptions,
-            memoryOptions,
-            totalInputFileProperties.nReads, 
-            correctionOptions,
-            readStorage
-        );
+        if(fileOptions.load_hashtables_from != ""){
+
+            std::ifstream is(fileOptions.load_hashtables_from);
+            assert((bool)is);
+
+            newGpuMinhasher.loadFromStream(is);
+
+            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+        }else{
+            newGpuMinhasher.construct(
+                fileOptions,
+                runtimeOptions,
+                memoryOptions,
+                totalInputFileProperties.nReads, 
+                correctionOptions,
+                readStorage
+            );
+
+            if(correctionOptions.mustUseAllHashfunctions 
+                && correctionOptions.numHashFunctions != newGpuMinhasher.getNumberOfMaps()){
+                std::cout << "Cannot use specified number of hash functions (" 
+                    << correctionOptions.numHashFunctions <<")\n";
+                std::cout << "Abort!\n";
+                return;
+            }
+        }
+
+        if(fileOptions.save_hashtables_to != "") {
+            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+            std::ofstream os(fileOptions.save_hashtables_to);
+            assert((bool)os);
+
+            newGpuMinhasher.writeToStream(os);
+
+    		std::cout << "Saved minhasher" << std::endl;
+        }
+
+
 
         TIMERSTOPCPU(build_newgpuminhasher);
 
