@@ -66,11 +66,11 @@ namespace gpu{
 
         void insert(const Key& key, const Value& value){
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % size;
+            std::size_t pos = hashfunc(key) % capacity;
             while(storage[pos] != emptySlot){
                 pos++;
                 //wrap-around
-                if(pos == size){
+                if(pos == capacity){
                     pos = 0;
                 }
                 probes++;
@@ -83,14 +83,14 @@ namespace gpu{
 
         QueryResult query(const Key& key) const{
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % size;
+            std::size_t pos = hashfunc(key) % capacity;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
                     return {false, Value{}};
                 }
                 pos++;
                 //wrap-around
-                if(pos == size){
+                if(pos == capacity){
                     pos = 0;
                 }
                 probes++;
@@ -145,11 +145,8 @@ namespace gpu{
         }
 
     private:
-        std::uint64_t hashfunc(const Key& key) const{
+        std::uint64_t hashfunc(std::uint64_t x) const{
             //murmur64
-
-            std::uint64_t x = key;
-
             x ^= x >> 33;
             x *= 0xff51afd7ed558ccd;
             x ^= x >> 33;
@@ -225,7 +222,6 @@ namespace gpu{
             values = std::move(vals);
 
             MinhashTransformResult result;
-            
 
             if(keys.size() == 0) return;
 
@@ -289,11 +285,17 @@ namespace gpu{
             #endif
 
             lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
+
             for(std::size_t i = 0; i < keys.size(); i++){
+                // if(i < 10){
+                //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
+                // }
+                
                 lookup.insert(
                     keys[i], 
                     ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
                 );
+                
             }
 
             (void)result;
@@ -385,15 +387,6 @@ namespace gpu{
         std::vector<Value> values;
         NaiveCpuSingleValueHashTable<Key, ValueIndex> lookup;
     };
-
- 
-
-    
-
-
-
-
-
 
 
 

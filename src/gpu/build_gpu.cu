@@ -32,10 +32,11 @@
 #include <mutex>
 #include <condition_variable>
 
-
+#include <gpu/gpuminhasher.cuh>
 
 //#define VALIDATE_READSTORAGE
 //#define VALIDATE_MINHASHER
+
 
 
 #ifdef __NVCC__
@@ -895,6 +896,7 @@ namespace gpu{
                             if(runtimeOptions.showProgress){
                                 std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                             }
+
                             auto transformresult = transform_keyvaluemap_gpu(
                                 minhashTables[i], 
                                 runtimeOptions.deviceIds, 
@@ -1311,7 +1313,29 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
                         const RuntimeOptions& runtimeOptions,
                         const MemoryOptions& memoryOptions,
                         const FileOptions& fileOptions,
-                        bool saveDataStructuresToFile){                                                     
+                        bool saveDataStructuresToFile){  
+                            
+                            
+        // auto xxx = NaiveCpuSingleValueHashTable<unsigned long, std::pair<unsigned int, unsigned short>>(1000000, 0.8f);
+        // auto yyy = minhasherdetail::KeyToIndexLengthPairMap<unsigned long, unsigned int>(1000000 / 0.8f);
+
+        // TIMERSTARTCPU(newinsert);
+        // for(int i = 0; i < 1000000; i++){
+        //     xxx.insert(i,std::pair<unsigned int, unsigned short>{i,i % 1024});
+        // }
+        // TIMERSTOPCPU(newinsert);
+
+        // TIMERSTARTCPU(oldinsert);
+        // for(int i = 0; i < 1000000; i++){
+        //     yyy.insert(i,i,i % 1024);
+        // }
+        // TIMERSTOPCPU(oldinsert);
+
+        // for(int i = 0; i < 1000000; i++){
+        //     auto newres = xxx.query(i);
+        //     auto oldresp = yyy.get(i);
+        //     assert(newres.value() == oldresp);
+        // }
 
         BuiltGpuDataStructures result;
 
@@ -1423,8 +1447,217 @@ BuiltGpuDataStructures buildGpuDataStructuresImpl2(
 #ifdef VALIDATE_MINHASHER        
         const auto& minhasher = result.builtMinhasher.data;
         validateMinhasher(minhasher, readStorage, fileOptions, runtimeOptions.deviceIds);
-#endif        
+#endif   
 
+#if 0
+
+//###########################################
+{
+        TIMERSTARTCPU(build_newgpuminhasher);
+        GpuMinhasher newGpuMinhasher(
+            correctionOptions.kmerlength, 
+            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+        );
+
+        newGpuMinhasher.construct(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            result.totalInputFileProperties.nReads, 
+            corOpts,
+            readStorage
+        );
+
+        TIMERSTOPCPU(build_newgpuminhasher);
+
+        auto newusage = newGpuMinhasher.getMemoryInfo();
+        std::cerr << "new minhasher uses on host: " << newusage.host << "\n";
+        for(auto pair : newusage.device){
+            std::cerr << "new minhasher uses on device " << pair.first << ": " << pair.second << "\n";
+        }
+
+        std::cerr << "comparing hashes \n";
+
+        const auto& minhasher = result.builtMinhasher.data;
+
+        constexpr read_number parallelReads = 1000000;
+        read_number numReads = result.totalInputFileProperties.nReads;
+        const int numIters = SDIV(numReads, parallelReads);
+
+        const int deviceId = 0;
+
+        const int numHashFuncs = newGpuMinhasher.getNumberOfMaps();
+        const std::size_t signaturesRowPitchElements = numHashFuncs;
+
+        const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(result.totalInputFileProperties.maxSequenceLength);
+
+        SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+        SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+
+        SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+        SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+
+        SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+        SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+        auto sequencehandle = readStorage.makeGatherHandleSequences();
+
+        ThreadPool threadPool(8);
+
+        auto showProgress = [&](auto totalCount, auto seconds){
+            if(runtimeOptions.showProgress){
+                std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                        << seconds << " seconds.\n";
+            }
+        };
+
+        auto updateShowProgressInterval = [](auto duration){
+            return duration * 2;
+        };
+
+        ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+
+        for (int iter = 0; iter < numIters; iter++){
+            read_number readIdBegin = iter * parallelReads;
+            read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+            const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+            readStorage.gatherSequenceDataToGpuBufferAsync(
+                &threadPool,
+                sequencehandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_indices,
+                d_indices,
+                curBatchsize,
+                deviceId,
+                stream
+            );
+        
+            readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                deviceId,
+                d_indices,
+                curBatchsize,
+                stream
+            );
+
+            newGpuMinhasher.computeReadHashesOnGpu(
+                d_signatures,
+                signaturesRowPitchElements,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                curBatchsize,
+                d_lengths,
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_signatures, 
+                d_signatures, 
+                signaturesRowPitchElements * sizeof(std::uint64_t) * curBatchsize, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            progressThread.addProgress(curBatchsize);
+
+            std::vector<GpuMinhasher::Range_t> rangesnew(curBatchsize * numHashFuncs);
+            std::vector<Minhasher::Range_t> rangesold(curBatchsize * numHashFuncs);
+
+            int totalNumResultsInRangesnew = 0;
+            int totalNumResultsInRangesold = 0;
+
+
+
+            // auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+            //     std::uint64_t countlimit = 10000;
+            //     std::uint64_t count = 0;
+
+            //     for (read_number readId = begin; readId < end; readId++){
+            //         read_number localId = readId - readIdBegin;
+
+            //         for(int i = 0; i < numHashFuncs; i++){
+            //             const kmer_type kmer = kmer_mask & h_signatures[signaturesRowPitchElements * localId + i];
+            //             kmersPerFunc[i][readId] = kmer;
+            //             readIdsPerFunc[i][readId] = readId;
+            //         }
+                    
+            //         count++;
+            //         if(count == countlimit){
+            //             progressThread.addProgress(count);
+            //             count = 0;                                                         
+            //         }
+            //     }
+            //     if(count > 0){
+            //         progressThread.addProgress(count);
+            //     }
+            // };
+
+            // threadPool.parallelFor(
+            //     pforHandle,
+            //     readIdBegin,
+            //     readIdEnd,
+            //     std::move(lambda));
+
+            TIMERSTARTCPU(newquery);
+            newGpuMinhasher.queryPrecalculatedSignatures(
+                h_signatures, //getNumberOfMaps() elements per sequence
+                rangesnew.data(), //getNumberOfMaps() elements per sequence
+                &totalNumResultsInRangesnew, 
+                curBatchsize
+            );
+            TIMERSTOPCPU(newquery);
+
+            TIMERSTARTCPU(oldquery);
+            minhasher.queryPrecalculatedSignatures(
+                h_signatures, //getNumberOfMaps() elements per sequence
+                rangesold.data(), //getNumberOfMaps() elements per sequence
+                &totalNumResultsInRangesold, 
+                curBatchsize
+            );
+            TIMERSTOPCPU(oldquery);
+
+            assert(totalNumResultsInRangesnew == totalNumResultsInRangesold);
+
+            for(int i = 0; i < curBatchsize; i++){
+                for(int h = 0; h < numHashFuncs; h++){
+                    auto rangeold = rangesold[i * numHashFuncs + h];
+                    auto rangenew = rangesnew[i * numHashFuncs + h];
+                    const int lold = std::distance(rangeold.first, rangeold.second);
+                    const int lnew= std::distance(rangenew.first, rangenew.second);
+                    assert(lold == lnew);
+                    
+                    for(int r = 0; r < lold; r++){
+                        assert(rangeold.first[r] == rangenew.first[r]);
+                    }
+
+                }
+            }
+
+
+
+            //TIMERSTOPCPU(insert);
+        }
+
+        progressThread.finished();
+
+        cudaStreamDestroy(stream); CUERR;
+
+}
+// ############################################
+#endif
         return result;
     }
 

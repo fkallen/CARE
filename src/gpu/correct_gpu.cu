@@ -5,7 +5,7 @@
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
-
+#include <gpu/gpuminhasher.cuh>
 #include <gpu/minhashkernels.hpp>
 
 #include <correctionresultprocessing.hpp>
@@ -72,6 +72,9 @@
 
 namespace care{
 namespace gpu{
+
+    //using Minhasher_t = Minhasher;
+    using Minhasher_t = GpuMinhasher;
 
     template<int gridsize, int blocksize>
     __global__
@@ -265,7 +268,7 @@ namespace gpu{
         int n_new_subjects = -1;
         std::atomic<int> n_queries{-1};
 
-        std::vector<Minhasher::Range_t> allRanges;
+        std::vector<Minhasher_t::Range_t> allRanges;
         std::vector<int> idsPerChunk;   
         std::vector<int> numAnchorsPerChunk;
         std::vector<int> idsPerChunkPrefixSum;
@@ -324,7 +327,7 @@ namespace gpu{
             nextData.h_minhashSignatures.resize(numMinhashMaps * batchsize);
             nextData.d_minhashSignatures.resize(numMinhashMaps * batchsize);
             
-            std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
+            std::vector<Minhasher_t::Range_t>& allRanges = nextData.allRanges;
             std::vector<int>& idsPerChunk = nextData.idsPerChunk;
             std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
             std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
@@ -730,7 +733,7 @@ namespace gpu{
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
 
         cpu::RangeGenerator<read_number>* readIdGenerator;
-		const Minhasher* minhasher;
+		const Minhasher_t* minhasher;
         const DistributedReadStorage* readStorage;
 		CorrectionOptions correctionOptions;
         GoodAlignmentProperties goodAlignmentProperties;
@@ -1266,7 +1269,7 @@ namespace gpu{
 
     // struct TransitionFunctionData {
 	// 	cpu::RangeGenerator<read_number>* readIdGenerator;
-	// 	const Minhasher* minhasher;
+	// 	const Minhasher_t* minhasher;
     //     const DistributedReadStorage* readStorage;
 	// 	CorrectionOptions correctionOptions;
     //     GoodAlignmentProperties goodAlignmentProperties;
@@ -1375,7 +1378,7 @@ namespace gpu{
 
 
 
-    void prepareNewDataForCorrection(Batch& batchData, int batchsize, const Minhasher& minhasher, const DistributedReadStorage& readStorage){
+    void prepareNewDataForCorrection(Batch& batchData, int batchsize, const Minhasher_t& minhasher, const DistributedReadStorage& readStorage){
         NextIterationData& nextData = batchData.nextIterationData;
 
         const int numCandidatesLimit = batchData.numCandidatesLimit;
@@ -1385,7 +1388,7 @@ namespace gpu{
         const size_t encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
         const int numMinhashMaps = minhasher.getNumberOfMaps();
 
-        std::vector<Minhasher::Range_t>& allRanges = nextData.allRanges;
+        std::vector<Minhasher_t::Range_t>& allRanges = nextData.allRanges;
         std::vector<int>& idsPerChunk = nextData.idsPerChunk;
         std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
         std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
@@ -1454,7 +1457,7 @@ namespace gpu{
 
         Batch* batchptr = &batchData;
         NextIterationData* nextDataPtr = &nextData;
-        const Minhasher* minhasherPtr = &minhasher;
+        const Minhasher_t* minhasherPtr = &minhasher;
 
         const int kmerSize = batchData.correctionOptions.kmerlength;
         const int numHashFunctions = numMinhashMaps;
@@ -1588,7 +1591,7 @@ namespace gpu{
             allRanges.data(), 
             numMinhashMaps * nextData.n_new_subjects, 
             nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            minhasherPtr->minparams.maps, 
+            minhasherPtr->getNumberOfMaps(), 
             nextData.stream,
             MergeRangesKernelType::allcub
         );
@@ -3474,7 +3477,7 @@ correct_gpu(
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        Minhasher& minhasher,
+        Minhasher_t& minhasher,
         DistributedReadStorage& readStorage){
 
     assert(runtimeOptions.canUseGpu);

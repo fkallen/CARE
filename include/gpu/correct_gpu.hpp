@@ -2,10 +2,12 @@
 #define CARE_CORRECT_GPU_HPP
 
 #include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpuminhasher.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
 #include <minhasher.hpp>
+
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <readstorage.hpp>
@@ -27,6 +29,18 @@ correct_gpu(
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
 	Minhasher& minhasher,
+	DistributedReadStorage& readStorage
+);
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+	const GoodAlignmentProperties& goodAlignmentProperties,
+	const CorrectionOptions& correctionOptions,
+	const RuntimeOptions& runtimeOptions,
+	const FileOptions& fileOptions,
+	const MemoryOptions& memoryOptions,
+	const SequenceFileProperties& sequenceFileProperties,
+	GpuMinhasher& minhasher,
 	DistributedReadStorage& readStorage
 );
 

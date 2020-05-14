@@ -91,6 +91,27 @@ namespace gpu{
             return resultsPerMapThreshold;
         }
 
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+
+            result.host = sizeof(HashTable) * minhashTables.size();
+            
+            for(const auto& tableptr : minhashTables){
+                auto m = tableptr->getMemoryInfo();
+                result.host += m.host;
+
+                for(auto pair : m.device){
+                    result.device[pair.first] += pair.second;
+                }
+            }
+
+            return result;
+        }
+
+        void destroy(){
+            minhashTables.clear();
+        }
+
         int calculateResultsPerMapThreshold(int coverage){
             int result = int(coverage * 2.5f);
             result = std::min(result, int(std::numeric_limits<BucketSize>::max()));
@@ -119,31 +140,6 @@ namespace gpu{
                 stream
             );
         }
-
-        void computeReadHashesOnGpu(
-            std::uint64_t* d_hashValues,
-            std::size_t hashValuesPitchInElements,
-            const unsigned int* d_encodedSequenceData,
-            std::size_t encodedSequencePitchInInts,
-            int numSequences,
-            const int* d_sequenceLengths,
-            int firstHashFunc,
-            cudaStream_t stream
-        ){
-            callMinhashSignaturesKernel_async(
-                d_hashValues,
-                hashValuesPitchInElements,
-                d_encodedSequenceData,
-                encodedSequencePitchInInts,
-                numSequences,
-                d_sequenceLengths,
-                getKmerSize(),
-                getNumberOfMaps(),
-                firstHashFunc,
-                stream
-            );
-        }
-
 
         void construct(
             const FileOptions &fileOptions,
@@ -207,7 +203,7 @@ namespace gpu{
 
                 auto updateMaxNumTables = [&](){
                     // (1 kmer + readid) per read
-                    std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) + numReads;
+                    std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * numReads;
                     maxNumTables = (maxMemoryForTables - bytesOfCachedConstructedTables) / requiredMemPerTable;
                     maxNumTables -= 2; // keep free memory of 2 tables to perform transformation 
                     std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
@@ -336,8 +332,8 @@ namespace gpu{
                             const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
                             HashTable hashTable(
-                                kmers, 
-                                readIds, 
+                                std::move(kmers), 
+                                std::move(readIds), 
                                 maxValuesPerKey,
                                 deviceIds
                             );
@@ -488,6 +484,54 @@ namespace gpu{
             minhashTables.emplace_back(std::make_unique<HashTable>(std::move(hm)));
         }
 
+        void computeReadHashesOnGpu(
+            std::uint64_t* d_hashValues,
+            std::size_t hashValuesPitchInElements,
+            const unsigned int* d_encodedSequenceData,
+            std::size_t encodedSequencePitchInInts,
+            int numSequences,
+            const int* d_sequenceLengths,
+            int numHashFuncs,
+            cudaStream_t stream
+        ){
+            callMinhashSignaturesKernel_async(
+                d_hashValues,
+                hashValuesPitchInElements,
+                d_encodedSequenceData,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                getKmerSize(),
+                numHashFuncs,
+                stream
+            );
+        }
+
+        void computeReadHashesOnGpu(
+            std::uint64_t* d_hashValues,
+            std::size_t hashValuesPitchInElements,
+            const unsigned int* d_encodedSequenceData,
+            std::size_t encodedSequencePitchInInts,
+            int numSequences,
+            const int* d_sequenceLengths,
+            int numHashFuncs,
+            int firstHashFunc,
+            cudaStream_t stream
+        ){
+            callMinhashSignaturesKernel_async(
+                d_hashValues,
+                hashValuesPitchInElements,
+                d_encodedSequenceData,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                getKmerSize(),
+                numHashFuncs,
+                firstHashFunc,
+                stream
+            );
+        }
+
         std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
         constructTablesWithGpuHashing(
             int numTables, 
@@ -600,18 +644,19 @@ namespace gpu{
                     stream
                 );
 
-                callMinhashSignaturesKernel_async(
+                computeReadHashesOnGpu(
                     d_signatures,
                     signaturesRowPitchElements,
                     d_sequenceData,
                     encodedSequencePitchInInts,
                     curBatchsize,
                     d_lengths,
-                    kmerSize,
                     numHashFuncs,
                     firstHashFunc,
                     stream
                 );
+
+                CUERR;
 
                 cudaMemcpyAsync(
                     h_signatures, 
@@ -713,7 +758,6 @@ namespace gpu{
 
             return assignedNumMaps;
     }
-
 
 
         int kmerSize;

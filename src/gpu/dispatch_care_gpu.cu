@@ -1,4 +1,5 @@
 #include <dispatch_care.hpp>
+#include <gpu/gpuminhasher.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -112,7 +113,30 @@ namespace care{
             return;
         }
 
-        printDataStructureMemoryUsage(minhasher, readStorage);
+
+
+        //printDataStructureMemoryUsage(minhasher, readStorage);
+
+        minhasher.destroy();
+
+        TIMERSTARTCPU(build_newgpuminhasher);
+        gpu::GpuMinhasher newGpuMinhasher(
+            correctionOptions.kmerlength, 
+            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+        );
+
+        newGpuMinhasher.construct(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            totalInputFileProperties.nReads, 
+            correctionOptions,
+            readStorage
+        );
+
+        TIMERSTOPCPU(build_newgpuminhasher);
+
+
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
@@ -125,13 +149,15 @@ namespace care{
             fileOptions, 
             memoryOptions,
             totalInputFileProperties,
-            minhasher, 
+            //minhasher, 
+            newGpuMinhasher,
             readStorage
         );
 
         TIMERSTOPCPU(STEP2);
 
-        minhasher.destroy();
+        //minhasher.destroy();
+        newGpuMinhasher.destroy();
         readStorage.destroy();
 
         //Merge corrected reads with input file to generate output file
