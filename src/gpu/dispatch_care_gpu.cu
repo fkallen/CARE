@@ -124,6 +124,18 @@ namespace care{
             }
         }
 
+        /*
+            Step 1: 
+            - load all reads from all input files into (gpu-)memory
+            - construct minhash signatures of all reads and store them in hash tables
+        */
+
+        TIMERSTARTCPU(STEP1);
+
+        std::cout << "STEP 1: Database construction" << std::endl;
+
+        TIMERSTARTCPU(build_readstorage);
+
         gpu::DistributedReadStorage readStorage(
             runtimeOptions.deviceIds, 
             maximumNumberOfReads, 
@@ -165,6 +177,8 @@ namespace care{
             TIMERSTOPCPU(save_to_file);
     		std::cout << "Saved reads" << std::endl;
         }
+
+        TIMERSTOPCPU(build_readstorage);
         
         SequenceFileProperties totalInputFileProperties;
 
@@ -201,35 +215,6 @@ namespace care{
         
 
 
-
-
-
-        // std::cout << "STEP 1: Database construction" << std::endl;
-
-        // TIMERSTARTCPU(STEP1);
-
-        // gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
-        //     correctionOptions,
-        //     runtimeOptions,
-        //     memoryOptions,
-        //     fileOptions
-        // );
-
-        // TIMERSTOPCPU(STEP1);
-
-        // if(correctionOptions.autodetectKmerlength){
-        //     correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
-        // }
-
-        // auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
-        // auto& minhasher = dataStructuresgpu.builtMinhasher.data;
-        // auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
-
-        // if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
-        //     std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
-        //     std::cout << "Abort!\n";
-        //     return;
-        // }
 
 
 
@@ -284,7 +269,7 @@ namespace care{
 
         TIMERSTOPCPU(build_newgpuminhasher);
 
-
+        TIMERSTOPCPU(STEP1)
 
 
 
