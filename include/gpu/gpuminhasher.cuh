@@ -112,6 +112,36 @@ namespace gpu{
             minhashTables.clear();
         }
 
+        void writeToStream(std::ostream& os) const{
+
+            os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
+    
+            const int numTables = getNumberOfMaps();
+            os.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
+    
+            for(const auto& tableptr : minhashTables){
+                tableptr->writeToStream(os);
+            }
+        }
+    
+        void loadFromStream(std::ifstream& is){
+            destroy();
+    
+            is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
+            is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+    
+            int numTables = 0;
+    
+            is.read(reinterpret_cast<char*>(&numTables), sizeof(int));
+    
+            for(int i = 0; i < numTables; i++){
+                HashTable table;
+                table.loadFromStream(is);
+                addHashTable(std::move(table));
+            }
+        }
+
         int calculateResultsPerMapThreshold(int coverage){
             int result = int(coverage * 2.5f);
             result = std::min(result, int(std::numeric_limits<BucketSize>::max()));
@@ -757,13 +787,15 @@ namespace gpu{
             }
 
             return assignedNumMaps;
-    }
+        }
 
 
         int kmerSize;
         int resultsPerMapThreshold;
         std::vector<std::unique_ptr<HashTable>> minhashTables;
     };
+
+
 
 
 
