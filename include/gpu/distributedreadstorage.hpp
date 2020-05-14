@@ -11,6 +11,7 @@
 #include <memorymanagement.hpp>
 
 #include <config.hpp>
+#include <options.hpp>
 #include <readlibraryio.hpp>
 
 #include <atomic>
@@ -104,6 +105,16 @@ public:
 	DistributedReadStorage(DistributedReadStorage&& other);
 
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
+
+    void construct(
+        std::vector<std::string> inputfiles,
+        bool useQualityScores,
+        read_number expectedNumberOfReads,
+        int expectedMinimumReadLength,
+        int expectedMaximumReadLength,
+        int threads,
+        bool showProgress
+    );
 
 	MemoryUsage getMemoryInfo() const;
     MemoryUsage getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const;

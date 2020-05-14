@@ -9,6 +9,7 @@
 #include <sequence.hpp>
 #include <readlibraryio.hpp>
 #include <threadpool.hpp>
+#include <util.hpp>
 
 #include <atomic>
 #include <fstream>
@@ -270,6 +271,201 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     rhs.hasMoved = true;
 
     return *this;
+}
+
+
+void DistributedReadStorage::construct(
+    std::vector<std::string> inputfiles,
+    bool useQualityScores,
+    read_number expectedNumberOfReads,
+    int expectedMinimumReadLength,
+    int expectedMaximumReadLength,
+    int threads,
+    bool showProgress
+){
+    constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
+
+    auto checkRead = [&, this](read_number readIndex, Read& read, int& Ncount){
+        const int readLength = int(read.sequence.size());
+
+        if(readIndex >= expectedNumberOfReads){
+            throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
+                                    + " reads, but file contains at least "
+                                    + std::to_string(readIndex+1) + " reads.");
+        }
+
+        if(readLength > expectedMaximumReadLength){
+            throw std::runtime_error("Error! Expected maximum read length = "
+                                    + std::to_string(expectedMaximumReadLength)
+                                    + ", but read " + std::to_string(readIndex)
+                                    + "has length " + std::to_string(readLength));
+        }
+
+        auto isValidBase = [](char c){
+            constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
+            return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+        };
+
+        const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
+            return !isValidBase(c);
+        });
+
+        //nmap[undeterminedBasesInRead]++;
+
+        if(undeterminedBasesInRead > 0){
+            setReadContainsN(readIndex, true);
+        }
+
+        for(auto& c : read.sequence){
+            if(c == 'a') c = 'A';
+            else if(c == 'c') c = 'C';
+            else if(c == 'g') c = 'G';
+            else if(c == 't') c = 'T';
+            else if(!isValidBase(c)){
+                c = bases[Ncount];
+                Ncount = (Ncount + 1) % 4;
+            }
+        }
+    };
+
+    constexpr size_t maxbuffersize = 1000000;
+    constexpr int numBuffers = 2;
+
+    std::array<std::vector<read_number>, numBuffers> indicesBuffers;
+    std::array<std::vector<Read>, numBuffers> readsBuffers;
+    std::array<bool, numBuffers> canBeUsed;
+    std::array<std::mutex, numBuffers> mutex;
+    std::array<std::condition_variable, numBuffers> cv;
+
+    ThreadPool threadPool(threads);
+
+    for(int i = 0; i < numBuffers; i++){
+        indicesBuffers[i].reserve(maxbuffersize);
+        readsBuffers[i].reserve(maxbuffersize);
+        canBeUsed[i] = true;
+    }
+
+    int bufferindex = 0;
+    read_number globalReadId = 0;
+
+    auto showProgressFunc = [show = showProgress](auto totalCount, auto seconds){
+        if(show){
+            std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                            << seconds << " seconds." << std::endl;
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration * 2;
+    };
+
+    ProgressThread<read_number> progressThread(
+        expectedNumberOfReads, 
+        showProgressFunc, 
+        updateShowProgressInterval
+    );
+
+    for(const auto& inputfile : inputfiles){
+        std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
+
+        forEachReadInFile(inputfile,
+                        [&](auto /*readnum*/, const auto& read){
+
+                if(!canBeUsed[bufferindex]){
+                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+                    if(!canBeUsed[bufferindex]){
+                        //std::cerr << "waiting for other buffer\n";
+                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+                    }
+                }
+
+                auto indicesBufferPtr = &indicesBuffers[bufferindex];
+                auto readsBufferPtr = &readsBuffers[bufferindex];
+                indicesBufferPtr->emplace_back(globalReadId);
+                readsBufferPtr->emplace_back(read);
+
+                ++globalReadId;
+
+                progressThread.addProgress(1);
+
+                if(indicesBufferPtr->size() >= maxbuffersize){
+                    canBeUsed[bufferindex] = false;
+
+                    //std::cerr << "launch other thread\n";
+                    threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        //std::cerr << "buffer " << bufferindex << " running\n";
+                        int nmodcounter = 0;
+
+                        for(int i = 0; i < int(readsBufferPtr->size()); i++){
+                            read_number readId = (*indicesBufferPtr)[i];
+                            auto& read = (*readsBufferPtr)[i];
+                            checkRead(readId, read, nmodcounter);
+                        }
+
+                        setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
+
+                        //TIMERSTARTCPU(clear);
+                        indicesBufferPtr->clear();
+                        readsBufferPtr->clear();
+                        //TIMERSTOPCPU(clear);
+                        
+                        std::lock_guard<std::mutex> l(mutex[bufferindex]);
+                        canBeUsed[bufferindex] = true;
+                        cv[bufferindex].notify_one();
+
+                        //std::cerr << "buffer " << bufferindex << " finished\n";
+                    });
+
+                    bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
+                }
+
+        });
+    }
+
+    auto indicesBufferPtr = &indicesBuffers[bufferindex];
+    auto readsBufferPtr = &readsBuffers[bufferindex];
+
+    if(int(readsBufferPtr->size()) > 0){
+        if(!canBeUsed[bufferindex]){
+            std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+            if(!canBeUsed[bufferindex]){
+                //std::cerr << "waiting for other buffer\n";
+                cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+            }
+        }
+
+        int nmodcounter = 0;
+
+        for(int i = 0; i < int(readsBufferPtr->size()); i++){
+            read_number readId = (*indicesBufferPtr)[i];
+            auto& read = (*readsBufferPtr)[i];
+            checkRead(readId, read, nmodcounter);
+        }
+
+        setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
+
+        indicesBufferPtr->clear();
+        readsBufferPtr->clear();
+    }
+
+    for(int i = 0; i < numBuffers; i++){
+        std::unique_lock<std::mutex> ul(mutex[i]);
+        if(!canBeUsed[i]){
+            //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
+            cv[i].wait(ul, [&](){ return canBeUsed[i]; });
+        }
+    }
+
+    progressThread.finished();
+
+    // std::cerr << "occurences of n/N:\n";
+    // for(const auto& p : nmap){
+    //     std::cerr << p.first << " " << p.second << '\n';
+    // }
+
+    constructionIsComplete();
+
+        
 }
 
 MemoryUsage DistributedReadStorage::getMemoryInfo() const{

@@ -5,7 +5,7 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 #include <minhasher.hpp>
-#include <build.hpp>
+//#include <build.hpp>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
@@ -86,38 +86,156 @@ namespace care{
             return;
         }
 
-        std::cout << "STEP 1: Database construction" << std::endl;
+        std::uint64_t maximumNumberOfReads = fileOptions.nReads;
+        int maximumSequenceLength = fileOptions.maximum_sequence_length;
+        int minimumSequenceLength = fileOptions.minimum_sequence_length;
+        bool scanned = false;
 
-        TIMERSTARTCPU(STEP1);
+        if(fileOptions.load_binary_reads_from == ""){
 
-        gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
-            correctionOptions,
-            runtimeOptions,
-            memoryOptions,
-            fileOptions
+            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
+                std::cout << "STEP 0: Determine input size" << std::endl;
+                
+                std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
+
+                maximumNumberOfReads = 0;
+                maximumSequenceLength = 0;
+                minimumSequenceLength = std::numeric_limits<int>::max();
+
+                for(const auto& inputfile : fileOptions.inputfiles){
+                    auto prop = getSequenceFileProperties(inputfile, runtimeOptions.showProgress);
+                    maximumNumberOfReads += prop.nReads;
+                    maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
+                    minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
+
+                    std::cout << "----------------------------------------\n";
+                    std::cout << "File: " << inputfile << "\n";
+                    std::cout << "Reads: " << prop.nReads << "\n";
+                    std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
+                    std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
+                    std::cout << "----------------------------------------\n";
+
+                    //result.inputFileProperties.emplace_back(prop);
+                }
+
+                scanned = true;
+            }else{
+                //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
+            }
+        }
+
+        gpu::DistributedReadStorage readStorage(
+            runtimeOptions.deviceIds, 
+            maximumNumberOfReads, 
+            correctionOptions.useQualityScores, 
+            minimumSequenceLength, 
+            maximumSequenceLength
         );
 
-        TIMERSTOPCPU(STEP1);
+        if(fileOptions.load_binary_reads_from != ""){
+
+            TIMERSTARTCPU(load_from_file);
+            readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
+            TIMERSTOPCPU(load_from_file);
+
+            if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
+                throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
+            if(!correctionOptions.useQualityScores && readStorage.canUseQualityScores())
+                std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
+
+            std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
+
+            readStorage.constructionIsComplete();
+        }else{
+            readStorage.construct(
+                fileOptions.inputfiles,
+                correctionOptions.useQualityScores,
+                maximumNumberOfReads,
+                minimumSequenceLength,
+                maximumSequenceLength,
+                runtimeOptions.threads,
+                runtimeOptions.showProgress
+            );
+        }
+
+        if(fileOptions.save_binary_reads_to != "") {
+            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+            TIMERSTARTCPU(save_to_file);
+            readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            TIMERSTOPCPU(save_to_file);
+    		std::cout << "Saved reads" << std::endl;
+        }
+        
+        SequenceFileProperties totalInputFileProperties;
+
+        totalInputFileProperties.nReads = readStorage.getNumberOfReads();
+        totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+
+        if(!scanned){
+            std::cout << "Determined the following read properties:\n";
+            std::cout << "----------------------------------------\n";
+            std::cout << "Total number of reads: " << totalInputFileProperties.nReads << "\n";
+            std::cout << "Minimum sequence length: " << totalInputFileProperties.minSequenceLength << "\n";
+            std::cout << "Maximum sequence length: " << totalInputFileProperties.maxSequenceLength << "\n";
+            std::cout << "----------------------------------------\n";
+        }
 
         if(correctionOptions.autodetectKmerlength){
-            correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
+            const int maxlength = totalInputFileProperties.maxSequenceLength;
+
+            auto getKmerSizeForHashing = [](int maximumReadLength){
+                if(maximumReadLength < 160){
+                    return 20;
+                }else{
+                    return 32;
+                }
+            };
+
+            correctionOptions.kmerlength = getKmerSizeForHashing(maxlength);
+
+            std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
         }
 
-        auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
-        auto& minhasher = dataStructuresgpu.builtMinhasher.data;
-        auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
+        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
+        
 
-        if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
-            std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
-            std::cout << "Abort!\n";
-            return;
-        }
+
+
+
+
+        // std::cout << "STEP 1: Database construction" << std::endl;
+
+        // TIMERSTARTCPU(STEP1);
+
+        // gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures2(
+        //     correctionOptions,
+        //     runtimeOptions,
+        //     memoryOptions,
+        //     fileOptions
+        // );
+
+        // TIMERSTOPCPU(STEP1);
+
+        // if(correctionOptions.autodetectKmerlength){
+        //     correctionOptions.kmerlength = dataStructuresgpu.kmerlength;
+        // }
+
+        // auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
+        // auto& minhasher = dataStructuresgpu.builtMinhasher.data;
+        // auto& totalInputFileProperties = dataStructuresgpu.totalInputFileProperties;
+
+        // if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
+        //     std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
+        //     std::cout << "Abort!\n";
+        //     return;
+        // }
 
 
 
         //printDataStructureMemoryUsage(minhasher, readStorage);
 
-        minhasher.destroy();
+        //minhasher.destroy();
 
         TIMERSTARTCPU(build_newgpuminhasher);
         gpu::GpuMinhasher newGpuMinhasher(
@@ -165,6 +283,9 @@ namespace care{
 
 
         TIMERSTOPCPU(build_newgpuminhasher);
+
+
+
 
 
 
