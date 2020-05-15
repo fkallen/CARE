@@ -14,7 +14,7 @@
 #include <qualityscoreweights.hpp>
 #include <sequence.hpp>
 
-#include <minhasher.hpp>
+//#include <minhasher.hpp>
 #include <options.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
