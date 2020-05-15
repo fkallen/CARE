@@ -351,8 +351,8 @@ struct ParallelForLoopExecutor{
         : threadPool(tp), pforHandle(handle){}
 
     template<class Index_t, class Func>
-    void operator()(Index_t begin, Index_t end, Func&& loopbody){
-        threadPool->parallelFor(
+    int operator()(Index_t begin, Index_t end, Func&& loopbody){
+        return threadPool->parallelFor(
             *pforHandle, 
             begin, 
             end, 
@@ -361,11 +361,24 @@ struct ParallelForLoopExecutor{
     }
 
     int getNumThreads() const{
-        return threadPool->getConcurrency()+1;
+        return threadPool->getConcurrency()+1; // the calling thread of operator() is used for processing, too.
     }
 
     ThreadPool* threadPool;
     ThreadPool::ParallelForHandle* pforHandle;
+};
+
+struct SequentialForLoopExecutor{
+    template<class Index_t, class Func>
+    int operator()(Index_t begin, Index_t end, Func&& loopbody){
+        const int threadId = 0;
+        loopbody(begin, end, threadId);
+        return 1;
+    }
+
+    int getNumThreads() const{
+        return 1; // the calling thread of operator() is used for processing, too.
+    }
 };
 
 
