@@ -3,6 +3,7 @@
 
 #include <config.hpp>
 
+#include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/gpuhashtable.cuh>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
@@ -23,6 +24,8 @@
 #include <limits>
 #include <string>
 #include <fstream>
+#include <algorithm>
+
 
 namespace care{
 namespace gpu{
@@ -40,6 +43,114 @@ namespace gpu{
         static constexpr std::uint64_t kmer_mask = (std::uint64_t(1) << (bits_kmer - 1)) 
                                                     | ((std::uint64_t(1) << (bits_kmer - 1)) - 1);
 
+        struct QueryHandle{
+            static constexpr int overprovisioningPercent = 0;
+
+            template<class T>
+            using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+            
+            template<class T>
+            using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+
+            int deviceId;
+
+            DeviceBuffer<std::uint64_t> d_minhashSignatures;
+            PinnedBuffer<std::uint64_t> h_minhashSignatures;
+
+            PinnedBuffer<read_number> h_candidate_read_ids_tmp;
+            DeviceBuffer<read_number> d_candidate_read_ids_tmp;
+
+            std::vector<Range_t> allRanges;
+            std::vector<int> idsPerChunk;   
+            std::vector<int> numAnchorsPerChunk;
+            std::vector<int> idsPerChunkPrefixSum;
+            std::vector<int> numAnchorsPerChunkPrefixSum;
+
+            MergeRangesGpuHandle<read_number> mergeHandle;
+
+
+            void resize(const GpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
+                const std::size_t maximumResultSize 
+                    = minhasher.getNumResultsPerMapThreshold() * minhasher.getNumberOfMaps() * numSequences;
+
+                d_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
+                h_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
+                h_candidate_read_ids_tmp.resize(maximumResultSize);
+                d_candidate_read_ids_tmp.resize(maximumResultSize);
+            
+                allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
+                idsPerChunk.resize(numThreads, 0);   
+                numAnchorsPerChunk.resize(numThreads, 0);
+                idsPerChunkPrefixSum.resize(numThreads, 0);
+                numAnchorsPerChunkPrefixSum.resize(numThreads, 0);
+            }
+
+            MemoryUsage getMemoryInfo() const{
+                MemoryUsage info;
+                info.host = 0;
+                info.device[deviceId] = 0;
+    
+                auto handlehost = [&](const auto& buff){
+                    info.host += buff.capacityInBytes();
+                };
+    
+                auto handledevice = [&](const auto& buff){
+                    info.device[deviceId] += buff.capacityInBytes();
+                };
+
+                auto handlevector = [&](const auto& buff){
+                    info.host += 
+                        sizeof(typename std::remove_reference<decltype(buff)>::type::value_type) * buff.capacity();
+                };
+    
+                handlehost(h_minhashSignatures);
+                handlehost(h_candidate_read_ids_tmp);
+    
+                handledevice(d_minhashSignatures);
+                handledevice(d_candidate_read_ids_tmp);
+
+                handlevector(allRanges);
+                handlevector(idsPerChunk);
+                handlevector(numAnchorsPerChunk);
+                handlevector(idsPerChunkPrefixSum);
+                handlevector(numAnchorsPerChunkPrefixSum);
+    
+                return info;
+            }
+
+            void destroy(){
+                int cur = 0;
+                cudaGetDevice(&cur); CUERR;
+                cudaSetDevice(deviceId); CUERR;
+
+                destroyMergeRangesGpuHandle(mergeHandle);
+
+                d_minhashSignatures.destroy();
+                h_minhashSignatures.destroy();
+                h_candidate_read_ids_tmp.destroy();
+                d_candidate_read_ids_tmp.destroy();
+
+                allRanges.clear();
+                allRanges.shrink_to_fit();
+
+                cudaSetDevice(cur); CUERR;
+            }
+        };
+
+        static QueryHandle makeQueryHandle(){
+            QueryHandle handle;
+
+            handle.mergeHandle = makeMergeRangesGpuHandle<read_number>();
+
+            cudaGetDevice(&handle.deviceId); CUERR;
+
+            return handle;
+        }
+
+        static void destroyQueryHandle(QueryHandle& handle){
+            handle.destroy();
+        }
+
 
         GpuMinhasher() : GpuMinhasher(16, 50){
 
@@ -54,6 +165,184 @@ namespace gpu{
         GpuMinhasher(GpuMinhasher&&) = default;
         GpuMinhasher& operator=(const GpuMinhasher&) = delete;
         GpuMinhasher& operator=(GpuMinhasher&&) = default;
+
+
+        template<class ParallelForLoop>
+        void getIdsOfSimilarReads(
+            QueryHandle& handle,
+            const read_number* d_readIds,
+            const unsigned int* d_encodedSequences,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int deviceId, 
+            cudaStream_t stream,
+            ParallelForLoop parallelFor,
+            read_number* d_similarReadIds,
+            int* d_similarReadsPerSequence,
+            int* d_similarReadsPerSequencePrefixSum
+        ) const{
+
+            int currentDeviceId = 0;
+            cudaGetDevice(&currentDeviceId); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+
+            const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
+
+            handle.d_minhashSignatures.resize(getNumberOfMaps() * numSequences);
+            handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
+            handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
+            handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
+
+            std::vector<Range_t>& allRanges = handle.allRanges;
+            std::vector<int>& idsPerChunk = handle.idsPerChunk;   
+            std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
+            std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
+            std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
+
+            const int maxNumThreads = parallelFor.getNumThreads();
+
+            allRanges.resize(getNumberOfMaps() * numSequences);
+            idsPerChunk.resize(maxNumThreads, 0);   
+            numAnchorsPerChunk.resize(maxNumThreads, 0);
+            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+
+            const std::size_t hashValuesPitchInElements = getNumberOfMaps();
+
+            computeReadHashesOnGpu(
+                handle.d_minhashSignatures.get(),
+                hashValuesPitchInElements,
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                stream
+            );
+
+            cudaMemcpyAsync(
+                handle.h_minhashSignatures.get(),
+                handle.d_minhashSignatures.get(),
+                handle.h_minhashSignatures.sizeInBytes(),
+                H2D,
+                stream
+            ); CUERR;
+
+
+            std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
+            std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
+    
+            cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures anchor data
+    
+            auto querySignatures2 = [&, this](int begin, int end, int threadId){
+    
+                const int chunksize = end - begin;
+    
+                int totalNumResults = 0;
+    
+                nvtx::push_range("queryPrecalculatedSignatures", 6);
+                queryPrecalculatedSignatures(
+                    handle.h_minhashSignatures.get() + begin * getNumberOfMaps(),
+                    allRanges.data() + begin * getNumberOfMaps(),
+                    &totalNumResults, 
+                    chunksize
+                );
+    
+                idsPerChunk[threadId] = totalNumResults;
+                numAnchorsPerChunk[threadId] = chunksize;
+                nvtx::pop_range();
+            };
+    
+            const int numChunksRequired = parallelFor(
+                0, 
+                numSequences, 
+                [=](auto begin, auto end, auto threadId){
+                    querySignatures2(begin, end, threadId);
+                }
+            );
+
+            //exclusive prefix sum
+            idsPerChunkPrefixSum[0] = 0;
+            for(int i = 0; i < numChunksRequired; i++){
+                idsPerChunkPrefixSum[i+1] = idsPerChunkPrefixSum[i] + idsPerChunk[i];
+            }
+
+            numAnchorsPerChunkPrefixSum[0] = 0;
+            for(int i = 0; i < numChunksRequired; i++){
+                numAnchorsPerChunkPrefixSum[i+1] = numAnchorsPerChunkPrefixSum[i] + numAnchorsPerChunk[i];
+            }
+
+            const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
+
+            //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
+            //then copy to the device
+
+            auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
+                nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
+                for(int chunkId = begin; chunkId < end; chunkId++){
+                    const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    const size_t elementsInChunk = idsPerChunk[chunkId];
+    
+                    const auto* ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * getNumberOfMaps();
+    
+                    auto* dest = hostdatabegin;
+    
+                    const int lmax = numAnchorsPerChunk[chunkId] * getNumberOfMaps();
+    
+                    for(int k = 0; k < lmax; k++){
+                        constexpr int nextprefetch = 2;
+    
+                        //prefetch first element of next range if the next range is not empty
+                        if(k+nextprefetch < lmax){
+                            if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
+                                __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                            }
+                        }
+                        const auto& range = ranges[k];
+                        dest = std::copy(range.first, range.second, dest);
+                    }
+    
+                    cudaMemcpyAsync(
+                        devicedatabegin,
+                        hostdatabegin,
+                        sizeof(read_number) * elementsInChunk,
+                        H2D,
+                        stream
+                    ); CUERR;
+                }
+                nvtx::pop_range();
+            };
+    
+            parallelFor(
+                0, 
+                numChunksRequired, 
+                [=](auto begin, auto end, auto threadId){
+                    copyCandidateIdsToContiguousMem(begin, end, threadId);
+                }
+            );
+
+            nvtx::push_range("gpumakeUniqueQueryResults", 2);
+            mergeRangesGpuAsync(
+                handle.mergeHandle, 
+                d_similarReadIds,
+                d_similarReadsPerSequence,
+                d_similarReadsPerSequencePrefixSum,
+                handle.d_candidate_read_ids_tmp.get(),
+                allRanges.data(), 
+                getNumberOfMaps() * numSequences, 
+                d_readIds,
+                getNumberOfMaps(), 
+                stream,
+                MergeRangesKernelType::allcub
+            );
+    
+            nvtx::pop_range();
+
+
+            cudaSetDevice(currentDeviceId); CUERR;
+
+        }
                                                     
 
         void queryPrecalculatedSignatures(
@@ -157,7 +446,7 @@ namespace gpu{
             int numSequences,
             const int* d_sequenceLengths,
             cudaStream_t stream
-        ){
+        ) const{
             callMinhashSignaturesKernel_async(
                 d_hashValues,
                 hashValuesPitchInElements,
@@ -523,7 +812,7 @@ namespace gpu{
             const int* d_sequenceLengths,
             int numHashFuncs,
             cudaStream_t stream
-        ){
+        ) const{
             callMinhashSignaturesKernel_async(
                 d_hashValues,
                 hashValuesPitchInElements,
@@ -547,7 +836,7 @@ namespace gpu{
             int numHashFuncs,
             int firstHashFunc,
             cudaStream_t stream
-        ){
+        ) const{
             callMinhashSignaturesKernel_async(
                 d_hashValues,
                 hashValuesPitchInElements,

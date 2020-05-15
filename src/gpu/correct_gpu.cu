@@ -274,6 +274,9 @@ namespace gpu{
         std::vector<int> idsPerChunkPrefixSum;
         std::vector<int> numAnchorsPerChunkPrefixSum;
 
+        const GpuMinhasher* gpuMinhasher;
+        GpuMinhasher::QueryHandle minhasherQueryHandle;
+
         cudaStream_t stream;
         cudaEvent_t event;
         int deviceId;
@@ -284,7 +287,8 @@ namespace gpu{
 
         SyncFlag syncFlag;
 
-        void init(            
+        void init(   
+            const GpuMinhasher& minhasher,         
             int deviceId,
             int batchsize,
             int numCandidatesLimit,
@@ -295,6 +299,8 @@ namespace gpu{
         ){
             NextIterationData& nextData = *this;
 
+            nextData.gpuMinhasher = &minhasher;
+
             nextData.deviceId = deviceId;
     
             cudaSetDevice(deviceId); CUERR;
@@ -302,6 +308,9 @@ namespace gpu{
             cudaEventCreate(&nextData.event); CUERR;
     
             nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
+            nextData.minhasherQueryHandle = GpuMinhasher::makeQueryHandle();
+
+            nextData.minhasherQueryHandle.resize(minhasher, batchsize, maxNumThreads);
     
             nextData.d_numLeftoverAnchors.resize(1);
             nextData.d_numLeftoverCandidates.resize(1);
@@ -397,6 +406,7 @@ namespace gpu{
             nextData.h_leftoverAnchorReadIds.destroy();
     
             destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
+            GpuMinhasher::destroyQueryHandle(nextData.minhasherQueryHandle);
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -441,6 +451,14 @@ namespace gpu{
             handledevice(d_leftoverCandidateReadIds);
             handledevice(d_leftoverCandidatesPerAnchors);
             handledevice(d_leftoverAnchorSequences);
+
+            auto queryHandleInfo = minhasherQueryHandle.getMemoryInfo();
+
+            info.host += queryHandleInfo.host;
+
+            for(auto pair : queryHandleInfo.device){
+                info.device[pair.first] += pair.second;
+            }
 
             return info;
         }
@@ -1462,6 +1480,28 @@ namespace gpu{
         const int kmerSize = batchData.correctionOptions.kmerlength;
         const int numHashFunctions = numMinhashMaps;
 
+        const int numLeftoverCandidates = nextData.h_numLeftoverCandidates[0];
+
+#if 1
+        ParallelForLoopExecutor parallelFor(batchData.threadPool, &nextData.pforHandle);
+
+        minhasherPtr->getIdsOfSimilarReads(
+            nextData.minhasherQueryHandle,
+            readIdsBegin + numLeftoverAnchors,
+            nextData.d_leftoverAnchorSequences.get() + numLeftoverAnchors * encodedSequencePitchInInts,
+            encodedSequencePitchInInts,
+            nextData.d_leftoverAnchorLengths.get() + numLeftoverAnchors,
+            nextData.n_new_subjects,
+            nextData.deviceId, 
+            nextData.stream,
+            parallelFor,
+            nextData.d_leftoverCandidateReadIds.get() + numLeftoverCandidates,
+            nextData.d_leftoverCandidatesPerAnchors.get() + numLeftoverAnchors,
+            nextData.d_candidates_per_subject_prefixsum.get() + numLeftoverAnchors
+        );
+
+#else
+
         callMinhashSignaturesKernel_async(
             nextData.d_minhashSignatures.get(),
             numMinhashMaps,
@@ -1530,7 +1570,7 @@ namespace gpu{
 
         const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
         //std::cerr << "totalNumIds = " << totalNumIds << "\n";
-        const int numLeftoverCandidates = nextData.h_numLeftoverCandidates[0];
+        
 
         auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
             nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
@@ -1597,6 +1637,7 @@ namespace gpu{
         );
 
         nvtx::pop_range();
+#endif
 
         nvtx::push_range("leftover_calculation", 3);
 
@@ -3647,6 +3688,7 @@ correct_gpu(
 
 
             batchData.nextIterationData.init( 
+                minhasher,
                 batchData.deviceId,
                 correctionOptions.batchsize,
                 batchData.numCandidatesLimit,
