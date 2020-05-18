@@ -267,12 +267,6 @@ namespace gpu{
         int n_new_subjects = -1;
         std::atomic<int> n_queries{-1};
 
-        std::vector<Minhasher_t::Range_t> allRanges;
-        std::vector<int> idsPerChunk;   
-        std::vector<int> numAnchorsPerChunk;
-        std::vector<int> idsPerChunkPrefixSum;
-        std::vector<int> numAnchorsPerChunkPrefixSum;
-
         const GpuMinhasher* gpuMinhasher;
         GpuMinhasher::QueryHandle minhasherQueryHandle;
 
@@ -332,19 +326,7 @@ namespace gpu{
             nextData.d_subject_sequences_lengths.resize(batchsize);
             nextData.h_subject_read_ids.resize(batchsize);
             nextData.d_subject_read_ids.resize(batchsize);
-            
-            std::vector<Minhasher_t::Range_t>& allRanges = nextData.allRanges;
-            std::vector<int>& idsPerChunk = nextData.idsPerChunk;
-            std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
-            std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
-            std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
-        
-            allRanges.resize(numMinhashMaps * batchsize);
-            idsPerChunk.resize(maxNumThreads, 0);   
-            numAnchorsPerChunk.resize(maxNumThreads, 0);
-            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
-    
+                
             const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
     
             nextData.h_candidate_read_ids.resize(maxNumIds);
@@ -1410,12 +1392,6 @@ namespace gpu{
 
         const size_t encodedSequencePitchInInts = batchData.encodedSequencePitchInInts;
         const int numMinhashMaps = minhasher.getNumberOfMaps();
-
-        std::vector<Minhasher_t::Range_t>& allRanges = nextData.allRanges;
-        std::vector<int>& idsPerChunk = nextData.idsPerChunk;
-        std::vector<int>& numAnchorsPerChunk = nextData.numAnchorsPerChunk;
-        std::vector<int>& idsPerChunkPrefixSum = nextData.idsPerChunkPrefixSum;
-        std::vector<int>& numAnchorsPerChunkPrefixSum = nextData.numAnchorsPerChunkPrefixSum;
 
         const int resultsPerMap = calculateResultsPerMapThreshold(batchData.correctionOptions.estimatedCoverage);
         const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
