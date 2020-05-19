@@ -601,13 +601,31 @@ namespace gpu{
                     cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
 
                     std::size_t availableMemoryToSaveGpuPartitions = totalLimit;
+                    // account for the currently calculated minhash signatures
+                    for(const auto& vec : initialMinhashes.first){
+                        const std::size_t sub = vec.capacity() * sizeof(kmer_type);
+                        if(availableMemoryToSaveGpuPartitions > sub){
+                            availableMemoryToSaveGpuPartitions -= sub;
+                        }else{
+                            availableMemoryToSaveGpuPartitions = 0;
+                        }
+                    }
+                    for(const auto& vec : initialMinhashes.second){
+                        const std::size_t sub = vec.capacity() * sizeof(read_number);
+                        if(availableMemoryToSaveGpuPartitions > sub){
+                            availableMemoryToSaveGpuPartitions -= sub;
+                        }else{
+                            availableMemoryToSaveGpuPartitions = 0;
+                        }
+                    }
                     //account for constructed tables in previous iteration
                     if(availableMemoryToSaveGpuPartitions > bytesOfCachedConstructedTables){
                         availableMemoryToSaveGpuPartitions -= bytesOfCachedConstructedTables;
                     }else{
                         availableMemoryToSaveGpuPartitions = 0;
                     }
-                    //account for constructed tables in current iteration and space needed by transformation
+
+                    //TODO fix this. signatures are already being accounted for. determine memory required for transformation
                     for(int i = 0; i < 2 + int(minhashTables.size()); i++){
                         const std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
                         if(availableMemoryToSaveGpuPartitions > requiredMemPerTable){
@@ -683,8 +701,8 @@ namespace gpu{
                             const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
                             HashTable hashTable(
-                                kmers, 
-                                readIds, 
+                                std::move(kmers), 
+                                std::move(readIds), 
                                 maxValuesPerKey,
                                 deviceIds
                             );
@@ -692,7 +710,6 @@ namespace gpu{
                             numConstructedTables++;     
 
                             auto memoryUsage = hashTable.getMemoryInfo();
-
                             if(allowCaching){
                                 bytesOfCachedConstructedTables += memoryUsage.host;
                                 cachedConstructedTables.emplace_back(std::move(hashTable));
