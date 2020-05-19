@@ -10,6 +10,8 @@
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
 
+#include <rangegenerator.hpp>
+
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -270,6 +272,286 @@ namespace care{
         TIMERSTOPCPU(build_newgpuminhasher);
 
         TIMERSTOPCPU(STEP1)
+
+
+
+#if 1
+
+        maximumNumberOfReads = totalInputFileProperties.nReads;
+        maximumSequenceLength = totalInputFileProperties.maxSequenceLength;
+        minimumSequenceLength = totalInputFileProperties.minSequenceLength;
+
+        // timing of querying all reads. Executing on gpu 0
+
+        const int deviceId = 0;
+        cudaSetDevice(deviceId); CUERR;
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+
+        const int maxbatchsize = 1000; // number of reads to query simultaneously
+
+        {
+
+            using DeviceBufferRN = SimpleAllocationDevice<read_number, 0>;
+            using PinnedBufferRN = SimpleAllocationPinnedHost<read_number, 0>;
+            using DeviceBufferUint = SimpleAllocationDevice<unsigned int, 0>;
+            using DeviceBufferInt = SimpleAllocationDevice<int, 0>;
+
+
+            const int encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+            const int numHashFunctions = newGpuMinhasher.getNumberOfMaps();
+            const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+            const int maxResultIds = resultsPerMap * numHashFunctions * maxbatchsize;
+
+
+            DeviceBufferRN d_readIds(maxbatchsize);
+            PinnedBufferRN h_readIds(maxbatchsize);
+            DeviceBufferUint d_encodedSequences(encodedSequencePitchInInts * maxbatchsize);
+            DeviceBufferInt d_sequenceLengths(maxbatchsize);
+            
+            DeviceBufferRN d_queryresults(maxResultIds);
+            DeviceBufferInt d_numResultsPerReadId(maxbatchsize);
+            DeviceBufferInt d_numResultsPerReadIdExclPrefixSum(maxbatchsize+1); // plus total count as last element
+
+
+            SimpleAllocationDevice<std::uint64_t, 0> d_normalhashvalues(numHashFunctions * maxbatchsize);
+            SimpleAllocationDevice<std::uint64_t, 0> d_uniquehashvalues(numHashFunctions * maxbatchsize);
+            SimpleAllocationDevice<std::uint64_t, 0> d_temp(numHashFunctions * maxbatchsize);
+            SimpleAllocationDevice<int, 0> d_hashfuncids(numHashFunctions * maxbatchsize);
+            SimpleAllocationDevice<int, 0> d_signaturesizes(maxbatchsize);
+
+            SimpleAllocationPinnedHost<int, 0> h_signaturesizes(maxbatchsize);
+
+            const int threadPoolSize = std::max(1, runtimeOptions.threads - 3*int(runtimeOptions.deviceIds.size()));
+
+            ThreadPool threadPool(threadPoolSize);
+            auto sequenceGatherHandle = readStorage.makeGatherHandleSequences();
+            auto minhasherQueryHandle = gpu::GpuMinhasher::makeQueryHandle();
+            minhasherQueryHandle.resize(newGpuMinhasher, maxbatchsize, threadPoolSize);
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            cpu::RangeGenerator<read_number> readIdGenerator(maximumNumberOfReads);
+
+            auto showProgress = [&](std::int64_t totalCount, int seconds){
+                if(runtimeOptions.showProgress){
+    
+                    int hours = seconds / 3600;
+                    seconds = seconds % 3600;
+                    int minutes = seconds / 60;
+                    seconds = seconds % 60;
+                    
+                    printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, maximumNumberOfReads,
+                    hours, minutes, seconds);
+                }
+            };
+    
+            auto updateShowProgressInterval = [](auto duration){
+                return duration;
+            };
+    
+            ProgressThread<std::int64_t> progressThread(maximumNumberOfReads, showProgress, updateShowProgressInterval);
+    
+            cudaEvent_t eventbegin, eventend;
+            cudaEventCreate(&eventbegin); CUERR;
+            cudaEventCreate(&eventend); CUERR;
+
+            float minhashtimeold = 0;
+            float minhashtimenew = 0;
+
+            std::map<int, int> numHashvaluesToFrequencyMap;
+            
+            while(!readIdGenerator.empty()){                
+
+                auto hreadIdsEnd = readIdGenerator.next_n_into_buffer(
+                    maxbatchsize, 
+                    h_readIds.get()
+                );
+
+                const int currentbatchsize = std::distance(h_readIds.get(), hreadIdsEnd);
+
+                cudaMemcpyAsync(
+                    d_readIds.get(),
+                    h_readIds.get(),
+                    sizeof(read_number) * currentbatchsize,
+                    H2D,
+                    stream
+                ); CUERR;
+
+
+                readStorage.gatherSequenceDataToGpuBufferAsync(
+                    &threadPool,
+                    sequenceGatherHandle,
+                    d_encodedSequences.get(),
+                    encodedSequencePitchInInts,
+                    h_readIds.get(),
+                    d_readIds.get(),
+                    currentbatchsize,
+                    deviceId,
+                    stream
+                );
+        
+                readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                    d_sequenceLengths.get(),
+                    deviceId,
+                    d_readIds.get(),
+                    currentbatchsize,         
+                    stream
+                );
+
+                ParallelForLoopExecutor parallelFor(&threadPool, &pforHandle);
+
+                cudaEventRecord(eventbegin, stream); CUERR;
+
+                callMinhashSignaturesKernel_async(
+                    d_normalhashvalues.get(),
+                    numHashFunctions,
+                    d_encodedSequences.get(),
+                    encodedSequencePitchInInts,
+                    currentbatchsize,
+                    d_sequenceLengths.get(),
+                    correctionOptions.kmerlength,
+                    numHashFunctions,
+                    stream
+                );
+
+                cudaEventRecord(eventend, stream); CUERR;
+
+                cudaEventSynchronize(eventend); CUERR;
+
+                float deltaold = 0;
+                cudaEventElapsedTime(&deltaold, eventbegin, eventend);
+
+                minhashtimeold += deltaold;
+
+
+                cudaEventRecord(eventbegin, stream); CUERR;
+
+                callUniqueMinhashSignaturesKernel_async(
+                    d_temp.get(),
+                    d_uniquehashvalues.get(),
+                    numHashFunctions,
+                    d_hashfuncids.get(),
+                    numHashFunctions,
+                    d_signaturesizes.get(),
+                    d_encodedSequences.get(),
+                    encodedSequencePitchInInts,
+                    currentbatchsize,
+                    d_sequenceLengths.get(),
+                    correctionOptions.kmerlength,
+                    numHashFunctions,
+                    stream
+                );
+
+                cudaEventRecord(eventend, stream); CUERR;
+
+                cudaEventSynchronize(eventend); CUERR;
+
+                float deltanew = 0;
+                cudaEventElapsedTime(&deltanew, eventbegin, eventend);
+
+                minhashtimenew += deltanew;
+
+                //check 
+
+                {
+                    generic_kernel<<<currentbatchsize, 64,0, stream>>>(
+                        [ = ,
+                            d_normalhashvalues = d_normalhashvalues.get(),
+                            d_uniquehashvalues = d_uniquehashvalues.get(),
+                            d_hashfuncids = d_hashfuncids.get(),
+                            d_signaturesizes = d_signaturesizes.get()
+                        ] __device__ (){
+
+                            for(int s = blockIdx.x; s < currentbatchsize; s += gridDim.x){
+                                const int signaturesize = d_signaturesizes[s];
+
+                                // printf("old: ");
+                                // for(int k = 0; k < numHashFunctions; k += 1){
+                                //     printf("%llu ", d_normalhashvalues[numHashFunctions * s + k]);
+                                // }
+                                // printf("\n");
+
+
+                                // printf("new(%d): ", signaturesize);
+                                // for(int k = 0; k < signaturesize; k += 1){
+                                //     printf("(%llu %d) ", 
+                                //         d_uniquehashvalues[numHashFunctions * s + k], 
+                                //         d_hashfuncids[numHashFunctions * s + k]
+                                //     );
+                                // }
+                                // printf("\n");
+
+                                for(int k = threadIdx.x; k < signaturesize; k += blockDim.x){
+                                    const auto newhashvalue = d_uniquehashvalues[numHashFunctions * s + k];
+                                    const int hashfuncid = d_hashfuncids[numHashFunctions * s + k];
+
+                                    const auto oldhashvalue = d_normalhashvalues[numHashFunctions * s + hashfuncid];
+
+                                    if(newhashvalue != oldhashvalue){
+                                        printf("error at s=%d, k=%d, hashfuncid=%d, old=%llu, new=%llu\n", 
+                                            s,k, hashfuncid, oldhashvalue,newhashvalue);
+                                    }
+                                    assert(newhashvalue == oldhashvalue);
+                                }
+                            }
+                        }
+                    );
+
+                }
+
+                cudaMemcpyAsync(
+                    h_signaturesizes.get(),
+                    d_signaturesizes.get(),
+                    d_signaturesizes.sizeInBytes(),
+                    D2H,
+                    stream
+                );
+
+                cudaStreamSynchronize(stream);
+
+                progressThread.addProgress(currentbatchsize);
+
+                for(int i = 0; i < currentbatchsize; i++){
+                    numHashvaluesToFrequencyMap[h_signaturesizes[i]]++;
+                }
+
+
+            }
+
+            progressThread.finished(); 
+        
+            std::cout << std::endl;
+
+            std::cout << "Minhashing old took " << minhashtimeold << " ms\n";
+            std::cout << "Minhashing new took " << minhashtimenew << " ms\n";
+
+            for(auto pair : numHashvaluesToFrequencyMap){
+                std::cout << pair.first << " " << pair.second << "\n";
+            }
+
+            cudaEventDestroy(eventbegin); CUERR;
+            cudaEventDestroy(eventend); CUERR;
+
+            gpu::GpuMinhasher::destroyQueryHandle(minhasherQueryHandle);
+
+        }
+
+
+
+
+        cudaStreamDestroy(stream); CUERR;
+
+
+
+
+
+#endif 
+
+
 
 
 

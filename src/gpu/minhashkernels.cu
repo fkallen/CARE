@@ -23,6 +23,7 @@ namespace care{
 
     // HASHING
 
+
     __global__
     void minhashSignaturesKernel(
             std::uint64_t* __restrict__ signatures,
@@ -231,6 +232,507 @@ namespace care{
             firstHashFunc
         );
     }
+
+
+    __global__
+    void minhashSignaturesKernel(
+            std::uint64_t* __restrict__ signatures, // numSequences * numHashFunc
+            std::uint64_t* __restrict__ kmers, // numSequences * numHashFunc
+            size_t signaturesRowPitchElements,
+            const unsigned int* __restrict__ sequences2Bit,
+            size_t sequenceRowPitchElements,
+            int numSequences,
+            const int* __restrict__ sequenceLengths,
+            int k,
+            int numHashFuncs
+    ){
+                
+        //constexpr int blocksize = 128;
+        constexpr int maximum_kmer_length = 32;
+
+        auto murmur3_fmix = [](std::uint64_t x) {
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccd;
+            x ^= x >> 33;
+            x *= 0xc4ceb9fe1a85ec53;
+            x ^= x >> 33;
+            return x;
+        };
+
+        auto make_reverse_complement = [](std::uint64_t s){
+            s = ((s >> 2)  & 0x3333333333333333ull) | ((s & 0x3333333333333333ull) << 2);
+            s = ((s >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((s & 0x0F0F0F0F0F0F0F0Full) << 4);
+            s = ((s >> 8)  & 0x00FF00FF00FF00FFull) | ((s & 0x00FF00FF00FF00FFull) << 8);
+            s = ((s >> 16) & 0x0000FFFF0000FFFFull) | ((s & 0x0000FFFF0000FFFFull) << 16);
+            s = ((s >> 32) & 0x00000000FFFFFFFFull) | ((s & 0x00000000FFFFFFFFull) << 32);
+            return ((std::uint64_t)(-1) - s) >> (8 * sizeof(s) - (32 << 1));
+        };
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        constexpr int firstHashFunc = 0;
+
+        if(tid < numSequences * numHashFuncs){
+            const int mySequenceIndex = tid / numHashFuncs;
+            const int myNumHashFunc = tid % numHashFuncs;
+            const int hashFuncId = myNumHashFunc + firstHashFunc;
+
+            const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
+            const int myLength = sequenceLengths[mySequenceIndex];
+
+            std::uint64_t* const mySignature = signatures + mySequenceIndex * signaturesRowPitchElements;
+            std::uint64_t* const myKmers = kmers + mySequenceIndex * signaturesRowPitchElements;            
+
+            std::uint64_t minHashValue = std::numeric_limits<std::uint64_t>::max();
+            std::uint64_t minKmer = 0;
+
+            auto handlekmer = [&](auto fwd, auto rc){
+                const auto smallest = min(fwd, rc);
+                const auto hashvalue = murmur3_fmix(smallest + hashFuncId);
+                if(hashvalue < minHashValue){
+                    minHashValue = hashvalue;
+                    minKmer = smallest;
+                }
+            };
+
+            if(myLength >= k){
+                //const int numKmers = myLength - k + 1;
+                const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
+                const int rcshiftamount = (maximum_kmer_length - k) * 2;
+
+                std::uint64_t kmer_encoded = mySequence[0];
+                if(k <= 16){
+                    kmer_encoded >>= (16 - k) * 2;
+                }else{
+                    kmer_encoded = (kmer_encoded << 32) | mySequence[1];
+                    kmer_encoded >>= (32 - k) * 2;
+                }
+
+                kmer_encoded >>= 2; //k-1 bases, allows easier loop
+
+                std::uint64_t rc_kmer_encoded = make_reverse_complement(kmer_encoded);
+
+                auto addBase = [&](std::uint64_t encBase){
+                    kmer_encoded <<= 2;
+                    rc_kmer_encoded >>= 2;
+
+                    const std::uint64_t revcBase = (~encBase) & 3;
+                    kmer_encoded |= encBase;
+                    rc_kmer_encoded |= revcBase << 62;
+                };
+
+                const int itersend1 = min(SDIV(k-1, 16) * 16, myLength);
+
+                for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
+                    const int nextIntIndex = nextSequencePos / 16;
+                    const int nextPositionInInt = nextSequencePos % 16;
+
+                    const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+
+                    addBase(nextBase);
+
+                    handlekmer(
+                        kmer_encoded & kmer_mask, 
+                        rc_kmer_encoded >> rcshiftamount
+                    );
+                }
+
+                const int full16Iters = (myLength - itersend1) / 16;
+
+                for(int iter = 0; iter < full16Iters; iter++){
+                    const int intIndex = (itersend1 + iter * 16) / 16;
+                    const unsigned int data = mySequence[intIndex];
+
+                    #pragma unroll
+                    for(int posInInt = 0; posInInt < 16; posInInt++){
+                        const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
+
+                        addBase(nextBase);
+
+                        handlekmer(
+                            kmer_encoded & kmer_mask, 
+                            rc_kmer_encoded >> rcshiftamount
+                        );
+                    }
+                }
+
+
+                for(int nextSequencePos = full16Iters * 16 + itersend1; nextSequencePos < myLength; nextSequencePos++){
+                    const int nextIntIndex = nextSequencePos / 16;
+                    const int nextPositionInInt = nextSequencePos % 16;
+
+                    const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
+
+                    addBase(nextBase);
+
+                    handlekmer(
+                        kmer_encoded & kmer_mask, 
+                        rc_kmer_encoded >> rcshiftamount
+                    );
+                }
+
+                mySignature[myNumHashFunc] = minHashValue;
+                myKmers[myNumHashFunc] = minKmer;
+
+            }else{
+                mySignature[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
+                myKmers[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
+            }
+        }
+    }
+
+
+template<int blocksize, int elemsPerThread>
+__global__
+void keepUniqueKmerKernel(
+    std::uint64_t* __restrict__ signatures, 
+    std::size_t signaturesRowPitchElements,
+    int* __restrict__ hashFuncIds,
+    std::size_t hashFuncIdsRowPitchElements,
+    int* __restrict__ sizesOfUniqueSignatures, 
+    const std::uint64_t* __restrict__ kmers,
+    std::size_t kmersRowPitchElements,
+    int numSequences,
+    int numHashFuncs,
+    int k
+){
+    constexpr int maxNumHashFuncs = 64;
+
+    assert(numHashFuncs <= maxNumHashFuncs); 
+
+    using BlockRadixSort = cub::BlockRadixSort<std::uint64_t, blocksize, elemsPerThread, int>;
+    using BlockRadixSortInt = cub::BlockRadixSort<int, blocksize, elemsPerThread, std::uint64_t>;
+
+    using BlockDiscontinuity = cub::BlockDiscontinuity<std::uint64_t, blocksize>;
+    using BlockScan = cub::BlockScan<int, blocksize>; 
+
+    using BlockStore = cub::BlockStore<std::uint64_t, blocksize, elemsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
+    using BlockStoreInt = cub::BlockStore<int, blocksize, elemsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
+    
+    using BlockLoad = cub::BlockLoad<std::uint64_t, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockLoadInt = cub::BlockLoad<int, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+
+    __shared__ union{
+        typename BlockRadixSort::TempStorage sort;
+        typename BlockRadixSortInt::TempStorage sort_int;
+        typename BlockDiscontinuity::TempStorage discontinuity;
+        typename BlockScan::TempStorage scan;
+        typename BlockLoad::TempStorage load;
+        typename BlockLoadInt::TempStorage load_int;
+        typename BlockStore::TempStorage store;
+        typename BlockStoreInt::TempStorage store_int;
+    } temp_storage;
+
+    // if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+    //     printf("typename BlockRadixSort::TempStorage %llu\n", sizeof(typename BlockRadixSort::TempStorage));
+    //     printf("typename BlockRadixSortInt::TempStorage %llu\n", sizeof(typename BlockRadixSortInt::TempStorage));
+    //     printf("typename BlockDiscontinuity::TempStorage %llu\n", sizeof(typename BlockDiscontinuity::TempStorage));
+    //     printf("typename BlockScan::TempStorage %llu\n", sizeof(typename BlockScan::TempStorage));
+    //     printf("typename BlockLoad::TempStorage %llu\n", sizeof(typename BlockLoad::TempStorage));
+    //     printf("typename BlockLoadInt::TempStorage %llu\n", sizeof(typename BlockLoadInt::TempStorage));
+    //     printf("typename BlockStore::TempStorage %llu\n", sizeof(typename BlockStore::TempStorage));
+    //     printf("typename BlockStoreInt::TempStorage %llu\n", sizeof(typename BlockStoreInt::TempStorage));
+    // }
+
+    __shared__ int uniquehashnums[maxNumHashFuncs];
+    __shared__ std::uint64_t uniquehashvalues[maxNumHashFuncs];
+
+    const int kmerBits = 2 * k;
+
+    for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+
+        std::uint64_t regkmers[elemsPerThread]; 
+        std::uint64_t reghashvalues[elemsPerThread]; 
+        int reghashnums[elemsPerThread];
+
+        const int sizeOfRange = numHashFuncs;
+        if(sizeOfRange == 0){
+            if(threadIdx.x == 0){
+                sizesOfUniqueSignatures[sequenceIndex] = 0;
+            }
+        }else{
+        
+            const std::uint64_t* const myKmers = kmers + sequenceIndex * kmersRowPitchElements;
+            int* const myHashFuncIds = hashFuncIds + sequenceIndex * hashFuncIdsRowPitchElements;
+            std::uint64_t* const mySignatures = signatures + sequenceIndex * signaturesRowPitchElements;
+
+            assert(sizeOfRange <= elemsPerThread * blocksize);            
+
+            // load kmers
+            BlockLoad(temp_storage.load).Load(
+                myKmers, 
+                regkmers, 
+                sizeOfRange,
+                std::numeric_limits<std::uint64_t>::max()
+            );
+
+            __syncthreads();
+
+            // BlockLoad(temp_storage.load).Load(
+            //     mySignatures, 
+            //     reghashvalues, 
+            //     sizeOfRange,
+            //     std::numeric_limits<std::uint64_t>::max()
+            // );
+
+            // if(sequenceIndex == 0){
+
+            //     if(threadIdx.x == 0){
+            //         printf("expected kmers;\n");
+
+            //         for(int i = 0; i < sizeOfRange; i++){
+            //             printf("%llu ", myKmers[i]);
+            //         }
+            //         printf("\n");
+
+            //         printf("expected signatures;\n");
+
+            //         for(int i = 0; i < sizeOfRange; i++){
+            //             printf("%llu ", mySignatures[i]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     __syncthreads();
+
+            //     if(threadIdx.x == 0){
+            //         printf("loaded kmers;\n");
+            //     }
+            //     __syncthreads();
+
+            //     for(int x = 0; x < blocksize; x++){
+            //         if(x == threadIdx.x){
+            //             #pragma unroll 
+            //             for(int i = 0; i < elemsPerThread; i++){
+            //                 printf("%d %llu\n", threadIdx.x * elemsPerThread + i, regkmers[i]);
+            //             }
+            //         }
+            //         __syncthreads();
+            //     }
+            // }
+
+            //set hash func numbers
+            #pragma unroll 
+            for(int i = 0; i < elemsPerThread; i++){
+                reghashnums[i] = threadIdx.x * elemsPerThread + i;
+            }
+
+            __syncthreads();
+
+            //sort kmers (and hash func numbers)
+            BlockRadixSort(temp_storage.sort).Sort(regkmers, reghashnums, 0, kmerBits);
+
+            __syncthreads();
+
+
+            // if(sequenceIndex == 0){
+            //     if(threadIdx.x == 0){
+            //         printf("hashnums sorted by kmer\n");
+            //     }
+            //     __syncthreads();
+            //     for(int x = 0; x < blocksize; x++){
+            //         if(x == threadIdx.x){
+            //             #pragma unroll 
+            //             for(int i = 0; i < elemsPerThread; i++){
+            //                 printf("%2d %20llu\n", reghashnums[i], regkmers[i]);
+            //             }
+            //         }
+            //         __syncthreads();
+            //     }
+            // }
+
+
+
+            int head_flags[elemsPerThread];
+
+            //mark first occurence of each kmer
+            BlockDiscontinuity(temp_storage.discontinuity).FlagHeads(
+                head_flags, 
+                regkmers, 
+                cub::Inequality()
+            );
+
+            __syncthreads();            
+
+            // don't use out of bounds elements
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i >= sizeOfRange){
+                    head_flags[i] = 0;
+                }
+            }
+
+            int prefixsum[elemsPerThread];
+            int numberOfSetHeadFlags = 0;
+
+            //calculate output positions of unique kmers
+            BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfSetHeadFlags);
+
+            __syncthreads();
+
+            //store unique hashnums in smem
+            #pragma unroll
+            for(int i = 0; i < elemsPerThread; i++){
+                if(threadIdx.x * elemsPerThread + i < sizeOfRange && head_flags[i] == 1){
+                    uniquehashnums[prefixsum[i]] = reghashnums[i];
+                    uniquehashvalues[prefixsum[i]] = mySignatures[reghashnums[i]];
+                }
+            }
+
+            //store number of unique kmers
+            if(threadIdx.x == 0){
+                sizesOfUniqueSignatures[sequenceIndex] = numberOfSetHeadFlags;
+            }
+
+            // if(sequenceIndex == 0){
+            //     if(threadIdx.x == 0){
+            //         printf("unique hashnums\n");
+            //         for(int x = 0; x < numberOfSetHeadFlags; x++){
+            //             printf("%d ", uniquehashnums[x]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     __syncthreads();                
+            // }
+
+            __syncthreads(); //uniquehashnums
+
+            //store signatures of unique kmers in smem
+            // for(int i = threadIdx.x; i < numberOfSetHeadFlags; i += blocksize){
+            //     uniquehashvalues[i] = mySignatures[uniquehashnums[i]];
+            // }
+
+
+            // __syncthreads();
+
+            // if(sequenceIndex == 0){
+            //     if(threadIdx.x == 0){
+            //         printf("unique hash funcs\n");
+            //         for(int x = 0; x < numberOfSetHeadFlags; x++){
+            //             printf("%llu ", uniquehashvalues[x]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     __syncthreads();                
+            // }
+
+            // if(sequenceIndex == 0){
+            //     if(threadIdx.x == 0){
+            //         printf("unique hashnums | unique hash funcs\n");
+            //         for(int x = 0; x < numberOfSetHeadFlags; x++){
+            //             printf("%d %llu\n", uniquehashnums[x], uniquehashvalues[x]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     __syncthreads();                
+            // }
+
+            //load unique signatures into regs
+            BlockLoad(temp_storage.load).Load(
+                uniquehashvalues, 
+                reghashvalues, 
+                numberOfSetHeadFlags,
+                std::numeric_limits<std::uint64_t>::max()
+            );
+
+            __syncthreads();
+
+            //load unique hash nums into regs
+            BlockLoadInt(temp_storage.load_int).Load(
+                uniquehashnums, 
+                reghashnums, 
+                numberOfSetHeadFlags,
+                std::numeric_limits<int>::max()
+            );
+
+            __syncthreads();
+
+            //sort unique signatures by unique hash nums
+            //numhashfuncs is limited to 64, so each hash num is in range [0...63] and occupies 6 bits.
+            BlockRadixSortInt(temp_storage.sort_int).Sort(reghashnums, reghashvalues, 0, 6); 
+
+            __syncthreads();
+
+            //finally, store unique signatures back to gmem
+            BlockStore(temp_storage.store).Store(mySignatures, reghashvalues, numberOfSetHeadFlags);
+
+            __syncthreads();
+
+            
+            BlockStoreInt(temp_storage.store_int).Store(myHashFuncIds, reghashnums, numberOfSetHeadFlags);
+
+            __syncthreads();
+
+            // if(sequenceIndex == 0){
+            //     if(threadIdx.x == 0){
+            //         printf("unique hashnums | unique hash funcs after sort\n");
+            //         for(int x = 0; x < numberOfSetHeadFlags; x++){
+            //             printf("%d %llu\n", myHashFuncIds[x], mySignatures[x]);
+            //         }
+            //         printf("\n");
+            //     }
+            //     __syncthreads();                
+            // }
+            
+        }
+    }
+}
+
+
+
+void callUniqueMinhashSignaturesKernel_async(
+    std::uint64_t* d_temp,
+    std::uint64_t* d_signatures,
+    std::size_t signaturesRowPitchElements,
+    int* d_hashFuncIds,
+    std::size_t hashFuncIdsRowPitchElements,
+    int* d_signatureSizePerSequence,
+    const unsigned int* d_sequences2Bit,
+    std::size_t sequenceRowPitchElements,
+    int numSequences,
+    const int* d_sequenceLengths,
+    int k,
+    int numHashFuncs,
+    cudaStream_t stream
+){
+        
+    constexpr int blocksize = 128;
+
+    if(numSequences <= 0){
+        return;
+    }
+
+    std::uint64_t* d_kmers = d_temp;
+            
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
+    size_t smem = 0;
+
+    minhashSignaturesKernel<<<grid, block, smem, stream>>>(
+        d_signatures,
+        d_kmers,
+        signaturesRowPitchElements,
+        d_sequences2Bit,
+        sequenceRowPitchElements,
+        numSequences,
+        d_sequenceLengths,
+        k,
+        numHashFuncs
+    );
+
+    const std::size_t kmersRowPitchElements = numHashFuncs;
+
+    keepUniqueKmerKernel<64, 1><<<numSequences, 64, 0, stream>>>(
+        d_signatures, 
+        signaturesRowPitchElements,
+        d_hashFuncIds,
+        hashFuncIdsRowPitchElements,
+        d_signatureSizePerSequence, 
+        d_kmers,
+        kmersRowPitchElements,
+        numSequences,
+        numHashFuncs,
+        k
+    );
+}
 
     // SET_UNION
 
