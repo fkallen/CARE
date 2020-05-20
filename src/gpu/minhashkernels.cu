@@ -5,6 +5,7 @@
 #include <gpu/utility_kernels.cuh>
 #include <config.hpp>
 
+#include <sequence.hpp>
 
 #include <nvToolsExt.h>
 
@@ -734,7 +735,257 @@ void callUniqueMinhashSignaturesKernel_async(
     );
 }
 
-    // SET_UNION
+
+
+//use one block per sequence
+
+template<int blocksize, int elemsPerThread>
+__global__
+void minhashSignaturesOfUniqueKmersKernel128(
+    std::uint64_t* __restrict__ signatures, // numSequences * numHashFunc
+    size_t signaturesRowPitchElements,
+    const unsigned int* __restrict__ sequences2Bit,
+    size_t sequenceRowPitchElements,
+    int numSequences,
+    const int* __restrict__ sequenceLengths,
+    int k,
+    int numHashFuncs
+){
+
+    using BlockLoad = cub::BlockLoad<std::uint64_t, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+    using BlockStore = cub::BlockStore<std::uint64_t, blocksize, elemsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
+    using BlockRadixSort = cub::BlockRadixSort<std::uint64_t, blocksize, elemsPerThread>;
+    using BlockDiscontinuity = cub::BlockDiscontinuity<std::uint64_t, blocksize>;
+    using BlockScan = cub::BlockScan<int, blocksize>; 
+    //BlockStore(temp_storage.store).Store(mySignatures, reghashvalues, numberOfSetHeadFlags);
+
+    __shared__ union{
+        typename BlockLoad::TempStorage load;
+        typename BlockStore::TempStorage store;
+        typename BlockRadixSort::TempStorage sort;
+        typename BlockDiscontinuity::TempStorage discontinuity;
+        typename BlockScan::TempStorage scan;
+    } temp_storage;
+
+    __shared__ unsigned int sharedsequence[8];
+    __shared__ std::uint64_t sharedkmers[128];
+
+    auto make_reverse_complement = [](std::uint64_t s){
+        s = ((s >> 2)  & 0x3333333333333333ull) | ((s & 0x3333333333333333ull) << 2);
+        s = ((s >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((s & 0x0F0F0F0F0F0F0F0Full) << 4);
+        s = ((s >> 8)  & 0x00FF00FF00FF00FFull) | ((s & 0x00FF00FF00FF00FFull) << 8);
+        s = ((s >> 16) & 0x0000FFFF0000FFFFull) | ((s & 0x0000FFFF0000FFFFull) << 16);
+        s = ((s >> 32) & 0x00000000FFFFFFFFull) | ((s & 0x00000000FFFFFFFFull) << 32);
+        return ((std::uint64_t)(-1) - s) >> (8 * sizeof(s) - (32 << 1));
+    };
+
+    auto murmur3_fmix = [](std::uint64_t x) {
+        x ^= x >> 33;
+        x *= 0xff51afd7ed558ccd;
+        x ^= x >> 33;
+        x *= 0xc4ceb9fe1a85ec53;
+        x ^= x >> 33;
+        return x;
+    };
+
+    auto hashfunc = murmur3_fmix;
+    const std::uint64_t kmer_mask = (std::uint64_t(1) << ((2*k) - 1)) | (std::uint64_t(1) << (((2*k) - 1))) - 1;
+
+    for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+
+        std::uint64_t* const mySignature = signatures + sequenceIndex * signaturesRowPitchElements;
+
+        // if(threadIdx.x == 0 && sequenceIndex < 10){
+        //     printf("%d mysig %p\n", sequenceIndex, mySignature);
+        // }
+
+        const int sequenceLength = sequenceLengths[sequenceIndex];
+        assert(sequenceLength <= 128);
+
+        if(sequenceLength >= k){
+            
+            const unsigned int* const mySequencePtr = sequences2Bit + sequenceIndex * sequenceRowPitchElements;
+            //load sequence into shared memory.
+            const int numInts = getEncodedNumInts2Bit(sequenceLength);
+
+            if(threadIdx.x < numInts){
+                sharedsequence[threadIdx.x] = mySequencePtr[threadIdx.x];
+                // if(sequenceIndex < 2){
+                //     printf("%d %d enc: %u\n", sequenceIndex, threadIdx.x, sharedsequence[threadIdx.x]);
+                // }
+            }
+
+            __syncthreads();
+
+            //kmerize , store canonical kmers into shared memory
+            const int numKmers = sequenceLength - k + 1;
+            assert(numKmers > 0);
+
+            for(int i = threadIdx.x; i < numKmers; i += blockDim.x){
+                const int firstPos = i;
+                const int lastPos = i + k - 1; // inclusive
+                const int firstIntPos = firstPos / 16;
+                const int lastIntPos = lastPos / 16;
+
+                assert(firstIntPos < numInts);
+                assert(lastIntPos < numInts);
+
+                
+                const std::uint64_t l = sharedsequence[firstIntPos];
+                const std::uint64_t r = sharedsequence[lastIntPos];
+                std::uint64_t kmer = (l << 32) | r;
+                // ((unsigned int*)&kmer)[1] = sharedsequence[lastIntPos];
+
+                // ((unsigned int*)&kmer)[0] = sharedsequence[firstIntPos];
+                // ((unsigned int*)&kmer)[1] = sharedsequence[lastIntPos];
+
+                //const int leftFirstPosInInt = firstPos % 16;
+                const int rightFirstPosInInt = lastPos % 16;
+
+                kmer = kmer >> 2*(15 - rightFirstPosInInt);
+                kmer = kmer & kmer_mask;
+
+                std::uint64_t revc = make_reverse_complement(kmer);
+                sharedkmers[i] = min(kmer, revc);
+            }
+
+            __syncthreads();
+
+            int numberOfUniqueKmers = 0;
+
+            // find unique kmers and store them into shared memory, replacing original kmers. sets numberOfUniqueKmers
+
+            {
+
+                std::uint64_t regkmers[elemsPerThread];
+
+                BlockLoad(temp_storage.load).Load(
+                    sharedkmers, 
+                    regkmers, 
+                    numKmers,
+                    std::numeric_limits<std::uint64_t>::max()
+                );
+
+                __syncthreads();
+
+                BlockRadixSort(temp_storage.sort).Sort(regkmers, 0, (2*k));
+
+                __syncthreads();
+
+                int head_flags[elemsPerThread];
+
+                //mark first occurence of each kmer
+                BlockDiscontinuity(temp_storage.discontinuity).FlagHeads(
+                    head_flags, 
+                    regkmers, 
+                    cub::Inequality()
+                );
+
+                __syncthreads();            
+
+                // don't use out of bounds elements
+                #pragma unroll
+                for(int i = 0; i < elemsPerThread; i++){
+                    if(threadIdx.x * elemsPerThread + i >= numKmers){
+                        head_flags[i] = 0;
+                    }
+                }
+
+                int prefixsum[elemsPerThread];            
+
+                //calculate output positions of unique kmers
+                BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfUniqueKmers);
+
+                #pragma unroll
+                for(int i = 0; i < elemsPerThread; i++){
+                    if(threadIdx.x * elemsPerThread + i < numKmers && head_flags[i] == 1){
+                        sharedkmers[prefixsum[i]] = regkmers[i];
+                    }
+                }
+            }
+
+            __syncthreads();
+
+            // if(numberOfUniqueKmers != 81 && threadIdx.x == 0){
+            //     printf("numberOfUniqueKmers %d\n", numberOfUniqueKmers);
+            // }
+
+            // perform minhashing of kmers
+
+            for(int h = threadIdx.x; h < numHashFuncs; h += blockDim.x){
+
+                std::uint64_t smallesthash = std::numeric_limits<std::uint64_t>::max();
+
+                for(int i = 0; i < numberOfUniqueKmers; i++){
+                    const std::uint64_t kmer = sharedkmers[i];
+                    const std::uint64_t hash = hashfunc(kmer + h);
+                    if(hash < smallesthash){
+                        smallesthash = hash;
+                    }
+                }
+
+                mySignature[h] = smallesthash;
+
+                // if(sequenceIndex < 2){
+                //     printf("%d %d %llu numberOfUniqueKmers %d\n", sequenceIndex, h, smallesthash, numberOfUniqueKmers);
+                // }
+            }
+
+            __syncthreads();
+
+
+        }else{
+            for(int i = threadIdx.x; i < numHashFuncs; i += blockDim.x){
+                mySignature[i] = std::numeric_limits<std::uint64_t>::max();
+            }
+        }
+    }
+}
+
+
+void callMinhashSignaturesOfUniqueKmersKernel128_async(
+        std::uint64_t* d_signatures,
+        size_t signaturesRowPitchElements,
+        const unsigned int* d_sequences2Bit,
+        size_t sequenceRowPitchElements,
+        int numSequences,
+        const int* d_sequenceLengths,
+        int k,
+        int numHashFuncs,
+        cudaStream_t stream){
+            
+    constexpr int blocksize = 128;
+
+    if(numSequences <= 0){
+        return;
+    }
+            
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(numSequences, 1, 1);
+    size_t smem = 0;
+    
+    const int firstHashFunc = 0;
+
+    minhashSignaturesOfUniqueKmersKernel128<128,1><<<grid, block, smem, stream>>>(
+        d_signatures,
+        signaturesRowPitchElements,
+        d_sequences2Bit,
+        sequenceRowPitchElements,
+        numSequences,
+        d_sequenceLengths,
+        k,
+        numHashFuncs
+    );
+}
+
+
+
+
+
+
+
+
+// ############## SET_UNION ###############
 
 
 

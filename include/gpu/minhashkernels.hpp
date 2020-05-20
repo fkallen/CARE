@@ -163,7 +163,17 @@ void callUniqueMinhashSignaturesKernel_async(
 );
 
 
-
+void callMinhashSignaturesOfUniqueKmersKernel128_async(
+    std::uint64_t* d_signatures,
+    size_t signaturesRowPitchElements,
+    const unsigned int* d_sequences2Bit,
+    size_t sequenceRowPitchElements,
+    int numSequences,
+    const int* d_sequenceLengths,
+    int k,
+    int numHashFuncs,
+    cudaStream_t stream
+);
 
 
 
