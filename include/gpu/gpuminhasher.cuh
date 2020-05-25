@@ -26,7 +26,9 @@
 #include <fstream>
 #include <algorithm>
 
-#define UNIQUE
+//#define UNIQUE
+
+//#define MAKEUNIQUEAFTERHASHING
 
 
 namespace care{
@@ -818,6 +820,23 @@ namespace gpu{
                 d_similarReadsPerSequencePrefixSum
             );
 #else 
+
+#ifdef MAKEUNIQUEAFTERHASHING
+            getIdsOfSimilarReadsUnique(
+                handle,
+                d_readIds, 
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                deviceId,
+                stream,
+                parallelFor,
+                d_similarReadIds,
+                d_similarReadsPerSequence,
+                d_similarReadsPerSequencePrefixSum
+            );
+#else            
             getIdsOfSimilarReadsUnique2(
                 handle,
                 d_readIds, 
@@ -832,7 +851,7 @@ namespace gpu{
                 d_similarReadsPerSequence,
                 d_similarReadsPerSequencePrefixSum
             );
-
+#endif
 #endif
         }
                                                     
@@ -1111,8 +1130,14 @@ namespace gpu{
                     std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> >
 #ifndef UNIQUE                    
                     initialMinhashes = constructTablesWithGpuHashing(
-#else                         
+#else                     
+
+#ifdef MAKEUNIQUEAFTERHASHING    
+                    initialMinhashes = constructTablesWithGpuHashingUniquekmers(
+#else 
                     initialMinhashes = constructTablesWithGpuHashingUniquekmers2(
+#endif 
+
 #endif                        
                         currentIterNumTables, 
                         numConstructedTables,
