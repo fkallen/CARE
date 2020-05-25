@@ -275,7 +275,7 @@ namespace care{
 
 
 
-#if 1
+#if 0
 
         maximumNumberOfReads = totalInputFileProperties.nReads;
         maximumSequenceLength = totalInputFileProperties.maxSequenceLength;
