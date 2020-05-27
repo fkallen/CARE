@@ -1467,7 +1467,8 @@ namespace gpu{
 
         minhasherPtr->getIdsOfSimilarReads(
             nextData.minhasherQueryHandle,
-            readIdsBegin + numLeftoverAnchors,
+            nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
+            nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
             nextData.d_leftoverAnchorSequences.get() + numLeftoverAnchors * encodedSequencePitchInInts,
             encodedSequencePitchInInts,
             nextData.d_leftoverAnchorLengths.get() + numLeftoverAnchors,

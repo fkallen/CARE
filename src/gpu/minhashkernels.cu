@@ -1013,6 +1013,170 @@ void compactDataOfUniqueRanges(
 
 }
 
+
+
+// perform set-union of inoutData on each range identified by offsets
+// assumes input data is sorted
+// removes anchorIds[i] from set_union range[i]
+// returns number of remaining elements if range[i] in sizesOfUniqueRanges[i]
+// template<int blocksize, int elemsPerThread>
+// __global__
+// void makeUniqueRangesFromSortedWithOnlyCUBKernel(
+//         read_number* __restrict__ inoutDataSorted, 
+//         int* __restrict__ sizesOfUniqueRanges, 
+//         int numSequences,
+//         const read_number* __restrict__ anchorIds,
+//         const int* __restrict__ offsets, // inoutData[offsets[i] - globalOffset] to inoutData[offsets[i+1] - globalOffset] (exclusive) belong to sequence i
+//         int globalOffset
+// ){
+
+//     using BlockLoad = cub::BlockLoad<read_number, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+//     using BlockDiscontinuity = cub::BlockDiscontinuity<read_number, blocksize>;
+//     using BlockScan = cub::BlockScan<int, blocksize>; 
+
+//     __shared__ union{
+//         typename BlockLoad::TempStorage load;
+//         typename BlockDiscontinuity::TempStorage discontinuity;
+//         typename BlockScan::TempStorage scan;
+//     } temp_storage;
+
+//     __shared__ read_number anchorId;
+
+//     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+
+//         read_number tempregs[elemsPerThread];   
+
+//         #pragma unroll
+//         for(int i = 0; i <elemsPerThread; i++){
+//             tempregs[i] = std::numeric_limits<read_number>::max();
+//         }
+
+//         const int sizeOfRange = offsets[sequenceIndex + 1] - offsets[sequenceIndex];
+//         if(sizeOfRange == 0){
+//             if(threadIdx.x == 0){
+//                 sizesOfUniqueRanges[sequenceIndex] = 0;
+//             }
+//         }else{
+        
+//             read_number* const myRange = inoutDataSorted + offsets[sequenceIndex] - globalOffset;
+
+//             assert(sizeOfRange <= elemsPerThread * blocksize);            
+
+//             BlockLoad(temp_storage.load).Load(
+//                 myRange, 
+//                 tempregs, 
+//                 sizeOfRange
+//             );
+
+//             if(threadIdx.x == 0){
+//                 anchorId = anchorIds[sequenceIndex];
+//             }
+
+//             __syncthreads();
+
+//             int head_flags[elemsPerThread];
+
+//             BlockDiscontinuity(temp_storage.discontinuity).FlagHeads(
+//                 head_flags, 
+//                 tempregs, 
+//                 cub::Inequality()
+//             );
+
+//             __syncthreads();            
+
+//             #pragma unroll
+//             for(int i = 0; i < elemsPerThread; i++){
+//                 if(threadIdx.x * elemsPerThread + i >= sizeOfRange){
+//                     head_flags[i] = 0;
+//                 }else{
+//                     if(tempregs[i] == anchorId){
+//                         head_flags[i] = 0;
+//                     }
+//                 }
+//             }
+
+//             int prefixsum[elemsPerThread];
+//             int numberOfSetHeadFlags = 0;
+
+//             BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfSetHeadFlags);
+
+//             __syncthreads();
+
+//             #pragma unroll
+//             for(int i = 0; i < elemsPerThread; i++){
+//                 if(threadIdx.x * elemsPerThread + i < sizeOfRange && head_flags[i] == 1){
+//                     myRange[prefixsum[i]] = tempregs[i];
+//                 }
+//             }
+
+//             if(threadIdx.x == 0){
+//                 sizesOfUniqueRanges[sequenceIndex] = numberOfSetHeadFlags;
+//             }
+//         }
+//     }
+
+// }
+
+
+// void callSegmentedMakeUniqueWithGmemSortKernel(
+//     void* temp_storage,
+//     std::size_t& temp_storage_bytes,
+//     MergeRangesGpuHandle<read_number>& handle,
+//     const read_number* d_data,
+//     read_number d_results,
+//     int* __restrict__ sizesOfUniqueRanges, 
+//     int numSegments,
+//     int* d_segmentsBeginOffsets,
+//     int* d_segmentsEndOffsets,
+//     int numItems,
+//     const read_number* __restrict__ anchorIds,
+//     int globalOffset,
+//     cudaStream_t stream
+// ){
+//     std::size_t requiredbytes = 0;
+
+//     cub::DeviceSegmentedRadixSort::SortKeys(
+//         nullptr, 
+//         requiredbytes, 
+//         d_data, 
+//         d_results,
+//         numItems, 
+//         numSegments, 
+//         d_segmentsBeginOffsets, 
+//         d_segmentsEndOffsets,
+//         0,
+//         sizeof(read_number) * 8,
+//         stream
+//     );
+
+//     if(temp_storage == nullptr){
+//         temp_storage_bytes = requiredbytes;
+//         return;
+//     }
+
+//     assert(requiredbytes <= temp_storage_bytes);
+
+//     cub::DeviceSegmentedRadixSort::SortKeys(
+//         temp_storage, 
+//         temp_storage_bytes, 
+//         d_data, 
+//         d_results,
+//         numItems, 
+//         numSegments, 
+//         d_segmentsBeginOffsets, 
+//         d_segmentsEndOffsets,
+//         0,
+//         sizeof(read_number) * 8,
+//         stream
+//     );
+
+// }
+
+
+
+
+
+
 // perform set-union of inoutData on each range identified by offsets
 // removes anchorIds[i] from set_union range[i]
 // returns number of remaining elements if range[i] in sizesOfUniqueRanges[i]

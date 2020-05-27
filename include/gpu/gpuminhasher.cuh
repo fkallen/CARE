@@ -8,6 +8,7 @@
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
+#include <gpu/cuda_unique.cuh>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -64,6 +65,11 @@ namespace gpu{
             PinnedBuffer<read_number> h_candidate_read_ids_tmp;
             DeviceBuffer<read_number> d_candidate_read_ids_tmp;
 
+            PinnedBuffer<int> h_begin_offsets;
+            DeviceBuffer<int> d_begin_offsets;
+
+            DeviceBuffer<char> d_cub_temp;
+
             std::vector<Range_t> allRanges;
             std::vector<int> idsPerChunk;   
             std::vector<int> numAnchorsPerChunk;
@@ -87,6 +93,9 @@ namespace gpu{
                 h_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
                 h_candidate_read_ids_tmp.resize(maximumResultSize);
                 d_candidate_read_ids_tmp.resize(maximumResultSize);
+
+                h_begin_offsets.resize(numSequences+1);
+                d_begin_offsets.resize(numSequences+1);
             
                 allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
                 idsPerChunk.resize(numThreads, 0);   
@@ -122,9 +131,13 @@ namespace gpu{
     
                 handlehost(h_minhashSignatures);
                 handlehost(h_candidate_read_ids_tmp);
+                handlehost(h_begin_offsets);
     
                 handledevice(d_minhashSignatures);
                 handledevice(d_candidate_read_ids_tmp);
+                handledevice(d_begin_offsets);
+
+                handledevice(d_cub_temp);
 
                 handlevector(allRanges);
                 handlevector(idsPerChunk);
@@ -152,6 +165,10 @@ namespace gpu{
                 h_minhashSignatures.destroy();
                 h_candidate_read_ids_tmp.destroy();
                 d_candidate_read_ids_tmp.destroy();
+                h_begin_offsets.destroy();
+                d_begin_offsets.destroy();
+
+                d_cub_temp.destroy();
 
                 allRanges.clear();
                 allRanges.shrink_to_fit();
@@ -201,6 +218,7 @@ namespace gpu{
         void getIdsOfSimilarReadsNormal(
             QueryHandle& handle,
             const read_number* d_readIds,
+            const read_number* h_readIds,
             const unsigned int* d_encodedSequences,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -223,12 +241,16 @@ namespace gpu{
             handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
             handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
             handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
+            handle.h_begin_offsets.resize(numSequences+1);
+            handle.d_begin_offsets.resize(numSequences+1);
 
             std::vector<Range_t>& allRanges = handle.allRanges;
             std::vector<int>& idsPerChunk = handle.idsPerChunk;   
             std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
             std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
             std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
+
+            std::vector<int> h_begin_offsets;
 
             const int maxNumThreads = parallelFor.getNumThreads();
 
@@ -237,6 +259,7 @@ namespace gpu{
             numAnchorsPerChunk.resize(maxNumThreads, 0);
             idsPerChunkPrefixSum.resize(maxNumThreads, 0);
             numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            h_begin_offsets.resize(numSequences+1);
 
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
 
@@ -311,7 +334,11 @@ namespace gpu{
                 nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
                 for(int chunkId = begin; chunkId < end; chunkId++){
                     const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+
+                    //const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    const auto devicedatabegin = d_similarReadIds + idsPerChunkPrefixSum[chunkId];
+
+                    
                     const size_t elementsInChunk = idsPerChunk[chunkId];
     
                     const auto* ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * getNumberOfMaps();
@@ -319,19 +346,48 @@ namespace gpu{
                     auto* dest = hostdatabegin;
     
                     const int lmax = numAnchorsPerChunk[chunkId] * getNumberOfMaps();
+
+                    for(int sequenceIndex = 0; sequenceIndex < numAnchorsPerChunk[chunkId]; sequenceIndex++){
+
+                        const int globalSequenceIndex = sequenceIndex + numAnchorsPerChunkPrefixSum[chunkId];
+
+                        for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
+                            const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
+                            
+                            constexpr int nextprefetch = 2;
     
-                    for(int k = 0; k < lmax; k++){
-                        constexpr int nextprefetch = 2;
-    
-                        //prefetch first element of next range if the next range is not empty
-                        if(k+nextprefetch < lmax){
-                            if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
-                                __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                            //prefetch first element of next range if the next range is not empty
+                            if(k+nextprefetch < lmax){
+                                if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
+                                    __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                                }
                             }
+                            const auto& range = ranges[k];
+                            dest = std::copy(range.first, range.second, dest);
+
                         }
-                        const auto& range = ranges[k];
-                        dest = std::copy(range.first, range.second, dest);
+
+                        const auto endOfSequenceRange = dest;
+
+                        handle.h_begin_offsets[globalSequenceIndex+1] = std::distance(
+                            handle.h_candidate_read_ids_tmp.get(),
+                            endOfSequenceRange
+                        ); 
+
                     }
+    
+                    // for(int k = 0; k < lmax; k++){
+                    //     constexpr int nextprefetch = 2;
+    
+                    //     //prefetch first element of next range if the next range is not empty
+                    //     if(k+nextprefetch < lmax){
+                    //         if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
+                    //             __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                    //         }
+                    //     }
+                    //     const auto& range = ranges[k];
+                    //     dest = std::copy(range.first, range.second, dest);
+                    // }
     
                     cudaMemcpyAsync(
                         devicedatabegin,
@@ -352,7 +408,173 @@ namespace gpu{
                 }
             );
 
+            cudaMemcpyAsync(
+                handle.d_begin_offsets.get(),
+                handle.h_begin_offsets.get(),
+                sizeof(int) * (numSequences + 1),
+                H2D,
+                stream
+            ); CUERR;
+
+
+            // SimpleAllocationDevice<read_number> d_normal_candidate_read_ids_tmp(handle.h_candidate_read_ids_tmp.size());
+            // SimpleAllocationDevice<read_number> d_normal_similar_read_ids(handle.h_candidate_read_ids_tmp.size());
+            // SimpleAllocationDevice<read_number> d_normal_similarReadsPerSequence(numSequences);
+            // SimpleAllocationDevice<read_number> d_normal_similarReadsPerSequencePrefixSum(numSequences + 1);
+
+            // cudaMemcpyAsync(
+            //     d_normal_candidate_read_ids_tmp.get(),
+            //     handle.h_candidate_read_ids_tmp.get(),
+            //     handle.h_candidate_read_ids_tmp.sizeInBytes(),
+            //     H2D,
+            //     stream
+            // ); CUERR;
+
+
             nvtx::push_range("gpumakeUniqueQueryResults", 2);
+#if 1
+            GpuSegmentedUnique::unique(
+                //HandleData* handle,
+                d_similarReadIds, //input
+                totalNumIds,
+                handle.d_candidate_read_ids_tmp.get(), //output
+                d_similarReadsPerSequence,
+                numSequences,
+                handle.d_begin_offsets.get(),
+                handle.d_begin_offsets.get() + 1,
+                handle.h_begin_offsets.get(),
+                handle.h_begin_offsets.get() + 1,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+
+            //if a candidate list is not empty, it must at least contain the id of the querying read.
+            //this id will be removed next. however, the prefixsum already requires the numbers with removed ids.
+            auto op = [] __device__ (int elem){
+                if(elem > 0) return elem - 1;
+                else return elem;
+            };
+            cub::TransformInputIterator<int, decltype(op), int*> itr(d_similarReadsPerSequence, op);
+
+            std::size_t cubTempBytes = 0;
+
+            cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int), stream);
+
+            cub::DeviceScan::InclusiveSum(
+                nullptr, 
+                cubTempBytes, 
+                itr, 
+                d_similarReadsPerSequencePrefixSum + 1, 
+                numSequences,
+                stream
+            );
+
+            handle.d_cub_temp.resize(cubTempBytes);
+
+            cub::DeviceScan::InclusiveSum(
+                handle.d_cub_temp.get(), 
+                cubTempBytes, 
+                itr, 
+                d_similarReadsPerSequencePrefixSum + 1, 
+                numSequences,
+                stream
+            );
+
+            // {
+            //     std::cerr << "before removing self id\n";
+            //     SimpleAllocationPinnedHost<read_number> h_similarReadIds(handle.d_candidate_read_ids_tmp.size());
+            //     SimpleAllocationPinnedHost<int> h_similarReadsPerSequence(numSequences);
+            //     SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum(numSequences+1);
+
+            //     cudaMemcpyAsync(h_similarReadIds, handle.d_candidate_read_ids_tmp.get(), sizeof(read_number) * h_similarReadIds.size(), D2H, stream); CUERR;
+            //     cudaMemcpyAsync(h_similarReadsPerSequence, d_similarReadsPerSequence, sizeof(int) * numSequences, D2H, stream); CUERR;
+
+            //     cudaStreamSynchronize(stream); CUERR;
+
+            //     std::cerr << "h_similarReadsPerSequence: ";
+            //     for(int i = 0; i < 13; i++){
+            //         std::cerr << h_similarReadsPerSequence[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     int b = 0;
+            //     for(int i = 0; i < 11; i++){
+            //         b += h_similarReadsPerSequence[i];
+            //     }
+
+            //     std::cerr << "results of read 11 " << "\n";
+            //     const int l = h_similarReadsPerSequence[11];
+
+            //     for(int i = 0; i < l; i++){
+            //         std::cerr << h_similarReadIds[b + i] << "\n";
+            //     }
+            // }
+
+            generic_kernel<<<numSequences, 128, 0, stream>>>(
+                [=,
+                    d_begin_offsets = handle.d_begin_offsets.get(),
+                    input = handle.d_candidate_read_ids_tmp.get(),
+                    output = d_similarReadIds
+                ] __device__ (){
+
+                    using BlockReduce = cub::BlockReduce<int, 128>;
+
+                    __shared__ BlockReduce::TempStorage temp_reduce;
+                    __shared__ int broadcast;
+
+                    for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+
+                       
+                        const read_number* const blockinput = input + d_begin_offsets[sequenceIndex];
+                        read_number* const blockoutput = output + d_similarReadsPerSequencePrefixSum[sequenceIndex];
+                        int numElements = d_similarReadsPerSequence[sequenceIndex];
+                        const read_number anchorIdToRemove = d_readIds[sequenceIndex];
+
+                        const int iters = SDIV(numElements, 128);
+                        for(int iter = 0; iter < iters; iter++){
+                        
+                            read_number elem = 0;
+                            int invalidpos = std::numeric_limits<int>::max();
+
+                            if(iter * 128 + threadIdx.x < numElements){
+                                elem = blockinput[iter * 128 + threadIdx.x];
+                            }
+
+                            //true for at most one thread
+                            if(elem == anchorIdToRemove){
+                                invalidpos = threadIdx.x;
+                            }
+
+                            invalidpos = BlockReduce(temp_reduce).Reduce(invalidpos, cub::Min{});
+
+                            if(threadIdx.x == 0){
+                                broadcast = invalidpos;
+                            }
+                            
+                            __syncthreads();
+
+                            //store valid elements to output array
+                            if(elem != anchorIdToRemove && (iter * 128 + threadIdx.x < numElements)){
+                                if(threadIdx.x < broadcast){
+                                    blockoutput[iter * 128 + threadIdx.x] = elem;
+                                }else{
+                                    blockoutput[iter * 128 + threadIdx.x - 1] = elem;
+                                }
+                            }
+                        }
+
+                        if(threadIdx.x == 0 && numElements > 0){
+                            d_similarReadsPerSequence[sequenceIndex] -= 1;
+                        }
+                    }
+                }
+            );
+
+
+#else 
+
+
             mergeRangesGpuAsync(
                 handle.mergeHandle, 
                 d_similarReadIds,
@@ -366,8 +588,46 @@ namespace gpu{
                 stream,
                 MergeRangesKernelType::allcub
             );
-    
+
+#endif     
+            // cudaDeviceSynchronize(); CUERR;
+            // std::cerr << "after removing self id\n";
+
+            // SimpleAllocationPinnedHost<read_number> h_similarReadIds(handle.d_candidate_read_ids_tmp.size());
+            // SimpleAllocationPinnedHost<int> h_similarReadsPerSequence(numSequences);
+            // SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum(numSequences+1);
+
+            // cudaMemcpyAsync(h_similarReadIds, d_similarReadIds, sizeof(read_number) * h_similarReadIds.size(), D2H, stream); CUERR;
+            // cudaMemcpyAsync(h_similarReadsPerSequence, d_similarReadsPerSequence, sizeof(int) * numSequences, D2H, stream); CUERR;
+            // cudaMemcpyAsync(h_similarReadsPerSequencePrefixSum, d_similarReadsPerSequencePrefixSum, sizeof(int) * (numSequences+1), D2H, stream); CUERR;
+
+            // cudaStreamSynchronize(stream); CUERR;
+
+            // std::cerr << "h_similarReadsPerSequence: ";
+            // for(int i = 0; i < 13; i++){
+            //     std::cerr << h_similarReadsPerSequence[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "h_similarReadsPerSequencePrefixSum: ";
+            // for(int i = 0; i < 13; i++){
+            //     std::cerr << h_similarReadsPerSequencePrefixSum[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // for(int x = 0; x < 12; x++){
+            //     std::cerr << "results of read " << x << "\n";
+            //     const int l = h_similarReadsPerSequence[x];
+            //     const int b = h_similarReadsPerSequencePrefixSum[x];
+
+            //     for(int i = 0; i < l; i++){
+            //         std::cerr << h_similarReadIds[b + i] << "\n";
+            //     }
+            // }
+
             nvtx::pop_range();
+
+            //std::exit(0);
 
 
             cudaSetDevice(currentDeviceId); CUERR;
@@ -793,6 +1053,7 @@ namespace gpu{
         void getIdsOfSimilarReads(
             QueryHandle& handle,
             const read_number* d_readIds,
+            const read_number* h_readIds,
             const unsigned int* d_encodedSequences,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -808,6 +1069,7 @@ namespace gpu{
             getIdsOfSimilarReadsNormal(
                 handle,
                 d_readIds, 
+                h_readIds,
                 d_encodedSequences,
                 encodedSequencePitchInInts,
                 d_sequenceLengths,
