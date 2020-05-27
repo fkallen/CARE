@@ -335,8 +335,8 @@ namespace gpu{
                 for(int chunkId = begin; chunkId < end; chunkId++){
                     const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
 
-                    //const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const auto devicedatabegin = d_similarReadIds + idsPerChunkPrefixSum[chunkId];
+                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    //const auto devicedatabegin = d_similarReadIds + idsPerChunkPrefixSum[chunkId];
 
                     
                     const size_t elementsInChunk = idsPerChunk[chunkId];
@@ -418,9 +418,9 @@ namespace gpu{
 
 
             // SimpleAllocationDevice<read_number> d_normal_candidate_read_ids_tmp(handle.h_candidate_read_ids_tmp.size());
-            // SimpleAllocationDevice<read_number> d_normal_similar_read_ids(handle.h_candidate_read_ids_tmp.size());
-            // SimpleAllocationDevice<read_number> d_normal_similarReadsPerSequence(numSequences);
-            // SimpleAllocationDevice<read_number> d_normal_similarReadsPerSequencePrefixSum(numSequences + 1);
+            // SimpleAllocationDevice<read_number> d_normal_similarReadIds(handle.h_candidate_read_ids_tmp.size());
+            // SimpleAllocationDevice<int> d_normal_similarReadsPerSequence(numSequences);
+            // SimpleAllocationDevice<int> d_normal_similarReadsPerSequencePrefixSum(numSequences + 1);
 
             // cudaMemcpyAsync(
             //     d_normal_candidate_read_ids_tmp.get(),
@@ -432,7 +432,23 @@ namespace gpu{
 
 
             nvtx::push_range("gpumakeUniqueQueryResults", 2);
-#if 1
+#if 0
+            // generic_kernel<<<numSequences, 128, 0, stream>>>(
+            //     [=,d_begin_offsets=handle.d_begin_offsets.get(),d_end_offsets=handle.d_begin_offsets.get()+1]
+            //         __device__ (){
+
+            //         for(int i = blockIdx.x; i < numSequences; i+= gridDim.x){
+            //             int begin = d_begin_offsets[i];
+            //             int end = d_end_offsets[i];
+
+            //             for(int k = threadIdx.x; k < end-begin; k+=blockDim.x){
+            //                 if(d_similarReadIds[begin + k] == 3738318){
+            //                     printf("beforeunique seqindex %d, pos %d\n", i, begin + k);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // );
             GpuSegmentedUnique::unique(
                 //HandleData* handle,
                 d_similarReadIds, //input
@@ -448,6 +464,23 @@ namespace gpu{
                 sizeof(read_number) * 8,
                 stream
             );
+
+            // generic_kernel<<<numSequences, 128, 0, stream>>>(
+            //     [=,d_begin_offsets=handle.d_begin_offsets.get(),d_candidate_read_ids_tmp=handle.d_candidate_read_ids_tmp.get()]
+            //         __device__ (){
+
+            //         for(int i = blockIdx.x; i < numSequences; i+= gridDim.x){
+            //             int begin = d_begin_offsets[i];
+            //             int end = d_similarReadsPerSequence[i];
+
+            //             for(int k = threadIdx.x; k < end-begin; k+=blockDim.x){
+            //                 if(d_candidate_read_ids_tmp[begin + k] == 3738318){
+            //                     printf("afterunique seqindex %d, pos %d\n", i, begin + k);
+            //                 }
+            //             }
+            //         }
+            //     }
+            // );
 
             //if a candidate list is not empty, it must at least contain the id of the querying read.
             //this id will be removed next. however, the prefixsum already requires the numbers with removed ids.
@@ -523,6 +556,8 @@ namespace gpu{
                     __shared__ BlockReduce::TempStorage temp_reduce;
                     __shared__ int broadcast;
 
+                    constexpr int debugindex = 82;
+
                     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
                        
@@ -530,6 +565,15 @@ namespace gpu{
                         read_number* const blockoutput = output + d_similarReadsPerSequencePrefixSum[sequenceIndex];
                         int numElements = d_similarReadsPerSequence[sequenceIndex];
                         const read_number anchorIdToRemove = d_readIds[sequenceIndex];
+
+                        // if(sequenceIndex == debugindex){
+                        //     if(threadIdx.x == 0){
+                        //         printf("anchorIdToRemove %u\n",anchorIdToRemove);
+                        //     }
+                        //     __syncthreads();
+                        // }
+
+                        bool foundInvalid = false;
 
                         const int iters = SDIV(numElements, 128);
                         for(int iter = 0; iter < iters; iter++){
@@ -539,28 +583,66 @@ namespace gpu{
 
                             if(iter * 128 + threadIdx.x < numElements){
                                 elem = blockinput[iter * 128 + threadIdx.x];
+
+                                // if(sequenceIndex == debugindex){
+                                //     printf("tid %d, load %u from position %d\n", 
+                                //     threadIdx.x, elem, d_begin_offsets[sequenceIndex] + iter * 128 + threadIdx.x);
+                                // }
                             }
+
+
 
                             //true for at most one thread
                             if(elem == anchorIdToRemove){
                                 invalidpos = threadIdx.x;
                             }
 
-                            invalidpos = BlockReduce(temp_reduce).Reduce(invalidpos, cub::Min{});
+                            if(!foundInvalid){
+                                invalidpos = BlockReduce(temp_reduce).Reduce(invalidpos, cub::Min{});
 
-                            if(threadIdx.x == 0){
-                                broadcast = invalidpos;
+                                if(threadIdx.x == 0){
+                                    broadcast = invalidpos;
+                                }
+                            }else{
+                                if(threadIdx.x == 0){
+                                    broadcast = -1;
+                                }
                             }
                             
                             __syncthreads();
 
+                            invalidpos = broadcast;
+
+                            // if(threadIdx.x == 0 && sequenceIndex == debugindex){
+                            //     printf("invalidpos = %d\n", invalidpos);
+                            // }
+
                             //store valid elements to output array
                             if(elem != anchorIdToRemove && (iter * 128 + threadIdx.x < numElements)){
-                                if(threadIdx.x < broadcast){
+
+                                const bool doShift = foundInvalid || threadIdx.x >= invalidpos;
+
+                                if(!doShift){
                                     blockoutput[iter * 128 + threadIdx.x] = elem;
+
+                                    // if(sequenceIndex == debugindex || elem == 3738318){
+                                    //     printf("seq %d tid %d, write %u to position %d (noshift)\n", 
+                                    //         sequenceIndex, threadIdx.x, elem, d_similarReadsPerSequencePrefixSum[sequenceIndex] + iter * 128 + threadIdx.x
+                                    //     );
+                                    // }
                                 }else{
                                     blockoutput[iter * 128 + threadIdx.x - 1] = elem;
+
+                                    // if(sequenceIndex == debugindex || elem == 3738318){
+                                    //     printf("seq %d tid %d, write %u to position %d (shift)\n", 
+                                    //     sequenceIndex, threadIdx.x, elem, d_similarReadsPerSequencePrefixSum[sequenceIndex] + iter * 128 + threadIdx.x-1
+                                    //     );
+                                    // }
                                 }
+                            }
+
+                            if(invalidpos != std::numeric_limits<int>::max()){
+                                foundInvalid |= true;
                             }
                         }
 
@@ -574,22 +656,96 @@ namespace gpu{
 
 #else 
 
+mergeRangesGpuAsync(
+    handle.mergeHandle, 
+    d_similarReadIds,
+    d_similarReadsPerSequence,
+    d_similarReadsPerSequencePrefixSum,
+    handle.d_candidate_read_ids_tmp.get(),
+    allRanges.data(), 
+    getNumberOfMaps() * numSequences, 
+    d_readIds,
+    getNumberOfMaps(), 
+    stream,
+    MergeRangesKernelType::allcub
+);
 
-            mergeRangesGpuAsync(
-                handle.mergeHandle, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum,
-                handle.d_candidate_read_ids_tmp.get(),
-                allRanges.data(), 
-                getNumberOfMaps() * numSequences, 
-                d_readIds,
-                getNumberOfMaps(), 
-                stream,
-                MergeRangesKernelType::allcub
-            );
+            // mergeRangesGpuAsync(
+            //     handle.mergeHandle, 
+            //     d_normal_similarReadIds,
+            //     d_normal_similarReadsPerSequence,
+            //     d_normal_similarReadsPerSequencePrefixSum,
+            //     d_normal_candidate_read_ids_tmp.get(),
+            //     allRanges.data(), 
+            //     getNumberOfMaps() * numSequences, 
+            //     d_readIds,
+            //     getNumberOfMaps(), 
+            //     stream,
+            //     MergeRangesKernelType::allcub
+            // );
 
 #endif     
+
+//             generic_kernel<<<1, 256, 0, stream>>>(
+//                 [
+//                     =,
+//                     d_normal_similarReadsPerSequence = d_normal_similarReadsPerSequence.get(),
+//                     d_normal_similarReadsPerSequencePrefixSum = d_normal_similarReadsPerSequencePrefixSum.get(),
+//                     d_normal_similarReadIds = d_normal_similarReadIds.get()
+//                 ] __device__ (){
+
+//                     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+// #if 0
+//                         if(threadIdx.x == 0){
+//                             if(d_normal_similarReadsPerSequence[sequenceIndex] != d_similarReadsPerSequence[sequenceIndex]){
+//                                 printf("error sequenceIndex %d, anchorId %u: normal_num %d, other_num %d\n", 
+//                                     sequenceIndex, d_readIds[sequenceIndex], 
+//                                     d_normal_similarReadsPerSequence[sequenceIndex],
+//                                     d_similarReadsPerSequence[sequenceIndex]
+//                                 );
+//                                 assert(false);
+//                             }
+
+//                             if(d_normal_similarReadsPerSequencePrefixSum[sequenceIndex] != d_similarReadsPerSequencePrefixSum[sequenceIndex]){
+//                                 printf("error sequenceIndex %d, anchorId %u: normal_num_ps %d, other_num_ps %d\n", 
+//                                     sequenceIndex, d_readIds[sequenceIndex], 
+//                                     d_normal_similarReadsPerSequencePrefixSum[sequenceIndex],
+//                                     d_similarReadsPerSequencePrefixSum[sequenceIndex]
+//                                 );
+//                                 assert(false);
+//                             }
+
+                            
+//                         }
+
+//                         __syncthreads();
+
+//                         const int numCandidates = d_normal_similarReadsPerSequence[sequenceIndex];
+//                         const int offset = d_normal_similarReadsPerSequencePrefixSum[sequenceIndex];
+
+//                         for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
+//                             if(d_normal_similarReadIds[offset + c] != d_similarReadIds[offset + c]){
+//                                 printf("error sequenceIndex %d, anchorId %u, candidate index %d: normalcand %u, othercand %u\n", 
+//                                     sequenceIndex, d_readIds[sequenceIndex], c,
+//                                     d_normal_similarReadIds[offset + c],
+//                                     d_similarReadIds[offset + c]
+//                                 );
+//                                 assert(false);
+//                             }
+//                         }
+// #endif 
+//                         // if(threadIdx.x == 0 && d_readIds[sequenceIndex] == 4){
+//                         //     for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
+//                         //         printf("%d: %u %u\n", c, d_normal_similarReadIds[offset + c], d_similarReadIds[offset + c]);
+//                         //     }
+//                         //     assert(false);
+//                         // }
+//                     }
+//                 }
+//             );
+
+            // cudaStreamSynchronize(stream); CUERR;
+
             // cudaDeviceSynchronize(); CUERR;
             // std::cerr << "after removing self id\n";
 
@@ -604,24 +760,24 @@ namespace gpu{
             // cudaStreamSynchronize(stream); CUERR;
 
             // std::cerr << "h_similarReadsPerSequence: ";
-            // for(int i = 0; i < 13; i++){
+            // for(int i = 0; i < 83; i++){
             //     std::cerr << h_similarReadsPerSequence[i] << " ";
             // }
             // std::cerr << "\n";
 
             // std::cerr << "h_similarReadsPerSequencePrefixSum: ";
-            // for(int i = 0; i < 13; i++){
+            // for(int i = 0; i < 83; i++){
             //     std::cerr << h_similarReadsPerSequencePrefixSum[i] << " ";
             // }
             // std::cerr << "\n";
 
-            // for(int x = 0; x < 12; x++){
+            // for(int x = 82; x < 83; x++){
             //     std::cerr << "results of read " << x << "\n";
             //     const int l = h_similarReadsPerSequence[x];
             //     const int b = h_similarReadsPerSequencePrefixSum[x];
-
+            //     std::cerr << "Range begin: " << b << "\n";
             //     for(int i = 0; i < l; i++){
-            //         std::cerr << h_similarReadIds[b + i] << "\n";
+            //         std::cerr << (b + i) << " " << h_similarReadIds[b + i] << "\n";
             //     }
             // }
 

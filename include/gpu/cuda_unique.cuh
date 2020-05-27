@@ -62,6 +62,15 @@ namespace cudauniquekernels{
                     sizeOfRange
                 );
 
+                // for(int k = 0; k < elemsPerThread; k++){
+                //     if(tempregs[k] == 3738318){
+                //         printf("segmentId %d thread %d tempreg %d is 3738318\n", 
+                //             segmentId, threadIdx.x, k);
+                //     }
+                // }
+
+                
+
                 // if(segmentId == 11){
                 //     if(threadIdx.x == 0){
                 //         printf("segmentBegin %d, segmentEnd %d\n", segmentBegin, segmentEnd);
@@ -104,6 +113,13 @@ namespace cudauniquekernels{
                 int numberOfSetHeadFlags = 0;
     
                 BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfSetHeadFlags);
+
+                // for(int k = 0; k < elemsPerThread; k++){
+                //     if(tempregs[k] == 3738318){
+                //         printf("segmentId %d thread %d tempreg %d is 3738318 after sort\n", 
+                //             segmentId, threadIdx.x, k);
+                //     }
+                // }
     
                 __syncthreads();
     
@@ -111,6 +127,11 @@ namespace cudauniquekernels{
                 for(int i = 0; i < elemsPerThread; i++){
                     if(threadIdx.x * elemsPerThread + i < sizeOfRange && head_flags[i] == 1){
                         output[segmentBegin + prefixsum[i]] = tempregs[i];
+
+                        // if(tempregs[i] == 3738318){
+                        //     printf("segmentId %d thread %d tempreg %d, write 3738318 to output pos %d\n", 
+                        //         segmentId, threadIdx.x, i, segmentBegin + prefixsum[i]);
+                        // }
                     }
                 }
     
@@ -120,6 +141,46 @@ namespace cudauniquekernels{
             }
         }
     
+    }
+
+    template<class T, class OffsetIterator>
+    __global__
+    void checkUniquenessKernel(
+        const T* __restrict__ elements_before_unique,
+        const T* __restrict__ unique_elements,
+        const int* __restrict__ unique_lengths, 
+        int numSegments,
+        OffsetIterator begin_offsets, //segment i begins at input[d_begin_offsets[i]]
+        OffsetIterator end_offsets //segment i ends at input[d_end_offsets[i]] (exclusive)      
+    ){
+        
+        for(int segmentId = blockIdx.x; segmentId < numSegments; segmentId += gridDim.x){
+    
+            const int segmentBegin = begin_offsets[segmentId];
+            const int segmentEnd = end_offsets[segmentId];
+            const int sizeOfRange = segmentEnd - segmentBegin;
+            const int uniqueSize = unique_lengths[segmentId];
+
+            for(int p = threadIdx.x; p < sizeOfRange; p += blockDim.x){
+                
+                const T element = elements_before_unique[segmentBegin + p];
+
+                int count = 0;
+
+                for(int i = 0; i < uniqueSize; i++){
+                    if(element == unique_elements[segmentBegin + i]){
+                        count++;
+                    }
+                }
+
+                if(count != 1){
+                    printf("error segment %d, element %u at original position %d appears %d times,"
+                            "sizeOfRange %d, uniqueSize %d\n",
+                        segmentId, element, segmentBegin + p, count, sizeOfRange, uniqueSize);
+                    assert(false);
+                }
+            }            
+        }    
     }
 
 
@@ -167,6 +228,15 @@ struct GpuSegmentedUnique{
             begin_bit,
             end_bit,
             stream
+        );
+
+        cudauniquekernels::checkUniquenessKernel<<<numSegments, 128, 0, stream>>>(
+            d_items,
+            d_unique_items,
+            d_unique_lengths, 
+            numSegments,
+            d_begin_offsets,
+            d_end_offsets
         );
     }
 
