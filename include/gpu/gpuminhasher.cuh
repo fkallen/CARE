@@ -152,6 +152,8 @@ namespace gpu{
                 handledevice(d_hashFuncIds);
                 handlehost(h_signatureSizePerSequence);
                 handlehost(h_hashFuncIds);
+
+                info += segmentedUniqueHandle->getMemoryInfo();
     
                 return info;
             }

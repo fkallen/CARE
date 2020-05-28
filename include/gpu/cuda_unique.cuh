@@ -3,6 +3,7 @@
 
 #include <gpu/simpleallocation.cuh>
 #include <hpc_helpers.cuh>
+#include <memorymanagement.hpp>
 
 #include <memory>
 
@@ -309,7 +310,8 @@ namespace cudauniquekernels{
 struct GpuSegmentedUnique{
     struct HandleData{
         int gpu;
-        SimpleAllocationDevice<char> d_temp_storage;
+        SimpleAllocationDevice<char, 0> d_temp_storage;
+        SimpleAllocationDevice<int> d_end_offsets_tmp;
 
         HandleData(){
             cudaGetDevice(&gpu); CUERR;
@@ -324,8 +326,33 @@ struct GpuSegmentedUnique{
             cudaSetDevice(gpu); CUERR;
 
             d_temp_storage.destroy();
+            d_end_offsets_tmp.destroy();
 
             cudaSetDevice(curgpu); CUERR;
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info;
+            info.host = 0;
+            info.device[gpu] = 0;
+
+            auto handlehost = [&](const auto& buff){
+                info.host += buff.capacityInBytes();
+            };
+
+            auto handledevice = [&](const auto& buff){
+                info.device[gpu] += buff.capacityInBytes();
+            };
+
+            auto handlevector = [&](const auto& buff){
+                info.host += 
+                    sizeof(typename std::remove_reference<decltype(buff)>::type::value_type) * buff.capacity();
+            };
+
+            handledevice(d_temp_storage);
+            handledevice(d_end_offsets_tmp);
+
+            return info;
         }
     };
 
@@ -367,35 +394,38 @@ struct GpuSegmentedUnique{
             return;
         }
 
-        constexpr int maximumSegmentSizeForRegSort = 128 * 64;
+        constexpr int maximumSegmentSizeForRegSort = 128 * 16;
 
-        //cudaMemsetAsync(d_unique_lengths, 0, sizeof(int) * numSegments, stream);
+        cudaMemsetAsync(d_unique_lengths, 0, sizeof(int) * numSegments, stream);
 
-        //select segments large than limit
-        // cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
-        //     handle->end_offsets_tmp.get(),
-        //     numSegments,
-        //     d_begin_offsets,
-        //     d_end_offsets,
-        //     maximumSegmentSizeForRegSort+1
-        // )
+        makeUniqueRangeWithRegSort(
+            d_unique_items,
+            d_unique_lengths, 
+            d_items,
+            numSegments,
+            d_begin_offsets, 
+            d_end_offsets, 
+            sizeOfLargestSegment,
+            begin_bit,
+            end_bit,
+            stream
+        );
 
-        if(sizeOfLargestSegment <= maximumSegmentSizeForRegSort){
+        if(sizeOfLargestSegment > maximumSegmentSizeForRegSort){
+            //select segments larger than limit
+            std::cerr << "makeUniqueRangeWithGmemSort\n";
+            handle->d_end_offsets_tmp.resize(numSegments);
 
-            makeUniqueRangeWithRegSort(
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
+            cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
+                handle->d_end_offsets_tmp.get(),
                 numSegments,
-                d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
-                begin_bit,
-                end_bit,
-                stream
-            );
+                d_begin_offsets,
+                d_end_offsets,
+                maximumSegmentSizeForRegSort+1
+            ); CUERR;
 
-        }else{
+            //handle those selected segments
+
             std::size_t temp_storage_bytes = 0;
 
             makeUniqueRangeWithGmemSort(
@@ -407,8 +437,7 @@ struct GpuSegmentedUnique{
                 numItems,
                 numSegments,
                 d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
+                handle->d_end_offsets_tmp.get(), 
                 begin_bit,
                 end_bit,
                 stream
@@ -425,8 +454,7 @@ struct GpuSegmentedUnique{
                 numItems,
                 numSegments,
                 d_begin_offsets, 
-                d_end_offsets, 
-                sizeOfLargestSegment,
+                handle->d_end_offsets_tmp.get(), 
                 begin_bit,
                 end_bit,
                 stream
@@ -443,6 +471,7 @@ struct GpuSegmentedUnique{
         );
     }
 
+    //segments of size larger than 128 * 64 are not processed
     template<class T, class OffsetIterator>
     static void makeUniqueRangeWithRegSort(
         T* d_output,
@@ -526,17 +555,8 @@ struct GpuSegmentedUnique{
         }else{
             constexpr int blocksize = 128;
             constexpr int elemsPerThread = 64;
-
-
-            if(sizeOfLargestSegment <= blocksize * elemsPerThread){
             
-                processData(blocksize, elemsPerThread);
-
-            }else{
-                
-                std::cerr << sizeOfLargestSegment << " > " << (blocksize * elemsPerThread) << " , cannot use callMakeUniqueRangeWithRegSortKernel \n";
-                assert(false);
-            }
+            processData(blocksize, elemsPerThread);
         }
     }
 
@@ -551,7 +571,6 @@ struct GpuSegmentedUnique{
         int numSegments,
         OffsetIterator d_begin_offsets, //segment i begins at input[d_begin_offsets[i]]
         OffsetIterator d_end_offsets, //segment i ends at input[d_end_offsets[i]] (exclusive)
-        int sizeOfLargestSegment,
         int begin_bit = 0,
         int end_bit = sizeof(T) * 8,
         cudaStream_t stream = 0
@@ -604,13 +623,6 @@ struct GpuSegmentedUnique{
             end_bit,
             stream
         );
-
-        // generic_kernel<<<1,1,0,stream>>>([=]__device__(){
-        //     printf("after sort\n");
-        //     for(int i = d_begin_offsets[0]; i < d_end_offsets[0]; i++){
-        //         printf("%d %u\n", i, d_item_temp[i]);
-        //     }
-        // });
 
         cudauniquekernels::makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread>
                 <<<numSegments, blocksize, 0, stream>>>(
