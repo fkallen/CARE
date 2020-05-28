@@ -6,6 +6,8 @@
 #include <memorymanagement.hpp>
 
 #include <memory>
+#include <cassert>
+#include <cmath>
 
 #ifdef __NVCC__
 
@@ -394,7 +396,7 @@ struct GpuSegmentedUnique{
             return;
         }
 
-        constexpr int maximumSegmentSizeForRegSort = 128 * 16;
+        constexpr int maximumSegmentSizeForRegSort = 128 * 64;
 
         cudaMemsetAsync(d_unique_lengths, 0, sizeof(int) * numSegments, stream);
 
@@ -413,7 +415,7 @@ struct GpuSegmentedUnique{
 
         if(sizeOfLargestSegment > maximumSegmentSizeForRegSort){
             //select segments larger than limit
-            std::cerr << "makeUniqueRangeWithGmemSort\n";
+
             handle->d_end_offsets_tmp.resize(numSegments);
 
             cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
