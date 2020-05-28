@@ -84,6 +84,8 @@ namespace gpu{
             DeviceBuffer<int> d_hashFuncIds;
             PinnedBuffer<int> h_hashFuncIds;
 
+            GpuSegmentedUnique::Handle segmentedUniqueHandle;
+
 
             void resize(const GpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
                 const std::size_t maximumResultSize 
@@ -180,6 +182,8 @@ namespace gpu{
                 d_hashFuncIds.destroy();
                 h_hashFuncIds.destroy();
 
+                segmentedUniqueHandle = nullptr;
+
                 cudaSetDevice(cur); CUERR;
             }
         };
@@ -188,6 +192,7 @@ namespace gpu{
             QueryHandle handle;
 
             handle.mergeHandle = makeMergeRangesGpuHandle<read_number>();
+            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
 
             cudaGetDevice(&handle.deviceId); CUERR;
 
@@ -419,7 +424,7 @@ namespace gpu{
             nvtx::push_range("gpumakeUniqueQueryResults", 2);
 #if 1
             GpuSegmentedUnique::unique(
-                //HandleData* handle,
+                handle.segmentedUniqueHandle,
                 d_similarReadIds, //input
                 totalNumIds,
                 handle.d_candidate_read_ids_tmp.get(), //output
