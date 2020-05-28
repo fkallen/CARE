@@ -55,23 +55,19 @@ namespace care{
 
     
 
-    template<class minhasher_t,
-             class readStorage_t>
-    void printDataStructureMemoryUsage(const minhasher_t& minhasher, const readStorage_t& readStorage){
+    template<class T>
+    void printDataStructureMemoryUsage(const T& datastructure, const std::string& name){
     	auto toGB = [](std::size_t bytes){
     			    double gb = bytes / 1024. / 1024. / 1024.0;
     			    return gb;
     		    };
 
-        auto rsMemInfo = readStorage.getMemoryInfo();
-
-        std::cout << "Reads occupy " << toGB(rsMemInfo.host) << " GB on host\n";
-        for(const auto& pair : rsMemInfo.device){
-            std::cout << "Reads occupy " << toGB(pair.second) << " GB on device " << pair.first << '\n';
+        auto memInfo = datastructure.getMemoryInfo();
+        
+        std::cout << name << " memory usage: " << toGB(memInfo.host) << " GB on host\n";
+        for(const auto& pair : memInfo.device){
+            std::cout << name << " memory usage: " << toGB(pair.second) << " GB on device " << pair.first << '\n';
         }
-
-    	//std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
-    	std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB on host." << std::endl;
     }
 
     void performCorrection(
@@ -216,13 +212,8 @@ namespace care{
         std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
         
 
+        printDataStructureMemoryUsage(readStorage, "reads");
 
-
-
-
-        //printDataStructureMemoryUsage(minhasher, readStorage);
-
-        //minhasher.destroy();
 
         TIMERSTARTCPU(build_newgpuminhasher);
         gpu::GpuMinhasher newGpuMinhasher(
@@ -266,6 +257,8 @@ namespace care{
 
     		std::cout << "Saved minhasher" << std::endl;
         }
+
+        printDataStructureMemoryUsage(newGpuMinhasher, "hash tables");
 
 
 
