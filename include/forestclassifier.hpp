@@ -74,8 +74,12 @@ namespace care{
         ForestClassifier& operator=(const ForestClassifier&) = delete;
 
         ForestClassifier& operator=(ForestClassifier&& rhs){
-            if(soHandle != nullptr)
-                dlclose(soHandle);
+            if(soHandle != nullptr){
+                int dlcloseretval = dlclose(soHandle);
+            	if (dlcloseretval != 0) {
+            		std::cerr << dlerror() << '\n';
+            	}
+            }
             soFilename = std::move(rhs.soFilename);
             soHandle = std::move(rhs.soHandle);
             shouldCorrect_forest = std::move(rhs.shouldCorrect_forest);
