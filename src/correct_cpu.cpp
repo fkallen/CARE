@@ -18,12 +18,14 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
+#include <forestclassifier.hpp>
 
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -112,6 +114,9 @@ namespace cpu{
             }
         };        
 
+
+        //BatchData = Working set of a thread
+
         struct BatchData{
             struct OutputData{
                 std::vector<TempCorrectedSequence> anchorCorrections;
@@ -120,6 +125,7 @@ namespace cpu{
                 std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
             };
 
+            //Task = Working set to correct a single read.
             struct Task{
                 bool active;
                 int numCandidates;
@@ -158,7 +164,7 @@ namespace cpu{
                 }            
             };
 
-            // data for all batch tasks within batch
+            // data for all tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
@@ -179,7 +185,7 @@ namespace cpu{
             std::vector<int> candidatesPerSubject;
             std::vector<int> candidatesPerSubjectPrefixSum;
             std::vector<read_number> filteredReadIds;
-            // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
+            // data used by a single task. is shared by all tasks within batch -> no interleaved access
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
             std::vector<BestAlignment_t> alignmentFlags;
@@ -208,6 +214,8 @@ namespace cpu{
             int encodedSequencePitchInInts = 0;
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
+
+            std::shared_ptr<ForestClassifier> forestClassifier1;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1064,10 +1072,14 @@ namespace cpu{
 #endif            
         }
 
-        void correctSubject(
+
+
+        void correctSubjectClassic(
                 BatchData& data,
                 BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
+
+            assert(correctionOptions.correctionType == CorrectionType::Classic);
 
             const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
@@ -1104,33 +1116,60 @@ namespace cpu{
                 task.subjectReadId
             );
 
-            //auto it = std::lower_bound(interestingReadIds.begin(), interestingReadIds.end(), task.readId);
-            // if(it != interestingReadIds.end() && *it == task.readId){
-            //     std::lock_guard<std::mutex> lg(interestingMutex);
-
-            //     std::cerr << "read id " << task.readId << " HQ: " << data.msaProperties.isHQ << "\n";
-            //     if(!data.msaProperties.isHQ){
-            //         for(int i = 0; i < int(correctionResult.bestAlignmentWeightOfConsensusBase.size()); i++){
-            //             if(correctionResult.bestAlignmentWeightOfConsensusBase[i] != 0 || correctionResult.bestAlignmentWeightOfAnchorBase[i]){
-            //                 std::cerr << "position " << i
-            //                             << " " << correctionResult.bestAlignmentWeightOfConsensusBase[i]
-            //                             << " " << correctionResult.bestAlignmentWeightOfAnchorBase[i] << "\n";
-            //             }
-            //         }
-            //     }
-            // }
-
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
             
-            if(0) /*if(task.subjectReadId == 1)*/{
-                std::cerr << "corrected ? " << task.subjectCorrection.isCorrected << ", " << task.subjectCorrection.correctedSequence << "\n";
-            }
+        }
 
-            // if(correctionResult.isCorrected){
-            //     task.corrected_subject = std::move(correctionResult.correctedSequence);
-            //     task.uncorrectedPositionsNoConsensus = std::move(correctionResult.uncorrectedPositionsNoConsensus);
-            //     task.corrected = true;                
-            // }
+        void correctSubjectForest(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions){
+
+            assert(correctionOptions.correctionType == CorrectionType::Forest);
+
+            task.msaProperties = getMSAProperties2(
+                data.multipleSequenceAlignment.support.data(),
+                data.multipleSequenceAlignment.coverage.data(),
+                subjectColumnsBegin_incl,
+                subjectColumnsEnd_excl,
+                correctionOptions.estimatedErrorrate,
+                correctionOptions.estimatedCoverage,
+                correctionOptions.m_coverage
+            );
+
+            
+            /*
+                auto asdf = data.forestClassifier1->shouldCorrect_forest(...)
+            */
+
+            //this must be computed using the results of forest classifier
+            /*            
+                struct CorrectionResult{
+                    bool isCorrected;
+                    bool isHQ;
+                    std::string correctedSequence;
+                };
+            */
+            task.subjectCorrection = CorrectionResult{};
+
+
+            task.msaProperties.isHQ = task.subjectCorrection.isHQ;
+
+        }
+
+        void correctSubject(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions){
+
+            if(correctionOptions.correctionType == CorrectionType::Classic){
+                correctSubjectClassic(data, task, correctionOptions);
+            }else if(correctionOptions.correctionType == CorrectionType::Forest){
+                correctSubjectForest(data, task, correctionOptions);
+            }else{
+                assert(false);
+            }
+            
         }
 
         void correctCandidates(
@@ -1455,6 +1494,11 @@ correct_cpu(
 
     TimeMeasurements timingsOfAllThreads;
 
+    std::shared_ptr<ForestClassifier> forestClassifier1;
+    if(correctionOptions.correctionType == CorrectionType::Forest){
+        forestClassifier1 = std::make_shared<ForestClassifier>(fileOptions.mlForestfile);
+    }
+
 
     // std::ifstream interestingstream("interestingIds.txt");
     // if(interestingstream){
@@ -1507,6 +1551,7 @@ correct_cpu(
         batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
         batchData.decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         batchData.qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+        batchData.forestClassifier1 = forestClassifier1;
 
         while(!(readIdGenerator.empty())){
 

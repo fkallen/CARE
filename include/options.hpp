@@ -10,6 +10,17 @@
 
 namespace care{
 
+    enum class CorrectionType : int {Classic, Forest};
+
+    __inline__
+    std::string nameOfCorrectionType(CorrectionType t){
+        switch(t){
+            case CorrectionType::Classic: return "Classic"; break;
+            case CorrectionType::Forest: return "Forest"; break;
+            default: return "Forgot to name correction type"; break;
+        }
+    }
+
 	//Options which can be parsed from command-line arguments
 
     struct GoodAlignmentProperties{
@@ -31,6 +42,7 @@ namespace care{
         int new_columns_to_correct = 15;
         int kmerlength = 20;
         int numHashFunctions = 48;
+        CorrectionType correctionType = CorrectionType::Classic;
     };
 
 	struct RuntimeOptions{

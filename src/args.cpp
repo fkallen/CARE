@@ -99,6 +99,14 @@ namespace args{
         if(pr.count("candidateCorrectionNewColumns")){
             result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
         }
+        if(pr.count("correctionType")){
+            const int val = pr["correctionType"].as<int>();
+
+            switch(val){
+                case 1: result.correctionType = CorrectionType::Forest; break;
+                default: result.correctionType = CorrectionType::Classic; break;
+            }
+        }
 
         return result;
 	}
