@@ -4,6 +4,7 @@ care-cpu
 care-gpu
 care-cpu-debug
 care-gpu-debug
+forests/*.so
 .CUB_INCDIR
 .CUDA_DIR
 .PREFIX
