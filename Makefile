@@ -20,8 +20,8 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
 			-gencode=arch=compute_70,code=sm_70 \
   			-gencode=arch=compute_70,code=compute_70
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz 
-LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz 
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
+LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
@@ -56,6 +56,8 @@ cpu:	$(CPU_VERSION)
 gpu:	$(GPU_VERSION)
 cpud:	$(CPU_VERSION_DEBUG)
 gpud:	$(GPU_VERSION_DEBUG)
+
+forests:	$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 
 
 $(GPU_VERSION) : $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
@@ -95,6 +97,16 @@ buildgpu/%.dbg.o : src/gpu/%.cu | makedir
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 
+forests/%.so : src/forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS) -shared -fPIC $< -o $@
+
+forests/%.dbg.so : src/forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -shared -fPIC $< -o $@
+
+
+
 install: 
 	mkdir -p $(PREFIX)/bin
 ifneq ("$(wildcard $(CPU_VERSION))","")
@@ -120,5 +132,6 @@ cleangpud:
 makedir:
 	@mkdir -p buildcpu
 	@mkdir -p buildgpu
+	@mkdir -p forests
 
 .PHONY: makedir

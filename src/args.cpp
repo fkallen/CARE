@@ -240,6 +240,10 @@ namespace args{
             result.tempdirectory = result.outputdirectory;
         }
 
+        if(pr.count("ml-forestfile")){
+            result.mlForestfile = pr["ml-forestfile"].as<std::string>();
+        }
+
         if(pr.count("inputfiles")){
             result.inputfiles = pr["inputfiles"].as<std::vector<std::string>>();
         }
@@ -384,6 +388,16 @@ namespace args{
                     std::cout << "Error: cannot open output file " << outputfile << std::endl;
                 }
             }            
+        }
+
+        {
+            if(opt.mlForestfile != ""){
+                std::ifstream is(opt.mlForestfile);
+                if(!(bool)is){
+                    valid = false;
+                    std::cout << "Error: cannot find mlForestfile " << opt.mlForestfile << std::endl;
+                }
+            }
         }
 
         {

@@ -55,6 +55,7 @@ namespace care{
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
         std::string tempdirectory;
+        std::string mlForestfile = "";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 	};
