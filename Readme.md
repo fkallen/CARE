@@ -40,6 +40,11 @@ make gpu
 
 Optionally, after executables have been built they can be copied to the installation directory via make install
 
+Forests: Creates shared object files for random forests
+```
+make forests
+```
+
 # Run   
 The simplest command which only includes mandatory options is
 
@@ -152,6 +157,10 @@ Available program parameters:
                                 K,M,G , e.g. 20G means 20 gigabyte. This option
                                 is not a hard limit. Default: All free
                                 memory.
+
+      --correctionType arg      0: Classic, 1: Forest
+      --ml-forestfile arg       The shared object file to load which contains 
+                                ML error correction logic
 
 ```
 
