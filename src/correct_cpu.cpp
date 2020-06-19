@@ -1543,8 +1543,6 @@ correct_cpu(
 
     const int numThreads = runtimeOptions.threads;
 
-    omp_set_num_threads(1);
-
     #pragma omp parallel
     {
         //const int threadId = omp_get_thread_num();
