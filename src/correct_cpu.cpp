@@ -255,14 +255,6 @@ namespace cpu{
             }
         }
 
-        // struct InterestingStruct{
-        //     read_number readId;
-        //     std::vector<int> positions;
-        // };
-
-        // std::vector<read_number> interestingReadIds;
-        // std::mutex interestingMutex;
-
         template<class Iter>
         Iter findBestAlignmentDirection(
                 Iter result,
@@ -298,7 +290,7 @@ namespace cpu{
         /*
             Filters alignments by good mismatch ratio.
 
-            Returns an sorted index list to alignments which pass the filter.
+            Returns a sorted index list to alignments which pass the filter.
         */
 
         template<class Iter, class Func>
@@ -878,18 +870,21 @@ namespace cpu{
                                                     task.bestCandidateQualities
                                                     : nullptr;
 
-            data.multipleSequenceAlignment.build(task.decodedSubjectSequence,
-                                            task.subjectSequenceLength,
-                                            data.decodedCandidateSequences.data(),
-                                            task.bestCandidateLengths,
-                                            task.numFilteredCandidates,
-                                            task.bestAlignmentShifts,
-                                            task.bestAlignmentWeights,
-                                            task.subjectQualities,
-                                            candidateQualityPtr,
-                                            data.decodedSequencePitchInBytes,
-                                            data.qualityPitchInBytes,
-                                            correctionOptions.useQualityScores);
+            MultipleSequenceAlignment::InputData buildArgs;
+            buildArgs.useQualityScores = correctionOptions.useQualityScores;
+            buildArgs.subjectLength = task.subjectSequenceLength;
+            buildArgs.nCandidates = task.numFilteredCandidates;
+            buildArgs.candidatesPitch = data.decodedSequencePitchInBytes;
+            buildArgs.candidateQualitiesPitch = data.qualityPitchInBytes;
+            buildArgs.subject = task.decodedSubjectSequence;
+            buildArgs.candidates = data.decodedCandidateSequences.data();
+            buildArgs.subjectQualities = task.subjectQualities;
+            buildArgs.candidateQualities = candidateQualityPtr;
+            buildArgs.candidateLengths = task.bestCandidateLengths;
+            buildArgs.candidateShifts = task.bestAlignmentShifts;
+            buildArgs.candidateDefaultWeightFactors = task.bestAlignmentWeights;
+        
+            data.multipleSequenceAlignment.build(buildArgs);
         }
 
 
@@ -1127,6 +1122,9 @@ namespace cpu{
 
             assert(correctionOptions.correctionType == CorrectionType::Forest);
 
+            const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+
             task.msaProperties = getMSAProperties2(
                 data.multipleSequenceAlignment.support.data(),
                 data.multipleSequenceAlignment.coverage.data(),
@@ -1136,6 +1134,9 @@ namespace cpu{
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage
             );
+
+            //data.multipleSequenceAlignment.print(std::cout);
+            //data.multipleSequenceAlignment.printWithDiffToConsensus(std::cout);
 
             
             /*
@@ -1541,6 +1542,8 @@ correct_cpu(
     ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
     const int numThreads = runtimeOptions.threads;
+
+    omp_set_num_threads(1);
 
     #pragma omp parallel
     {
