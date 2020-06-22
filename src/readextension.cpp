@@ -99,17 +99,17 @@ public:
             }
             
 
-            std::array<std::vector<read_number>, 2> newCandidates;
+            std::array<std::vector<read_number>, 2> newCandidateReadIds;
 
             getCandidates(
-                newCandidates[0], 
+                newCandidateReadIds[0], 
                 currentAnchor[0].data(), 
                 currentAnchorLength[0],
                 currentAnchorReadId[0]
             );
 
             getCandidates(
-                newCandidates[1], 
+                newCandidateReadIds[1], 
                 currentAnchor[1].data(), 
                 currentAnchorLength[1],
                 currentAnchorReadId[1]
@@ -119,13 +119,13 @@ public:
                 // remove self from candidate list
                 for(int i = 0; i < 2; i++){
                     auto readIdPos = std::lower_bound(
-                        newCandidates[i].begin(),                                            
-                        newCandidates[i].end(),
+                        newCandidateReadIds[i].begin(),                                            
+                        newCandidateReadIds[i].end(),
                         currentAnchorReadId[i]
                     );
 
-                    if(readIdPos != newCandidates[i].end() && *readIdPos == currentAnchorReadId[i]){
-                        newCandidates[i].erase(readIdPos);
+                    if(readIdPos != newCandidateReadIds[i].end() && *readIdPos == currentAnchorReadId[i]){
+                        newCandidateReadIds[i].erase(readIdPos);
                     }
                 }
             }
@@ -145,14 +145,14 @@ public:
             };
 
             std::vector<read_number> mateIdsToKeep(
-                std::min(newCandidates[0].size(), newCandidates[1].size())
+                std::min(newCandidateReadIds[0].size(), newCandidateReadIds[1].size())
             );
 
             auto mateIdsToKeep_end = std::set_intersection(
-                newCandidates[0].begin(),
-                newCandidates[0].end(),
-                newCandidates[1].begin(),
-                newCandidates[1].end(),
+                newCandidateReadIds[0].begin(),
+                newCandidateReadIds[0].end(),
+                newCandidateReadIds[1].begin(),
+                newCandidateReadIds[1].end(),
                 mateIdsToKeep.begin(),
                 [](auto id1, auto id2){
                     //read pairs have consecutive read ids. (0,1) (2,3) ...
@@ -170,45 +170,45 @@ public:
                 }
             );
 
-            std::vector<read_number> tmp(std::min(newCandidates[0].size(), mateIdsToKeep.size()));
-            assert(tmp.size() == std::min(newCandidates[1].size(), mateIdsToKeep.size()));
+            std::vector<read_number> tmp(std::min(newCandidateReadIds[0].size(), mateIdsToKeep.size()));
+            assert(tmp.size() == std::min(newCandidateReadIds[1].size(), mateIdsToKeep.size()));
 
             //cppref: ... elements will be copied from the first range to the destination range
             auto tmp_end1 = std::set_intersection(
-                newCandidates[0].begin(),
-                newCandidates[0].end(),
+                newCandidateReadIds[0].begin(),
+                newCandidateReadIds[0].end(),
                 mateIdsToKeep.begin(),
                 mateIdsToKeep_end,
                 tmp.begin(),
                 mateIdLessThan
             );
 
-            newCandidates[0].erase(
+            newCandidateReadIds[0].erase(
                 std::copy(
                     tmp.begin(),
                     tmp_end1,
-                    newCandidates[0].begin()
+                    newCandidateReadIds[0].begin()
                 ),
-                newCandidates[0].end()
+                newCandidateReadIds[0].end()
             );
 
             //cppref: ... elements will be copied from the first range to the destination range
             auto tmp_end2 = std::set_intersection(
-                newCandidates[1].begin(),
-                newCandidates[1].end(),
+                newCandidateReadIds[1].begin(),
+                newCandidateReadIds[1].end(),
                 mateIdsToKeep.begin(),
                 mateIdsToKeep_end,
                 tmp.begin(),
                 mateIdLessThan
             );
 
-            newCandidates[1].erase(
+            newCandidateReadIds[1].erase(
                 std::copy(
                     tmp.begin(),
                     tmp_end2,
-                    newCandidates[1].begin()
+                    newCandidateReadIds[1].begin()
                 ),
-                newCandidates[1].end()
+                newCandidateReadIds[1].end()
             );
 
             /*
@@ -218,35 +218,35 @@ public:
             cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::array<std::vector<int>, 2> newCandidateSequenceLengths;
-            std::array<std::vector<unsigned int>, 2> newCandidateSequencesData;
-            std::array<std::vector<unsigned int>, 2> newCandidateSequencesRevcData;
+            std::array<std::vector<unsigned int>, 2> newCandidateSequenceData;
+            std::array<std::vector<unsigned int>, 2> newCandidateSequenceRevcData;
 
             for(int i = 0; i < 2; i++){
-                const int numCandidates = newCandidates[i].size();
+                const int numCandidates = newCandidateReadIds[i].size();
 
                 newCandidateSequenceLengths[i].resize(numCandidates);
-                newCandidateSequencesData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                newCandidateSequencesRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                newCandidateSequenceData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                newCandidateSequenceRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
                 readStorage->gatherSequenceLengths(
                     readStorageGatherHandle,
-                    newCandidates[i].data(),
-                    newCandidates[i].size(),
+                    newCandidateReadIds[i].data(),
+                    newCandidateReadIds[i].size(),
                     newCandidateSequenceLengths[i].data()
                 );
 
                 readStorage->gatherSequenceData(
                     readStorageGatherHandle,
-                    newCandidates[i].data(),
-                    newCandidates[i].size(),
-                    newCandidateSequencesData[i].data(),
+                    newCandidateReadIds[i].data(),
+                    newCandidateReadIds[i].size(),
+                    newCandidateSequenceData[i].data(),
                     encodedSequencePitchInInts
                 );
 
                 for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = newCandidateSequencesData[i].data() 
+                    const unsigned int* const seqPtr = newCandidateSequenceData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
-                    unsigned int* const seqrevcPtr = newCandidateSequencesRevcData[i].data() 
+                    unsigned int* const seqrevcPtr = newCandidateSequenceRevcData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
 
                     reverseComplement2Bit(
@@ -264,24 +264,29 @@ public:
 
             cpu::shd::CpuAlignmentHandle alignmentHandle;
 
-            std::array<std::vector<care::cpu::SHDResult>, 2> newForwardAlignments;
-            std::array<std::vector<care::cpu::SHDResult>, 2> newRevcAlignments;
+            std::array<std::vector<care::cpu::SHDResult>, 2> newAlignments;
             std::array<std::vector<BestAlignment_t>, 2> newAlignmentFlags;
+
+            assert(newCandidateReadIds[0].size() == newCandidateReadIds[1].size());
 
             for(int i = 0; i < 2; i++){
 
-                const int numCandidates = newCandidates[i].size();
+                const int numCandidates = newCandidateReadIds[i].size();
 
-                newForwardAlignments[i].resize(numCandidates);
-                newRevcAlignments[i].resize(numCandidates);
+                std::vector<care::cpu::SHDResult> newForwardAlignments;
+                std::vector<care::cpu::SHDResult> newRevcAlignments;
+
+                newForwardAlignments.resize(numCandidates);
+                newRevcAlignments.resize(numCandidates);
                 newAlignmentFlags[i].resize(numCandidates);
+                newAlignments[i].resize(numCandidates);
 
                 care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
                     alignmentHandle,
-                    newForwardAlignments[i].data(),
+                    newForwardAlignments.data(),
                     currentAnchor[i].data(),
                     currentAnchorLength[i],
-                    newCandidateSequencesData[i].data(),
+                    newCandidateSequenceData[i].data(),
                     encodedSequencePitchInInts,
                     newCandidateSequenceLengths[i].data(),
                     numCandidates,
@@ -292,10 +297,10 @@ public:
 
                 care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
                     alignmentHandle,
-                    newRevcAlignments[i].data(),
+                    newRevcAlignments.data(),
                     currentAnchor[i].data(),
                     currentAnchorLength[i],
-                    newCandidateSequencesRevcData[i].data(),
+                    newCandidateSequenceRevcData[i].data(),
                     encodedSequencePitchInInts,
                     newCandidateSequenceLengths[i].data(),
                     numCandidates,
@@ -304,11 +309,11 @@ public:
                     goodAlignmentProperties.min_overlap_ratio
                 );
 
-                //decide whether to keep forward or reverse complement
+                //decide whether to keep forward or reverse complement, and keep it
 
                 for(int c = 0; c < numCandidates; c++){
-                    const auto& forwardAlignment = newForwardAlignments[i][c];
-                    const auto& revcAlignment = newRevcAlignments[i][c];
+                    const auto& forwardAlignment = newForwardAlignments[c];
+                    const auto& revcAlignment = newRevcAlignments[c];
                     const int candidateLength = newCandidateSequenceLengths[i][c];
 
                     newAlignmentFlags[i][c] = care::choose_best_alignment(
@@ -320,8 +325,99 @@ public:
                         goodAlignmentProperties.min_overlap,
                         correctionOptions.estimatedErrorrate
                     );
+
+                    if(newAlignmentFlags[i][c] == BestAlignment_t::Forward){
+                        newAlignments[i][c] = forwardAlignment;
+                    }else{
+                        newAlignments[i][c] = revcAlignment;
+                    }
                 }
 
+            }
+
+            /*
+                Remove bad alignments and the corresponding alignments of their mate
+            */        
+
+            assert(newAlignments[0].size() == newAlignments[1].size());
+            const int size = newAlignments[0].size();
+
+            // std::array<std::vector<care::cpu::SHDResult>, 2> newAlignmentsTmp;
+            // std::array<std::vector<BestAlignment_t>, 2> newAlignmentFlagsTmp;
+
+            // newAlignmentsTmp[0].resize(size);
+            // newAlignmentFlagsTmp[0].resize(size);
+
+            // newAlignmentsTmp[1].resize(size);
+            // newAlignmentFlagsTmp[1].resize(size);
+
+            std::vector<int> positionsOfCandidatesToKeep(size);
+
+            int numRemainingCandidates = 0;
+
+            //select remaining candidates
+            for(int c = 0; c < size; c++){
+                const BestAlignment_t alignmentFlag0 = newAlignmentFlags[0][c];
+                const BestAlignment_t alignmentFlag1 = newAlignmentFlags[1][c];
+
+                //if any of the mates aligns badly, remove both of them
+                if(!(alignmentFlag0 == BestAlignment_t::None || alignmentFlag1 == BestAlignment_t::None)){
+                    //keep
+                    positionsOfCandidatesToKeep[numRemainingCandidates] = c;
+                    numRemainingCandidates++;
+                }else{
+                    ; //don't keep
+                }
+            }
+
+            //compact selected candidates inplace
+            for(int i = 0; i < 2; i++){
+                for(int c = 0; c < numRemainingCandidates; c++){
+                    const int index = positionsOfCandidatesToKeep[c];
+
+                    newAlignments[i][c] = newAlignments[i][index];
+                    newAlignmentFlags[i][c] = newAlignmentFlags[i][index];
+                    newCandidateReadIds[i][c] = newCandidateReadIds[i][index];
+                    newCandidateSequenceLengths[i][c] = newCandidateSequenceLengths[i][index];
+                    //TODO only keep the sequence with matching alignment orientation
+                    std::copy_n(
+                        newCandidateSequenceData[i].data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        newCandidateSequenceData[i].data() + c * encodedSequencePitchInInts
+                    );
+                    std::copy_n(
+                        newCandidateSequenceRevcData[i].data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        newCandidateSequenceRevcData[i].data() + c * encodedSequencePitchInInts
+                    );
+                }
+
+                //erase past-end elements
+                newAlignments[i].erase(
+                    newAlignments[i].begin() + numRemainingCandidates, 
+                    newAlignments[i].end()
+                );
+                newAlignmentFlags[i].erase(
+                    newAlignmentFlags[i].begin() + numRemainingCandidates, 
+                    newAlignmentFlags[i].end()
+                );
+                newCandidateReadIds[i].erase(
+                    newCandidateReadIds[i].begin() + numRemainingCandidates, 
+                    newCandidateReadIds[i].end()
+                );
+                newCandidateSequenceLengths[i].erase(
+                    newCandidateSequenceLengths[i].begin() + numRemainingCandidates, 
+                    newCandidateSequenceLengths[i].end()
+                );
+                newCandidateSequenceData[i].erase(
+                    newCandidateSequenceData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    newCandidateSequenceData[i].end()
+                );
+                newCandidateSequenceRevcData[i].erase(
+                    newCandidateSequenceRevcData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    newCandidateSequenceRevcData[i].end()
+                );
+                
             }
         }
     }
