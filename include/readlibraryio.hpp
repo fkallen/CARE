@@ -185,6 +185,65 @@ void forEachReadInFile(const std::string& filename, Func f){
 
 
 
+template<class Func>
+void forEachReadInPairedFiles(const std::string& file1, const std::string& file2, Func f){
+
+    kseqpp::KseqPP reader1(file1);
+    kseqpp::KseqPP reader2(file2);
+
+    int which = 0;
+
+    Read read;
+
+    std::int64_t readNumber = 0;
+
+    auto getNextRead = [&](){
+        kseqpp::KseqPP* ptr = &reader1;
+        if(which == 1){
+            ptr = &reader2;
+        }
+
+        auto& reader = *ptr;
+        const int status = reader.next();
+        //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
+        if(status >= 0){
+            read.name = reader.getCurrentName();
+            read.comment = reader.getCurrentComment();
+            read.sequence = reader.getCurrentSequence();
+            read.quality = reader.getCurrentQuality();
+        }else if(status < -1){
+            std::cerr << "parser error status " << status << " in file " << (which == 0 ? file1 : file2) << '\n';
+        }
+
+        bool success = (status >= 0);
+
+        if(which == 0){
+            which = 1;
+        }else{
+            which = 0;
+        }
+
+        return success;
+    };
+
+    bool success = getNextRead();
+
+    while(success){
+
+        f(readNumber, read);
+        
+        readNumber++;
+
+        success = getNextRead();
+    }
+}
+
+
+
+
+
+
+
 } //end namespace
 
 #endif
