@@ -644,60 +644,91 @@ namespace care{
                 updateShowProgressInterval
             );
 
-            for(const auto& inputfile : fileOptions.inputfiles){
-                std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
+            auto inserterFunc = [&](auto /*readnum*/, const auto& read){
 
-                forEachReadInFile(inputfile,
-                                [&](auto /*readnum*/, const auto& read){
+                if(!canBeUsed[bufferindex]){
+                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+                    if(!canBeUsed[bufferindex]){
+                        //std::cerr << "waiting for other buffer\n";
+                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+                    }
+                }
 
-                        if(!canBeUsed[bufferindex]){
-                            std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                            if(!canBeUsed[bufferindex]){
-                                //std::cerr << "waiting for other buffer\n";
-                                cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                            }
+                auto indicesBufferPtr = &indicesBuffers[bufferindex];
+                auto readsBufferPtr = &readsBuffers[bufferindex];
+                indicesBufferPtr->emplace_back(globalReadId);
+                readsBufferPtr->emplace_back(read);
+
+                ++globalReadId;
+
+                progressThread.addProgress(1);                
+
+                if(indicesBufferPtr->size() >= maxbuffersize){
+                    canBeUsed[bufferindex] = false;
+
+                    //std::cerr << "launch other thread\n";
+                    threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        //std::cerr << "buffer " << bufferindex << " running\n";
+                        int nmodcounter = 0;
+
+                        for(int i = 0; i < int(readsBufferPtr->size()); i++){
+                            read_number readId = (*indicesBufferPtr)[i];
+                            auto& read = (*readsBufferPtr)[i];
+                            checkRead(readId, read, nmodcounter);
+                            readStorage.insertRead(readId, read.sequence, read.quality);
                         }
 
-                        auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                        auto readsBufferPtr = &readsBuffers[bufferindex];
-                        indicesBufferPtr->emplace_back(globalReadId);
-                        readsBufferPtr->emplace_back(read);
+                        //TIMERSTARTCPU(clear);
+                        indicesBufferPtr->clear();
+                        readsBufferPtr->clear();
+                        //TIMERSTOPCPU(clear);
+                        
+                        std::lock_guard<std::mutex> l(mutex[bufferindex]);
+                        canBeUsed[bufferindex] = true;
+                        cv[bufferindex].notify_one();
 
-                        ++globalReadId;
+                        //std::cerr << "buffer " << bufferindex << " finished\n";
+                    });
 
-                        progressThread.addProgress(1);                
+                    bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
+                }
 
-                        if(indicesBufferPtr->size() >= maxbuffersize){
-                            canBeUsed[bufferindex] = false;
+            };
 
-                            //std::cerr << "launch other thread\n";
-                            threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                                //std::cerr << "buffer " << bufferindex << " running\n";
-                                int nmodcounter = 0;
+            assert(fileOptions.inputfiles.size() > 0);
+            assert(fileOptions.inputfiles.size() <= 2);
 
-                                for(int i = 0; i < int(readsBufferPtr->size()); i++){
-                                    read_number readId = (*indicesBufferPtr)[i];
-                                    auto& read = (*readsBufferPtr)[i];
-                                    checkRead(readId, read, nmodcounter);
-                                    readStorage.insertRead(readId, read.sequence, read.quality);
-                                }
+            /*
+                If two input files are present, it is assumed that the mate of i-th read in file 1
+                is the i-th read in file 2. The first read in file 1 has id 0. The first read in file 2 has id 1.
+                Read ids within a file increase by 2.
 
-                                //TIMERSTARTCPU(clear);
-                                indicesBufferPtr->clear();
-                                readsBufferPtr->clear();
-                                //TIMERSTOPCPU(clear);
-                                
-                                std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                                canBeUsed[bufferindex] = true;
-                                cv[bufferindex].notify_one();
 
-                                //std::cerr << "buffer " << bufferindex << " finished\n";
-                            });
+                If one input file is present, it is assumed that the i-th read pair consists of reads 2*i and 2*i+1
+            */
 
-                            bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-                        }
 
-                });
+            if(fileOptions.inputfiles.size() == 1){
+
+                const auto& filename1 = fileOptions.inputfiles[0];
+
+                std::cout << "Converting paired reads of files " 
+                    << filename1  << ", storing them in memory\n";
+
+                forEachReadInFile(filename1, inserterFunc);
+            
+            }
+
+            if(fileOptions.inputfiles.size() == 2){
+
+                const auto& filename1 = fileOptions.inputfiles[0];
+                const auto& filename2 = fileOptions.inputfiles[1];
+
+                std::cout << "Converting paired reads of files " 
+                    << filename1 << " and " << filename2 << ", storing them in memory\n";
+
+                forEachReadInPairedFiles(filename1, filename2, inserterFunc);
+            
             }
 
             auto indicesBufferPtr = &indicesBuffers[bufferindex];
