@@ -6,6 +6,7 @@
 #include <options.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
+#include <msa.hpp>
 
 #include <algorithm>
 #include <array>
@@ -60,23 +61,12 @@ public:
 
     }
 
+    /*
+        Assumes read1 is on the forward strand, read2 is on the reverse strand
+    */
     ExtendResult extendPairedRead(
         ExtendInput& input
     ){
-        ws.decodedPairedRead[0].resize(input.readLength1);
-        ws.decodedPairedRead[1].resize(input.readLength2);
-
-        decode2BitSequence(
-            &ws.decodedPairedRead[0][0],
-            input.encodedRead1,
-            input.readLength1
-        );
-
-        decode2BitSequence(
-            &ws.decodedPairedRead[1][0],
-            input.encodedRead2,
-            input.readLength2
-        );
 
         std::array<std::vector<unsigned int>, 2> currentAnchor;
         std::array<int, 2> currentAnchorLength;
@@ -218,14 +208,14 @@ public:
             cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::array<std::vector<int>, 2> newCandidateSequenceLengths;
-            std::array<std::vector<unsigned int>, 2> newCandidateSequenceData;
+            std::array<std::vector<unsigned int>, 2> newCandidateSequenceFwdData;
             std::array<std::vector<unsigned int>, 2> newCandidateSequenceRevcData;
 
             for(int i = 0; i < 2; i++){
                 const int numCandidates = newCandidateReadIds[i].size();
 
                 newCandidateSequenceLengths[i].resize(numCandidates);
-                newCandidateSequenceData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                newCandidateSequenceFwdData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
                 newCandidateSequenceRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
                 readStorage->gatherSequenceLengths(
@@ -239,12 +229,12 @@ public:
                     readStorageGatherHandle,
                     newCandidateReadIds[i].data(),
                     newCandidateReadIds[i].size(),
-                    newCandidateSequenceData[i].data(),
+                    newCandidateSequenceFwdData[i].data(),
                     encodedSequencePitchInInts
                 );
 
                 for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = newCandidateSequenceData[i].data() 
+                    const unsigned int* const seqPtr = newCandidateSequenceFwdData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
                     unsigned int* const seqrevcPtr = newCandidateSequenceRevcData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
@@ -286,7 +276,7 @@ public:
                     newForwardAlignments.data(),
                     currentAnchor[i].data(),
                     currentAnchorLength[i],
-                    newCandidateSequenceData[i].data(),
+                    newCandidateSequenceFwdData[i].data(),
                     encodedSequencePitchInInts,
                     newCandidateSequenceLengths[i].data(),
                     numCandidates,
@@ -352,26 +342,57 @@ public:
             // newAlignmentFlagsTmp[1].resize(size);
 
             std::vector<int> positionsOfCandidatesToKeep(size);
+            std::vector<int> tmpPositionsOfCandidatesToKeep(size);
 
             int numRemainingCandidates = 0;
+            int numRemainingCandidatesTmp = 0;
 
-            //select remaining candidates
+            //select remaining candidates by alignment flag
+            //if any of the mates aligns badly, remove both of them
             for(int c = 0; c < size; c++){
                 const BestAlignment_t alignmentFlag0 = newAlignmentFlags[0][c];
                 const BestAlignment_t alignmentFlag1 = newAlignmentFlags[1][c];
-
-                //if any of the mates aligns badly, remove both of them
+                
                 if(!(alignmentFlag0 == BestAlignment_t::None || alignmentFlag1 == BestAlignment_t::None)){
-                    //keep
                     positionsOfCandidatesToKeep[numRemainingCandidates] = c;
                     numRemainingCandidates++;
                 }else{
-                    ; //don't keep
+                    ; //if any of the mates aligns badly, remove both of them
                 }
             }
 
+            //remove candidates whose mate aligns with a conflicting shift direction
+            for(int c = 0; c < numRemainingCandidates; c++){
+                const int index = positionsOfCandidatesToKeep[c];
+                const auto& alignmentresult0 = newAlignments[0][index];
+                const auto& alignmentresult1 = newAlignments[1][index];
+                
+                //only keep candidates for both read0 and read1 
+                //which align "to the right" relative to the forward strand
+                // => positive shift on forward strand, negative shift on reverse strand
+                if(alignmentresult0.shift >= 0 && alignmentresult1.shift <= 0){
+                    //keep
+                    tmpPositionsOfCandidatesToKeep[numRemainingCandidatesTmp] = index;
+                    numRemainingCandidatesTmp++;
+                }else{
+                    ;
+                }
+            }
+
+            std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
+            std::swap(numRemainingCandidates, numRemainingCandidatesTmp);
+
+
+            if(numRemainingCandidates == 0){
+                break; //terminate while loop
+            }
+
+            std::array<std::vector<unsigned int>, 2> newCandidateSequenceData;
+
             //compact selected candidates inplace
             for(int i = 0; i < 2; i++){
+                newCandidateSequenceData[i].resize(numRemainingCandidates * encodedSequencePitchInInts);
+
                 for(int c = 0; c < numRemainingCandidates; c++){
                     const int index = positionsOfCandidatesToKeep[c];
 
@@ -379,17 +400,38 @@ public:
                     newAlignmentFlags[i][c] = newAlignmentFlags[i][index];
                     newCandidateReadIds[i][c] = newCandidateReadIds[i][index];
                     newCandidateSequenceLengths[i][c] = newCandidateSequenceLengths[i][index];
-                    //TODO only keep the sequence with matching alignment orientation
+                    
+                    assert(newAlignmentFlags[i][index] != BestAlignment_t::None);
+
+                    if(newAlignmentFlags[i][index] == BestAlignment_t::Forward){
+                        std::copy_n(
+                            newCandidateSequenceFwdData[i].data() + index * encodedSequencePitchInInts,
+                            encodedSequencePitchInInts,
+                            newCandidateSequenceData[i].data() + c * encodedSequencePitchInInts
+                        );
+                    }else{
+                        //BestAlignment_T::ReverseComplement
+
+                        std::copy_n(
+                            newCandidateSequenceRevcData[i].data() + index * encodedSequencePitchInInts,
+                            encodedSequencePitchInInts,
+                            newCandidateSequenceData[i].data() + c * encodedSequencePitchInInts
+                        );
+                    }
+
+                    //not sure if these 2 arrays will be required further on
                     std::copy_n(
-                        newCandidateSequenceData[i].data() + index * encodedSequencePitchInInts,
+                        newCandidateSequenceFwdData[i].data() + index * encodedSequencePitchInInts,
                         encodedSequencePitchInInts,
-                        newCandidateSequenceData[i].data() + c * encodedSequencePitchInInts
+                        newCandidateSequenceFwdData[i].data() + c * encodedSequencePitchInInts
                     );
+
                     std::copy_n(
                         newCandidateSequenceRevcData[i].data() + index * encodedSequencePitchInInts,
                         encodedSequencePitchInInts,
                         newCandidateSequenceRevcData[i].data() + c * encodedSequencePitchInInts
                     );
+                    
                 }
 
                 //erase past-end elements
@@ -409,9 +451,10 @@ public:
                     newCandidateSequenceLengths[i].begin() + numRemainingCandidates, 
                     newCandidateSequenceLengths[i].end()
                 );
-                newCandidateSequenceData[i].erase(
-                    newCandidateSequenceData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    newCandidateSequenceData[i].end()
+                //not sure if these 2 arrays will be required further on
+                newCandidateSequenceFwdData[i].erase(
+                    newCandidateSequenceFwdData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    newCandidateSequenceFwdData[i].end()
                 );
                 newCandidateSequenceRevcData[i].erase(
                     newCandidateSequenceRevcData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
@@ -419,6 +462,66 @@ public:
                 );
                 
             }
+
+            for(int i = 0; i < 2; i++){
+                std::string decodedAnchor(currentAnchorLength[i], '\0');
+
+                decode2BitSequence(
+                    &decodedAnchor[0],
+                    currentAnchor[i].data(),
+                    currentAnchorLength[i]
+                );
+
+                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
+                    constexpr float maxErrorPercentInOverlap = 0.2f;
+
+                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
+                };
+
+                std::vector<int> candidateShifts(numRemainingCandidates);
+                std::vector<float> candidateOverlapWeights(numRemainingCandidates);
+
+                for(int c = 0; c < numRemainingCandidates; c++){
+                    candidateShifts[c] = newAlignments[i][c].shift;
+
+                    candidateOverlapWeights[c] = calculateOverlapWeight(
+                        currentAnchorLength[i], 
+                        newAlignments[i][c].nOps,
+                        newAlignments[i][c].overlap
+                    );
+                }
+
+                std::vector<char> candidateStrings(decodedSequencePitchInBytes * numRemainingCandidates, '\0');
+
+                for(int c = 0; c < numRemainingCandidates; c++){
+                    decode2BitSequence(
+                        candidateStrings.data() + c * decodedSequencePitchInBytes,
+                        newCandidateSequenceData[i].data() + c * encodedSequencePitchInInts,
+                        newCandidateSequenceLengths[i][c]
+                    );
+                }
+
+
+                MultipleSequenceAlignment msa;
+
+                msa.build(
+                    decodedAnchor.c_str(),
+                    currentAnchorLength[i],
+                    candidateStrings.data(),
+                    newCandidateSequenceLengths[i].data(),
+                    numRemainingCandidates,
+                    candidateShifts.data(),
+                    candidateOverlapWeights.data(),
+                    nullptr, //subjectQualities,
+                    nullptr, //candidateQualities,
+                    encodedSequencePitchInInts,
+                    0, // candidateQualitiesPitch,
+                    false // useQualityScores
+                );
+
+            }
+
+            iter++; //control outer while-loop
         }
     }
 
