@@ -542,7 +542,7 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&noMoreWrites), sizeof(bool));
                 outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
 
-                assert(nKeys == keys.size());
+                //assert(nKeys == keys.size());
                 assert(nValues == values.size());
 
                 //outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
@@ -684,16 +684,23 @@ namespace care{
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
                 assert(noMoreWrites);                
 
-                const auto indexLengthPair = keyToIndexLengthPairMap.get(key);                
+                const auto indexLengthPair = keyToIndexLengthPairMap.get(key);
 
-                if(size_t(indexLengthPair.first) > values.size() || size_t(indexLengthPair.first + indexLengthPair.second) > values.size()){
-                    std::cerr << "\n invalid indexLengthPair . cPS = " << indexLengthPair.first 
-                            << ", length " << indexLengthPair.second << " values.size() = " << values.size() << "\n";
-                    assert(false);
+                if(indexLengthPair.first == std::numeric_limits<Index_t>::max()
+                        && indexLengthPair.second == std::numeric_limits<BucketSize>::max()){
+                    
+                    //probing length exceeded, 0 values for key
+                    return {nullptr, nullptr};
+                }else{
+                    if(size_t(indexLengthPair.first) > values.size() || size_t(indexLengthPair.first + indexLengthPair.second) > values.size()){
+                        std::cerr << "\n invalid indexLengthPair . cPS = " << indexLengthPair.first 
+                                << ", length " << indexLengthPair.second << " values.size() = " << values.size() << "\n";
+                        assert(false);
+                    }
+                
+                    return {&values[indexLengthPair.first], &values[indexLengthPair.first + indexLengthPair.second]};
                 }
                 
-                return {&values[indexLengthPair.first], &values[indexLengthPair.first + indexLengthPair.second]};
-                //nvtx::pop_range("fetch index");
 			}
 
 		};
