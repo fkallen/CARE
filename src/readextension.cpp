@@ -954,46 +954,58 @@ extend_cpu(
                 encodedSequencePitchInInts
             );
 
-            ReadExtender::ExtendInput input;
-            input.readId1 = currentIds[0];
-            input.readId2 = currentIds[1];
-            input.encodedRead1 = currentEncodedReads.data() + 0 * encodedSequencePitchInInts;
-            input.encodedRead2 = currentEncodedReads.data() + 1 * encodedSequencePitchInInts;
-            input.readLength1 = currentReadLengths[0];
-            input.readLength2 = currentReadLengths[1];
-            input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[0]);
-            input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[1]);
+            auto processReadOrder = [&](std::array<int, 2> order){
+                ReadExtender::ExtendInput input;
 
-            auto extendResult = readExtender.extendPairedRead(input);
+                input.readId1 = currentIds[order[0]];
+                input.readId2 = currentIds[order[1]];
+                input.encodedRead1 = currentEncodedReads.data() + order[0] * encodedSequencePitchInInts;
+                input.encodedRead2 = currentEncodedReads.data() + order[1] * encodedSequencePitchInInts;
+                input.readLength1 = currentReadLengths[order[0]];
+                input.readLength2 = currentReadLengths[order[1]];
+                input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[order[0]]);
+                input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[order[1]]);
 
-            if(extendResult.success){
-                const int numResults = extendResult.extendedReads.size();
-                auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
+                auto extendResult = readExtender.extendPairedRead(input);
 
-                for(int i = 0; i < numResults; i++){
-                    auto& pair = extendResult.extendedReads[i];
+                if(extendResult.success){
+                    const int numResults = extendResult.extendedReads.size();
+                    auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
 
-                    TempCorrectedSequence tcs;
-                    tcs.hq = false;
-                    tcs.useEdits = false;
-                    tcs.type = TempCorrectedSequence::Type::Anchor;
-                    tcs.shift = 0;
-                    tcs.readId = pair.first;
-                    tcs.sequence = std::move(pair.second);
+                    for(int i = 0; i < numResults; i++){
+                        auto& pair = extendResult.extendedReads[i];
 
-                    encodeddata[i] = tcs.encode();
-                }
+                        TempCorrectedSequence tcs;
+                        tcs.hq = false;
+                        tcs.useEdits = false;
+                        tcs.type = TempCorrectedSequence::Type::Anchor;
+                        tcs.shift = 0;
+                        tcs.readId = pair.first;
+                        tcs.sequence = std::move(pair.second);
 
-                auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
-                    for(int i = 0; i < size; i++){
-                        partialResults.storeElement(std::move(encodeddata[i]));
+                        encodeddata[i] = tcs.encode();
                     }
-                };
 
-                outputThread.enqueue(
-                    std::move(func)
-                );
-            }
+                    auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
+                        for(int i = 0; i < size; i++){
+                            partialResults.storeElement(std::move(encodeddata[i]));
+                        }
+                    };
+
+                    outputThread.enqueue(
+                        std::move(func)
+                    );
+                } 
+
+                return extendResult.success;  
+            };
+
+            // it is not known which of both reads is on the forward strand / reverse strand. try both combinations
+            bool success0 = processReadOrder({0,1});
+
+            bool success1 = processReadOrder({1,0});
+
+            std::cerr << "success0 " << success0 << ", success1 " << success1 << "\n";            
             
         }
         
