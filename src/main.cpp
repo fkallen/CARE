@@ -284,7 +284,15 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-    care::performCorrection(
+    // care::performCorrection(
+	// 	correctionOptions,
+	// 	runtimeOptions,
+	// 	memoryOptions,
+	// 	fileOptions,
+	// 	goodAlignmentProperties
+	// );
+
+	care::performExtension(
 		correctionOptions,
 		runtimeOptions,
 		memoryOptions,

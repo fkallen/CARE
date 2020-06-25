@@ -15,6 +15,8 @@
 #include <correctionresultprocessing.hpp>
 #include <sequence.hpp>
 
+#include <readextension_cpu.hpp>
+
 #include <vector>
 #include <iostream>
 #include <mutex>
@@ -141,6 +143,133 @@ namespace care{
             outputfiles, 
             false
         );
+
+        TIMERSTOPCPU(STEP3);
+
+        std::cout << "Construction of output file(s) finished." << std::endl;
+
+    }
+
+
+
+    void performExtension(
+                            CorrectionOptions correctionOptions,
+                            RuntimeOptions runtimeOptions,
+                            MemoryOptions memoryOptions,
+                            FileOptions fileOptions,
+                            GoodAlignmentProperties goodAlignmentProperties){
+
+        std::cout << "Running CARE EXTEND CPU" << std::endl;
+
+        std::cout << "STEP 1: Database construction" << std::endl;
+
+        TIMERSTARTCPU(STEP1);
+
+        BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
+            correctionOptions,
+            runtimeOptions,
+            memoryOptions,
+            fileOptions
+        );
+
+        TIMERSTOPCPU(STEP1);
+
+        if(correctionOptions.autodetectKmerlength){
+            correctionOptions.kmerlength = dataStructures.kmerlength;
+        }
+
+        auto& readStorage = dataStructures.builtReadStorage.data;
+        auto& minhasher = dataStructures.builtMinhasher.data;
+        auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
+
+        if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
+            std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        printDataStructureMemoryUsage(minhasher, readStorage);
+
+        std::cout << "STEP 2: Error correction" << std::endl;
+
+        TIMERSTARTCPU(STEP2);
+
+        auto partialResults = extend_cpu(
+            goodAlignmentProperties, 
+            correctionOptions,
+            runtimeOptions, 
+            fileOptions, 
+            memoryOptions, 
+            totalInputFileProperties,
+            minhasher, 
+            readStorage
+        );
+
+        TIMERSTOPCPU(STEP2);
+
+        minhasher.destroy();
+        readStorage.destroy();
+
+        const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
+        std::size_t memoryForSorting = 0;
+
+        if(availableMemoryInBytes2 > 1*(std::size_t(1) << 30)){
+            memoryForSorting = availableMemoryInBytes2 - 1*(std::size_t(1) << 30);
+        }
+
+        std::cout << "STEP 3: Constructing output file(s)" << std::endl;
+
+        TIMERSTARTCPU(STEP3);
+
+        std::vector<FileFormat> formats;
+        for(const auto& inputfile : fileOptions.inputfiles){
+            formats.emplace_back(getFileFormat(inputfile));
+        }
+        std::vector<std::string> outputfiles;
+        for(const auto& outputfilename : fileOptions.outputfilenames){
+            outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
+        }
+
+        auto outputFormat = getFileFormat(fileOptions.inputfiles[0]);
+        //no gz output
+        if(outputFormat == FileFormat::FASTQGZ)
+            outputFormat = FileFormat::FASTQ;
+        if(outputFormat == FileFormat::FASTAGZ)
+            outputFormat = FileFormat::FASTA;
+
+
+        std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
+            fileOptions.outputdirectory + "/extensionresult.txt", 
+            outputFormat
+        );
+
+        std::int64_t count = 0;
+        auto partialResultsReader = partialResults.makeReader();
+
+        while(partialResultsReader.hasNext()){
+            TempCorrectedSequence tcs = *(partialResultsReader.next());
+
+            Read read;
+            read.name = "" + std::to_string(count);
+            read.comment = "original read id " + std::to_string(tcs.readId);
+            read.sequence = std::move(tcs.sequence);
+            read.quality.resize(read.sequence.size());
+            std::fill(read.quality.begin(), read.quality.end(), 'F');
+
+            writer->writeRead(read.name, read.comment, read.sequence, read.quality);
+
+            count++;
+        }
+
+        // constructOutputFileFromResults2(
+        //     fileOptions.tempdirectory,
+        //     fileOptions.inputfiles,            
+        //     partialResults, 
+        //     memoryForSorting,
+        //     formats[0], 
+        //     outputfiles, 
+        //     false
+        // );
 
         TIMERSTOPCPU(STEP3);
 

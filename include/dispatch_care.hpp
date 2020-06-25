@@ -17,6 +17,13 @@ namespace care{
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties);
 
+    void performExtension(
+                            CorrectionOptions correctionOptions,
+                            RuntimeOptions runtimeOptions,
+                            MemoryOptions memoryOptions,
+                            FileOptions fileOptions,
+                            GoodAlignmentProperties goodAlignmentProperties);
+
 
 }
 

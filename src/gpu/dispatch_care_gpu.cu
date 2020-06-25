@@ -608,4 +608,20 @@ namespace care{
 
     }
 
+
+
+
+
+    void performExtension(
+        CorrectionOptions correctionOptions,
+        RuntimeOptions runtimeOptions,
+        MemoryOptions memoryOptions,
+        FileOptions fileOptions,
+        GoodAlignmentProperties goodAlignmentProperties){
+
+        std::cout << "Running CARE EXTEND GPU" << std::endl;
+
+        std::cout << "Abort. Not implemented."
+    }
+
 }
