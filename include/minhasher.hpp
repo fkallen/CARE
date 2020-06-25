@@ -542,7 +542,6 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&noMoreWrites), sizeof(bool));
                 outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
 
-                assert(nKeys == keys.size());
                 assert(nValues == values.size());
 
                 //outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
