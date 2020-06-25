@@ -284,14 +284,15 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-    // care::performCorrection(
-	// 	correctionOptions,
-	// 	runtimeOptions,
-	// 	memoryOptions,
-	// 	fileOptions,
-	// 	goodAlignmentProperties
-	// );
-
+#if 0
+    care::performCorrection(
+		correctionOptions,
+		runtimeOptions,
+		memoryOptions,
+		fileOptions,
+		goodAlignmentProperties
+	);
+#else
 	care::performExtension(
 		correctionOptions,
 		runtimeOptions,
@@ -299,6 +300,6 @@ int main(int argc, char** argv){
 		fileOptions,
 		goodAlignmentProperties
 	);
-
+#endif
 	return 0;
 }

@@ -621,7 +621,7 @@ namespace care{
 
         std::cout << "Running CARE EXTEND GPU" << std::endl;
 
-        std::cout << "Abort. Not implemented."
+        std::cout << "Abort. Not implemented." << std::endl;
     }
 
 }
