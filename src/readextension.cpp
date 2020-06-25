@@ -14,6 +14,20 @@
 #include <vector>
 #include <iostream>
 #include <string>
+#include <memory>
+
+
+
+
+#include <readextension_cpu.hpp>
+#include <correctionresultprocessing.hpp>
+#include <rangegenerator.hpp>
+#include <threadpool.hpp>
+#include <memoryfile.hpp>
+#include <util.hpp>
+#include <filehelpers.hpp>
+
+#include <omp.h>
 
 
 namespace care{
@@ -22,7 +36,9 @@ namespace care{
 struct ReadExtender{
 public:
     struct ExtendResult{
-
+        bool success = false;
+        // (read number of forward strand read, extended read for forward strand)
+        std::vector<std::pair<read_number, std::string>> extendedReads;
     };
 
     struct WorkingSet{
@@ -71,22 +87,57 @@ public:
         std::array<std::vector<unsigned int>, 2> currentAnchor;
         std::array<int, 2> currentAnchorLength;
         std::array<read_number, 2> currentAnchorReadId;
+        std::array<int, 2> accumExtensionLengths;        
+        
+        //for each iteration of the while-loop, saves the currentAnchor (decoded), 
+        //the current accumExtensionLength,
+        //the new candidate read ids
+        std::array<std::vector<std::string>, 2> totalDecodedAnchors;
+        std::array<std::vector<int>, 2> totalAnchorBeginInExtendedRead;
+        std::array<std::vector<std::vector<read_number>>, 2> totalCandidateReadIdsPerIteration;
+
+        //saves the read ids of used candidates for each strand over all iterations
+        std::array<std::vector<read_number>, 2> totalCandidateReadIds; 
+
+        bool abort = false;
+        bool mateHasBeenFound = false;
+        std::vector<read_number>::iterator mateIdLocationIter;
+
+        //setup input of first loop iteration
+        currentAnchor[0].resize(input.numInts1);
+        std::copy_n(input.encodedRead1, input.numInts1, currentAnchor[0].begin());
+        currentAnchor[1].resize(input.numInts2);
+        std::copy_n(input.encodedRead2, input.numInts2, currentAnchor[1].begin());
+
+        currentAnchorLength[0] = input.readLength1;
+        currentAnchorLength[1] = input.readLength2;
+
+        currentAnchorReadId[0] = input.readId1;
+        currentAnchorReadId[1] = input.readId2;
+
+        accumExtensionLengths[0] = 0;
+        accumExtensionLengths[1] = 0;
 
         int iter = 0;
-        while(iter < insertSize){
+        while(iter < insertSize && !abort && !mateHasBeenFound){
 
-            if(iter == 0){
-                currentAnchor[0].resize(input.numInts1);
-                std::copy_n(input.encodedRead1, input.numInts1, currentAnchor[0].begin());
-                currentAnchor[1].resize(input.numInts2);
-                std::copy_n(input.encodedRead2, input.numInts2, currentAnchor[1].begin());
+            //update "total" arrays
+            for(int i = 0; i < 2; i++){
+                std::string decodedAnchor(currentAnchorLength[i], '\0');
 
-                currentAnchorLength[0] = input.readLength1;
-                currentAnchorLength[1] = input.readLength2;
+                decode2BitSequence(
+                    &decodedAnchor[0],
+                    currentAnchor[i].data(),
+                    currentAnchorLength[i]
+                );
 
-                currentAnchorReadId[0] = input.readId1;
-                currentAnchorReadId[1] = input.readId2;
+                totalDecodedAnchors[i].emplace_back(std::move(decodedAnchor));
+                totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
             }
+            
+
+            
+
             
 
             std::array<std::vector<read_number>, 2> newCandidateReadIds;
@@ -144,18 +195,12 @@ public:
                 newCandidateReadIds[1].begin(),
                 newCandidateReadIds[1].end(),
                 mateIdsToKeep.begin(),
-                [](auto id1, auto id2){
-                    //read pairs have consecutive read ids. (0,1) (2,3) ...
-                    //if id1 == id2, return true, else compare the smaller one. 
+                [&](auto id1, auto id2){
 
                     if(id1 == id2){
-                        return true;
+                        return true; //this will remove equal read Ids from both sets
                     }else{
-
-                        const auto firstId1 = id1 - id1 % 2;
-                        const auto firstId2 = id2 - id2 % 2;
-
-                        return firstId1 < firstId2;
+                        return mateIdLessThan(id1, id2);
                     }
                 }
             );
@@ -382,8 +427,39 @@ public:
             std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
             std::swap(numRemainingCandidates, numRemainingCandidatesTmp);
 
+            numRemainingCandidatesTmp = 0;
+
+            //remove candidates which have already been used in a previous iteration
+            assert(std::is_sorted(totalCandidateReadIds[0].begin(), totalCandidateReadIds[0].end()));
+
+            for(int c = 0; c < numRemainingCandidates; c++){
+                const int index = positionsOfCandidatesToKeep[c];
+                const read_number readId = newCandidateReadIds[0][index];
+                //because of symmetry it is sufficient to check one strand
+
+                auto it = std::lower_bound(
+                    totalCandidateReadIds[0].begin(),
+                    totalCandidateReadIds[0].end(),
+                    readId
+                );
+
+                if(!(it != totalCandidateReadIds[0].end() && *it == readId)){
+                    //readId not found, keep it
+                    tmpPositionsOfCandidatesToKeep[numRemainingCandidatesTmp] = index;
+                    numRemainingCandidatesTmp++;
+                }else{
+                    ;
+                }
+            }
+
+            std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
+            std::swap(numRemainingCandidates, numRemainingCandidatesTmp);
+
+
+
 
             if(numRemainingCandidates == 0){
+                abort = true;
                 break; //terminate while loop
             }
 
@@ -463,14 +539,37 @@ public:
                 
             }
 
+            //update "total" arrays of candidates
             for(int i = 0; i < 2; i++){
-                std::string decodedAnchor(currentAnchorLength[i], '\0');
+                totalCandidateReadIdsPerIteration[i].emplace_back(newCandidateReadIds[i]);
 
-                decode2BitSequence(
-                    &decodedAnchor[0],
-                    currentAnchor[i].data(),
-                    currentAnchorLength[i]
+                assert(std::is_sorted(newCandidateReadIds[i].begin(), newCandidateReadIds[i].end()));
+
+                std::vector<read_number> tmp(totalCandidateReadIds[i].size() + newCandidateReadIds[i].size());
+                auto tmp_end = std::merge(
+                    totalCandidateReadIds[i].begin(),
+                    totalCandidateReadIds[i].end(),
+                    newCandidateReadIds[i].begin(),
+                    newCandidateReadIds[i].end(),
+                    tmp.begin()
                 );
+                assert(tmp_end == tmp.end()); // duplicates should have been removed
+                //tmp.erase(tmp_end, tmp.end());
+
+                std::swap(totalCandidateReadIds[i], tmp);
+            }
+
+            //check if mate has been reached
+            mateIdLocationIter = std::lower_bound(
+                newCandidateReadIds[0].begin(),
+                newCandidateReadIds[0].end(),
+                input.readId2
+            );
+
+            mateHasBeenFound = (mateIdLocationIter != newCandidateReadIds[0].end() && *mateIdLocationIter == input.readId2);
+
+            for(int i = 0; i < 2; i++){
+                const std::string& decodedAnchor = totalDecodedAnchors[i].back();
 
                 auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
                     constexpr float maxErrorPercentInOverlap = 0.2f;
@@ -519,10 +618,135 @@ public:
                     false // useQualityScores
                 );
 
+
+                if(!mateHasBeenFound){
+                    //mate not found. prepare next while-loop iteration
+                    int consensusLength = msa.consensus.size();
+
+                    //the first currentAnchorLength[i] columns are occupied by anchor. try to extend read 
+                    //by at most 10 bp. In case consensuslength == anchorlength, abort
+
+                    if(consensusLength == currentAnchorLength[i]){
+                        abort = true;
+                        
+                    }else{
+                        assert(consensusLength > currentAnchorLength[i]);
+                        constexpr int maxextension = 10;
+
+                        const int extendBy = std::min(consensusLength - currentAnchorLength[i], maxextension);
+                        //update data for next iteration of outer while loop
+                        if(i == 0){
+                            const std::string nextDecodedAnchor(msa.consensus.data() + extendBy, currentAnchorLength[i]);
+                            const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
+
+                            currentAnchor[i].resize(numInts);
+                            encodeSequence2Bit(
+                                currentAnchor[i].data(), 
+                                nextDecodedAnchor.c_str(), 
+                                nextDecodedAnchor.size()
+                            );
+                            currentAnchorLength[i] = nextDecodedAnchor.size();
+                        }else{
+                            //i == 1
+                            const char* const data = msa.consensus.data() 
+                                + consensusLength - currentAnchorLength[i] - extendBy;
+                            const std::string nextDecodedAnchor(data, currentAnchorLength[i]);
+                            const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
+
+                            currentAnchor[i].resize(numInts);
+                            encodeSequence2Bit(
+                                currentAnchor[i].data(), 
+                                nextDecodedAnchor.c_str(), 
+                                nextDecodedAnchor.size()
+                            );
+                            currentAnchorLength[i] = nextDecodedAnchor.size();
+                        }
+                    }
+                }else{
+                    if(i == 0){
+                        //find end of mate in msa
+                        const int index = std::distance(newCandidateReadIds[i].begin(), mateIdLocationIter);
+                        const int shift = newAlignments[i][index].shift;
+                        const int clength = newCandidateSequenceLengths[i][index];
+                        assert(shift >= 0);
+                        const int endcolumn = shift + clength;
+
+                        std::string decodedAnchor(msa.consensus.data(), endcolumn);
+
+                        totalDecodedAnchors[i].emplace_back(std::move(decodedAnchor));
+                        totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
+                    }
+                }
+
             }
+
+
 
             iter++; //control outer while-loop
         }
+
+        ExtendResult extendResult;
+
+
+        if(abort){
+            ; //no read extension possible
+        }else{
+            if(mateHasBeenFound){
+                //construct extended read
+                //build msa of all saved totalDecodedAnchors[0]
+
+                const int numsteps = totalDecodedAnchors[0].size();
+                int maxlen = 0;
+                for(const auto& s: totalDecodedAnchors[0]){
+                    const int len = s.length();
+                    if(len > maxlen){
+                        maxlen = len;
+                    }
+                }
+                const std::string& decodedAnchor = totalDecodedAnchors[0][0];
+
+                const auto& shifts = totalAnchorBeginInExtendedRead[0];
+                std::vector<float> initialWeights(numsteps-1, 1.0f);
+
+
+                std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
+                std::vector<int> stepstringlengths(numsteps-1);
+                for(int c = 1; c < numsteps; c++){
+                    std::copy(
+                        totalDecodedAnchors[0][c].begin(),
+                        totalDecodedAnchors[0][c].end(),
+                        stepstrings.begin() + c * maxlen
+                    );
+                    stepstringlengths[c-1] = totalDecodedAnchors[0][c].size();
+                }
+
+                MultipleSequenceAlignment msa;
+
+                msa.build(
+                    decodedAnchor.c_str(),
+                    decodedAnchor.length(),
+                    stepstrings.data(),
+                    stepstringlengths.data(),
+                    numsteps-1,
+                    shifts.data(),
+                    initialWeights.data(),
+                    nullptr, //subjectQualities,
+                    nullptr, //candidateQualities,
+                    maxlen,
+                    0, // candidateQualitiesPitch,
+                    false // useQualityScores
+                );
+
+                extendResult.success = true;
+
+                std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+                extendResult.extendedReads.emplace_back(input.readId1, std::move(extendedRead));
+            }else{
+                ; //no read extension possible
+            }
+        }
+
+        return extendResult;
     }
 
 private:
@@ -595,5 +819,214 @@ private:
     GoodAlignmentProperties goodAlignmentProperties;
     WorkingSet ws;
 };
+
+
+
+
+
+
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+extend_cpu(
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    const SequenceFileProperties& sequenceFileProperties,
+    Minhasher& minhasher,
+    cpu::ContiguousReadStorage& readStorage
+){
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
+
+    #pragma omp parallel for
+    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+        correctionStatusFlagsPerRead[i] = 0;
+    }
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+
+    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
+        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
+
+    if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
+    }
+
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+
+    BackgroundThread outputThread(true);
+
+    /*
+
+    auto showProgress = [&](auto totalCount, auto seconds){
+        if(runtimeOptions.showProgress){
+
+            printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, sequenceFileProperties.nReads,
+                    int(seconds / 3600),
+                    int(seconds / 60) % 60,
+                    int(seconds) % 60);
+            std::cout.flush();
+        }
+
+        if(totalCount == sequenceFileProperties.nReads){
+            std::cerr << '\n';
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration;
+    };
+
+    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+
+    */
+    const int insertSize = 300;
+    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+
+    omp_set_num_threads(1);
+
+    #pragma omp parallel
+    {
+        ReadExtender readExtender{
+            insertSize,
+            maximumSequenceLength,
+            readStorage, 
+            minhasher      
+        };
+
+        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+
+        std::vector<read_number> currentIds(2);
+        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts);
+        std::array<int, 2> currentReadLengths;
+
+        while(!(readIdGenerator.empty())){
+            std::array<read_number, 2> currentIds;
+
+            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                2, 
+                currentIds.begin()
+            );
+            
+            if(std::distance(currentIds.begin(), readIdsEnd) != 2){
+                continue; //this should only happen if all reads have been processed or input file is not properly paired
+            }
+
+            readStorage.gatherSequenceLengths(
+                readStorageGatherHandle,
+                currentIds.data(),
+                currentIds.size(),
+                currentReadLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                readStorageGatherHandle,
+                currentIds.data(),
+                currentIds.size(),
+                currentEncodedReads.data(),
+                encodedSequencePitchInInts
+            );
+
+            ReadExtender::ExtendInput input;
+            input.readId1 = currentIds[0];
+            input.readId2 = currentIds[1];
+            input.encodedRead1 = currentEncodedReads.data() + 0 * encodedSequencePitchInInts;
+            input.encodedRead2 = currentEncodedReads.data() + 1 * encodedSequencePitchInInts;
+            input.readLength1 = currentReadLengths[0];
+            input.readLength2 = currentReadLengths[1];
+            input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[0]);
+            input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[1]);
+
+            auto extendResult = readExtender.extendPairedRead(input);
+
+            if(extendResult.success){
+                const int numResults = extendResult.extendedReads.size();
+                auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
+
+                for(int i = 0; i < numResults; i++){
+                    auto& pair = extendResult.extendedReads[i];
+
+                    TempCorrectedSequence tcs;
+                    tcs.hq = false;
+                    tcs.useEdits = false;
+                    tcs.type = TempCorrectedSequence::Type::Anchor;
+                    tcs.shift = 0;
+                    tcs.readId = pair.first;
+                    tcs.sequence = std::move(pair.second);
+
+                    encodeddata[i] = tcs.encode();
+                }
+
+                auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
+                    for(int i = 0; i < size; i++){
+                        partialResults.storeElement(std::move(encodeddata[i]));
+                    }
+                };
+
+                outputThread.enqueue(
+                    std::move(func)
+                );
+            }
+            
+        }
+        
+    }
+
+    //progressThread.finished();
+
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+    //outputstream.flush();
+    partialResults.flush();
+
+
+
+    return partialResults;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 } // namespace care
