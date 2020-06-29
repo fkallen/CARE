@@ -3,65 +3,28 @@
 
 #include <config.hpp>
 
-#include <dlfcn.h> //linux load shared object
+#include <soloader.hpp>
 
-#include <functional>
 #include <string>
-#include <limits>
 #include <iostream>
 #include <utility>
-#include <stdexcept>
 
 namespace care{
 
     struct ForestClassifier{
 
-        std::string soFilename;
-        void* soHandle = nullptr;
-        std::function<std::pair<int, int>(double, double, double,
+        SoFunction<std::pair<int, int>(double, double, double,
                                         double, double, double,
                                         double, double, double,
                                         double, double, double,
-                                        double)> shouldCorrect_forest;
+                                        double)> function;
 
         ForestClassifier(){}
 
-        ForestClassifier(std::string soFilename_) : soFilename(std::move(soFilename_)){
-            //std::cerr << soFilename << '\n';
-            bool failure = false;
-
-            soHandle = dlopen(soFilename.c_str(), RTLD_NOW);
-        	if (!soHandle) {
-        		std::cerr << dlerror() << '\n';
-        		failure = true;
-        	}
-
-            auto fptr = dlsym(soHandle, "shouldCorrect_forest");
-
-            const char* error = dlerror();
-        	if (error != NULL) {
-        		std::cerr << error << '\n';
-        		failure = true;
-        	}
-
-            if(failure){
-                throw std::runtime_error("Cannot load forest object:" + soFilename);
-            }
-
-            shouldCorrect_forest = (std::pair<int, int> (*) (double, double, double,
-                                            double, double, double,
-                                            double, double, double,
-                                            double, double, double,
-                                            double)) fptr;
-        }
-
-        ~ForestClassifier(){
-            if(soHandle != nullptr){
-                int dlcloseretval = dlclose(soHandle);
-            	if (dlcloseretval != 0) {
-            		std::cerr << dlerror() << '\n';
-            	}
-            }
+        ForestClassifier(std::string soFilename) 
+            : function(soFilename, "shouldCorrect_forest")
+        {
+           
         }
 
 
@@ -74,19 +37,7 @@ namespace care{
         ForestClassifier& operator=(const ForestClassifier&) = delete;
 
         ForestClassifier& operator=(ForestClassifier&& rhs){
-            if(soHandle != nullptr){
-                int dlcloseretval = dlclose(soHandle);
-            	if (dlcloseretval != 0) {
-            		std::cerr << dlerror() << '\n';
-            	}
-            }
-            soFilename = std::move(rhs.soFilename);
-            soHandle = std::move(rhs.soHandle);
-            shouldCorrect_forest = std::move(rhs.shouldCorrect_forest);
-
-            rhs.soFilename = "";
-            rhs.soHandle = nullptr;
-            rhs.shouldCorrect_forest = nullptr;
+            function = std::move(rhs.function);
 
             return *this;
         }
@@ -107,19 +58,21 @@ namespace care{
                             double correction_fraction) const noexcept{
 
 
-        auto forestresult = shouldCorrect_forest(position_support,
-                                                position_coverage,
-                                                alignment_coverage,
-                                                dataset_coverage,
-                                                min_support,
-                                                min_coverage,
-                                                max_support,
-                                                max_coverage,
-                                                mean_support,
-                                                mean_coverage,
-                                                median_support,
-                                                median_coverage,
-                                                maxgini);
+            auto forestresult = function(
+                position_support,
+                position_coverage,
+                alignment_coverage,
+                dataset_coverage,
+                min_support,
+                min_coverage,
+                max_support,
+                max_coverage,
+                mean_support,
+                mean_coverage,
+                median_support,
+                median_coverage,
+                maxgini
+            );
 
             const int count_correct = forestresult.second;
             const int count_dontcorrect = forestresult.first;
