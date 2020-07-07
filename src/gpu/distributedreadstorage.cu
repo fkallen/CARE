@@ -621,7 +621,7 @@ void DistributedReadStorage::setReads(ThreadPool* threadPool,
         ;
     }
         
-
+#if 1
     std::vector<char> sequenceData;
     std::vector<Length_t> sequenceLengths;
     std::vector<char> qualityData;
@@ -665,6 +665,208 @@ void DistributedReadStorage::setReads(ThreadPool* threadPool,
         setQualities(indices, qualityData.data());
     }
     //TIMERSTOPCPU(internalset);
+#else 
+
+
+    const size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(getSequenceLengthUpperBound());
+    const std::size_t encodedSequencePitch = encodedSequencePitchInInts * sizeof(int);
+    const size_t qualityPitch = getSequenceLengthUpperBound();
+
+    const std::size_t decodedSequencePitch = SDIV(statistics.maximumSequenceLength, 128) * 128;
+
+    constexpr std::size_t buffersize = std::size_t{1} << 20;
+
+    const int readsPerIteration = buffersize / decodedSequencePitch;
+    const int iterations = SDIV(numReads, readsPerIteration);
+
+    char* h_decodedSequences;
+    char* d_decodedSequences;
+
+    cudaMallocHost(&h_decodedSequences, sizeof(char) * buffersize * 2); CUERR;
+    cudaMalloc(&d_decodedSequences, sizeof(char) * buffersize * 2); CUERR;
+
+    std::array<char*, 2> h_decodedSequences_arr{h_decodedSequences, h_decodedSequences + buffersize};
+    std::array<char*, 2> d_decodedSequences_arr{d_decodedSequences, d_decodedSequences + buffersize};
+
+    unsigned int* h_encodedSequences;
+    unsigned int* d_encodedSequences;
+
+    cudaMallocHost(&h_encodedSequences, sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration * 2); CUERR;
+    cudaMalloc(&d_encodedSequences, sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration * 2); CUERR;
+
+    std::array<unsigned int*, 2> h_encodedSequences_arr{h_encodedSequences, h_encodedSequences + sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration};
+    std::array<unsigned int*, 2> d_encodedSequences_arr{d_encodedSequences, d_encodedSequences + sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration};
+
+    int* h_lengths;
+    int* d_lengths;
+
+    cudaMallocHost(&h_lengths, sizeof(int) * readsPerIteration * 2); CUERR;
+    cudaMalloc(&d_lengths, sizeof(int) * readsPerIteration * 2); CUERR;
+
+    std::array<int*, 2> h_lengths_arr{h_lengths, h_lengths + readsPerIteration};
+    std::array<int*, 2> d_lengths_arr{d_lengths, d_lengths + readsPerIteration};
+
+    std::array<cudaStream_t, 2> streams;
+    cudaStreamCreate(&streams[0]); CUERR;
+    cudaStreamCreate(&streams[1]); CUERR;
+
+    std::vector<char> sequenceData;
+    std::vector<Length_t> sequenceLengths;
+    std::vector<char> qualityData;
+
+    sequenceData.resize(statistics.maximumSequenceLength * numReads, 0);
+    sequenceLengths.resize(numReads, 0);
+
+    if(canUseQualityScores()){
+        qualityData.resize(getSequenceLengthUpperBound() * numReads, 0);
+    }
+
+    ThreadPool::ParallelForHandle pforHandle;
+
+    int currentbuf = 0;
+
+    for(int iteration = 0; iteration < iterations; iteration++){
+
+        const int begin = iteration * readsPerIteration;
+        const int end = std::min((iteration+1) * readsPerIteration, numReads);
+        const int chunksize = end - begin;
+        
+        for(int i = 0; i < chunksize; i++){
+            const auto& r = reads[begin + i];
+
+            std::copy(
+                r.sequence.begin(), 
+                r.sequence.end(), 
+                h_decodedSequences_arr[currentbuf] + i * decodedSequencePitch
+            );
+
+            h_lengths_arr[currentbuf][i] = r.sequence.size();
+        }
+
+        // cudaMemcpyAsync(
+        //     d_decodedSequences_arr[currentbuf],
+        //     h_decodedSequences_arr[currentbuf],
+        //     sizeof(char) * chunksize * decodedSequencePitch,
+        //     H2D,
+        //     streams[currentbuf]
+        // ); CUERR;
+
+        // cudaMemcpyAsync(
+        //     d_lengths_arr[currentbuf],
+        //     h_lengths_arr[currentbuf],
+        //     sizeof(int) * chunksize,
+        //     H2D,
+        //     streams[currentbuf]
+        // ); CUERR;
+
+        // //kernel for encoding
+
+        // cudaMemcpyAsync(
+        //     h_encodedSequences_arr[currentbuf],
+        //     d_encodedSequences_arr[currentbuf],
+        //     sizeof(unsigned int) * chunksize * encodedSequencePitchInInts,
+        //     D2H,
+        //     streams[currentbuf]
+        // ); CUERR;
+
+        auto prepare = [&](int b, int e, int /*threadId*/){
+            for(int i = b; i < e; i++){
+                const Read& r = reads[i];
+    
+                unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(begin + i) * encodedSequencePitch];
+                const char* src = h_decodedSequences_arr[currentbuf] + i * decodedSequencePitch;
+                encodeSequence2Bit(
+                    dest,
+                    src,
+                    h_lengths_arr[currentbuf][i]
+                );
+            }
+        };
+    
+        
+    
+        threadPool->parallelFor(pforHandle, 0, chunksize, prepare);
+
+
+        //std::copy(h_lengths_arr[currentbuf], h_lengths_arr[currentbuf] + chunksize, sequenceLengths.begin() + begin);
+
+        if(iteration > 0){
+            //process results of previous iteration
+            const int otherbuf = 1 - currentbuf;
+
+            const int otherbegin = (iteration-1) * readsPerIteration;
+            const int otherend = iteration * readsPerIteration;
+            const int otherchunksize = end - begin;
+
+            cudaStreamSynchronize(streams[otherbuf]);
+
+            for(int i = 0; i < chunksize; i++){
+                const auto& r = reads[otherbegin + i];
+    
+                std::copy(
+                    h_encodedSequences_arr[otherbuf] + i * encodedSequencePitchInInts,
+                    h_encodedSequences_arr[otherbuf] + (i+1) * encodedSequencePitchInInts,
+                    ((unsigned int*)sequenceData.data()) + (otherbegin + i)* encodedSequencePitchInInts
+                );
+    
+                sequenceLengths[otherbegin + i] = h_lengths_arr[otherbuf][i];
+
+                if(canUseQualityScores()){
+                    std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + (otherbegin + i) * qualityPitch);
+                }
+            }
+        } 
+
+        if(iteration == iterations - 1){
+            //process results of current (final) iteration
+
+            cudaStreamSynchronize(streams[currentbuf]);
+
+            for(int i = 0; i < chunksize; i++){
+
+                const auto& r = reads[begin + i];
+    
+                std::copy(
+                    h_encodedSequences_arr[currentbuf] + i * encodedSequencePitchInInts,
+                    h_encodedSequences_arr[currentbuf] + (i+1) * encodedSequencePitchInInts,
+                    ((unsigned int*)sequenceData.data()) + (begin + i)* encodedSequencePitchInInts
+                );
+    
+                sequenceLengths[begin + i] = h_lengths_arr[currentbuf][i];
+
+                if(canUseQualityScores()){
+                    std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + (begin + i) * qualityPitch);
+                }
+            }
+
+        } 
+
+        currentbuf = 1 - currentbuf;
+
+    }
+
+    cudaStreamDestroy(streams[0]);
+    cudaStreamDestroy(streams[1]);
+    cudaFree(d_lengths); CUERR;
+    cudaFreeHost(h_lengths); CUERR;
+    cudaFree(d_encodedSequences); CUERR;
+    cudaFreeHost(h_encodedSequences); CUERR;
+    cudaFree(d_decodedSequences); CUERR;
+    cudaFreeHost(h_decodedSequences); CUERR;
+
+
+
+    // ThreadPool::ParallelForHandle pforHandle;
+
+    // threadPool->parallelFor(pforHandle, 0, numReads, prepare);
+
+    setSequences(indices, sequenceData.data());
+    setSequenceLengths(indices, sequenceLengths.data());
+    if(canUseQualityScores()){
+        setQualities(indices, qualityData.data());
+    }
+
+#endif
 }
 
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){

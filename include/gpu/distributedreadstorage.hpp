@@ -9,6 +9,7 @@
 #include <gpu/gpubitarray.cuh>
 
 #include <memorymanagement.hpp>
+#include <cub/util_allocator.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -83,6 +84,8 @@ public:
     GPULengthStore_t gpulengthStorage;
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
     mutable DistributedArray<char, read_number> distributedQualities;
+
+    cub::CachingDeviceAllocator cubCachingAllocator;
 
     std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
 
