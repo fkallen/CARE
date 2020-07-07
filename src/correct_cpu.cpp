@@ -19,6 +19,7 @@
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <forestclassifier.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <array>
 #include <chrono>
@@ -713,19 +714,14 @@ namespace cpu{
                     );
                 }
 
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
-
                 for(int i = 0; i < task.numFilteredCandidates; i++){
                     task.bestAlignmentShifts[i] = task.bestAlignments[i].shift;
 
                     task.bestAlignmentWeights[i] = calculateOverlapWeight(
                         task.subjectSequenceLength, 
                         task.bestAlignments[i].nOps, 
-                        task.bestAlignments[i].overlap
+                        task.bestAlignments[i].overlap,
+                        alignmentProps.maxErrorRate
                     );
                 }
             }
@@ -892,7 +888,8 @@ namespace cpu{
         void removeCandidatesOfDifferentRegionFromMSA(
                 BatchData& data,
                 BatchData::Task& task,
-                const CorrectionOptions& correctionOptions){
+                const CorrectionOptions& correctionOptions,
+                const GoodAlignmentProperties& alignmentProps){
 
             constexpr int max_num_minimizations = 5;
 
@@ -917,7 +914,8 @@ namespace cpu{
                                                         data.multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                         data.multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                         task.bestAlignmentShifts,
-                                                        correctionOptions.estimatedCoverage);
+                                                        correctionOptions.estimatedCoverage,
+                                                        alignmentProps.maxErrorRate);
             };
 
             auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
@@ -1689,7 +1687,12 @@ correct_cpu(
                 tpa = std::chrono::system_clock::now();
                 #endif
 
-                removeCandidatesOfDifferentRegionFromMSA(batchData, batchTask, correctionOptions);
+                removeCandidatesOfDifferentRegionFromMSA(
+                    batchData, 
+                    batchTask, 
+                    correctionOptions, 
+                    goodAlignmentProperties
+                );
 
                 #ifdef ENABLE_TIMING
                 batchData.timings.msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
