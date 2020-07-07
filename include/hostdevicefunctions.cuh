@@ -59,10 +59,8 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
-    float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize){
-        constexpr float maxErrorPercentInOverlap = 0.2f;
-
-        return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
+    float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize, float maxMismatchRatio){
+        return 1.0f - sqrtf(nOps / (overlapsize * maxMismatchRatio));
     }
 
     HD_WARNING_DISABLE

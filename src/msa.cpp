@@ -913,7 +913,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     int subjectColumnsBegin_incl,
                                                     int subjectColumnsEnd_excl,
                                                     const int* candidateShifts,
-                                                    int dataset_coverage){
+                                                    int dataset_coverage,
+                                                    float desiredAlignmentMaxErrorRate){
 
     auto is_significant_count = [&](int count, int dataset_coverage){
         if(int(dataset_coverage * 0.3f) <= count)
@@ -1063,11 +1064,6 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
             assert(seenCounts[2] == countsG[col]);
             assert(seenCounts[3] == countsT[col]);
 
-            auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-            };
 
 #if 1
             //check that no candidate which should be removed has very good alignment.
@@ -1077,7 +1073,12 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                 if(result.differentRegionCandidate[candidateIndex]){
                     const int nOps = alignments_nOps[candidateIndex];
                     const int overlapsize = alignments_overlaps[candidateIndex];
-                    const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                    const float overlapweight = calculateOverlapWeight(
+                        subjectLength, 
+                        nOps, 
+                        overlapsize, 
+                        desiredAlignmentMaxErrorRate
+                    );
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
 
