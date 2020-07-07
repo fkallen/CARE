@@ -293,6 +293,7 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
+            float desiredAlignmentMaxErrorRate,
             int subjectIndex){  
 
         constexpr bool candidatesAreTransposed = true;
@@ -345,7 +346,12 @@ namespace gpu{
             const int query_alignment_overlap = myOverlaps[localCandidateIndex];
             const int query_alignment_nops = myNops[localCandidateIndex];
 
-            const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
+            const float overlapweight = calculateOverlapWeight(
+                subjectLength, 
+                query_alignment_nops, 
+                query_alignment_overlap,
+                desiredAlignmentMaxErrorRate
+            );
 
             assert(overlapweight <= 1.0f);
             assert(overlapweight >= 0.0f);
@@ -396,6 +402,7 @@ namespace gpu{
             size_t msa_weights_row_pitch_floats,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
+            float desiredAlignmentMaxErrorRate,
             int subjectIndex){  
 
         constexpr bool candidatesAreTransposed = true;
@@ -424,7 +431,12 @@ namespace gpu{
                 const int query_alignment_overlap = myOverlaps[localCandidateIndex];
                 const int query_alignment_nops = myNops[localCandidateIndex];
 
-                const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
+                const float overlapweight = calculateOverlapWeight(
+                    subjectLength, 
+                    query_alignment_nops, 
+                    query_alignment_overlap,
+                    desiredAlignmentMaxErrorRate
+                );
 
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
@@ -616,6 +628,7 @@ namespace gpu{
             const int* __restrict__ myNops,
             const int* __restrict__ myOverlaps,
             bool* __restrict__ myShouldBeKept,
+            float desiredAlignmentMaxErrorRate,
             int subjectIndex,
             int encodedSequencePitchInInts,
             size_t msa_pitch,
@@ -805,7 +818,12 @@ namespace gpu{
                             const int localCandidateIndex = myIndices[k];
                             const int nOps = myNops[localCandidateIndex];
                             const int overlapsize = myOverlaps[localCandidateIndex];
-                            const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                            const float overlapweight = calculateOverlapWeight(
+                                subjectLength, 
+                                nOps, 
+                                overlapsize,
+                                desiredAlignmentMaxErrorRate
+                            );
                             assert(overlapweight <= 1.0f);
                             assert(overlapweight >= 0.0f);
 
@@ -1046,6 +1064,7 @@ namespace gpu{
             int n_subjects,
             int n_queries,
             bool canUseQualityScores,
+            float desiredAlignmentMaxErrorRate,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
             size_t msa_row_pitch,
@@ -1119,6 +1138,7 @@ namespace gpu{
                         msa_weights_row_pitch_floats,
                         encodedSequencePitchInInts,
                         qualityPitchInBytes,
+                        desiredAlignmentMaxErrorRate,
                         subjectIndex
                     );
 
@@ -1183,6 +1203,7 @@ namespace gpu{
             const int* __restrict__ d_indices,
             const int* __restrict__ d_indices_per_subject,
             const int* __restrict__ d_blocksPerSubjectPrefixSum,
+            float desiredAlignmentMaxErrorRate,
             int n_subjects,
             int n_queries,
             bool canUseQualityScores,
@@ -1300,7 +1321,12 @@ namespace gpu{
                         const int query_alignment_overlap = myOverlaps[localCandidateIndex];
                         const int query_alignment_nops = myNops[localCandidateIndex];
 
-                        const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
+                        const float overlapweight = calculateOverlapWeight(
+                            subjectLength, 
+                            query_alignment_nops, 
+                            query_alignment_overlap,
+                            desiredAlignmentMaxErrorRate
+                        );
 
                         assert(overlapweight <= 1.0f);
                         assert(overlapweight >= 0.0f);
@@ -1451,6 +1477,7 @@ namespace gpu{
     #endif
 
 
+
     template<int BLOCKSIZE, MemoryType addSequencesMemType>
     __launch_bounds__(BLOCKSIZE, buildMSASingleBlockKernel_MIN_BLOCKS)
     __global__
@@ -1478,6 +1505,7 @@ namespace gpu{
             const char* __restrict__ candidateQualities,
             const int* __restrict__ d_numAnchors,
             const int* __restrict__ d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1582,6 +1610,7 @@ namespace gpu{
                         msa_weights_row_pitch_floats,
                         encodedSequencePitchInInts,
                         qualityPitchInBytes,
+                        desiredAlignmentMaxErrorRate,
                         subjectIndex
                     );
 
@@ -1664,6 +1693,7 @@ namespace gpu{
             const int* __restrict__ candidateSequencesLength,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
+            float desiredAlignmentMaxErrorRate,
             int n_subjects,
             int n_candidates,
             int encodedSequencePitchInInts,
@@ -1736,6 +1766,7 @@ namespace gpu{
                         myNops,
                         myOverlaps,
                         myShouldBeKept,
+                        desiredAlignmentMaxErrorRate,
                         subjectIndex,
                         encodedSequencePitchInInts,
                         msa_pitch,
@@ -1788,6 +1819,7 @@ namespace gpu{
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const int* __restrict__ d_numAnchors,
             const int* __restrict__ d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
@@ -1883,6 +1915,7 @@ namespace gpu{
                         myNops,
                         myOverlaps,
                         myShouldBeKept,
+                        desiredAlignmentMaxErrorRate,
                         subjectIndex,
                         encodedSequencePitchInInts,
                         msa_pitch,
@@ -1959,6 +1992,7 @@ namespace gpu{
                             msa_weights_pitch_floats,
                             encodedSequencePitchInInts,
                             qualityPitchInBytes,
+                            desiredAlignmentMaxErrorRate,
                             subjectIndex
                         );
 
@@ -2031,6 +2065,7 @@ namespace gpu{
                             msa_weights_pitch_floats,
                             encodedSequencePitchInInts,
                             qualityPitchInBytes,
+                            desiredAlignmentMaxErrorRate,
                             subjectIndex
                         );
 
@@ -2107,6 +2142,7 @@ namespace gpu{
             const char* __restrict__ candidateQualities,
             bool* __restrict__ d_shouldBeKept,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
+            float desiredAlignmentMaxErrorRate,
             int n_subjects,
             int n_candidates,
             bool canUseQualityScores,
@@ -2216,6 +2252,7 @@ namespace gpu{
                             myNops,
                             myOverlaps,
                             myShouldBeKept,
+                            desiredAlignmentMaxErrorRate,
                             subjectIndex,
                             encodedSequencePitchInInts,
                             msa_pitch,
@@ -2288,6 +2325,7 @@ namespace gpu{
                                 msa_weights_pitch_floats,
                                 encodedSequencePitchInInts,
                                 qualityPitchInBytes,
+                                desiredAlignmentMaxErrorRate,
                                 subjectIndex
                             );
 
@@ -2360,6 +2398,7 @@ namespace gpu{
                                 msa_weights_pitch_floats,
                                 encodedSequencePitchInInts,
                                 qualityPitchInBytes,
+                                desiredAlignmentMaxErrorRate,
                                 subjectIndex
                             );
 
@@ -2606,6 +2645,7 @@ namespace gpu{
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
             const int* d_indices_per_subject,
+            float desiredAlignmentMaxErrorRate,
             int n_subjects,
             int n_queries,
             bool canUseQualityScores,
@@ -2700,6 +2740,7 @@ namespace gpu{
             n_subjects,
             n_queries,
             canUseQualityScores,
+            desiredAlignmentMaxErrorRate,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
             msa_row_pitch,
@@ -2963,7 +3004,8 @@ namespace gpu{
                 const char* d_candidateQualities,
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
-    			const int* d_indices_per_subject,
+                const int* d_indices_per_subject,
+                float desiredAlignmentMaxErrorRate,
     			int n_subjects,
     			int n_queries,
     			bool canUseQualityScores,
@@ -3054,6 +3096,7 @@ namespace gpu{
             d_candidates_per_subject_prefixsum,
             d_indices,
             d_indices_per_subject,
+            desiredAlignmentMaxErrorRate,
             n_subjects,
             n_queries,
             canUseQualityScores,
@@ -3208,6 +3251,7 @@ namespace gpu{
                 const int* d_candidateSequencesLength,
                 bool* d_shouldBeKept,
                 const int* d_candidates_per_subject_prefixsum,
+                float desiredAlignmentMaxErrorRate,
                 int n_subjects,
                 int n_candidates,
                 int encodedSequencePitchInInts,
@@ -3294,6 +3338,7 @@ namespace gpu{
                     d_candidateSequencesLength, \
                     d_shouldBeKept, \
                     d_candidates_per_subject_prefixsum, \
+                    desiredAlignmentMaxErrorRate, \
                     n_subjects, \
                     n_candidates, \
                     encodedSequencePitchInInts, \
@@ -3352,6 +3397,7 @@ namespace gpu{
             const int* d_candidates_per_subject_prefixsum,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             bool canUseQualityScores,
@@ -3450,6 +3496,7 @@ namespace gpu{
             d_candidates_per_subject_prefixsum,
             d_numAnchors,
             d_numCandidates,
+            desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3490,6 +3537,7 @@ namespace gpu{
             const char* d_candidateQualities,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             bool canUseQualityScores,
@@ -3575,6 +3623,7 @@ namespace gpu{
             d_candidateQualities,
             d_numAnchors,
             d_numCandidates,
+            desiredAlignmentMaxErrorRate,
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
@@ -3619,6 +3668,7 @@ namespace gpu{
             const int* d_candidatesPerSubjectPrefixSum,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             const bool* d_canExecute,
@@ -3660,6 +3710,7 @@ namespace gpu{
             d_candidatesPerSubjectPrefixSum,
             d_indices,
             d_indices_per_subject,
+            desiredAlignmentMaxErrorRate,
             n_subjects,
             n_candidates,
             canUseQualityScores,
@@ -3718,6 +3769,7 @@ namespace gpu{
             d_candidateQualities,
             d_numAnchors,
             d_numCandidates,
+            desiredAlignmentMaxErrorRate,
             maxNumAnchors,
             maxNumCandidates,
             canUseQualityScores,

@@ -209,6 +209,7 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             const int* d_candidateSequencesLength,
             bool* d_shouldBeKept,
             const int* d_candidates_per_subject_prefixsum,
+            float desiredAlignmentMaxErrorRate,
             int n_subjects,
             int n_candidates,
             int encodedSequencePitchInInts,
@@ -245,6 +246,7 @@ void callBuildMSASingleBlockKernel_async(
             const char* d_candidateQualities,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             bool canUseQualityScores,
@@ -254,7 +256,7 @@ void callBuildMSASingleBlockKernel_async(
             size_t msa_weights_row_pitch_floats,
             const bool* d_canExecute,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle);
+            KernelLaunchHandle& handle);
 
 void callBuildMSAKernel_async(
             MSAColumnProperties* d_msaColumnProperties,
@@ -285,6 +287,7 @@ void callBuildMSAKernel_async(
             const int* d_candidatesPerSubjectPrefixSum,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             const bool* d_canExecute,
@@ -319,6 +322,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
             const int* d_candidates_per_subject_prefixsum,
             const int* d_numAnchors,
             const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
             int maxNumAnchors,
             int maxNumCandidates,
             bool canUseQualityScores,
@@ -333,7 +337,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
             int iteration,
             const read_number* d_subjectReadIds,
             cudaStream_t stream,
-            KernelLaunchHandle& kernelLaunchHandle);
+            KernelLaunchHandle& handle);
 
 // correction kernels
 

@@ -260,7 +260,7 @@ namespace gpu{
 
                                     const int mynOps = nOps[arrayindex];
                                     const int overlapsize = overlaps[arrayindex];
-                                    const float overlapweight = calculateOverlapWeight(subjectLength, mynOps, overlapsize);
+                                    const float overlapweight = calculateOverlapWeight(subjectLength, mynOps, overlapsize, desiredAlignmentMaxErrorRate);
                                     assert(overlapweight <= 1.0f);
                                     assert(overlapweight >= 0.0f);
 

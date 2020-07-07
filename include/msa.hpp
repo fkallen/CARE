@@ -242,7 +242,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     int subjectColumnsBegin_incl,
                                                     int subjectColumnsEnd_excl,
                                                     const int* candidateShifts,
-                                                    int dataset_coverage);
+                                                    int dataset_coverage,
+                                                    float desiredAlignmentMaxErrorRate);
 
 std::pair<int,int> findGoodConsensusRegionOfSubject(const char* subject,
                                                     int subjectLength,
