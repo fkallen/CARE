@@ -74,6 +74,9 @@ public:
         SimpleAllocationDevice<unsigned int> d_encodedSequences;
         SimpleAllocationPinnedHost<int> h_lengths;
         SimpleAllocationDevice<int> d_lengths;
+        std::vector<char> sequenceData;
+        std::vector<int> sequenceLengths;
+        std::vector<char> qualityData;
 
         ReadInserterHandle(){
             cudaGetDevice(&deviceId); CUERR;
@@ -110,7 +113,10 @@ public:
             std::swap(d_encodedSequences, rhs.d_encodedSequences);
             std::swap(h_lengths, rhs.h_lengths);
             std::swap(d_lengths, rhs.d_lengths);
-            
+            std::swap(sequenceData, rhs.sequenceData);
+            std::swap(sequenceLengths, rhs.sequenceLengths);
+            std::swap(qualityData, rhs.qualityData);
+
             return *this;
         }
         

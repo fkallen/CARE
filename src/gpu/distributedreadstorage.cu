@@ -333,7 +333,7 @@ void DistributedReadStorage::construct(
     };
 
     constexpr int maxbuffersize = 65536;
-    constexpr int numBuffers = 2;
+    constexpr int numBuffers = 3;
 
     std::array<std::vector<read_number>, numBuffers> indicesBuffers;
     std::array<std::vector<Read>, numBuffers> readsBuffers;
@@ -344,7 +344,7 @@ void DistributedReadStorage::construct(
 
     using Inserter_t = decltype(makeReadInserter());
 
-    std::array<Inserter_t, 2> inserterFuncs{makeReadInserter(), makeReadInserter()};
+    std::array<Inserter_t, 3> inserterFuncs{makeReadInserter(), makeReadInserter(), makeReadInserter()};
 
     ThreadPool threadPool(threads);
 
@@ -637,58 +637,10 @@ void DistributedReadStorage::setReads(
     read_number prev_value = numberOfInsertedReads;
     while(prev_value < maxIndex+1 && !numberOfInsertedReads.compare_exchange_weak(prev_value, maxIndex+1)){
         ;
-    }
-        
-#if 0
-    std::vector<char> sequenceData;
-    std::vector<Length_t> sequenceLengths;
-    std::vector<char> qualityData;
+    }      
 
-    const size_t encodedSequencePitch = getEncodedNumInts2Bit(getSequenceLengthUpperBound()) * sizeof(int);
-    const size_t qualityPitch = getSequenceLengthUpperBound();
-
-    sequenceData.resize(encodedSequencePitch * numReads, 0);
-    sequenceLengths.resize(numReads, 0);
-    if(canUseQualityScores()){
-        qualityData.resize(getSequenceLengthUpperBound() * numReads, 0);
-    }
-
-    //TIMERSTOPCPU(internalinit);
-
-    auto prepare = [&](int begin, int end, int /*threadId*/){
-        for(int i = begin; i < end; i++){
-            const Read& r = reads[i];
-
-            unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(i) * encodedSequencePitch];
-            encodeSequence2Bit(dest,
-                                    r.sequence.c_str(),
-                                    r.sequence.length());
-            sequenceLengths[i] = Length_t(r.sequence.length());
-            if(canUseQualityScores()){
-                std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + i * qualityPitch);
-            }
-        }
-    };
-
-    ThreadPool::ParallelForHandle pforHandle;
-
-    threadPool->parallelFor(pforHandle, 0, numReads, prepare);
-
-    //TIMERSTOPCPU(internal);
-
-    //TIMERSTARTCPU(internalset);
-    setSequences(indices, sequenceData.data());
-    setSequenceLengths(indices, sequenceLengths.data());
-    if(canUseQualityScores()){
-        setQualities(indices, qualityData.data());
-    }
-    //TIMERSTOPCPU(internalset);
-#else 
-
-
-    const size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(getSequenceLengthUpperBound());
-    const std::size_t encodedSequencePitch = encodedSequencePitchInInts * sizeof(int);
-    const size_t qualityPitch = getSequenceLengthUpperBound();
+    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(getSequenceLengthUpperBound());
+    const std::size_t qualityPitch = getSequenceLengthUpperBound();
 
     const std::size_t decodedSequencePitch = SDIV(statistics.maximumSequenceLength, 128) * 128;
 
@@ -722,9 +674,9 @@ void DistributedReadStorage::setReads(
     std::array<cudaStream_t, 2> streams{handle.stream1, handle.stream2};
 
 
-    std::vector<char> sequenceData;
-    std::vector<Length_t> sequenceLengths;
-    std::vector<char> qualityData;
+    std::vector<char>& sequenceData = handle.sequenceData;
+    std::vector<Length_t>& sequenceLengths = handle.sequenceLengths;
+    std::vector<char>& qualityData = handle.qualityData;
 
     sequenceData.resize(statistics.maximumSequenceLength * numReads, 0);
     sequenceLengths.resize(numReads, 0);
@@ -754,7 +706,7 @@ void DistributedReadStorage::setReads(
 
             h_lengths_arr[currentbuf][i] = r.sequence.size();
         }
-#if 1
+
         cudaMemcpyAsync(
             d_decodedSequences_arr[currentbuf],
             h_decodedSequences_arr[currentbuf],
@@ -859,26 +811,6 @@ void DistributedReadStorage::setReads(
             D2H,
             streams[currentbuf]
         ); CUERR;
-#else
-        auto prepare = [&](int b, int e, int /*threadId*/){
-            for(int i = b; i < e; i++){
-    
-                unsigned int* dest = h_encodedSequences_arr[currentbuf] + i * encodedSequencePitchInInts;
-                const char* src = h_decodedSequences_arr[currentbuf] + i * decodedSequencePitch;
-                encodeSequence2Bit(
-                    dest,
-                    src,
-                    h_lengths_arr[currentbuf][i]
-                );
-            }
-        };
-    
-        
-    
-        threadPool->parallelFor(pforHandle, 0, chunksize, prepare);
-#endif
-
-        //std::copy(h_lengths_arr[currentbuf], h_lengths_arr[currentbuf] + chunksize, sequenceLengths.begin() + begin);
 
         if(iteration > 0){
             //process results of previous iteration
@@ -934,10 +866,6 @@ void DistributedReadStorage::setReads(
         currentbuf = 1 - currentbuf;
 
     }
-
-    // ThreadPool::ParallelForHandle pforHandle;
-
-    // threadPool->parallelFor(pforHandle, 0, numReads, prepare);
 
     setSequences(indices, sequenceData.data(), numReads);
     setSequenceLengths(indices, sequenceLengths.data(), numReads);
