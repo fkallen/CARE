@@ -135,6 +135,22 @@ public:
         return qual;
     }
 
+    std::string& getCurrentName(){
+        return name;
+    }
+
+    std::string& getCurrentComment(){
+        return comment;
+    }
+
+    std::string& getCurrentSequence(){
+        return seq;
+    }
+
+    std::string& getCurrentQuality(){
+        return qual;
+    }
+
 private:
 
     struct kstream_t {
