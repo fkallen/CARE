@@ -10,8 +10,11 @@ HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
 
-CFLAGS = -Wall -fopenmp -g -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
-CFLAGS_DEBUG = -Wall -fopenmp -g -O0 -Iinclude -I$(THRUST_INCDIR)
+CFLAGS_BASIC = -Wall -fopenmp -g -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_DEBUG_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
+
+CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
+CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
 NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
@@ -80,19 +83,19 @@ $(CPU_VERSION_DEBUG) : $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 
 buildcpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS) -c $< -o $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_CPU) -c $< -o $@
 
 buildcpu/%.dbg.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -c $< -o $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_CPU_DEBUG) -c $< -o $@
 
 buildgpu/%.o : src/gpu/%.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS_BASIC)" -c $< -o $@
 
 buildgpu/%.dbg.o : src/gpu/%.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG_BASIC)" -c $< -o $@
 
 
 install: 
