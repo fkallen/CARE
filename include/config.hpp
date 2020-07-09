@@ -29,7 +29,7 @@ namespace care{
 
     //maximum number of minhash maps
     constexpr int maximum_number_of_maps = 48;
-    static_assert(maximum_number_of_maps > 0);
+    static_assert(maximum_number_of_maps > 0, "");
 
 
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
@@ -46,7 +46,7 @@ namespace care{
     //tmpresultfileformat = 0 -> use a plain text file. use gnu sort for sorting
     //tmpresultfileformat = 1 -> use space efficient format. use custom sort function
     constexpr int tmpresultfileformat = 1;
-    static_assert(0 <= tmpresultfileformat && tmpresultfileformat <= 1);
+    static_assert(0 <= tmpresultfileformat && tmpresultfileformat <= 1, "");
 
 //##################################################
 
