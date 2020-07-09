@@ -163,10 +163,7 @@ public:
 
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
-    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
-    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
-    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const Read* reads, int numReads);
-    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const std::vector<Read>& reads);
+    void setReads(ThreadPool* threadPool, const read_number* indices, const Read* reads, int numReads);
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
@@ -245,11 +242,11 @@ public:
         void init(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
-        void setSequences(const std::vector<read_number>& indices, const char* data);
+        void setSequences(const read_number* indices, const char* data, int numReads);
         void setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data);
-        void setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data);
+        void setSequenceLengths(const read_number* indices, const Length_t* data, int numReads);
         void setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data);
-        void setQualities(const std::vector<read_number>& indices, const char* data);
+        void setQualities(const read_number* indices, const char* data, int numReads);
 };
 
 
