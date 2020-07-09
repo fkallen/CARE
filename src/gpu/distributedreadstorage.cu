@@ -332,11 +332,12 @@ void DistributedReadStorage::construct(
         }
     };
 
-    constexpr size_t maxbuffersize = 1000000;
+    constexpr int maxbuffersize = 65536;
     constexpr int numBuffers = 2;
 
     std::array<std::vector<read_number>, numBuffers> indicesBuffers;
     std::array<std::vector<Read>, numBuffers> readsBuffers;
+    std::array<int, numBuffers> bufferSizes;
     std::array<bool, numBuffers> canBeUsed;
     std::array<std::mutex, numBuffers> mutex;
     std::array<std::condition_variable, numBuffers> cv;
@@ -344,9 +345,10 @@ void DistributedReadStorage::construct(
     ThreadPool threadPool(threads);
 
     for(int i = 0; i < numBuffers; i++){
-        indicesBuffers[i].reserve(maxbuffersize);
-        readsBuffers[i].reserve(maxbuffersize);
+        indicesBuffers[i].resize(maxbuffersize);
+        readsBuffers[i].resize(maxbuffersize);
         canBeUsed[i] = true;
+        bufferSizes[i] = 0;
     }
 
     int bufferindex = 0;
@@ -373,7 +375,7 @@ void DistributedReadStorage::construct(
         std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
 
         forEachReadInFile(inputfile,
-                        [&](auto /*readnum*/, const auto& read){
+                        [&](auto /*readnum*/, auto& read){
 
                 if(!canBeUsed[bufferindex]){
                     std::unique_lock<std::mutex> ul(mutex[bufferindex]);
@@ -387,25 +389,31 @@ void DistributedReadStorage::construct(
 
                 auto indicesBufferPtr = &indicesBuffers[bufferindex];
                 auto readsBufferPtr = &readsBuffers[bufferindex];
-                indicesBufferPtr->emplace_back(globalReadId);
-                readsBufferPtr->emplace_back(read);
+                auto& buffersize = bufferSizes[bufferindex];
+
+                (*indicesBufferPtr)[buffersize] = globalReadId;
+                std::swap((*readsBufferPtr)[buffersize], read);
+
+                ++buffersize;
 
                 ++globalReadId;
 
                 progressThread.addProgress(1);
 
-                if(indicesBufferPtr->size() >= maxbuffersize){
+                if(buffersize >= maxbuffersize){
                     canBeUsed[bufferindex] = false;
 
                     //std::cerr << "launch other thread\n";
                     nvtx::push_range("enqeue", 0);
                     threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
                         //std::cerr << "buffer " << bufferindex << " running\n";
+                        const int buffersize = bufferSizes[bufferindex];
+
                         nvtx::push_range("process read batch", 0);
                         int nmodcounter = 0;
 
                         nvtx::push_range("check read batch", 0);
-                        for(int i = 0; i < int(readsBufferPtr->size()); i++){
+                        for(int i = 0; i < buffersize; i++){
                             read_number readId = (*indicesBufferPtr)[i];
                             auto& read = (*readsBufferPtr)[i];
                             checkRead(readId, read, nmodcounter);
@@ -413,12 +421,11 @@ void DistributedReadStorage::construct(
                         nvtx::pop_range();
 
                         nvtx::push_range("insert read batch", 0);
-                        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), indicesBufferPtr->size());
+                        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
                         nvtx::pop_range();
 
                         //TIMERSTARTCPU(clear);
-                        indicesBufferPtr->clear();
-                        readsBufferPtr->clear();
+                        bufferSizes[bufferindex] = 0;
                         //TIMERSTOPCPU(clear);
                         
                         std::lock_guard<std::mutex> l(mutex[bufferindex]);
@@ -440,8 +447,9 @@ void DistributedReadStorage::construct(
 
     auto indicesBufferPtr = &indicesBuffers[bufferindex];
     auto readsBufferPtr = &readsBuffers[bufferindex];
+    auto& buffersize = bufferSizes[bufferindex];
 
-    if(int(readsBufferPtr->size()) > 0){
+    if(buffersize > 0){
         if(!canBeUsed[bufferindex]){
             std::unique_lock<std::mutex> ul(mutex[bufferindex]);
             if(!canBeUsed[bufferindex]){
@@ -452,16 +460,15 @@ void DistributedReadStorage::construct(
 
         int nmodcounter = 0;
 
-        for(int i = 0; i < int(readsBufferPtr->size()); i++){
+        for(int i = 0; i < buffersize; i++){
             read_number readId = (*indicesBufferPtr)[i];
             auto& read = (*readsBufferPtr)[i];
             checkRead(readId, read, nmodcounter);
         }
 
-        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), indicesBufferPtr->size());
+        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
 
-        indicesBufferPtr->clear();
-        readsBufferPtr->clear();
+        buffersize = 0;
     }
 
     for(int i = 0; i < numBuffers; i++){

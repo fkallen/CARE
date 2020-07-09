@@ -158,10 +158,17 @@ void forEachReadInFile(const std::string& filename, Func f){
         const int status = reader.next();
         //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
         if(status >= 0){
-            read.name = reader.getCurrentName();
-            read.comment = reader.getCurrentComment();
-            read.sequence = reader.getCurrentSequence();
-            read.quality = reader.getCurrentQuality();
+            #if 0
+                read.name = reader.getCurrentName();
+                read.comment = reader.getCurrentComment();
+                read.sequence = reader.getCurrentSequence();
+                read.quality = reader.getCurrentQuality();
+            #else
+                std::swap(read.name, reader.getCurrentName());
+                std::swap(read.comment, reader.getCurrentComment());
+                std::swap(read.sequence, reader.getCurrentSequence());
+                std::swap(read.quality, reader.getCurrentQuality());
+            #endif
         }else if(status < -1){
             std::cerr << "parser error status " << status << " in file " << filename << '\n';
         }
