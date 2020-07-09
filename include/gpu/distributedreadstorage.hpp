@@ -61,6 +61,133 @@ public:
 
         std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
+
+    struct ReadInserterHandle{
+    public:
+        int deviceId;
+
+        cudaStream_t stream1 = nullptr;
+        cudaStream_t stream2 = nullptr;
+        SimpleAllocationPinnedHost<char> h_decodedSequences;
+        SimpleAllocationDevice<char> d_decodedSequences;
+        SimpleAllocationPinnedHost<unsigned int> h_encodedSequences;
+        SimpleAllocationDevice<unsigned int> d_encodedSequences;
+        SimpleAllocationPinnedHost<int> h_lengths;
+        SimpleAllocationDevice<int> d_lengths;
+
+        ReadInserterHandle(){
+            cudaGetDevice(&deviceId); CUERR;
+            create();
+        }
+
+        ReadInserterHandle(int deviceId) : deviceId(deviceId){
+            create();
+        }
+
+        ~ReadInserterHandle(){
+            int cur = 0;
+            cudaGetDevice(&cur); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+            cudaStreamDestroy(stream1); CUERR;
+            cudaStreamDestroy(stream2); CUERR;
+            cudaSetDevice(cur); CUERR;
+        }
+
+        ReadInserterHandle(const ReadInserterHandle&) = delete;
+        ReadInserterHandle& operator=(const ReadInserterHandle&) = delete;
+
+        ReadInserterHandle(ReadInserterHandle&& rhs){
+            *this = std::move(rhs);
+        }
+
+        ReadInserterHandle& operator=(ReadInserterHandle&& rhs){
+            std::swap(deviceId, rhs.deviceId);
+            std::swap(stream1, rhs.stream1);
+            std::swap(stream2, rhs.stream2);
+            std::swap(h_decodedSequences, rhs.h_decodedSequences);
+            std::swap(d_decodedSequences, rhs.d_decodedSequences);
+            std::swap(h_encodedSequences, rhs.h_encodedSequences);
+            std::swap(d_encodedSequences, rhs.d_encodedSequences);
+            std::swap(h_lengths, rhs.h_lengths);
+            std::swap(d_lengths, rhs.d_lengths);
+            
+            return *this;
+        }
+        
+        void create(){
+            int cur = 0;
+            cudaGetDevice(&cur); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+            cudaStreamCreate(&stream1); CUERR;
+            cudaStreamCreate(&stream2); CUERR;
+            cudaSetDevice(cur); CUERR;
+        }    
+    };
+
+    // struct ReadInserter{
+    // public:
+    //     ReadInserter() = default;
+    //     ReadInserter(const ReadInserter&) = delete;
+    //     ReadInserter& operator=(const ReadInserter&) = delete;
+    //     ReadInserter(ReadInserter&&) = default;
+    //     ReadInserter& operator=(ReadInserter&&) = default;
+
+    //     void setReads(
+    //         ThreadPool* threadPool, 
+    //         const read_number* indices, 
+    //         const Read* reads, 
+    //         int numReads
+    //     )
+    // private:
+    //     struct ReadInserterHandle{
+    //     public:
+    //         int deviceId;
+
+    //         cudaStream_t stream1 = nullptr;
+    //         cudaStream_t stream2 = nullptr;
+    //         SimpleAllocationPinnedHost<char> h_decodedSequences;
+    //         SimpleAllocationDevice<char> d_decodedSequences;
+    //         SimpleAllocationPinnedHost<char> h_encodedSequences;
+    //         SimpleAllocationDevice<char> d_encodedSequences;
+    //         SimpleAllocationPinnedHost<char> h_lengths;
+    //         SimpleAllocationDevice<char> d_lengths;
+
+    //         ReadInserterHandle(){
+    //             cudaGetDevice(&deviceId); CUERR;
+    //             create();
+    //         }
+
+    //         ReadInserterHandle(int deviceId) : deviceId(deviceId){
+    //             create();
+    //         }
+
+    //         ~ReadInserterHandle(){
+    //             int cur = 0;
+    //             cudaGetDevice(&cur); CUERR;
+    //             cudaSetDevice(deviceId); CUERR;
+    //             cudaStreamDestroy(stream1); CUERR;
+    //             cudaStreamDestroy(stream2); CUERR;
+    //             cudaSetDevice(cur); CUERR;
+    //         }
+
+    //         ReadInserterHandle(const ReadInserterHandle&) = delete;
+    //         ReadInserterHandle& operator=(const ReadInserterHandle&) = delete;
+    //         ReadInserterHandle(ReadInserterHandle&&) = default;
+    //         ReadInserterHandle& operator=(ReadInserterHandle&&) = default;
+            
+    //         void create(){
+    //             int cur = 0;
+    //             cudaGetDevice(&cur); CUERR;
+    //             cudaSetDevice(deviceId); CUERR;
+    //             cudaStreamCreate(&stream1); CUERR;
+    //             cudaStreamCreate(&stream2); CUERR;
+    //             cudaSetDevice(cur); CUERR;
+    //         }    
+    //     };
+
+        
+    //     ReadInserterHandle handle;
+    // }; 
     
     using Length_t = int;
 
@@ -163,7 +290,32 @@ public:
 
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
-    void setReads(ThreadPool* threadPool, const read_number* indices, const Read* reads, int numReads);
+    
+
+    void setReads(
+        ReadInserterHandle& handle,
+        ThreadPool* threadPool, 
+        const read_number* indices, 
+        const Read* reads, 
+        int numReads
+    );
+
+    auto makeReadInserter(int deviceId = 0){
+        auto handleptr = std::make_unique<ReadInserterHandle>(deviceId);
+
+        return  [
+                    this, 
+                    handleptr = std::move(handleptr)
+                ](
+                    ThreadPool* threadPool, 
+                    const read_number* indices, 
+                    const Read* reads, 
+                    int numReads
+                ){
+                    this->setReads(*handleptr, threadPool, indices, reads, numReads);
+                };
+        
+    }
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;

@@ -342,6 +342,10 @@ void DistributedReadStorage::construct(
     std::array<std::mutex, numBuffers> mutex;
     std::array<std::condition_variable, numBuffers> cv;
 
+    using Inserter_t = decltype(makeReadInserter());
+
+    std::array<Inserter_t, 2> inserterFuncs{makeReadInserter(), makeReadInserter()};
+
     ThreadPool threadPool(threads);
 
     for(int i = 0; i < numBuffers; i++){
@@ -349,6 +353,7 @@ void DistributedReadStorage::construct(
         readsBuffers[i].resize(maxbuffersize);
         canBeUsed[i] = true;
         bufferSizes[i] = 0;
+
     }
 
     int bufferindex = 0;
@@ -421,7 +426,12 @@ void DistributedReadStorage::construct(
                         nvtx::pop_range();
 
                         nvtx::push_range("insert read batch", 0);
-                        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
+                        inserterFuncs[bufferindex](
+                            &threadPool, 
+                            indicesBufferPtr->data(), 
+                            readsBufferPtr->data(), 
+                            buffersize
+                        );
                         nvtx::pop_range();
 
                         //TIMERSTARTCPU(clear);
@@ -466,7 +476,7 @@ void DistributedReadStorage::construct(
             checkRead(readId, read, nmodcounter);
         }
 
-        setReads(&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
+        inserterFuncs[bufferindex](&threadPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
 
         buffersize = 0;
     }
@@ -593,6 +603,7 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
 
 
 void DistributedReadStorage::setReads(
+    ReadInserterHandle& handle,
     ThreadPool* threadPool, 
     const read_number* indices, 
     const Read* reads, 
@@ -686,36 +697,30 @@ void DistributedReadStorage::setReads(
     const int readsPerIteration = buffersize / decodedSequencePitch;
     const int iterations = SDIV(numReads, readsPerIteration);
 
-    char* h_decodedSequences;
-    char* d_decodedSequences;
+    handle.h_decodedSequences.resize(buffersize * 2);
+    handle.d_decodedSequences.resize(buffersize * 2);
+    handle.h_encodedSequences.resize(encodedSequencePitchInInts * readsPerIteration * 2);
+    handle.d_encodedSequences.resize(encodedSequencePitchInInts * readsPerIteration * 2);
+    handle.h_lengths.resize(readsPerIteration * 2);
+    handle.d_lengths.resize(readsPerIteration * 2);
+    
 
-    cudaMallocHost(&h_decodedSequences, sizeof(char) * buffersize * 2); CUERR;
-    cudaMalloc(&d_decodedSequences, sizeof(char) * buffersize * 2); CUERR;
+    char* h_decodedSequences = handle.h_decodedSequences.get();
+    char* d_decodedSequences = handle.d_decodedSequences.get();
+    unsigned int* h_encodedSequences = handle.h_encodedSequences.get();
+    unsigned int* d_encodedSequences = handle.d_encodedSequences.get();
+    int* h_lengths = handle.h_lengths.get();
+    int* d_lengths = handle.d_lengths.get();
 
     std::array<char*, 2> h_decodedSequences_arr{h_decodedSequences, h_decodedSequences + buffersize};
     std::array<char*, 2> d_decodedSequences_arr{d_decodedSequences, d_decodedSequences + buffersize};
-
-    unsigned int* h_encodedSequences;
-    unsigned int* d_encodedSequences;
-
-    cudaMallocHost(&h_encodedSequences, sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration * 2); CUERR;
-    cudaMalloc(&d_encodedSequences, sizeof(unsigned int) * encodedSequencePitchInInts * readsPerIteration * 2); CUERR;
-
     std::array<unsigned int*, 2> h_encodedSequences_arr{h_encodedSequences, h_encodedSequences + encodedSequencePitchInInts * readsPerIteration};
     std::array<unsigned int*, 2> d_encodedSequences_arr{d_encodedSequences, d_encodedSequences + encodedSequencePitchInInts * readsPerIteration};
-
-    int* h_lengths;
-    int* d_lengths;
-
-    cudaMallocHost(&h_lengths, sizeof(int) * readsPerIteration * 2); CUERR;
-    cudaMalloc(&d_lengths, sizeof(int) * readsPerIteration * 2); CUERR;
-
     std::array<int*, 2> h_lengths_arr{h_lengths, h_lengths + readsPerIteration};
     std::array<int*, 2> d_lengths_arr{d_lengths, d_lengths + readsPerIteration};
 
-    std::array<cudaStream_t, 2> streams;
-    cudaStreamCreate(&streams[0]); CUERR;
-    cudaStreamCreate(&streams[1]); CUERR;
+    std::array<cudaStream_t, 2> streams{handle.stream1, handle.stream2};
+
 
     std::vector<char> sequenceData;
     std::vector<Length_t> sequenceLengths;
@@ -930,17 +935,6 @@ void DistributedReadStorage::setReads(
 
     }
 
-    cudaStreamDestroy(streams[0]);
-    cudaStreamDestroy(streams[1]);
-    cudaFree(d_lengths); CUERR;
-    cudaFreeHost(h_lengths); CUERR;
-    cudaFree(d_encodedSequences); CUERR;
-    cudaFreeHost(h_encodedSequences); CUERR;
-    cudaFree(d_decodedSequences); CUERR;
-    cudaFreeHost(h_decodedSequences); CUERR;
-
-
-
     // ThreadPool::ParallelForHandle pforHandle;
 
     // threadPool->parallelFor(pforHandle, 0, numReads, prepare);
@@ -954,6 +948,9 @@ void DistributedReadStorage::setReads(
 #endif
 
 }
+
+
+
 
 
 
