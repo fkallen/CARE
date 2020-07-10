@@ -35,7 +35,6 @@ namespace care{
 
     Minhasher& Minhasher::operator=(Minhasher&& rhs){
         minhashTables = std::move(rhs.minhashTables);
-        minparams = std::move(rhs.minparams);
         nReads = std::move(rhs.nReads);
         kmerSize = std::move(rhs.kmerSize);
         resultsPerMapThreshold = std::move(rhs.resultsPerMapThreshold);
@@ -98,15 +97,21 @@ namespace care{
         outstream.write(reinterpret_cast<const char*>(&maximum_number_of_maps_tosave), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
 
-        outstream.write(reinterpret_cast<const char*>(&minparams), sizeof(MinhashOptions));
+
+        outstream.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
+        outstream.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(read_number));
-        bool dummy = false;
-        outstream.write(reinterpret_cast<const char*>(&dummy), sizeof(bool));
+
+        const int numTables = getNumberOfMaps();
+        outstream.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
+        
         for(const auto& tableptr : minhashTables)
             tableptr->writeToStream(outstream);
     }
 
     void Minhasher::loadFromStream(std::ifstream& instream){
+
+        destroy();
 
         int bits_key_loaded;
     	std::uint64_t key_mask_loaded;
@@ -126,33 +131,14 @@ namespace care{
         assert(maximum_number_of_maps == maximum_number_of_maps_loaded);
         assert(maximum_kmer_length == maximum_kmer_length_loaded);
 
-        MinhashOptions minparams_loaded;
-        read_number nReads_loaded;
-        bool dummy_loaded;
+        instream.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
+        instream.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+        instream.read(reinterpret_cast<char*>(&nReads), sizeof(read_number));
 
-        instream.read(reinterpret_cast<char*>(&minparams_loaded), sizeof(MinhashOptions));
-        instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(read_number));
-        instream.read(reinterpret_cast<char*>(&dummy_loaded), sizeof(bool));
+        int numTables = 0;
+        instream.read(reinterpret_cast<char*>(&numTables), sizeof(int));
 
-        // assert(minparams == minparams_loaded);
-        // assert(nReads == nReads_loaded);
-
-        minparams = minparams_loaded;
-        nReads = nReads_loaded;
-
-
-        //minhashTables.resize(minparams.maps);
-
-		// for (int i = 0; i < minparams.maps; ++i) {
-		// 	minhashTables[i].reset();
-		// }
-
-        // for(auto& tableptr : minhashTables)
-        //     tableptr->readFromStream(instream);
-
-        minhashTables.clear();
-
-        for(int i = 0; i < minparams.maps; i++){
+        for(int i = 0; i < numTables; i++){
             try{
                 auto tmptableptr = std::make_unique<Minhasher::Map_t>();
                 tmptableptr->readFromStream(instream);
@@ -186,15 +172,12 @@ namespace care{
         cpu::ContiguousReadStorage& readStorage
     ){
 
-        Minhasher::MinhashOptions minhashOptions;
-        minhashOptions.k = correctionOptions.kmerlength;
-        minhashOptions.maps = correctionOptions.numHashFunctions;
-        minhashOptions.numResultsPerMapQueryThreshold 
-            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+        const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
 
         init(nReads);
 
         ThreadPool threadPool(runtimeOptions.threads);
+        //ThreadPool threadPool(1);
         ThreadPool::ParallelForHandle pforHandle;
 
         const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
@@ -215,7 +198,7 @@ namespace care{
         int numSavedTables = 0;
         int numConstructedTables = 0;
 
-        while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
+        while(numConstructedTables < requestedNumberOfMaps && maxMemoryForTables > writtenTableBytes){
             std::vector<std::unique_ptr<Map_t>> minhashTablesCurrentIteration;
 
             int maxNumTables = 0;
@@ -232,7 +215,7 @@ namespace care{
                 throw std::runtime_error("Not enough memory to construct 1 table");
             }
 
-            int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
+            int currentIterNumTables = std::min(requestedNumberOfMaps - numConstructedTables, maxNumTables);
             for(int i = 0; i < currentIterNumTables; i++){
                 minhashTablesCurrentIteration.emplace_back(std::make_unique<Map_t>(nReads));
             }
@@ -277,11 +260,42 @@ namespace care{
                     const int sequencelength = readStorage.fetchSequenceLength(readId);
                     std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
 
-                    insertSequenceIntoExternalTables(sequencestring, 
-                                                                readId, 
-                                                                tableIds,
-                                                                minhashTablesCurrentIteration,
-                                                                hashIds);
+                    if(readId >= nReads)
+                        throw std::runtime_error("Minhasher::insertSequence: read number too large. "
+                                                + std::to_string(readId) + " > " + std::to_string(nReads));
+
+                    
+                    if(sequencelength >= getKmerSize()){
+
+                    }else{
+                        // we do not consider reads which are shorter than k
+                        ;//TODO this breaks querying
+                    }
+
+                    auto hashValues = minhashfunc(sequencestring, requestedNumberOfMaps);
+
+                    for(int i = 0; i < int(hashIds.size()); i++){
+                        auto hashValue = hashValues[hashIds[i]];
+                        auto tableId = tableIds[i];
+                        auto& tableptr = minhashTablesCurrentIteration[tableId];
+
+                        kmer_type key = hashValue & key_mask;
+                        Value_t value(readId);
+
+                        if (!tableptr->add(key, value, readId)) {
+                            throw std::runtime_error(("error adding key to map. key "
+                                                        + std::to_string(key) + " "
+                                                        + std::to_string(value) + " "
+                                                        + std::to_string(readId)));
+                        }
+                    }
+
+
+                    // insertSequenceIntoExternalTables(sequencestring, 
+                    //                                             readId, 
+                    //                                             tableIds,
+                    //                                             minhashTablesCurrentIteration,
+                    //                                             hashIds);
 
                     progressThread.addProgress(1);
                 }
@@ -296,10 +310,10 @@ namespace care{
             progressThread.finished();
 
             //if all tables could be constructed at once, no need to save them to temporary file
-            if(minhashOptions.maps == currentIterNumTables){
+            if(requestedNumberOfMaps == currentIterNumTables){
                 for(int i = 0; i < currentIterNumTables; i++){
                     int globalTableId = globalTableIds[i];
-                    int maxValuesPerKey = getResultsPerMapThreshold();                    
+                    int maxValuesPerKey = getNumResultsPerMapThreshold();                    
                     if(runtimeOptions.showProgress){
                         std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                     }
@@ -320,7 +334,7 @@ namespace care{
             }else{
                 for(int i = 0; i < currentIterNumTables; i++){
                     int globalTableId = globalTableIds[i];
-                    int maxValuesPerKey = getResultsPerMapThreshold();                    
+                    int maxValuesPerKey = getNumResultsPerMapThreshold();                    
                     if(runtimeOptions.showProgress){
                         std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
                     }
@@ -352,7 +366,7 @@ namespace care{
                 }
                 minhashTablesCurrentIteration.clear();
 
-                if(numConstructedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
+                if(numConstructedTables >= requestedNumberOfMaps || maxMemoryForTables < writtenTableBytes){
                     outstream.flush();
 
                     std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
@@ -378,10 +392,8 @@ namespace care{
                     }
 
                     filehelpers::removeFile(tmpmapsFilename);
-
-                    //minhashTables.resize(usableNumMaps);
-                    std::cout << "Can use " << usableNumMaps << " out of specified " << minparams.maps << " tables\n";
-                    minparams.maps = usableNumMaps;
+                    std::cout << "Can use " << usableNumMaps << " out of specified " 
+                        << requestedNumberOfMaps << " tables\n";
                 }   
             }
         }
@@ -397,16 +409,6 @@ namespace care{
 
 
 
-
-    void Minhasher::initMap(int mapId){
-        assert(mapId < minparams.maps);
-        minhashTables[mapId].reset();
-    }
-
-    void Minhasher::moveassignMap(int mapId, Minhasher::Map_t&& newMap){
-        assert(mapId < minparams.maps);
-        minhashTables[mapId].reset(new Map_t(std::move(newMap)));
-    }
 
 	void Minhasher::clear(){
 		minhashTables.clear();
@@ -430,15 +432,15 @@ namespace care{
     }
 
     std::map<int, std::int64_t> Minhasher::getBinSizeHistogramOfMap(int tableId) const{
-        assert(tableId < minparams.maps);
+        assert(tableId < getNumberOfMaps());
         return getBinSizeHistogramOfMap(*minhashTables[tableId]);
     }
 
     std::vector<std::map<int, std::int64_t>> Minhasher::getBinSizeHistogramsOfMaps() const{
         std::vector<std::map<int, std::int64_t>> result;
-        result.reserve(minparams.maps);
+        result.reserve(getNumberOfMaps());
 
-        for(int i = 0; i < minparams.maps; i++){
+        for(int i = 0; i < getNumberOfMaps(); i++){
             result.emplace_back(getBinSizeHistogramOfMap(i));
         }
 
@@ -459,7 +461,7 @@ namespace care{
     }
 
     void Minhasher::insertIntoMap(int map, std::uint64_t hashValue, read_number readnum){
-        assert(map < minparams.maps);
+        assert(map < getNumberOfMaps());
 
         kmer_type key = hashValue & key_mask;
         Value_t value(readnum);
@@ -478,7 +480,8 @@ namespace care{
                                     + std::to_string(readnum) + " > " + std::to_string(nReads));
 
 		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
+        const int length = sequence.size();
+		if(length < getKmerSize())
 			return;
 
 		//get hash values
@@ -488,7 +491,7 @@ namespace care{
 
 		// insert
         //TIMERSTARTCPU(insertTupleIntoMap);
-		for (int map = 0; map < minparams.maps; ++map) {
+		for (int map = 0; map < getNumberOfMaps(); ++map) {
             insertIntoMap(map, hashValues[map], readnum);
 		}
         //TIMERSTOPCPU(insertTupleIntoMap);
@@ -507,7 +510,8 @@ namespace care{
         assert(std::all_of(tableIds.begin(), tableIds.end(), [&](auto id){return id < int(tables.size());}));
 
 		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
+		const int length = sequence.size();
+		if(length < getKmerSize())
 			return; //TODO this breaks querying
 
 		auto hashValues = minhashfunc(sequence);
@@ -540,14 +544,15 @@ namespace care{
 	}
 
     void Minhasher::insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds){
-        assert(int(mapIds.size()) <= minparams.maps);
+        assert(int(mapIds.size()) <= getNumberOfMaps());
 
 		if(readnum >= nReads)
 			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
                                     + std::to_string(readnum) + " > " + std::to_string(nReads));
 
 		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
+		const int length = sequence.size();
+		if(length < getKmerSize())
 			return;
 
 		//get hash values
@@ -558,7 +563,7 @@ namespace care{
 		// insert
         //TIMERSTARTCPU(insertTupleIntoMap);
         for(auto mapId : mapIds){
-            assert(mapId < minparams.maps);
+            assert(mapId < getNumberOfMaps());
             insertIntoMap(mapId, hashValues[mapId], readnum);
 
         }
@@ -568,9 +573,9 @@ namespace care{
 
     std::pair<const Minhasher::Value_t*, const Minhasher::Value_t*>
     Minhasher::queryMap(int mapid, Minhasher::Map_t::Key_t key) const noexcept{
-        assert(mapid < minparams.maps);
+        assert(mapid < getNumberOfMaps());
 
-        const int numResultsPerMapQueryThreshold = getResultsPerMapThreshold();
+        const int numResultsPerMapQueryThreshold = getNumResultsPerMapThreshold();
 
         auto entries_range = minhashTables[mapid]->get_ranged(key);
         int n_entries = std::distance(entries_range.first, entries_range.second);
@@ -588,7 +593,7 @@ namespace care{
 
         if(num_hits == 1){
             return getCandidates_any_map(sequence, max_number_candidates);
-        }else if(num_hits == minparams.maps){
+        }else if(num_hits == getNumberOfMaps()){
             return getCandidates_all_maps(sequence, max_number_candidates);
         }else{
             return getCandidates_some_maps(sequence, num_hits, max_number_candidates);
@@ -619,7 +624,7 @@ namespace care{
 
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequenceLength < minparams.k){
+        if(sequenceLength < getKmerSize()){
             handle.allUniqueResults.clear();
             return;
         }
@@ -642,7 +647,7 @@ namespace care{
         std::array<Index_t, 64> preparedIndices{};
 
         auto prepare_map = [&](int mapid, kmer_type key){
-            assert(mapid < minparams.maps);
+            assert(mapid < getNumberOfMaps());
             preparedIndices[mapid] = minhashTables[mapid]->prepare_get_ranged(key);
         };
 
@@ -658,9 +663,9 @@ namespace care{
         };
 
         constexpr int preparedistance = 8;
-        const int chunks = SDIV(minparams.maps, preparedistance);
+        const int chunks = SDIV(getNumberOfMaps(), preparedistance);
 
-        for(int map = 0; map < std::min(preparedistance, minparams.maps); map++){
+        for(int map = 0; map < std::min(preparedistance, getNumberOfMaps()); map++){
             kmer_type key = hashValues[map] & key_mask;
             prepare_map(map, key);
         }
@@ -669,7 +674,7 @@ namespace care{
             if(iteration < chunks - 1){
                 const int nextIteration = iteration + 1;
                 const int begin = nextIteration * preparedistance;
-                const int end = std::min((nextIteration+1) * preparedistance, minparams.maps);
+                const int end = std::min((nextIteration+1) * preparedistance, getNumberOfMaps());
 
                 for(int map = begin; map < end; map++){
                     kmer_type key = hashValues[map] & key_mask;
@@ -678,7 +683,7 @@ namespace care{
             }
 
             const int begin = iteration * preparedistance;
-            const int end = std::min((iteration+1) * preparedistance, minparams.maps);
+            const int end = std::min((iteration+1) * preparedistance, getNumberOfMaps());
             for(int map = begin; map < end; map++){
                 auto entries_range = query_map(map, preparedIndices[map]);
                 int n_entries = std::distance(entries_range.first, entries_range.second);
@@ -698,7 +703,7 @@ namespace care{
         nvtx::push_range("map queries", 4);
 #endif
 
-        for(int map = 0; map < minparams.maps; ++map){
+        for(int map = 0; map < getNumberOfMaps(); ++map){
             kmer_type key = hashValues[map] & key_mask;
             auto entries_range = queryMap(map, key);
             int n_entries = std::distance(entries_range.first, entries_range.second);
@@ -761,7 +766,7 @@ namespace care{
         for(int i = 0; i < numSequences; i++){
             const char* sequence = sequences[i].c_str();
             const int length = sequences[i].length();
-            if(length < minparams.k){
+            if(length < getKmerSize()){
                 // handle.allUniqueResults.clear();
                 // return;
             }else{
@@ -787,7 +792,7 @@ namespace care{
         for(int i = 0; i < numSequences; i++){
             const char* sequence = sequences + i * sequencesPitch;
             const int length = sequenceLengths[i];
-            if(length < minparams.k){
+            if(length < getKmerSize()){
                 // handle.allUniqueResults.clear();
                 // return;
             }else{
@@ -804,14 +809,14 @@ namespace care{
     void Minhasher::queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const{
 
         handle.multiranges.clear();
-        handle.multiranges.reserve(minparams.maps * numSequences);
+        handle.multiranges.reserve(getNumberOfMaps() * numSequences);
         handle.numResultsPerSequence.clear();
         handle.numResultsPerSequence.resize(numSequences, 0);        
 
         for(int i = 0; i < numSequences; i++){
             const std::uint64_t* signature = &handle.multiminhashSignatures[i * getNumberOfMaps()];
 
-            for(int map = 0; map < minparams.maps; ++map){
+            for(int map = 0; map < getNumberOfMaps(); ++map){
                 kmer_type key = signature[map] & key_mask;
                 auto entries_range = queryMap(map, key);
                 int n_entries = std::distance(entries_range.first, entries_range.second);
@@ -835,7 +840,7 @@ namespace care{
             const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
             Minhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
 
-            for(int map = 0; map < minparams.maps; ++map){
+            for(int map = 0; map < getNumberOfMaps(); ++map){
                 kmer_type key = signature[map] & key_mask;
                 auto entries_range = queryMap(map, key);
                 numResults += std::distance(entries_range.first, entries_range.second);
@@ -865,8 +870,8 @@ namespace care{
 
         //     for(int i = 0; i < numSequences; i++){
         //         stream << handle.numResultsPerSequence[i] << "\n";
-        //         auto myranges = &handle.multiranges[i * minparams.maps];
-        //         const int numRangesForSequence = minparams.maps;
+        //         auto myranges = &handle.multiranges[i * getNumberOfMaps()];
+        //         const int numRangesForSequence = getNumberOfMaps();
 
         //         for(int k = 0; k < numRangesForSequence; k++){
         //             auto& range = myranges[k];
@@ -888,8 +893,8 @@ namespace care{
             auto currentBegin = handle.contiguousDataOfRanges.begin();
             auto currentEnd = handle.contiguousDataOfRanges.begin();
             for(int i = 0; i < numSequences; i++){
-                auto myranges = &handle.multiranges[i * minparams.maps];
-                const int numRangesForSequence = minparams.maps;
+                auto myranges = &handle.multiranges[i * getNumberOfMaps()];
+                const int numRangesForSequence = getNumberOfMaps();
                 for(int r = 0; r < numRangesForSequence; r++){
                     auto& range = myranges[r];
                     currentEnd = std::copy(range.first, range.second, currentBegin);
@@ -904,8 +909,8 @@ namespace care{
         auto currentBegin = handle.multiallUniqueResults.begin();
         auto currentEnd = handle.multiallUniqueResults.begin();
         for(int i = 0; i < numSequences; i++){
-            auto myranges = &handle.multiranges[i * minparams.maps];
-            const int numRangesForSequence = minparams.maps;
+            auto myranges = &handle.multiranges[i * getNumberOfMaps()];
+            const int numRangesForSequence = getNumberOfMaps();
             currentBegin = currentEnd;
             currentEnd = k_way_set_union<Value_t>(handle.suHandle, currentBegin, myranges, numRangesForSequence);
             handle.numResultsPerSequence[i] = std::distance(currentBegin, currentEnd);
@@ -925,10 +930,11 @@ namespace care{
                                         std::uint64_t max_number_candidates) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
+        const int length = sequence.size();
+        if(length < getKmerSize())
             return {};
 
-        if(num_hits > minparams.maps || num_hits < 1)
+        if(num_hits > getNumberOfMaps() || num_hits < 1)
             return {};
 
         //TIMERSTARTCPU(minhashfunc);
@@ -937,8 +943,8 @@ namespace care{
 
         std::size_t total_num_ids = 0;
         std::vector<const Value_t*> iters;
-        iters.reserve(minparams.maps*2);
-        for(int map = 0; map < minparams.maps; ++map){
+        iters.reserve(getNumberOfMaps()*2);
+        for(int map = 0; map < getNumberOfMaps(); ++map){
             kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = queryMap(map, key);
@@ -974,19 +980,20 @@ namespace care{
                                         std::uint64_t max_number_candidates) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
+        const int length = sequence.size();
+        if(length < getKmerSize())
             return {};
 
-        if(num_hits > minparams.maps || num_hits < 1)
+        if(num_hits > getNumberOfMaps() || num_hits < 1)
             return {};
 
-        const int numResultsPerMapQueryThreshold = getResultsPerMapThreshold();
+        const int numResultsPerMapQueryThreshold = getNumResultsPerMapThreshold();
 
         //TIMERSTARTCPU(minhashfunc);
         auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
-        const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * minparams.maps, max_number_candidates);
+        const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * getNumberOfMaps(), max_number_candidates);
 
         std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
@@ -994,7 +1001,7 @@ namespace care{
         tmp.reserve(maximumResultSize);
 
         //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+        for(int map = 0; map < getNumberOfMaps() && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = queryMap(map, key);
@@ -1044,16 +1051,17 @@ namespace care{
                                         std::uint64_t max_number_candidates) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
+        const int length = sequence.size();
+        if(length < getKmerSize())
             return {};
 
-        const int numResultsPerMapQueryThreshold = getResultsPerMapThreshold();
+        const int numResultsPerMapQueryThreshold = getNumResultsPerMapThreshold();
 
         //TIMERSTARTCPU(minhashfunc);
         auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
-        const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * minparams.maps, max_number_candidates);
+        const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * getNumberOfMaps(), max_number_candidates);
 
         std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
@@ -1061,7 +1069,7 @@ namespace care{
         tmp.reserve(maximumResultSize);
 
         //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+        for(int map = 0; map < getNumberOfMaps() && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = queryMap(map, key);
@@ -1093,7 +1101,8 @@ Minhasher::getCandidates_fromHashvalues_any_map(
     std::uint64_t* hashValues) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
+        const int length = sequence.size();
+        if(length < getKmerSize())
             return {};
 
         //TIMERSTARTCPU(minhashfunc);     
@@ -1103,7 +1112,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
         using Range_t = std::pair<const Value_t*, const Value_t*>;
         std::vector<Range_t> ranges;
-        ranges.reserve(minparams.maps);
+        ranges.reserve(getNumberOfMaps());
 
         int maximumResultSize = 0;
 
@@ -1114,7 +1123,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
         nvtx::push_range("map queries", 4);
 #endif
 
-        for(int map = 0; map < minparams.maps; ++map){
+        for(int map = 0; map < getNumberOfMaps(); ++map){
             kmer_type key = hashValues[map] & key_mask;
             auto entries_range = queryMap(map, key);
             int n_entries = std::distance(entries_range.first, entries_range.second);
@@ -1187,7 +1196,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
         if(num_hits == 1){
             result = getCandidates_any_map(sequence, max_number_candidates);
-        }else if(num_hits == minparams.maps){
+        }else if(num_hits == getNumberOfMaps()){
             result = getCandidates_all_maps(sequence, max_number_candidates);
         }else{
             result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
@@ -1201,7 +1210,8 @@ Minhasher::getCandidates_fromHashvalues_any_map(
     std::int64_t Minhasher::getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
+		const int length = sequence.size();
+        if(length < getKmerSize())
 			return 0;
 
 		//TIMERSTARTCPU(minhashfunc);
@@ -1210,7 +1220,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
         std::size_t result = 0;
 
-        for(int map = 0; map < minparams.maps; ++map) {
+        for(int map = 0; map < getNumberOfMaps(); ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
 			//TIMERSTARTCPU(get_ranged);
@@ -1220,27 +1230,14 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 			//TIMERSTOPCPU(get_ranged);
         }
 
-        assert(result >= std::size_t(minparams.maps));
-        result -= minparams.maps; //remove self from each map result
+        assert(result >= std::size_t(getNumberOfMaps()));
+        result -= getNumberOfMaps(); //remove self from each map result
 
 		return std::int64_t(result);
 
 	}
 
 //###################################################
-
-	void Minhasher::resize(std::uint64_t nReads_){
-		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
-		if(nReads_-1 > max_read_num)
-			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
-
-		nReads = nReads_;
-
-		for (std::size_t i = 0; i < minhashTables.size(); ++i){
-			auto& table = minhashTables[i];
-			table->resize(nReads_);
-		}
-	}
    
 
     std::array<std::uint64_t, maximum_number_of_maps> 
@@ -1333,19 +1330,14 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
-        return minhashfunc(sequence.c_str(), sequence.length());
+    Minhasher::minhashfunc(const std::string& sequence, int numHashfuncs) const noexcept{
+        return minhashfunc(sequence.c_str(), sequence.length(), numHashfuncs);
 	}
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
-        return minhashfunction(sequence, sequenceLength, minparams.k, minparams.maps);
+    Minhasher::minhashfunc(const char* sequence, int sequenceLength, int numHashfuncs) const noexcept{
+        return minhashfunction(sequence, sequenceLength, getKmerSize(), numHashfuncs);
 	}
-
-    int Minhasher::getResultsPerMapThreshold() const{
-        return minparams.numResultsPerMapQueryThreshold;
-    };
-
 
     int calculateResultsPerMapThreshold(int coverage){
         int result = int(coverage * 2.5f);

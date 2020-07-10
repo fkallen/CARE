@@ -743,26 +743,10 @@ struct Minhasher {
         // }
 	};
 
-    struct MinhashOptions {
-        int maps;
-        int k;
-        int numResultsPerMapQueryThreshold;
-
-        bool operator==(const MinhashOptions& other) const{
-            return maps == other.maps && k == other.k 
-                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
-        };
-        bool operator!=(const MinhashOptions& other) const{
-            return !(*this == other);
-        };
-    };
-
     int kmerSize;
     int resultsPerMapThreshold;
-	// the actual maps
-	std::vector<std::unique_ptr<Map_t>> minhashTables;
-	MinhashOptions minparams;
     read_number nReads;
+	std::vector<std::unique_ptr<Map_t>> minhashTables;
 
     // Minhasher();
 
@@ -928,11 +912,22 @@ struct Minhasher {
 
 private:
 
-	std::array<std::uint64_t, maximum_number_of_maps>
-    minhashfunc(const std::string& sequence) const noexcept;
+    std::array<std::uint64_t, maximum_number_of_maps>
+    minhashfunc(const std::string& sequence) const noexcept{
+        return minhashfunc(sequence, getNumberOfMaps());
+    }
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    minhashfunc(const char* sequence, int sequenceLength) const noexcept;
+    minhashfunc(const char* sequence, int sequenceLength) const noexcept{
+        return minhashfunc(sequence, sequenceLength, getNumberOfMaps());
+    }
+
+
+	std::array<std::uint64_t, maximum_number_of_maps>
+    minhashfunc(const std::string& sequence, int numHashfuncs) const noexcept;
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    minhashfunc(const char* sequence, int sequenceLength, int numHashfuncs) const noexcept;
 
     void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
     void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;
