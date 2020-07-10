@@ -873,8 +873,6 @@ void DistributedReadStorage::setReads(
         setQualities(indices, qualityData.data(), numReads);
     }
 
-#endif
-
 }
 
 
