@@ -33,16 +33,20 @@ namespace care{
         return std::vector<int>{};
     }
 
-    template<class minhasher_t,
-             class readStorage_t>
-    void printDataStructureMemoryUsage(const minhasher_t& minhasher, const readStorage_t& readStorage){
+
+    template<class T>
+    void printDataStructureMemoryUsage(const T& datastructure, const std::string& name){
     	auto toGB = [](std::size_t bytes){
     			    double gb = bytes / 1024. / 1024. / 1024.0;
     			    return gb;
     		    };
 
-    	std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
-    	std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
+        auto memInfo = datastructure.getMemoryInfo();
+        
+        std::cout << name << " memory usage: " << toGB(memInfo.host) << " GB on host\n";
+        for(const auto& pair : memInfo.device){
+            std::cout << name << " memory usage: " << toGB(pair.second) << " GB on device " << pair.first << '\n';
+        }
     }
 
     void printFileProperties(const std::string& filename, const SequenceFileProperties& props){
@@ -185,7 +189,7 @@ namespace care{
         std::cout << "Reads with ambiguous bases: " << readStorageXXX.getNumberOfReadsWithN() << std::endl;
         
 
-        std::cerr << "printDataStructureMemoryUsage(readStorageXXX, \"reads\");" << "\n";
+        printDataStructureMemoryUsage(readStorageXXX, "reads");
 
 
 
@@ -198,12 +202,57 @@ namespace care{
         //     fileOptions
         // );
 
-        BuiltDataStructure<Minhasher> aaa = build_minhasher(fileOptions,
-                                			   runtimeOptions,
-                                               memoryOptions,
-                                			   totalInputFilePropertiesXXX.nReads,
-                                               correctionOptions,
-                                			   readStorageXXX);
+        // BuiltDataStructure<Minhasher> aaa = build_minhasher(fileOptions,
+        //                         			   runtimeOptions,
+        //                                        memoryOptions,
+        //                         			   totalInputFilePropertiesXXX.nReads,
+        //                                        correctionOptions,
+        //                         			   readStorageXXX);
+
+        TIMERSTARTCPU(build_newgpuminhasher);
+        Minhasher minhasher(
+            correctionOptions.kmerlength, 
+            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+        );
+
+        if(fileOptions.load_hashtables_from != ""){
+
+            std::ifstream is(fileOptions.load_hashtables_from);
+            assert((bool)is);
+
+            minhasher.loadFromStream(is);
+
+            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+        }else{
+            minhasher.construct(
+                fileOptions,
+                runtimeOptions,
+                memoryOptions,
+                totalInputFilePropertiesXXX.nReads, 
+                correctionOptions,
+                readStorageXXX
+            );
+
+            if(correctionOptions.mustUseAllHashfunctions 
+                && correctionOptions.numHashFunctions != minhasher.getNumberOfMaps()){
+                std::cout << "Cannot use specified number of hash functions (" 
+                    << correctionOptions.numHashFunctions <<")\n";
+                std::cout << "Abort!\n";
+                return;
+            }
+        }
+
+        if(fileOptions.save_hashtables_to != "") {
+            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+            std::ofstream os(fileOptions.save_hashtables_to);
+            assert((bool)os);
+
+            minhasher.writeToStream(os);
+
+    		std::cout << "Saved minhasher" << std::endl;
+        }
+
+        printDataStructureMemoryUsage(minhasher, "hash tables");
 
         TIMERSTOPCPU(STEP1);
 
@@ -214,16 +263,11 @@ namespace care{
         //auto& readStorage = dataStructures.builtReadStorage.data;
         //auto& minhasher = dataStructures.builtMinhasher.data;
         //auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
-        auto& minhasher = aaa.data;
-        auto& totalInputFileProperties = totalInputFilePropertiesXXX;
+        //auto& minhasher = aaa.data;
+        //auto& totalInputFileProperties = totalInputFilePropertiesXXX;
 
-        if(correctionOptions.mustUseAllHashfunctions && correctionOptions.numHashFunctions != minhasher.minparams.maps){
-            std::cout << "Cannot use specified number of hash functions (" << correctionOptions.numHashFunctions <<")\n";
-            std::cout << "Abort!\n";
-            return;
-        }
 
-        printDataStructureMemoryUsage(minhasher, readStorageXXX);
+        //printDataStructureMemoryUsage(minhasher, readStorageXXX);
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
@@ -235,7 +279,7 @@ namespace care{
             runtimeOptions, 
             fileOptions, 
             memoryOptions, 
-            totalInputFileProperties,
+            totalInputFilePropertiesXXX,
             minhasher, 
             //readStorage
             readStorageXXX

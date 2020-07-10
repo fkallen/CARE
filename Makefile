@@ -34,7 +34,8 @@ SOURCES_CPU_AND_GPU = $(filter-out src/build.cpp src/correct_cpu.cpp src/dispatc
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
-SOURCES_ONLY_CPU = src/build.cpp src/correct_cpu.cpp src/dispatch_care_cpu.cpp
+SOURCES_ONLY_CPU = src/correct_cpu.cpp src/dispatch_care_cpu.cpp
+#src/build.cpp
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))

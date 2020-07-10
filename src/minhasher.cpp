@@ -4,6 +4,10 @@
 #include <util.hpp>
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <options.hpp>
+#include <readstorage.hpp>
+#include <minhasher_transform.hpp>
+
 
 #include <algorithm>
 #include <cassert>
@@ -24,20 +28,6 @@
 
 namespace care{
 
-    Minhasher::Minhasher() : Minhasher(Minhasher::MinhashOptions{32,20,128}){}
-
-	Minhasher::Minhasher(const Minhasher::MinhashOptions& parameters)
-		: minparams(parameters), nReads(0)
-	{
-		if(maximum_number_of_maps < minparams.maps)
-			throw std::runtime_error("Minhasher: Maximum number of maps is "
-									+ std::to_string(maximum_number_of_maps) + "!");
-
-		if(maximum_kmer_length < minparams.k){
-			throw std::runtime_error("Minhasher is configured for maximum kmer length of "
-									+ std::to_string(maximum_kmer_length) + "!");
-		}
-	}
 
     Minhasher::Minhasher(Minhasher&& rhs){
         *this = std::move(rhs);
@@ -47,14 +37,16 @@ namespace care{
         minhashTables = std::move(rhs.minhashTables);
         minparams = std::move(rhs.minparams);
         nReads = std::move(rhs.nReads);
-        canUseGpu = std::move(rhs.canUseGpu);
-        allowUVM = std::move(rhs.allowUVM);
+        kmerSize = std::move(rhs.kmerSize);
+        resultsPerMapThreshold = std::move(rhs.resultsPerMapThreshold);
 
         return *this;
     }
 
     bool Minhasher::operator==(const Minhasher& rhs) const{
-        if(minparams != rhs.minparams)
+        if(kmerSize != rhs.kmerSize)
+            return false;
+        if(resultsPerMapThreshold != rhs.resultsPerMapThreshold)
             return false;
         if(nReads != rhs.nReads)
             return false;
@@ -93,9 +85,7 @@ namespace care{
 
 
 
-    void Minhasher::saveToFile(const std::string& filename) const{
-        std::ofstream outstream(filename, std::ios::binary);
-
+    void Minhasher::writeToStream(std::ostream& outstream) const{
         int bits_key_tosave = bits_key;
         std::uint64_t key_mask_tosave = key_mask;
         std::uint64_t max_read_num_tosave = max_read_num;
@@ -110,15 +100,13 @@ namespace care{
 
         outstream.write(reinterpret_cast<const char*>(&minparams), sizeof(MinhashOptions));
         outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(read_number));
-        outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
+        bool dummy = false;
+        outstream.write(reinterpret_cast<const char*>(&dummy), sizeof(bool));
         for(const auto& tableptr : minhashTables)
             tableptr->writeToStream(outstream);
     }
 
-    void Minhasher::loadFromFile(const std::string& filename){
-        std::ifstream instream(filename, std::ios::binary);
-        if(!instream)
-            throw std::runtime_error("Cannot load hashtable from file " + filename);
+    void Minhasher::loadFromStream(std::ifstream& instream){
 
         int bits_key_loaded;
     	std::uint64_t key_mask_loaded;
@@ -140,11 +128,11 @@ namespace care{
 
         MinhashOptions minparams_loaded;
         read_number nReads_loaded;
-        bool canUseGpu_loaded;
+        bool dummy_loaded;
 
         instream.read(reinterpret_cast<char*>(&minparams_loaded), sizeof(MinhashOptions));
         instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(read_number));
-        instream.read(reinterpret_cast<char*>(&canUseGpu_loaded), sizeof(bool));
+        instream.read(reinterpret_cast<char*>(&dummy_loaded), sizeof(bool));
 
         // assert(minparams == minparams_loaded);
         // assert(nReads == nReads_loaded);
@@ -185,12 +173,230 @@ namespace care{
 
 		nReads = nReads_;
 
-		minhashTables.resize(minparams.maps);
-
-		for (int i = 0; i < minparams.maps; ++i) {
-			minhashTables[i].reset();
-		}
+		minhashTables.clear();
 	}
+
+
+    void Minhasher::construct(
+        const FileOptions& fileOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        std::uint64_t nReads,
+        const CorrectionOptions& correctionOptions,
+        cpu::ContiguousReadStorage& readStorage
+    ){
+
+        Minhasher::MinhashOptions minhashOptions;
+        minhashOptions.k = correctionOptions.kmerlength;
+        minhashOptions.maps = correctionOptions.numHashFunctions;
+        minhashOptions.numResultsPerMapQueryThreshold 
+            = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+
+        init(nReads);
+
+        ThreadPool threadPool(runtimeOptions.threads);
+        ThreadPool::ParallelForHandle pforHandle;
+
+        const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
+        std::ofstream outstream(tmpmapsFilename, std::ios::binary);
+        if(!outstream){
+            throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
+        }
+        std::size_t writtenTableBytes = 0;
+
+        std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024;
+
+        maxMemoryForTables = std::min(maxMemoryForTables, 
+                                std::min(memoryOptions.memoryForHashtables, memoryOptions.memoryTotalLimit));
+
+        std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
+        std::size_t availableMemForTables = maxMemoryForTables;
+
+        int numSavedTables = 0;
+        int numConstructedTables = 0;
+
+        while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
+            std::vector<std::unique_ptr<Map_t>> minhashTablesCurrentIteration;
+
+            int maxNumTables = 0;
+
+            {
+                std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                maxNumTables = availableMemForTables / requiredMemPerTable;
+                maxNumTables -= 2; // need free memory of 2 tables to perform transformation 
+                std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
+                std::cerr << "maxNumTables = " << maxNumTables << "\n";
+            }
+
+            if(maxNumTables <= 0){
+                throw std::runtime_error("Not enough memory to construct 1 table");
+            }
+
+            int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
+            for(int i = 0; i < currentIterNumTables; i++){
+                minhashTablesCurrentIteration.emplace_back(std::make_unique<Map_t>(nReads));
+            }
+            
+
+            std::vector<int> tableIds(currentIterNumTables);                
+            std::vector<int> hashIds(currentIterNumTables);
+            std::vector<int> globalTableIds(currentIterNumTables);
+            
+            std::iota(tableIds.begin(), tableIds.end(), 0);
+            std::iota(hashIds.begin(), hashIds.end(), numConstructedTables);
+            std::iota(globalTableIds.begin(), globalTableIds.end(), numConstructedTables);
+
+            std::cout << "Constructing maps: ";
+            std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
+            std::cout << "\n";
+
+            const read_number readIdBegin = 0;
+            const read_number readIdEnd = readStorage.getNumberOfReads();
+
+            auto showProgress = [&](auto totalCount, auto seconds){
+                if(runtimeOptions.showProgress){
+                    std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                            << seconds << " seconds.\n";
+                }
+            };
+
+            auto updateShowProgressInterval = [](auto duration){
+                return duration * 2;
+            };
+
+            ProgressThread<std::uint64_t> progressThread(nReads, 
+                    showProgress,
+                    updateShowProgressInterval);
+
+            auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+
+                for (read_number readId = begin; readId < end; readId++){
+                    const read_number localId = readId - readIdBegin;
+
+                    const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
+                    const int sequencelength = readStorage.fetchSequenceLength(readId);
+                    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+
+                    insertSequenceIntoExternalTables(sequencestring, 
+                                                                readId, 
+                                                                tableIds,
+                                                                minhashTablesCurrentIteration,
+                                                                hashIds);
+
+                    progressThread.addProgress(1);
+                }
+            };
+
+            threadPool.parallelFor(
+                pforHandle,
+                readIdBegin,
+                readIdEnd,
+                std::move(lambda));
+
+            progressThread.finished();
+
+            //if all tables could be constructed at once, no need to save them to temporary file
+            if(minhashOptions.maps == currentIterNumTables){
+                for(int i = 0; i < currentIterNumTables; i++){
+                    int globalTableId = globalTableIds[i];
+                    int maxValuesPerKey = getResultsPerMapThreshold();                    
+                    if(runtimeOptions.showProgress){
+                        std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
+                    }
+
+                    auto transformresult = transform_keyvaluemap(*minhashTablesCurrentIteration[i], maxValuesPerKey);
+                    (void)transformresult;
+
+                    if(runtimeOptions.showProgress){
+                        //std::cout << "Construction complete. \n";
+                        // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                        // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                        // std::cerr << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                    }
+
+                    numConstructedTables++;
+                    minhashTables.emplace_back(std::move(minhashTablesCurrentIteration[i]));
+                }
+            }else{
+                for(int i = 0; i < currentIterNumTables; i++){
+                    int globalTableId = globalTableIds[i];
+                    int maxValuesPerKey = getResultsPerMapThreshold();                    
+                    if(runtimeOptions.showProgress){
+                        std::cout << "Constructing hash table " << globalTableId << "." << std::endl;
+                    }
+
+                    auto transformresult = transform_keyvaluemap(*minhashTablesCurrentIteration[i], maxValuesPerKey);
+                    (void)transformresult;
+
+                    if(runtimeOptions.showProgress){
+                        //std::cout << "Construction complete. \n";
+                        // std::cerr << "Unique keys: " << transformresult.numberOfUniqueKeys << " ";
+                        // std::cerr << "Removed unique keys: " << transformresult.numberOfRemovedKeys << " ";
+                        // std::cerr << "Removed values: " << transformresult.numberOfRemovedValues << "\n";
+                    }
+
+
+                    numConstructedTables++;
+                    
+                    minhashTablesCurrentIteration[i]->writeToStream(outstream);
+                    numSavedTables++;
+                    writtenTableBytes = outstream.tellp();
+
+                    std::cerr << "tablesize = " << minhashTablesCurrentIteration[i]->numBytes() << "\n";
+                    std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
+                    std::cerr << "numSavedTables = " << numSavedTables << "\n";
+
+                    if(maxMemoryForTables <= writtenTableBytes){
+                        break;
+                    }
+                }
+                minhashTablesCurrentIteration.clear();
+
+                if(numConstructedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
+                    outstream.flush();
+
+                    std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
+                    
+                    int usableNumMaps = 0;
+
+                    //load as many transformed tables from file as possible and move them to minhasher
+                    std::ifstream instream(tmpmapsFilename, std::ios::binary);
+                    for(int i = 0; i < numSavedTables; i++){
+                        try{
+                            std::cerr << "try loading table " << i << "\n";
+                            auto tableptr = std::make_unique<Map_t>();
+                            tableptr->readFromStream(instream);
+                            minhashTables.emplace_back(std::move(tableptr));
+                            
+                            std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                            usableNumMaps++;
+                            std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                        }catch(...){
+                            std::cerr << "Loading table " << i << " failed\n";
+                            break;
+                        }                        
+                    }
+
+                    filehelpers::removeFile(tmpmapsFilename);
+
+                    //minhashTables.resize(usableNumMaps);
+                    std::cout << "Can use " << usableNumMaps << " out of specified " << minparams.maps << " tables\n";
+                    minparams.maps = usableNumMaps;
+                }   
+            }
+        }
+
+    }
+
+
+
+
+
+
+
+
+
+
 
     void Minhasher::initMap(int mapId){
         assert(mapId < minparams.maps);
@@ -292,14 +498,13 @@ namespace care{
     void Minhasher::insertSequenceIntoExternalTables(const std::string& sequence, 
                                                     read_number readnum,                                                     
                                                     const std::vector<int>& tableIds,
-                                                    std::vector<Minhasher::Map_t>& tables,
+                                                    std::vector<std::unique_ptr<Minhasher::Map_t>>& tables,
                                                     const std::vector<int>& hashIds) const{
 		if(readnum >= nReads)
 			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
                                     + std::to_string(readnum) + " > " + std::to_string(nReads));
         assert(tableIds.size() == hashIds.size());
         assert(std::all_of(tableIds.begin(), tableIds.end(), [&](auto id){return id < int(tables.size());}));
-        assert(std::all_of(hashIds.begin(), hashIds.end(), [&](auto id){return id < minparams.maps;}));
 
 		// we do not consider reads which are shorter than k
 		if(sequence.size() < unsigned(minparams.k))
@@ -310,8 +515,8 @@ namespace care{
         for(int i = 0; i < int(hashIds.size()); i++){
             auto hashValue = hashValues[hashIds[i]];
             auto tableId = tableIds[i];
-            auto& table = tables[tableId];
-            insertIntoExternalTable(table, hashValue, readnum);
+            auto& tableptr = tables[tableId];
+            insertIntoExternalTable(*tableptr, hashValue, readnum);
         }
 	}
 
@@ -319,7 +524,7 @@ namespace care{
                                                     int numHashValues,
                                                     read_number readnum,                                                     
                                                     const std::vector<int>& tableIds,
-                                                    std::vector<Minhasher::Map_t>& tables) const{
+                                                    std::vector<std::unique_ptr<Minhasher::Map_t>>& tables) const{
 		if(readnum >= nReads)
 			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
                                     + std::to_string(readnum) + " > " + std::to_string(nReads));
@@ -329,8 +534,8 @@ namespace care{
         for(int i = 0; i < numHashValues; i++){
             auto hashValue = hashValues[i];
             auto tableId = tableIds[i];
-            auto& table = tables[tableId];
-            insertIntoExternalTable(table, hashValue, readnum);
+            auto& tableptr = tables[tableId];
+            insertIntoExternalTable(*tableptr, hashValue, readnum);
         }
 	}
 

@@ -6,6 +6,8 @@
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <options.hpp>
+#include <readstorage.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -213,13 +215,13 @@ namespace care{
 				keyToIndexMap.shrink_to_fit();
 			}
 
-            void writeToStream(std::ofstream& outstream) const{
+            void writeToStream(std::ostream& outstream) const{
                 outstream.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(&size), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
             }
 
-            void readFromStream(std::ifstream& instream){
+            void readFromStream(std::istream& instream){
                 instream.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::uint64_t));
 
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
@@ -410,13 +412,13 @@ namespace care{
 				keyToIndexMap.shrink_to_fit();
 			}
 
-            void writeToStream(std::ofstream& outstream) const{
+            void writeToStream(std::ostream& outstream) const{
                 outstream.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(&size), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
             }
 
-            void readFromStream(std::ifstream& instream){
+            void readFromStream(std::istream& instream){
                 instream.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::uint64_t));
 
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
@@ -533,7 +535,7 @@ namespace care{
                 return !(*this == rhs);
             }
 
-            void writeToStream(std::ofstream& outstream) const{
+            void writeToStream(std::ostream& outstream) const{
                 bool resultsAreSorted_towrite = resultsAreSorted;
                 outstream.write(reinterpret_cast<const char*>(&resultsAreSorted_towrite), sizeof(bool));
                 outstream.write(reinterpret_cast<const char*>(&size), sizeof(Index_t));
@@ -563,7 +565,7 @@ namespace care{
                 keyToIndexLengthPairMap.writeToStream(outstream);
             }
 
-            void readFromStream(std::ifstream& instream){
+            void readFromStream(std::istream& instream){
                 bool sorted;
                 instream.read(reinterpret_cast<char*>(&sorted), sizeof(bool));
                 assert(sorted == resultsAreSorted);
@@ -755,16 +757,25 @@ struct Minhasher {
         };
     };
 
+    int kmerSize;
+    int resultsPerMapThreshold;
 	// the actual maps
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
     read_number nReads;
-    bool canUseGpu = false;
-    bool allowUVM = false;
 
-    Minhasher();
+    // Minhasher();
 
-    Minhasher(const MinhashOptions& parameters);
+    // Minhasher(const MinhashOptions& parameters);
+
+    Minhasher() : Minhasher(16, 50){
+
+    }
+
+    Minhasher(int kmerSize, int resultsPerMapThreshold)
+        : kmerSize(kmerSize), resultsPerMapThreshold(resultsPerMapThreshold){
+
+    }
 
     Minhasher(const Minhasher&) = delete;
     Minhasher& operator=(const Minhasher&) = delete;
@@ -776,17 +787,34 @@ struct Minhasher {
 
     bool operator!=(const Minhasher& rhs) const;
 
+    void construct(
+        const FileOptions& fileOptions,
+        const RuntimeOptions& runtimeOptions,
+        const MemoryOptions& memoryOptions,
+        std::uint64_t nReads,
+        const CorrectionOptions& correctionOptions,
+        care::cpu::ContiguousReadStorage& readStorage
+    );
+
     int getNumberOfMaps() const{
-        return minparams.maps;
+        return minhashTables.size();
+    }
+
+    int getKmerSize() const{
+        return kmerSize;
+    }
+
+    int getNumResultsPerMapThreshold() const{
+        return resultsPerMapThreshold;
     }
 
     std::size_t numBytes() const;
 
     MemoryUsage getMemoryInfo() const;
 
-    void saveToFile(const std::string& filename) const;
+    void writeToStream(std::ostream& os) const;
 
-    void loadFromFile(const std::string& filename);
+    void loadFromStream(std::ifstream& is);
 
 	void init(std::uint64_t nReads);
     void initMap(int map);
@@ -803,14 +831,14 @@ struct Minhasher {
     void insertSequenceIntoExternalTables(const std::string& sequence, 
                                             read_number readnum,                                                     
                                             const std::vector<int>& tableIds,
-                                            std::vector<Map_t>& tables,
+                                            std::vector<std::unique_ptr<Map_t>>& tables,
                                             const std::vector<int>& hashIds) const;
 
     void insertSequenceIntoExternalTables(const std::uint64_t* hashValues, 
                                             int numHashValues,
                                             read_number readnum,                                                     
                                             const std::vector<int>& tableIds,
-                                            std::vector<Minhasher::Map_t>& tables) const;
+                                            std::vector<std::unique_ptr<Map_t>>& tables) const;
 
     void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
 
