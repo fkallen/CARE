@@ -11,6 +11,8 @@
 #include <threadpool.hpp>
 #include <util.hpp>
 
+#include <readstorageconstruction.hpp>
+
 #include <atomic>
 #include <fstream>
 #include <omp.h>
@@ -287,6 +289,31 @@ void DistributedReadStorage::construct(
     int threads,
     bool showProgress
 ){
+
+#if 1
+
+    auto makeInserterFunc = [&](){return makeReadInserter();};
+    auto makeReadContainsNFunc = [this](){
+        return [&](read_number readId, bool contains){
+            this->setReadContainsN(readId, contains);
+        };
+    };
+
+    constructReadStorageFromFiles(
+        inputfiles,
+        useQualityScores,
+        expectedNumberOfReads,
+        expectedMinimumReadLength,
+        expectedMaximumReadLength,
+        threads,
+        showProgress,
+        makeInserterFunc,
+        makeReadContainsNFunc
+    );
+
+    constructionIsComplete();
+
+#else     
     constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
 
     auto checkRead = [&, this](read_number readIndex, Read& read, int& Ncount){
@@ -497,7 +524,7 @@ void DistributedReadStorage::construct(
     // }
 
     constructionIsComplete();
-
+#endif
         
 }
 
