@@ -193,7 +193,7 @@ namespace cpu{
         bool operator!=(const ContiguousReadStorage& other) const{
             return !(*this == other);
         }
-#if 1
+
         void construct(
             std::vector<std::string> inputfiles,
             bool useQualityScores,
@@ -415,7 +415,7 @@ namespace cpu{
 
             //constructionIsComplete();
         }
-#endif 
+
         std::size_t size() const{
             //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
 
@@ -452,6 +452,8 @@ namespace cpu{
 
         void setReadContainsN(read_number readId, bool contains){
 
+            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+
             auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
                                                 readIdsOfReadsWithUndeterminedBase.end(),
                                                 readId);
@@ -459,14 +461,12 @@ namespace cpu{
             if(contains){
                 if(pos != readIdsOfReadsWithUndeterminedBase.end()){
                     ; //already marked
-                }else{
-                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+                }else{                    
                     readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
                 }
             }else{
                 if(pos != readIdsOfReadsWithUndeterminedBase.end()){
                     //remove mark
-                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
                     readIdsOfReadsWithUndeterminedBase.erase(pos);
                 }else{
                     ; //already unmarked

@@ -913,22 +913,21 @@ void DistributedReadStorage::setReads(
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
     assert(!isReadOnly);
 
+    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+
     auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
                                         readIdsOfReadsWithUndeterminedBase.end(),
                                         readId);
-
 
     if(contains){
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             ; //already marked
         }else{
-            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
         }
     }else{
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             //remove mark
-            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.erase(pos);
         }else{
             ; //already unmarked
