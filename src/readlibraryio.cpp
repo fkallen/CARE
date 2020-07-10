@@ -225,7 +225,7 @@ void GZipWriter::writeImpl(const std::string& data){
 
         forEachReadInFile(
             filename, 
-            [&](auto readNumber, auto read){
+            [&](auto readNumber, const auto& read){
                 int len = read.sequence.length();
                 if(len > prop.maxSequenceLength)
                     prop.maxSequenceLength = len;
