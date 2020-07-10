@@ -517,10 +517,17 @@ void mergeResultFiles2_impl(
     bool firstiter = true;
 
     auto updateRead = [&](Read& read){
-        read.name = inputReaderVector[inputFileId].getCurrentName();
-        read.comment = inputReaderVector[inputFileId].getCurrentComment();
-        read.sequence = inputReaderVector[inputFileId].getCurrentSequence();
-        read.quality = inputReaderVector[inputFileId].getCurrentQuality();
+        #if 0
+            read.name = inputReaderVector[inputFileId].getCurrentName();
+            read.comment = inputReaderVector[inputFileId].getCurrentComment();
+            read.sequence = inputReaderVector[inputFileId].getCurrentSequence();
+            read.quality = inputReaderVector[inputFileId].getCurrentQuality();
+        #else 
+            std::swap(read.name, inputReaderVector[inputFileId].getCurrentName());
+            std::swap(read.comment, inputReaderVector[inputFileId].getCurrentComment());
+            std::swap(read.sequence, inputReaderVector[inputFileId].getCurrentSequence());
+            std::swap(read.quality, inputReaderVector[inputFileId].getCurrentQuality());
+        #endif
     };
 
     std::chrono::time_point<std::chrono::system_clock> timebegin, timeend;
