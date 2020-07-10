@@ -112,7 +112,7 @@ namespace care{
 
         TIMERSTARTCPU(build_readstorage);
 
-        care::cpu::ContiguousReadStorage readStorageXXX(
+        care::cpu::ContiguousReadStorage readStorage(
             maximumNumberOfReads, 
             correctionOptions.useQualityScores, 
             minimumSequenceLength, 
@@ -122,19 +122,19 @@ namespace care{
         if(fileOptions.load_binary_reads_from != ""){
 
             TIMERSTARTCPU(load_from_file);
-            readStorageXXX.loadFromFile(fileOptions.load_binary_reads_from);
+            readStorage.loadFromFile(fileOptions.load_binary_reads_from);
             TIMERSTOPCPU(load_from_file);
 
-            if(correctionOptions.useQualityScores && !readStorageXXX.canUseQualityScores())
+            if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
-            if(!correctionOptions.useQualityScores && readStorageXXX.canUseQualityScores())
+            if(!correctionOptions.useQualityScores && readStorage.canUseQualityScores())
                 std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
 
             std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
 
             //readStorage.constructionIsComplete();
         }else{
-            readStorageXXX.construct(
+            readStorage.construct(
                 fileOptions.inputfiles,
                 correctionOptions.useQualityScores,
                 maximumNumberOfReads,
@@ -145,33 +145,35 @@ namespace care{
             );
         }
 
+        TIMERSTOPCPU(build_readstorage);
+
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
             TIMERSTARTCPU(save_to_file);
-            readStorageXXX.saveToFile(fileOptions.save_binary_reads_to);
+            readStorage.saveToFile(fileOptions.save_binary_reads_to);
             TIMERSTOPCPU(save_to_file);
     		std::cout << "Saved reads" << std::endl;
         }
 
-        TIMERSTOPCPU(build_readstorage);
         
-        SequenceFileProperties totalInputFilePropertiesXXX;
+        
+        SequenceFileProperties totalInputFileProperties;
 
-        totalInputFilePropertiesXXX.nReads = readStorageXXX.getNumberOfReads();
-        totalInputFilePropertiesXXX.maxSequenceLength = readStorageXXX.getStatistics().maximumSequenceLength;
-        totalInputFilePropertiesXXX.minSequenceLength = readStorageXXX.getStatistics().minimumSequenceLength;
+        totalInputFileProperties.nReads = readStorage.getNumberOfReads();
+        totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
 
         if(!scanned){
             std::cout << "Determined the following read properties:\n";
             std::cout << "----------------------------------------\n";
-            std::cout << "Total number of reads: " << totalInputFilePropertiesXXX.nReads << "\n";
-            std::cout << "Minimum sequence length: " << totalInputFilePropertiesXXX.minSequenceLength << "\n";
-            std::cout << "Maximum sequence length: " << totalInputFilePropertiesXXX.maxSequenceLength << "\n";
+            std::cout << "Total number of reads: " << totalInputFileProperties.nReads << "\n";
+            std::cout << "Minimum sequence length: " << totalInputFileProperties.minSequenceLength << "\n";
+            std::cout << "Maximum sequence length: " << totalInputFileProperties.maxSequenceLength << "\n";
             std::cout << "----------------------------------------\n";
         }
 
         if(correctionOptions.autodetectKmerlength){
-            const int maxlength = totalInputFilePropertiesXXX.maxSequenceLength;
+            const int maxlength = totalInputFileProperties.maxSequenceLength;
 
             auto getKmerSizeForHashing = [](int maximumReadLength){
                 if(maximumReadLength < 160){
@@ -186,30 +188,12 @@ namespace care{
             std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
         }
 
-        std::cout << "Reads with ambiguous bases: " << readStorageXXX.getNumberOfReadsWithN() << std::endl;
-        
+        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;        
 
-        printDataStructureMemoryUsage(readStorageXXX, "reads");
-
+        printDataStructureMemoryUsage(readStorage, "reads");
 
 
-
-
-        // BuiltDataStructures dataStructures = buildAndSaveDataStructures2(
-        //     correctionOptions,
-        //     runtimeOptions,
-        //     memoryOptions,
-        //     fileOptions
-        // );
-
-        // BuiltDataStructure<Minhasher> aaa = build_minhasher(fileOptions,
-        //                         			   runtimeOptions,
-        //                                        memoryOptions,
-        //                         			   totalInputFilePropertiesXXX.nReads,
-        //                                        correctionOptions,
-        //                         			   readStorageXXX);
-
-        TIMERSTARTCPU(build_newgpuminhasher);
+        TIMERSTARTCPU(build_minhasher);
         Minhasher minhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
@@ -228,9 +212,9 @@ namespace care{
                 fileOptions,
                 runtimeOptions,
                 memoryOptions,
-                totalInputFilePropertiesXXX.nReads, 
+                totalInputFileProperties.nReads, 
                 correctionOptions,
-                readStorageXXX
+                readStorage
             );
 
             if(correctionOptions.mustUseAllHashfunctions 
@@ -242,6 +226,8 @@ namespace care{
             }
         }
 
+        TIMERSTOPCPU(build_minhasher);
+
         if(fileOptions.save_hashtables_to != "") {
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
             std::ofstream os(fileOptions.save_hashtables_to);
@@ -252,22 +238,11 @@ namespace care{
     		std::cout << "Saved minhasher" << std::endl;
         }
 
+
+
         printDataStructureMemoryUsage(minhasher, "hash tables");
 
         TIMERSTOPCPU(STEP1);
-
-        // if(correctionOptions.autodetectKmerlength){
-        //     correctionOptions.kmerlength = dataStructures.kmerlength;
-        // }
-
-        //auto& readStorage = dataStructures.builtReadStorage.data;
-        //auto& minhasher = dataStructures.builtMinhasher.data;
-        //auto& totalInputFileProperties = dataStructures.totalInputFileProperties;
-        //auto& minhasher = aaa.data;
-        //auto& totalInputFileProperties = totalInputFilePropertiesXXX;
-
-
-        //printDataStructureMemoryUsage(minhasher, readStorageXXX);
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
@@ -279,17 +254,16 @@ namespace care{
             runtimeOptions, 
             fileOptions, 
             memoryOptions, 
-            totalInputFilePropertiesXXX,
+            totalInputFileProperties,
             minhasher, 
             //readStorage
-            readStorageXXX
+            readStorage
         );
 
         TIMERSTOPCPU(STEP2);
 
         minhasher.destroy();
-        //readStorage.destroy();
-        readStorageXXX.destroy();
+        readStorage.destroy();
 
         const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
         std::size_t memoryForSorting = 0;
