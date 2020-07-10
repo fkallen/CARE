@@ -8,6 +8,7 @@
 
 #include <threadpool.hpp>
 #include <util.hpp>
+#include <readstorageconstruction.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -203,217 +204,30 @@ namespace cpu{
             int threads,
             bool showProgress
         ){
-            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
 
-            auto checkRead = [&, this](read_number readIndex, Read& read, int& Ncount){
-                const int readLength = int(read.sequence.size());
-
-                if(readIndex >= expectedNumberOfReads){
-                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
-                                            + " reads, but file contains at least "
-                                            + std::to_string(readIndex+1) + " reads.");
-                }
-
-                if(readLength > expectedMaximumReadLength){
-                    throw std::runtime_error("Error! Expected maximum read length = "
-                                            + std::to_string(expectedMaximumReadLength)
-                                            + ", but read " + std::to_string(readIndex)
-                                            + "has length " + std::to_string(readLength));
-                }
-
-                auto isValidBase = [](char c){
-                    constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
-                    return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+            auto makeInserterFunc = [this](){
+                return [&, this](ThreadPool* tp, read_number* indices, Read* reads, int count){
+                    this->setReads(tp, indices, reads, count);
                 };
-
-                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
-                    return !isValidBase(c);
-                });
-
-                //nmap[undeterminedBasesInRead]++;
-
-                if(undeterminedBasesInRead > 0){
-                    setReadContainsN(readIndex, true);
-                }
-
-                for(auto& c : read.sequence){
-                    if(c == 'a') c = 'A';
-                    else if(c == 'c') c = 'C';
-                    else if(c == 'g') c = 'G';
-                    else if(c == 't') c = 'T';
-                    else if(!isValidBase(c)){
-                        c = bases[Ncount];
-                        Ncount = (Ncount + 1) % 4;
-                    }
-                }
+            };
+            auto makeReadContainsNFunc = [this](){
+                return [&, this](read_number readId, bool contains){
+                    this->setReadContainsN(readId, contains);
+                };
             };
 
-            constexpr int maxbuffersize = 65536;
-            constexpr int numBuffers = 3;
-
-            std::array<std::vector<read_number>, numBuffers> indicesBuffers;
-            std::array<std::vector<Read>, numBuffers> readsBuffers;
-            std::array<int, numBuffers> bufferSizes;
-            std::array<bool, numBuffers> canBeUsed;
-            std::array<std::mutex, numBuffers> mutex;
-            std::array<std::condition_variable, numBuffers> cv;
-
-            //using Inserter_t = decltype(makeReadInserter());
-
-            //std::array<Inserter_t, 3> inserterFuncs{makeReadInserter(), makeReadInserter(), makeReadInserter()};
-
-            ThreadPool threadPool(numBuffers);
-            ThreadPool pforPool(std::max(1, threads - numBuffers));
-
-            for(int i = 0; i < numBuffers; i++){
-                indicesBuffers[i].resize(maxbuffersize);
-                readsBuffers[i].resize(maxbuffersize);
-                canBeUsed[i] = true;
-                bufferSizes[i] = 0;
-
-            }
-
-            int bufferindex = 0;
-            read_number globalReadId = 0;
-
-            auto showProgressFunc = [show = showProgress](auto totalCount, auto seconds){
-                if(show){
-                    std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                                    << seconds << " seconds." << std::endl;
-                }
-            };
-
-            auto updateShowProgressInterval = [](auto duration){
-                return duration * 2;
-            };
-
-            ProgressThread<read_number> progressThread(
-                expectedNumberOfReads, 
-                showProgressFunc, 
-                updateShowProgressInterval
+            constructReadStorageFromFiles(
+                inputfiles,
+                useQualityScores,
+                expectedNumberOfReads,
+                expectedMinimumReadLength,
+                expectedMaximumReadLength,
+                threads,
+                showProgress,
+                makeInserterFunc,
+                makeReadContainsNFunc
             );
-
-            for(const auto& inputfile : inputfiles){
-                std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
-
-                forEachReadInFile(inputfile,
-                                [&](auto /*readnum*/, auto& read){
-
-                        if(!canBeUsed[bufferindex]){
-                            std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                            if(!canBeUsed[bufferindex]){
-                                //std::cerr << "waiting for other buffer\n";
-                                //nvtx::push_range("wait for doublebuffer", 0);
-                                cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                                //nvtx::pop_range();
-                            }
-                        }
-
-                        auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                        auto readsBufferPtr = &readsBuffers[bufferindex];
-                        auto& buffersize = bufferSizes[bufferindex];
-
-                        (*indicesBufferPtr)[buffersize] = globalReadId;
-                        std::swap((*readsBufferPtr)[buffersize], read);
-
-                        ++buffersize;
-
-                        ++globalReadId;
-
-                        progressThread.addProgress(1);
-
-                        if(buffersize >= maxbuffersize){
-                            canBeUsed[bufferindex] = false;
-
-                            //std::cerr << "launch other thread\n";
-                            //nvtx::push_range("enqeue", 0);
-                            threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                                //std::cerr << "buffer " << bufferindex << " running\n";
-                                const int buffersize = bufferSizes[bufferindex];
-
-                                //nvtx::push_range("process read batch", 0);
-                                int nmodcounter = 0;
-
-                                //nvtx::push_range("check read batch", 0);
-                                for(int i = 0; i < buffersize; i++){
-                                    read_number readId = (*indicesBufferPtr)[i];
-                                    auto& read = (*readsBufferPtr)[i];
-                                    checkRead(readId, read, nmodcounter);
-                                }
-                                //nvtx::pop_range();
-
-                                //nvtx::push_range("insert read batch", 0);
-                                setReads(
-                                    &pforPool, 
-                                    indicesBufferPtr->data(), 
-                                    readsBufferPtr->data(), 
-                                    buffersize
-                                );
-                                //nvtx::pop_range();
-
-                                //TIMERSTARTCPU(clear);
-                                bufferSizes[bufferindex] = 0;
-                                //TIMERSTOPCPU(clear);
-                                
-                                std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                                canBeUsed[bufferindex] = true;
-                                cv[bufferindex].notify_one();
-
-                                //nvtx::pop_range();
-
-                                //std::cerr << "buffer " << bufferindex << " finished\n";
-                            });
-
-                            bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-
-                            //nvtx::pop_range();
-                        }
-
-                });
-            }
-
-            auto indicesBufferPtr = &indicesBuffers[bufferindex];
-            auto readsBufferPtr = &readsBuffers[bufferindex];
-            auto& buffersize = bufferSizes[bufferindex];
-
-            if(buffersize > 0){
-                if(!canBeUsed[bufferindex]){
-                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                    if(!canBeUsed[bufferindex]){
-                        //std::cerr << "waiting for other buffer\n";
-                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                    }
-                }
-
-                int nmodcounter = 0;
-
-                for(int i = 0; i < buffersize; i++){
-                    read_number readId = (*indicesBufferPtr)[i];
-                    auto& read = (*readsBufferPtr)[i];
-                    checkRead(readId, read, nmodcounter);
-                }
-
-                setReads(&pforPool, indicesBufferPtr->data(), readsBufferPtr->data(), buffersize);
-
-                buffersize = 0;
-            }
-
-            for(int i = 0; i < numBuffers; i++){
-                std::unique_lock<std::mutex> ul(mutex[i]);
-                if(!canBeUsed[i]){
-                    //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
-                    cv[i].wait(ul, [&](){ return canBeUsed[i]; });
-                }
-            }
-
-            progressThread.finished();
-
-            // std::cerr << "occurences of n/N:\n";
-            // for(const auto& p : nmap){
-            //     std::cerr << p.first << " " << p.second << '\n';
-            // }
-
-            //constructionIsComplete();
+     
         }
 
         std::size_t size() const{
