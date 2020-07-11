@@ -19,13 +19,6 @@
 #include <vector>
 #include <numeric>
 
-//#define NVTXTIMELINE
-
-#ifdef NVTXTIMELINE
-#include <gpu/nvtxtimelinemarkers.hpp>
-#endif
-
-
 namespace care{
 
 
@@ -77,13 +70,11 @@ namespace care{
     void Minhasher::writeToStream(std::ostream& outstream) const{
         int bits_key_tosave = bits_key;
         std::uint64_t key_mask_tosave = key_mask;
-        std::uint64_t max_read_num_tosave = max_read_num;
         int maximum_number_of_maps_tosave = maximum_number_of_maps;
         int maximum_kmer_length_tosave = maximum_kmer_length;
 
         outstream.write(reinterpret_cast<const char*>(&bits_key_tosave), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&key_mask_tosave), sizeof(std::uint64_t));
-        outstream.write(reinterpret_cast<const char*>(&max_read_num_tosave), sizeof(std::uint64_t));
         outstream.write(reinterpret_cast<const char*>(&maximum_number_of_maps_tosave), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
 
@@ -105,19 +96,16 @@ namespace care{
 
         int bits_key_loaded;
     	std::uint64_t key_mask_loaded;
-        std::uint64_t max_read_num_loaded;
         int maximum_number_of_maps_loaded;
         int maximum_kmer_length_loaded;
 
         instream.read(reinterpret_cast<char*>(&bits_key_loaded), sizeof(int));
         instream.read(reinterpret_cast<char*>(&key_mask_loaded), sizeof(std::uint64_t));
-        instream.read(reinterpret_cast<char*>(&max_read_num_loaded), sizeof(std::uint64_t));
         instream.read(reinterpret_cast<char*>(&maximum_number_of_maps_loaded), sizeof(int));
         instream.read(reinterpret_cast<char*>(&maximum_kmer_length_loaded), sizeof(int));
 
         assert(bits_key == bits_key_loaded);
         assert(key_mask == key_mask_loaded);
-        assert(max_read_num == max_read_num_loaded);
         assert(maximum_number_of_maps == maximum_number_of_maps_loaded);
         assert(maximum_kmer_length == maximum_kmer_length_loaded);
 
@@ -141,17 +129,6 @@ namespace care{
         }
     }
 
-	void Minhasher::init(std::uint64_t nReads_){
-		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
-		if(nReads_-1 > max_read_num)
-			throw std::runtime_error("Minhasher::init: Minhasher is configured for only"
-                                    + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
-
-		nReads = nReads_;
-
-		minhashTables.clear();
-	}
-
 
     void Minhasher::construct(
         const FileOptions& fileOptions,
@@ -164,7 +141,8 @@ namespace care{
 
         const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
 
-        init(nReads);
+        this->nReads = nReads;
+        minhashTables.clear();
 
         ThreadPool threadPool(runtimeOptions.threads);
         //ThreadPool threadPool(1);
@@ -378,14 +356,6 @@ namespace care{
 
 
 
-
-
-
-
-
-
-
-
 	void Minhasher::clear(){
 		minhashTables.clear();
 		nReads = 0;
@@ -412,15 +382,6 @@ namespace care{
         return std::make_pair(mapQueryResult.valuesBegin, mapQueryResult.valuesBegin + mapQueryResult.numValues);
     }
 
-    std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t) const noexcept{
-        Minhasher::Handle handle;
-        getCandidates_any_map(handle, sequence, 0);
-
-        std::vector<Result_t> result(std::move(handle.result()));
-        return result;
-    }
-
     void Minhasher::getCandidates_any_map(
             Minhasher::Handle& handle,
             const std::string& sequence,
@@ -434,86 +395,17 @@ namespace care{
             int sequenceLength,
             std::uint64_t) const noexcept{
 
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
         if(sequenceLength < getKmerSize()){
             handle.allUniqueResults.clear();
             return;
         }
-
-        //TIMERSTARTCPU(minhashfunc);
-#ifdef NVTXTIMELINE        
-        nvtx::push_range("hashing", 3);
-#endif        
+   
         auto hashValues = minhashfunc(sequence, sequenceLength);
-#ifdef NVTXTIMELINE        
-        nvtx::pop_range("hashing");
-#endif        
-        //TIMERSTOPCPU(minhashfunc);
 
         handle.ranges.clear();
 
         int maximumResultSize = 0;
-
-#if 0
-        std::array<Index_t, 64> preparedIndices{};
-
-        auto prepare_map = [&](int mapid, kmer_type key){
-            assert(mapid < getNumberOfMaps());
-            preparedIndices[mapid] = minhashTables[mapid]->prepare_get_ranged(key);
-        };
-
-        auto query_map = [&](int mapid, Index_t preparedIndex){
-            auto entries_range = minhashTables[mapid]->execute_get_ranged(preparedIndex);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(n_entries > numResultsPerMapQueryThreshold){
-                return std::make_pair(entries_range.first, entries_range.first); //return empty range
-            }
-
-            return entries_range;
-        };
-
-        constexpr int preparedistance = 8;
-        const int chunks = SDIV(getNumberOfMaps(), preparedistance);
-
-        for(int map = 0; map < std::min(preparedistance, getNumberOfMaps()); map++){
-            kmer_type key = hashValues[map] & key_mask;
-            prepare_map(map, key);
-        }
-
-        for(int iteration = 0; iteration < chunks; iteration++){
-            if(iteration < chunks - 1){
-                const int nextIteration = iteration + 1;
-                const int begin = nextIteration * preparedistance;
-                const int end = std::min((nextIteration+1) * preparedistance, getNumberOfMaps());
-
-                for(int map = begin; map < end; map++){
-                    kmer_type key = hashValues[map] & key_mask;
-                    prepare_map(map, key);
-                }
-            }
-
-            const int begin = iteration * preparedistance;
-            const int end = std::min((iteration+1) * preparedistance, getNumberOfMaps());
-            for(int map = begin; map < end; map++){
-                auto entries_range = query_map(map, preparedIndices[map]);
-                int n_entries = std::distance(entries_range.first, entries_range.second);
-                if(n_entries > 0){
-                    maximumResultSize += n_entries;
-                    ranges.emplace_back(entries_range);
-                }
-            }
-
-        }
-
-#else
-
-        //TIMERSTARTCPU(query);
-
-#ifdef NVTXTIMELINE
-        nvtx::push_range("map queries", 4);
-#endif
 
         for(int map = 0; map < getNumberOfMaps(); ++map){
             kmer_type key = hashValues[map] & key_mask;
@@ -524,216 +416,12 @@ namespace care{
                 handle.ranges.emplace_back(entries_range);
             }
         }
-#ifdef NVTXTIMELINE
-        nvtx::pop_range("map queries");
-#endif 
 
-#endif
-        //TIMERSTOPCPU(query);
-
-        //TIMERSTARTCPU(setunion);     
-#ifdef NVTXTIMELINE         
-        nvtx::push_range("setunion", 5);
-#endif
-
-#if 1
         handle.allUniqueResults.resize(maximumResultSize);
 
         auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges.data(), handle.ranges.size());
         handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
-#else 
-        std::unordered_set<Value_t> uniqueValues;
-        for(const auto& range : ranges){
-            uniqueValues.insert(range.first, range.second);
-        }
-        std::vector<Value_t> allUniqueResults(uniqueValues.size());
-        std::copy(uniqueValues.cbegin(), uniqueValues.cend(), allUniqueResults.begin());
-
-#endif
-        // std::vector<Value_t> allUniqueResultsPQ(maximumResultSize);
-        // auto resultEndPQ = k_way_set_union_with_priorityqueue(allUniqueResultsPQ.begin(), ranges);
-        // allUniqueResultsPQ.erase(resultEndPQ, allUniqueResultsPQ.end()); 
-
-        // assert(allUniqueResults.size() == allUniqueResultsPQ.size());
-        // assert(allUniqueResults == allUniqueResultsPQ);
-
-
-
-#ifdef NVTXTIMELINE        
-        nvtx::pop_range("setunion");
-#endif 
-
-        //TIMERSTOPCPU(setunion);
     }
-
-
-
-    void Minhasher::calculateMinhashSignatures(
-            Minhasher::Handle& handle,
-            const std::vector<std::string>& sequences) const{
-
-        handle.multiminhashSignatures.resize(getNumberOfMaps() * sequences.size());
-
-        const int numSequences = sequences.size();
-        for(int i = 0; i < numSequences; i++){
-            const char* sequence = sequences[i].c_str();
-            const int length = sequences[i].length();
-            if(length < getKmerSize()){
-                // handle.allUniqueResults.clear();
-                // return;
-            }else{
-                auto hashValues = minhashfunc(sequence, length);
-                std::copy(
-                    hashValues.begin(), 
-                    hashValues.end(), 
-                    handle.multiminhashSignatures.begin() + getNumberOfMaps() * i
-                );
-            }
-        }
-    }
-
-    void Minhasher::calculateMinhashSignatures(
-            Minhasher::Handle& handle,
-            const char* sequences,
-            int numSequences,
-            const int* sequenceLengths,
-            int sequencesPitch) const{
-
-        handle.multiminhashSignatures.resize(getNumberOfMaps() * numSequences);
-
-        for(int i = 0; i < numSequences; i++){
-            const char* sequence = sequences + i * sequencesPitch;
-            const int length = sequenceLengths[i];
-            if(length < getKmerSize()){
-                // handle.allUniqueResults.clear();
-                // return;
-            }else{
-                auto hashValues = minhashfunc(sequence, length);
-                std::copy(
-                    hashValues.begin(), 
-                    hashValues.end(), 
-                    handle.multiminhashSignatures.begin() + getNumberOfMaps() * i
-                );
-            }
-        }
-    }
-
-    void Minhasher::queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const{
-
-        handle.multiranges.clear();
-        handle.multiranges.reserve(getNumberOfMaps() * numSequences);
-        handle.numResultsPerSequence.clear();
-        handle.numResultsPerSequence.resize(numSequences, 0);        
-
-        for(int i = 0; i < numSequences; i++){
-            const std::uint64_t* signature = &handle.multiminhashSignatures[i * getNumberOfMaps()];
-
-            for(int map = 0; map < getNumberOfMaps(); ++map){
-                kmer_type key = signature[map] & key_mask;
-                auto entries_range = queryMap(map, key);
-                int n_entries = std::distance(entries_range.first, entries_range.second);
-                if(n_entries > 0){
-                    handle.numResultsPerSequence[i] += n_entries;
-                }
-                handle.multiranges.emplace_back(entries_range);
-            }
-        }      
-    }
-
-    void Minhasher::queryPrecalculatedSignatures(
-        const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-        Minhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
-        int* totalNumResultsInRanges, 
-        int numSequences) const{ 
-        
-        int numResults = 0;
-
-        for(int i = 0; i < numSequences; i++){
-            const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
-            Minhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
-
-            for(int map = 0; map < getNumberOfMaps(); ++map){
-                kmer_type key = signature[map] & key_mask;
-                auto entries_range = queryMap(map, key);
-                numResults += std::distance(entries_range.first, entries_range.second);
-                range[map] = entries_range;
-            }
-        }   
-
-        *totalNumResultsInRanges = numResults;   
-    }
-
-    //static bool once = true;
-
-    void Minhasher::makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const{
-        int maxNumResults = 0;
-        for(int i = 0; i < numSequences; i++){
-            maxNumResults += handle.numResultsPerSequence[i];
-        }
-        handle.multiallUniqueResults.resize(maxNumResults);
-        handle.numResultsPerSequencePrefixSum.resize(numSequences + 1);
-
-        handle.numResultsPerSequencePrefixSum[0] = 0;
-
-        // if(once){
-        //     once = false;
-
-        //     std::ofstream stream("queryranges.txt");
-
-        //     for(int i = 0; i < numSequences; i++){
-        //         stream << handle.numResultsPerSequence[i] << "\n";
-        //         auto myranges = &handle.multiranges[i * getNumberOfMaps()];
-        //         const int numRangesForSequence = getNumberOfMaps();
-
-        //         for(int k = 0; k < numRangesForSequence; k++){
-        //             auto& range = myranges[k];
-        //             stream << (range.second - range.first) << "\n";
-                    
-        //             for(auto it = range.first; it != range.second; it++){
-        //                 stream << *it << " ";                     
-        //             }
-        //             stream<< "\n";
-        //         } 
-        //     }
-        // }
-
-        handle.contiguousDataOfRanges.resize(maxNumResults);
-
-        // copy the data identified by the ranges, which may be scattered across the whole hash tables, 
-        // into a contiguous chunk of memory
-        {
-            auto currentBegin = handle.contiguousDataOfRanges.begin();
-            auto currentEnd = handle.contiguousDataOfRanges.begin();
-            for(int i = 0; i < numSequences; i++){
-                auto myranges = &handle.multiranges[i * getNumberOfMaps()];
-                const int numRangesForSequence = getNumberOfMaps();
-                for(int r = 0; r < numRangesForSequence; r++){
-                    auto& range = myranges[r];
-                    currentEnd = std::copy(range.first, range.second, currentBegin);
-                    range.first = &(*currentBegin);
-                    range.second = &(*currentEnd);
-                    currentBegin = currentEnd;
-                }
-            }
-        }
-
-        //for each queried sequence, perform set union of all its ranges
-        auto currentBegin = handle.multiallUniqueResults.begin();
-        auto currentEnd = handle.multiallUniqueResults.begin();
-        for(int i = 0; i < numSequences; i++){
-            auto myranges = &handle.multiranges[i * getNumberOfMaps()];
-            const int numRangesForSequence = getNumberOfMaps();
-            currentBegin = currentEnd;
-            currentEnd = k_way_set_union<Value_t>(handle.suHandle, currentBegin, myranges, numRangesForSequence);
-            handle.numResultsPerSequence[i] = std::distance(currentBegin, currentEnd);
-
-            handle.numResultsPerSequencePrefixSum[i+1] = handle.numResultsPerSequencePrefixSum[i] + handle.numResultsPerSequence[i];
-        }
-
-        handle.multiallUniqueResults.erase(currentEnd, handle.multiallUniqueResults.end());   
-    }
-
-
 
 
 
