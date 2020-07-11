@@ -9,7 +9,7 @@
 #include <options.hpp>
 #include <readstorage.hpp>
 
-#include <gpu/gpuhashtable.cuh>
+#include <cpuhashtable.hpp>
 
 
 #include <cstdint>

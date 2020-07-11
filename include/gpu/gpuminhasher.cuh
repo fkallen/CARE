@@ -4,11 +4,11 @@
 #include <config.hpp>
 
 #include <gpu/nvtxtimelinemarkers.hpp>
-#include <gpu/gpuhashtable.cuh>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
 #include <gpu/cuda_unique.cuh>
+#include <cpuhashtable.hpp>
 
 #include <options.hpp>
 #include <util.hpp>

@@ -1,8 +1,7 @@
-#ifndef CARE_GPUHASHTABLE_CUH
-#define CARE_GPUHASHTABLE_CUH 
+#ifndef CARE_CPUHASHTABLE_CUH
+#define CARE_CPUHASHTABLE_CUH 
 
 #include <config.hpp>
-#include <kvtable.hpp>
 #include <minhasher_transform.hpp>
 #include <memorymanagement.hpp>
 
