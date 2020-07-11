@@ -64,6 +64,19 @@ namespace gpu{
             : NaiveCpuSingleValueHashTable(size, 0.8f){            
         }
 
+        bool operator==(const NaiveCpuSingleValueHashTable& rhs) const{
+            return emptySlot == rhs.emptySlot 
+                && load == rhs.load
+                && maxProbes == rhs.maxProbes
+                && size == rhs.size 
+                && capacity == rhs.capacity
+                && storage == rhs.storage;
+        }
+
+        bool operator!=(const NaiveCpuSingleValueHashTable& rhs) const{
+            return !(operator==(rhs));
+        }
+
         void insert(const Key& key, const Value& value){
             std::size_t probes = 0;
             std::size_t pos = hashfunc(key) % capacity;
@@ -198,6 +211,14 @@ namespace gpu{
             int maxValuesPerKey
         ){
             init(std::move(keys), std::move(vals), maxValuesPerKey);
+        }
+
+        bool operator==(const CpuReadOnlyMultiValueHashTable& rhs) const{
+            return values == rhs.values && lookup == rhs.lookup;
+        }
+
+        bool operator!=(const CpuReadOnlyMultiValueHashTable& rhs) const{
+            return !(operator==(rhs));
         }
 
         void init(
