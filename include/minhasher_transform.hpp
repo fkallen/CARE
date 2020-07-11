@@ -1,7 +1,6 @@
 #ifndef CARE_MINHASHER_TRANSFORM_HPP
 #define CARE_MINHASHER_TRANSFORM_HPP
 
-#include <minhasher.hpp>
 #include <config.hpp>
 
 #include <algorithm>
@@ -35,14 +34,6 @@ namespace care{
         std::uint64_t numberOfRemovedKeys = 0;
         std::uint64_t numberOfRemovedValues = 0;
     };
-
-    void transform_minhasher(Minhasher& minhasher);
-    void transform_minhasher(Minhasher& minhasher, int map);
-
-#ifdef __NVCC__
-    void transform_minhasher_gpu(Minhasher& minhasher, const std::vector<int>& deviceIds);
-    void transform_minhasher_gpu(Minhasher& minhasher, int map, const std::vector<int>& deviceIds);
-#endif
 
 
     template<class Key_t, class Value_t, class Index_t>
@@ -299,50 +290,6 @@ namespace care{
         return result;
     };
 
-    template<class KeyValueMap>
-    MinhashTransformResult transform_keyvaluemap(KeyValueMap& map, int maxValuesPerKey){
-        MinhashTransformResult result;
-
-        if(map.noMoreWrites) return result;
-
-        if(map.size == 0) return result;
-
-        result = cpu_transformation(
-            map.keys, 
-            map.values, 
-            map.counts, 
-            map.countsPrefixSum, 
-            map.keysWithoutValues, 
-            maxValuesPerKey
-        );
-
-        map.nKeys = map.keys.size();
-        map.nValues = map.values.size();
-        map.noMoreWrites = true;
-
-        using Key_t = typename KeyValueMap::Key_t;
-        using Index_t = typename KeyValueMap::Index_t;
-
-
-        map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
-        for(Index_t i = 0; i < map.nKeys; i++){
-            map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
-        }
-
-        // keys and prefixsums have been stored in as in keyToPairMap.
-        // can free the memory.
-        {
-            std::vector<Key_t> tmp;
-            map.keys.swap(tmp);
-        }
-
-        {
-            std::vector<Index_t> tmp;
-            map.countsPrefixSum.swap(tmp);
-        }
-
-        return result;
-    }
 
 #ifdef __NVCC__
 
@@ -713,102 +660,6 @@ namespace care{
 
     };
 
-    template<class KeyValueMap>
-    std::size_t estimateGpuMemoryForTransformKeyValueMap(KeyValueMap& map){
-        return MinhasherTransformGPUCompactKeys<true>::estimateRequiredGpuMem(map.keys, map.values, map.countsPrefixSum);
-    }
-
-    template<class KeyValueMap>
-    MinhashTransformResult transform_keyvaluemap_gpu(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
-        MinhashTransformResult result;
-
-        if(map.noMoreWrites) return result;
-
-        if(map.size == 0) return result;
-
-        if(deviceIds.size() == 0){
-
-            result = cpu_transformation(
-                map.keys, 
-                map.values, 
-                map.counts, 
-                map.countsPrefixSum, 
-                map.keysWithoutValues, 
-                maxValuesPerKey
-            );
-
-        }else{
-            
-            std::pair<bool, MinhashTransformResult> pair = GPUTransformation<false>::execute(
-                map.keys, 
-                map.values, 
-                map.counts, 
-                map.countsPrefixSum, 
-                map.keysWithoutValues, 
-                deviceIds, 
-                maxValuesPerKey
-            );
-
-            bool success = pair.first;
-            result = pair.second;
-
-            if(!success){
-                std::cerr << "Fallback to managed memory transformation.\n";
-
-                pair = GPUTransformation<true>::execute(
-                    map.keys, 
-                    map.values, 
-                    map.counts, 
-                    map.countsPrefixSum, 
-                    map.keysWithoutValues, 
-                    deviceIds, 
-                    maxValuesPerKey
-                );
-
-                success = pair.first;
-                result = pair.second;
-            }
-
-            if(!success){
-                std::cerr << "\nFallback to cpu transformation.\n";
-                
-                result = cpu_transformation(
-                    map.keys, 
-                    map.values, 
-                    map.counts, 
-                    map.countsPrefixSum, 
-                    map.keysWithoutValues, 
-                    maxValuesPerKey
-                );
-            }
-        }
-
-        map.nKeys = map.keys.size();
-        map.nValues = map.values.size();
-        map.noMoreWrites = true;
-
-        using Key_t = typename KeyValueMap::Key_t;
-        using Index_t = typename KeyValueMap::Index_t;
-
-        map.keyToIndexLengthPairMap = minhasherdetail::KeyToIndexLengthPairMap<Key_t, Index_t>(map.nKeys / map.load);
-        for(Index_t i = 0; i < map.nKeys; i++){
-            map.keyToIndexLengthPairMap.insert(map.keys[i], map.countsPrefixSum[i], map.countsPrefixSum[i+1] - map.countsPrefixSum[i]);
-        }
-
-        // keys and prefixsums have been stored in as in keyToPairMap.
-        // can free the memory.
-        {
-            std::vector<Key_t> tmp;
-            map.keys.swap(tmp);
-        }
-
-        {
-            std::vector<Index_t> tmp;
-            map.countsPrefixSum.swap(tmp);
-        }
-
-        return result;
-    }
 
 #endif
 }

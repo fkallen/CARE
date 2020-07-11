@@ -9,6 +9,9 @@
 #include <options.hpp>
 #include <readstorage.hpp>
 
+#include <gpu/gpuhashtable.cuh>
+
+
 #include <cstdint>
 #include <memory>
 #include <map>
@@ -702,10 +705,13 @@ namespace care{
 
 struct Minhasher {
 
+    using Key_t = kmer_type;
+
     using Index_t = read_number; //read id type
     using Value_t = Index_t; //Value type for hashmap
     using Result_t = Index_t; // Return value for minhash query
-    using Map_t = minhasherdetail::KeyValueMapFixedSize<kmer_type, Value_t, Index_t>; //internal map type
+    //using Map_t = minhasherdetail::KeyValueMapFixedSize<kmer_type, Value_t, Index_t>; //internal map type
+    using Map_t = care::gpu::CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
 
     using Range_t = std::pair<const Value_t*, const Value_t*>;
 
@@ -791,8 +797,6 @@ struct Minhasher {
         return resultsPerMapThreshold;
     }
 
-    std::size_t numBytes() const;
-
     MemoryUsage getMemoryInfo() const;
 
     void writeToStream(std::ostream& os) const;
@@ -807,29 +811,8 @@ struct Minhasher {
 
 	void destroy();
 
-    std::map<int, std::int64_t> getBinSizeHistogramOfMap(const Minhasher::Map_t& table) const;
-    std::map<int, std::int64_t> getBinSizeHistogramOfMap(int tableId) const;
-    std::vector<std::map<int, std::int64_t>> getBinSizeHistogramsOfMaps() const;
-
-    void insertSequenceIntoExternalTables(const std::string& sequence, 
-                                            read_number readnum,                                                     
-                                            const std::vector<int>& tableIds,
-                                            std::vector<std::unique_ptr<Map_t>>& tables,
-                                            const std::vector<int>& hashIds) const;
-
-    void insertSequenceIntoExternalTables(const std::uint64_t* hashValues, 
-                                            int numHashValues,
-                                            read_number readnum,                                                     
-                                            const std::vector<int>& tableIds,
-                                            std::vector<std::unique_ptr<Map_t>>& tables) const;
-
-    void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
-
-	void insertSequence(const std::string& sequence, read_number readnum);
-
-
     std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
-                                                        Map_t::Key_t key) const noexcept;
+                                                        Key_t key) const noexcept;
 
 
 
@@ -897,10 +880,10 @@ struct Minhasher {
     Query number of candidates
 */
 
-    std::int64_t getNumberOfCandidates(const std::string& sequence,
-                                        int num_hits) const noexcept;
-
-    std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept;
+    //std::int64_t getNumberOfCandidates(const std::string& sequence,
+    //                                    int num_hits) const noexcept;
+    //
+    //std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept;
 
 //###################################################
 
