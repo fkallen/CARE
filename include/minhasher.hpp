@@ -36,7 +36,7 @@ struct Minhasher {
     using Key_t = kmer_type;
     using Value_t = read_number;
 
-    using Map_t = care::gpu::CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
+    using Map_t = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
 
     using Range_t = std::pair<const Value_t*, const Value_t*>;
 
