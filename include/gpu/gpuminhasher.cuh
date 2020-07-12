@@ -4,11 +4,11 @@
 #include <config.hpp>
 
 #include <gpu/nvtxtimelinemarkers.hpp>
-#include <gpu/gpuhashtable.cuh>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
 #include <gpu/cuda_unique.cuh>
+#include <cpuhashtable.hpp>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -34,6 +34,150 @@
 
 namespace care{
 namespace gpu{
+
+    struct GpuReadStorageHasher{
+        int totalNumHashFuncs; 
+        int kmerSize;
+        int deviceId;
+        cudaStream_t stream;
+        const DistributedReadStorage* readStorage;
+        ThreadPool* threadPool;
+
+        SimpleAllocationDevice<unsigned int, 0> d_sequenceData;
+        SimpleAllocationDevice<int, 0> d_lengths;
+
+        SimpleAllocationPinnedHost<read_number, 0> h_indices;
+        SimpleAllocationDevice<read_number, 0> d_indices;
+
+        SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures;
+        SimpleAllocationDevice<std::uint64_t, 0> d_signatures;
+        
+        ThreadPool::ParallelForHandle pforHandle;
+        DistributedReadStorage::GatherHandleSequences gatherHandle;
+
+        GpuReadStorageHasher(int totalNumHashFuncs, int kmerSize, const DistributedReadStorage* readStorage, ThreadPool* threadPool) 
+            : 
+            totalNumHashFuncs(totalNumHashFuncs),
+            kmerSize(kmerSize),
+            readStorage(readStorage), 
+            threadPool(threadPool), 
+            pforHandle(),
+            gatherHandle(readStorage->makeGatherHandleSequences()){
+
+            cudaStreamCreate(&stream); CUERR;
+            cudaGetDevice(&deviceId); CUERR;
+
+        }
+
+        ~GpuReadStorageHasher(){
+            cudaStreamDestroy(stream); CUERR;
+        }
+
+        template<class StoreResultFunc, class AddProgressFunc>
+        void hash(
+            const read_number readIdBegin, 
+            const read_number readIdEnd,
+            int numHashFuncs,
+            int firstHashFunc,
+            StoreResultFunc storeResult, // storeResult(hashfunc, kmer, readid)
+            AddProgressFunc addProgress
+        ){
+            const int upperBoundSequenceLength = readStorage->getSequenceLengthUpperBound();
+            const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+            const std::size_t signaturesRowPitchElements = numHashFuncs;
+
+            const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+            d_sequenceData.resize(encodedSequencePitchInInts * curBatchsize);
+            d_lengths.resize(curBatchsize);
+            h_indices.resize(curBatchsize);
+            d_indices.resize(curBatchsize);
+            h_signatures.resize(signaturesRowPitchElements * curBatchsize);
+            d_signatures.resize(signaturesRowPitchElements * curBatchsize);
+
+            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+            readStorage->gatherSequenceDataToGpuBufferAsync(
+                threadPool,
+                gatherHandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_indices,
+                d_indices,
+                curBatchsize,
+                deviceId,
+                stream
+            );
+        
+            readStorage->gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                deviceId,
+                d_indices,
+                curBatchsize,
+                stream
+            );
+
+            callMinhashSignaturesKernel_async(
+                d_signatures,
+                signaturesRowPitchElements,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                curBatchsize,
+                d_lengths,
+                kmerSize,
+                numHashFuncs,
+                firstHashFunc,
+                stream
+            );
+
+            CUERR;
+
+            cudaMemcpyAsync(
+                h_signatures, 
+                d_signatures, 
+                signaturesRowPitchElements * sizeof(std::uint64_t) * curBatchsize, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                constexpr int bits_kmer = sizeof(kmer_type) * 8;
+                constexpr std::uint64_t kmer_mask = (std::uint64_t(1) << (bits_kmer - 1)) 
+                                                    | ((std::uint64_t(1) << (bits_kmer - 1)) - 1);
+
+                std::uint64_t countlimit = 10000;
+                std::uint64_t count = 0;
+
+                for (read_number readId = begin; readId < end; readId++){
+                    read_number localId = readId - readIdBegin;
+
+                    for(int i = 0; i < numHashFuncs; i++){
+                        const kmer_type kmer = kmer_mask & h_signatures[signaturesRowPitchElements * localId + i];
+                        storeResult(i, kmer, readId);
+                    }
+                    
+                    count++;
+                    if(count == countlimit){
+                        addProgress(count);
+                        count = 0;                                                         
+                    }
+                }
+                if(count > 0){
+                    addProgress(count);
+                }
+            };
+
+            threadPool->parallelFor(
+                pforHandle,
+                readIdBegin,
+                readIdEnd,
+                std::move(lambda));
+        }
+    };
 
     class GpuMinhasher{
     private:
@@ -484,8 +628,6 @@ namespace gpu{
 
                     __shared__ BlockReduce::TempStorage temp_reduce;
                     __shared__ int broadcast;
-
-                    constexpr int debugindex = 82;
 
                     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
@@ -1395,7 +1537,9 @@ namespace gpu{
 
                     //TODO fix this. signatures are already being accounted for. determine memory required for transformation
                     for(int i = 0; i < 2 + int(minhashTables.size()); i++){
-                        const std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                        const std::size_t requiredMemPerTable = nReads * sizeof(Key_t)
+                                                                + nReads * sizeof(Value_t)
+                                                                + 4 * 1024;
                         if(availableMemoryToSaveGpuPartitions > requiredMemPerTable){
                             availableMemoryToSaveGpuPartitions -= requiredMemPerTable;
                         }else{
@@ -1636,6 +1780,101 @@ namespace gpu{
             );
         }
 
+
+        
+
+        std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
+        constructTablesAAA(
+            int numTables, 
+            int firstTableId,
+            std::int64_t numberOfReads,
+            int upperBoundSequenceLength,
+            const RuntimeOptions& runtimeOptions,
+            const DistributedReadStorage& readStorage
+        ){
+            constexpr read_number parallelReads = 1000000;
+            read_number numReads = numberOfReads;
+            const int numIters = SDIV(numReads, parallelReads);
+            const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+            
+            const auto& deviceIds = runtimeOptions.deviceIds;
+            const int numThreads = runtimeOptions.threads;
+
+            assert(deviceIds.size() > 0);
+
+            const int deviceId = deviceIds[0];
+
+            cudaSetDevice(deviceId); CUERR;
+
+            const int numHashFuncs = numTables;
+            const int firstHashFunc = firstTableId;
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            std::vector<std::vector<kmer_type>> kmersPerFunc(numTables);
+            std::vector<std::vector<read_number>> readIdsPerFunc(numTables);
+
+            for(auto& v : kmersPerFunc){
+                v.resize(numberOfReads);
+            }
+
+            for(auto& v : readIdsPerFunc){
+                v.resize(numberOfReads);
+            }
+
+            std::vector<int> tableIds(numTables);                
+            std::vector<int> hashIds(numTables);
+            
+            std::iota(tableIds.begin(), tableIds.end(), 0);
+
+            std::cout << "Constructing maps: ";
+            for(int i = 0; i < numTables; i++){
+                std::cout << (firstTableId + i) << ' ';
+            }
+            std::cout << '\n';
+
+            auto showProgress = [&](auto totalCount, auto seconds){
+                if(runtimeOptions.showProgress){
+                    std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                            << seconds << " seconds.\n";
+                }
+            };
+
+            auto updateShowProgressInterval = [](auto duration){
+                return duration * 2;
+            };
+
+            ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+            ThreadPool threadPool(numThreads);
+
+
+            GpuReadStorageHasher readHasher(numTables, getKmerSize(), &readStorage, &threadPool);
+
+            for (int iter = 0; iter < numIters; iter++){
+                read_number readIdBegin = iter * parallelReads;
+                read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+                readHasher.hash(
+                    readIdBegin, 
+                    readIdEnd,
+                    numHashFuncs,
+                    firstHashFunc,
+                    [&](int hashfunc, kmer_type kmer, read_number readId){
+                        kmersPerFunc[hashfunc][readId] = kmer;
+                        readIdsPerFunc[hashfunc][readId] = readId;
+                    },
+                    [&](auto p){
+                        progressThread.addProgress(p);
+                    }
+                );
+            }
+
+            progressThread.finished();
+
+            return {std::move(kmersPerFunc), std::move(readIdsPerFunc)};
+        }
+
         std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
         constructTablesWithGpuHashing(
             int numTables, 
@@ -1840,7 +2079,7 @@ namespace gpu{
             cudaSetDevice(deviceId); CUERR;
 
             const int numHashFuncs = numTables;
-            const int firstHashFunc = firstTableId;
+            //const int firstHashFunc = firstTableId;
             const std::size_t signaturesRowPitchElements = 48;
 
             ThreadPool::ParallelForHandle pforHandle;
@@ -2056,7 +2295,7 @@ namespace gpu{
             cudaSetDevice(deviceId); CUERR;
 
             const int numHashFuncs = numTables;
-            const int firstHashFunc = firstTableId;
+            //const int firstHashFunc = firstTableId;
             const std::size_t signaturesRowPitchElements = 48;
 
             ThreadPool::ParallelForHandle pforHandle;

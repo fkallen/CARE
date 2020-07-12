@@ -1394,7 +1394,6 @@ namespace gpu{
         const int numMinhashMaps = minhasher.getNumberOfMaps();
 
         const int resultsPerMap = calculateResultsPerMapThreshold(batchData.correctionOptions.estimatedCoverage);
-        const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
 
         //data of new anchors is appended to leftover data
 
@@ -1454,18 +1453,11 @@ namespace gpu{
 
         //minhash the retrieved anchors to find candidate ids
 
-        Batch* batchptr = &batchData;
-        NextIterationData* nextDataPtr = &nextData;
-        const Minhasher_t* minhasherPtr = &minhasher;
-
-        const int kmerSize = batchData.correctionOptions.kmerlength;
-        const int numHashFunctions = numMinhashMaps;
-
         const int numLeftoverCandidates = nextData.h_numLeftoverCandidates[0];
 
         ParallelForLoopExecutor parallelFor(batchData.threadPool, &nextData.pforHandle);
 
-        minhasherPtr->getIdsOfSimilarReads(
+        minhasher.getIdsOfSimilarReads(
             nextData.minhasherQueryHandle,
             nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
             nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,

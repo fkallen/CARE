@@ -963,8 +963,6 @@ void callMinhashSignaturesOfUniqueKmersKernel128_async(
     dim3 block(blocksize, 1, 1);
     dim3 grid(numSequences, 1, 1);
     size_t smem = 0;
-    
-    const int firstHashFunc = 0;
 
     minhashSignaturesOfUniqueKmersKernel128<128,1><<<grid, block, smem, stream>>>(
         d_signatures,

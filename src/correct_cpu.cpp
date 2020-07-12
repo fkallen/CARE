@@ -424,12 +424,11 @@ namespace cpu{
                     decode2BitSequence(decodedBegin,
                                         &data.subjectSequencesData[i * data.encodedSequencePitchInInts],
                                         length);
-                    //TODO modify minhasher to work with char ptr + size instead of string
-                    std::string sequence(decodedBegin, length);
 
                     minhasher.getCandidates_any_map(
                         data.minhashHandle,
-                        sequence,
+                        decodedBegin,
+                        length,
                         0
                     );
 

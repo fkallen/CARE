@@ -61,10 +61,11 @@ namespace care{
                                                 int expectedMaximumReadLength);
 
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
-                                			   const RuntimeOptions& runtimeOptions,
-                                               const MemoryOptions& memoryOptions,
-                                			   std::uint64_t nReads,
-                                			   cpu::ContiguousReadStorage& readStorage);
+                                            const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
+                                            std::uint64_t nReads,
+                                            const CorrectionOptions& correctionOptions,
+                                            cpu::ContiguousReadStorage& readStorage);
 
     BuiltDataStructures buildDataStructures2(
                                 			const CorrectionOptions& correctionOptions,
