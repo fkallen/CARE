@@ -48,15 +48,18 @@ namespace care{
         auto policy = thrust::omp::par;
 
         std::vector<Index_t> indices(size);
+        auto* indices_begin = indices.data();
+        auto* indices_end = indices.data() + indices.size();
+
         //TIMERSTARTCPU(iota);
-        thrust::sequence(policy, indices.begin(), indices.end(), Index_t(0));
+        thrust::sequence(policy, indices_begin, indices_end, Index_t(0));
         //TIMERSTOPCPU(iota);
 
         //TIMERSTARTCPU(sortindices);
         //sort indices by key. if keys are equal, sort by value
         thrust::sort(policy,
-                    indices.begin(),
-                    indices.end(),
+                    indices_begin,
+                    indices_end,
                     [&] (const auto &lhs, const auto &rhs) {
                         if(keys[lhs] == keys[rhs]){
                             return values[lhs] < values[rhs];
@@ -69,8 +72,8 @@ namespace care{
         //TIMERSTARTCPU(sortvalues);
         std::vector<Value_t> sortedValues(size);
         thrust::copy(policy,
-                    thrust::make_permutation_iterator(values.begin(), indices.begin()),
-                    thrust::make_permutation_iterator(values.begin(), indices.end()),
+                    thrust::make_permutation_iterator(values.begin(), indices_begin),
+                    thrust::make_permutation_iterator(values.begin(), indices_end),
                     sortedValues.begin());
 
         //TIMERSTOPCPU(sortvalues);
@@ -85,8 +88,8 @@ namespace care{
         //TIMERSTARTCPU(sortkeys);
         std::vector<Key_t> sortedKeys(size);
         thrust::copy(policy,
-                    thrust::make_permutation_iterator(keys.begin(), indices.begin()),
-                    thrust::make_permutation_iterator(keys.begin(), indices.end()),
+                    thrust::make_permutation_iterator(keys.begin(), indices_begin),
+                    thrust::make_permutation_iterator(keys.begin(), indices_end),
                     sortedKeys.begin());
 
         //TIMERSTOPCPU(sortkeys);
@@ -111,23 +114,28 @@ namespace care{
         std::vector<Key_t> histogram_keys(nUniqueKeys);
         std::vector<Index_t> histogram_counts(nUniqueKeys);
 
+        auto* keys_begin = keys.data();
+        auto* keys_end = keys.data() + keys.size();
+        auto* histogram_keys_begin = histogram_keys.data();
+        auto* histogram_counts_begin = histogram_counts.data();
+
         //make key - frequency histogram
         auto histogramEndIterators = thrust::reduce_by_key(policy,
-                                keys.begin(),
-                                keys.end(),
+                                keys_begin,
+                                keys_end,
                                 thrust::constant_iterator<Index_t>(1),
-                                histogram_keys.begin(),
-                                histogram_counts.begin());
+                                histogram_keys_begin,
+                                histogram_counts_begin);
 
-        assert(histogramEndIterators.first == histogram_keys.end());
-        assert(histogramEndIterators.second == histogram_counts.end());
+        assert(histogramEndIterators.first == histogram_keys.data() + nUniqueKeys);
+        assert(histogramEndIterators.second == histogram_counts.data() + nUniqueKeys);
 
         countsPrefixSum.resize(nUniqueKeys+1, Index_t(0));
 
         thrust::inclusive_scan(policy,
-                                histogram_counts.begin(),
+                                histogram_counts_begin,
                                 histogramEndIterators.second,
-                                countsPrefixSum.begin() + 1);
+                                countsPrefixSum.data() + 1);
 
         keys.swap(histogram_keys);
 
