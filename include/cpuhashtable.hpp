@@ -194,7 +194,7 @@ namespace care{
 
 
 namespace cpuhashtabledetail{
-    
+
         struct TransformResult{
             std::uint64_t numberOfUniqueKeys = 0;
             std::uint64_t numberOfRemovedKeys = 0;
@@ -211,6 +211,12 @@ namespace cpuhashtabledetail{
         std::uint64_t transformCPUCompactKeys(std::vector<Key_t>& keys,
                                             std::vector<Value_t>& values,
                                             std::vector<Index_t>& countsPrefixSum){
+
+            auto deallocVector = [](auto& vec){
+                using T = typename std::remove_reference<decltype(vec)>::type;
+                T tmp{};
+                vec.swap(tmp);
+            };
 
             assert(keys.size() == values.size());
             assert(std::numeric_limits<Index_t>::max() >= keys.size());
@@ -251,10 +257,7 @@ namespace cpuhashtabledetail{
 
             std::swap(sortedValues, values);
 
-            { // deallocate sortedValues
-                std::vector<Value_t> tmp{};
-                std::swap(sortedValues, tmp);
-            }
+            deallocVector(sortedValues);
 
             //TIMERSTARTCPU(sortkeys);
             std::vector<Key_t> sortedKeys(size);
@@ -267,10 +270,8 @@ namespace cpuhashtabledetail{
 
             std::swap(sortedKeys, keys);
 
-            { // deallocate sortedKeys
-                std::vector<Key_t> tmp{};
-                std::swap(sortedKeys, tmp);
-            }
+            deallocVector(sortedKeys);
+            deallocVector(indices);
 
             const Index_t nUniqueKeys = thrust::inner_product(policy,
                                                 keys.begin(),
