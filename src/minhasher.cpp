@@ -6,8 +6,6 @@
 #include <memorymanagement.hpp>
 #include <options.hpp>
 #include <readstorage.hpp>
-#include <minhasher_transform.hpp>
-
 
 #include <algorithm>
 #include <cassert>

@@ -14,7 +14,7 @@
 #include <util.hpp>
 #include <hpc_helpers.cuh>
 #include <filehelpers.hpp>
-#include <minhasher_transform.hpp>
+
 #include <sequence.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
