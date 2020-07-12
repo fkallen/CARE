@@ -338,17 +338,8 @@ struct GpuSegmentedUnique{
             info.host = 0;
             info.device[gpu] = 0;
 
-            auto handlehost = [&](const auto& buff){
-                info.host += buff.capacityInBytes();
-            };
-
             auto handledevice = [&](const auto& buff){
                 info.device[gpu] += buff.capacityInBytes();
-            };
-
-            auto handlevector = [&](const auto& buff){
-                info.host += 
-                    sizeof(typename std::remove_reference<decltype(buff)>::type::value_type) * buff.capacity();
             };
 
             handledevice(d_temp_storage);

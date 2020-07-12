@@ -629,8 +629,6 @@ namespace gpu{
                     __shared__ BlockReduce::TempStorage temp_reduce;
                     __shared__ int broadcast;
 
-                    constexpr int debugindex = 82;
-
                     for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
 
                        
@@ -2081,7 +2079,7 @@ namespace gpu{
             cudaSetDevice(deviceId); CUERR;
 
             const int numHashFuncs = numTables;
-            const int firstHashFunc = firstTableId;
+            //const int firstHashFunc = firstTableId;
             const std::size_t signaturesRowPitchElements = 48;
 
             ThreadPool::ParallelForHandle pforHandle;
@@ -2297,7 +2295,7 @@ namespace gpu{
             cudaSetDevice(deviceId); CUERR;
 
             const int numHashFuncs = numTables;
-            const int firstHashFunc = firstTableId;
+            //const int firstHashFunc = firstTableId;
             const std::size_t signaturesRowPitchElements = 48;
 
             ThreadPool::ParallelForHandle pforHandle;

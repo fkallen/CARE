@@ -241,14 +241,12 @@ namespace gpu{
             std::vector<read_number> countsPrefixSum;
             values = std::move(vals);
 
-            MinhashTransformResult result;
-
             if(keys.size() == 0) return;
 
             #ifdef __NVCC__            
             if(gpuIds.size() == 0){
             #endif
-                result = cpu_transformation(
+                cpu_transformation(
                     keys, 
                     values, 
                     counts, 
@@ -270,7 +268,6 @@ namespace gpu{
                 );
 
                 bool success = pair.first;
-                result = pair.second;
 
                 if(!success){
                     std::cerr << "Fallback to managed memory transformation.\n";
@@ -286,13 +283,12 @@ namespace gpu{
                     );
 
                     success = pair.first;
-                    result = pair.second;
                 }
 
                 if(!success){
                     std::cerr << "\nFallback to cpu transformation.\n";
                     
-                    result = cpu_transformation(
+                    cpu_transformation(
                         keys, 
                         values, 
                         counts, 
@@ -317,8 +313,6 @@ namespace gpu{
                 );
                 
             }
-
-            (void)result;
         }
 
         QueryResult query(const Key& key) const{

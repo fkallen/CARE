@@ -456,20 +456,6 @@ namespace gpu{
             return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
-        auto getSubjectPtr = [&] (int subjectIndex){
-            const unsigned int* result = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-            return result;
-        };
-
-        auto getCandidatePtr = [&] (int candidateIndex){
-            const unsigned int* result = candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
-            return result;
-        };
-
-        auto getCandidateLength = [&](int candidateIndex){
-            return candidateSequencesLength[candidateIndex];
-        };
-
         auto isGoodAvgSupport = [&](float avgsupport){
             return fgeq(avgsupport, avg_support_threshold);
         };
@@ -613,7 +599,7 @@ namespace gpu{
                         if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
                             my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                         }else{
-                            const unsigned int* subject = getSubjectPtr(subjectIndex);
+                            const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
                             const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
                             const char base = to_nuc(encodedBase);
                             assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
@@ -912,11 +898,6 @@ namespace gpu{
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
         constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
 
-
-        auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-            return reverseComplementStringInplace((char*)sequence, sequencelength);
-        };
-
         auto decodedReverseComplementInplaceGroup = [](auto group, char* sequence, int sequencelength){
             auto make_reverse_complement_nuc = [](char in){
                 switch(in){
@@ -1206,9 +1187,9 @@ namespace gpu{
             return getEncodedNuc2Bit(data, length, index, trafo);
         };
         
-        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
-            return ((data >> (30 - 2*pos)) & 0x00000003);
-        };
+        // auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+        //     return ((data >> (30 - 2*pos)) & 0x00000003);
+        // };
 
         auto to_nuc = [](char c){
             constexpr char A_enc = 0x00;
