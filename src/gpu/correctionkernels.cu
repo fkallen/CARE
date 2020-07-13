@@ -422,8 +422,7 @@ namespace gpu{
             const int* __restrict__ numAnchorsPtr,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
+            size_t msaColumnPitchInElements,
             int maximumSequenceLength,
             float estimatedErrorrate,
             float desiredAlignmentMaxErrorRate,
@@ -481,16 +480,14 @@ namespace gpu{
             }
         };
 
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
 
-                const float* const my_support = support + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_coverage = coverage + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_orig_coverage = origCoverages + msa_weights_pitch_floats * subjectIndex;
-                const char* const my_consensus = consensus + msa_pitch  * subjectIndex;
+                const float* const my_support = support + msaColumnPitchInElements * subjectIndex;
+                const int* const my_coverage = coverage + msaColumnPitchInElements * subjectIndex;
+                const int* const my_orig_coverage = origCoverages + msaColumnPitchInElements * subjectIndex;
+                const char* const my_consensus = consensus + msaColumnPitchInElements  * subjectIndex;
                 char* const my_corrected_subject = correctedSubjects + subjectIndex * sequence_pitch;
 
                 const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
@@ -888,8 +885,7 @@ namespace gpu{
             int numEditsThreshold,            
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
+            size_t msaColumnPitchInElements,
             size_t dynamicsmemPitchInInts){
 
         /*
@@ -955,8 +951,6 @@ namespace gpu{
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
 
-
-        //const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
         const int loopEnd = *numCandidatesToBeCorrected;
 
         for(int id = groupId;
@@ -977,7 +971,7 @@ namespace gpu{
 
             const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
 
-            const char* const my_consensus = consensus + msa_pitch * subjectIndex;
+            const char* const my_consensus = consensus + msaColumnPitchInElements * subjectIndex;
 
             if(tgroup.thread_rank() == 0){                        
                 shared_numEditsOfCandidate[groupIdInBlock] = 0;
@@ -995,7 +989,7 @@ namespace gpu{
                 shared_correctedCandidate[i - queryColumnsBegin_incl] = my_consensus[i];
             }
 
-            //const float* const my_support = support + msa_weights_pitch_floats * subjectIndex;
+            //const float* const my_support = support + msaColumnPitchInElements * subjectIndex;
             
 
             // for(int i = copyposbegin; i < copyposend; i += 1) {
@@ -1350,8 +1344,7 @@ namespace gpu{
                             int maxNumAnchors,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
+                            size_t msaColumnPitchElements,
                             int maximumSequenceLength,
                             float estimatedErrorrate,
                             float desiredAlignmentMaxErrorRate,
@@ -1434,8 +1427,7 @@ namespace gpu{
                                     d_numAnchors, \
                                     encodedSequencePitchInInts, \
                                     sequence_pitch, \
-                                    msa_pitch, \
-                                    msa_weights_pitch, \
+                                    msaColumnPitchElements, \
                                     maximumSequenceLength, \
                                     estimatedErrorrate, \
                                     desiredAlignmentMaxErrorRate, \
@@ -1479,7 +1471,7 @@ namespace gpu{
             const int* d_numLocalGoodCandidateIndicesPerSubject,
             const int* d_numAnchors,
             const int* d_numCandidates,
-            size_t msa_weights_pitch_floats,
+            size_t msaColumnPitchInElements,
             float min_support_threshold,
             float min_coverage_threshold,
             int new_columns_to_correct,
@@ -1558,7 +1550,7 @@ namespace gpu{
             d_numLocalGoodCandidateIndicesPerSubject,
             d_numAnchors,
             d_numCandidates,
-            msa_weights_pitch_floats,
+            msaColumnPitchInElements,
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct
@@ -1589,8 +1581,7 @@ namespace gpu{
             int numEditsThreshold,
             int encodedSequencePitchInInts,
             size_t sequence_pitch,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
+            size_t msaColumnPitchInElements,
             int maximum_sequence_length,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
@@ -1674,8 +1665,7 @@ namespace gpu{
                     numEditsThreshold, \
                     encodedSequencePitchInInts, \
                     sequence_pitch, \
-                    msa_pitch, \
-                    msa_weights_pitch, \
+                    msaColumnPitchInElements, \
                     dynamicsmemPitchInInts \
                 ); CUERR;
 

@@ -603,13 +603,11 @@ namespace gpu{
         int encodedSequencePitchInInts;
         int decodedSequencePitchInBytes;
         int qualityPitchInBytes;        
-        int maxNumEditsPerSequence;        
-        int msa_weights_pitch;
-        int msa_pitch;        
+        int maxNumEditsPerSequence;      
         int n_subjects;
         int n_queries;        
         int graphindex = 0;
-        size_t msa_weights_pitch_floats = 0;
+        size_t msaColumnPitchInElements = 0;
 
         BackgroundThread* outputThread;
         BackgroundThread* backgroundWorker;
@@ -894,11 +892,10 @@ namespace gpu{
             auto& streams = batchData.streams;
     
             const auto sequence_pitch = batchData.decodedSequencePitchInBytes;
-            const auto msa_pitch = batchData.msa_pitch;
             const auto maxCandidates = batchData.numCandidatesLimit;
             const auto encodedSeqPitchInts = batchData.encodedSequencePitchInInts;
             const auto qualPitchBytes = batchData.qualityPitchInBytes;
-            const auto msa_weights_pitch_floats = batchData.msa_weights_pitch_floats;
+            const auto msaColumnPitchInElements = batchData.msaColumnPitchInElements;
             const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
                     
             const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
@@ -1024,23 +1021,23 @@ namespace gpu{
     
             //multiple sequence alignment
     
-            h_consensus.resize(batchsize * msa_pitch);
-            h_support.resize(batchsize * msa_weights_pitch_floats);
-            h_coverage.resize(batchsize * msa_weights_pitch_floats);
-            h_origWeights.resize(batchsize * msa_weights_pitch_floats);
-            h_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            h_consensus.resize(batchsize * msaColumnPitchInElements);
+            h_support.resize(batchsize * msaColumnPitchInElements);
+            h_coverage.resize(batchsize * msaColumnPitchInElements);
+            h_origWeights.resize(batchsize * msaColumnPitchInElements);
+            h_origCoverages.resize(batchsize * msaColumnPitchInElements);
             h_msa_column_properties.resize(batchsize);
-            h_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
-            h_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+            h_counts.resize(batchsize * 4 * msaColumnPitchInElements);
+            h_weights.resize(batchsize * 4 * msaColumnPitchInElements);
     
-            d_consensus.resize(batchsize * msa_pitch);
-            d_support.resize(batchsize * msa_weights_pitch_floats);
-            d_coverage.resize(batchsize * msa_weights_pitch_floats);
-            d_origWeights.resize(batchsize * msa_weights_pitch_floats);
-            d_origCoverages.resize(batchsize * msa_weights_pitch_floats);
+            d_consensus.resize(batchsize * msaColumnPitchInElements);
+            d_support.resize(batchsize * msaColumnPitchInElements);
+            d_coverage.resize(batchsize * msaColumnPitchInElements);
+            d_origWeights.resize(batchsize * msaColumnPitchInElements);
+            d_origCoverages.resize(batchsize * msaColumnPitchInElements);
             d_msa_column_properties.resize(batchsize);
-            d_counts.resize(batchsize * 4 * msa_weights_pitch_floats);
-            d_weights.resize(batchsize * 4 * msa_weights_pitch_floats);
+            d_counts.resize(batchsize * 4 * msaColumnPitchInElements);
+            d_weights.resize(batchsize * 4 * msaColumnPitchInElements);
     
     
             d_canExecute.resize(1);
@@ -2037,8 +2034,7 @@ namespace gpu{
             batch.correctionOptions.useQualityScores,
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
-            batch.msa_pitch,
-            batch.msa_weights_pitch / sizeof(float),
+            batch.msaColumnPitchInElements,
             batch.d_indices,
             batch.d_indices_per_subject,
             batch.d_candidates_per_subject_prefixsum,
@@ -2121,8 +2117,7 @@ namespace gpu{
                 batch.correctionOptions.useQualityScores,
                 batch.encodedSequencePitchInInts,
                 batch.qualityPitchInBytes,
-                batch.msa_pitch,
-                batch.msa_weights_pitch / sizeof(float),
+                batch.msaColumnPitchInElements,
                 d_indices_dblbuf[(0 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(0 + iteration) % 2],
                 batch.correctionOptions.estimatedCoverage,
@@ -2298,7 +2293,7 @@ namespace gpu{
                     msacolumns,
                     batch.decodedSequencePitchInBytes);
                 std::cout << "\n";
-                std::string consensus = std::string{batch.h_consensus + i * batch.msa_pitch, batch.h_consensus + i * batch.msa_pitch + msacolumns};
+                std::string consensus = std::string{batch.h_consensus + i * batch.msaColumnPitchInElements, batch.h_consensus + i * batch.msaColumnPitchInElements + msacolumns};
                 std::cout << "Consensus:\n   " << consensus << "\n\n";
                 printSequencesInMSAConsEq(std::cout,
                     anchorString.c_str(),
@@ -2383,8 +2378,7 @@ namespace gpu{
         ); CUERR;
         cudaDeviceSynchronize();
 
-        std::size_t msa_weights_row_pitch_floats = batch.msa_weights_pitch / sizeof(float);
-        std::size_t msa_row_pitch = batch.msa_pitch;
+        const std::size_t msaColumnPitchInElements = batch.msaColumnPitchInElements;
 
         for(int i = 0; i < batch.n_subjects; i++){
             if(batch.h_subject_read_ids[i] == 13){
@@ -2392,60 +2386,60 @@ namespace gpu{
                 std::cerr << "subjectColumnsEnd_excl = " << batch.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
                 std::cerr << "lastColumn_excl = " << batch.h_msa_column_properties[i].lastColumn_excl << "\n";
                 std::cerr << "counts: \n";
-                int* counts = batch.h_counts + i * 4 * msa_weights_row_pitch_floats;
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[0 * msa_weights_row_pitch_floats + k] << ' ';
+                int* counts = batch.h_counts + i * 4 * msaColumnPitchInElements;
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << counts[0 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[1 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << counts[1 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[2 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << counts[2 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << counts[3 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << counts[3 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "weights: \n";
-                float* weights = batch.h_weights + i * 4 * msa_weights_row_pitch_floats;
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[0 * msa_weights_row_pitch_floats + k] << ' ';
+                float* weights = batch.h_weights + i * 4 * msaColumnPitchInElements;
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << weights[0 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[1 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << weights[1 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[2 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << weights[2 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
-                    std::cerr << weights[3 * msa_weights_row_pitch_floats + k] << ' ';
+                for(int k = 0; k < msaColumnPitchInElements; k++){
+                    std::cerr << weights[3 * msaColumnPitchInElements + k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "coverage: \n";
-                int* coverage = batch.h_coverage + i * msa_weights_row_pitch_floats;
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                int* coverage = batch.h_coverage + i * msaColumnPitchInElements;
+                for(int k = 0; k < msaColumnPitchInElements; k++){
                     std::cerr << coverage[k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "support: \n";
-                float* support = batch.h_support + i * msa_weights_row_pitch_floats;
-                for(int k = 0; k < msa_weights_row_pitch_floats; k++){
+                float* support = batch.h_support + i * msaColumnPitchInElements;
+                for(int k = 0; k < msaColumnPitchInElements; k++){
                     std::cerr << support[k] << ' ';
                 }
                 std::cerr << "\n";
 
                 std::cerr << "consensus: \n";
-                char* consensus = batch.h_consensus + i * msa_row_pitch;
-                for(int k = 0; k < msa_row_pitch; k++){
+                char* consensus = batch.h_consensus + i * msaColumnPitchInElements;
+                for(int k = 0; k < msaColumnPitchInElements; k++){
                     std::cerr << consensus[k] << ' ';
                 }
                 std::cerr << "\n";
@@ -2487,8 +2481,7 @@ namespace gpu{
             batchsize,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            batch.msa_pitch,
-            batch.msa_weights_pitch,
+            batch.msaColumnPitchInElements,
             batch.sequenceFileProperties.maxSequenceLength,
             batch.correctionOptions.estimatedErrorrate,
             batch.goodAlignmentProperties.maxErrorRate,
@@ -2692,7 +2685,7 @@ namespace gpu{
             d_indices_per_subject,
             d_numAnchors,
             d_numCandidates,
-            batch.msa_weights_pitch / sizeof(float),
+            batch.msaColumnPitchInElements,
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct,
@@ -2807,8 +2800,7 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            batch.msa_pitch,
-            batch.msa_weights_pitch,
+            batch.msaColumnPitchInElements,
             batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -3512,9 +3504,8 @@ correct_gpu(
             );
     
             batchData.msa_max_column_count = (3*sequenceFileProperties.maxSequenceLength - 2*batchData.min_overlap);
-            batchData.msa_pitch = SDIV(sizeof(char)*batchData.msa_max_column_count, 4) * 4;
-            batchData.msa_weights_pitch = SDIV(sizeof(float)*batchData.msa_max_column_count, 4) * 4;
-            batchData.msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
+            //round up to 32 elements
+            batchData.msaColumnPitchInElements = SDIV(batchData.msa_max_column_count, 32) * 32;
             
             batchData.numCandidatesLimit = numCandidatesLimitPerGpu[deviceId];
 
