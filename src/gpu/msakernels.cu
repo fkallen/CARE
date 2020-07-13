@@ -47,7 +47,7 @@ namespace gpu{
             const MSAColumnProperties* __restrict__ msaColumnProperties,
             const int* __restrict__ counts,
             const float* __restrict__ weights,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             int subjectIndex){
 
         const int firstColumn_incl = msaColumnProperties->firstColumn_incl;
@@ -59,8 +59,8 @@ namespace gpu{
             float sumOfWeights = 0.0f;
 
             for(int k = 0; k < 4; k++){
-                const int count = mycounts[k * msa_weights_row_pitch_floats];
-                const float weight = myweights[k * msa_weights_row_pitch_floats];
+                const int count = mycounts[k * msaColumnPitchInElements];
+                const float weight = myweights[k * msaColumnPitchInElements];
                 if(count > 0 && weight <= 0.0f){
                     printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
                         subjectIndex, column, k, count, weight);
@@ -195,7 +195,7 @@ namespace gpu{
             int* __restrict__ counts,
             float* __restrict__ weights,
             int* __restrict__ coverages,
-            int rowPitchInElements,
+            int msaColumnPitchInElements,
             const unsigned int* sequence, 
             int sequenceLength, 
             bool isForward,
@@ -235,7 +235,7 @@ namespace gpu{
                     const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
 
                     assert(weight != 0);
-                    const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                    const int rowOffset = encodedBaseAsInt * msaColumnPitchInElements;
                     const int columnIndex = columnStart 
                             + (isForward ? (intIndex * 16 + posInInt) : sequenceLength - 1 - (intIndex * 16 + posInInt));
                     
@@ -259,7 +259,7 @@ namespace gpu{
                 const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
 
                 assert(weight != 0);
-                const int rowOffset = encodedBaseAsInt * rowPitchInElements;
+                const int rowOffset = encodedBaseAsInt * msaColumnPitchInElements;
                 const int columnIndex = columnStart 
                     + (isForward ? (fullInts * 16 + posInInt) : sequenceLength - 1 - (fullInts * 16 + posInInt));
                     atomicAdd(counts + rowOffset + columnIndex, doAdd ? 1 : -1);
@@ -290,7 +290,7 @@ namespace gpu{
             int numIndices,
             size_t elementOffsetForTransposedCandidates,
             bool canUseQualityScores, 
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
             float desiredAlignmentMaxErrorRate,
@@ -302,12 +302,12 @@ namespace gpu{
         float* const myweights = inputweights;
         int* const mycoverages = inputcoverages;        
 
-        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats * 4; column += BLOCKSIZE){
+        for(int column = threadIdx.x; column < msaColumnPitchInElements * 4; column += BLOCKSIZE){
             mycounts[column] = 0;
             myweights[column] = 0;
         }
 
-        for(int column = threadIdx.x; column < msa_weights_row_pitch_floats; column += BLOCKSIZE){
+        for(int column = threadIdx.x; column < msaColumnPitchInElements; column += BLOCKSIZE){
             mycoverages[column] = 0;
         }   
         
@@ -325,7 +325,7 @@ namespace gpu{
             const int columnIndex = subjectColumnsBegin_incl + i;
             const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
             const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
-            const int rowOffset = int(encbase) * msa_weights_row_pitch_floats;
+            const int rowOffset = int(encbase) * msaColumnPitchInElements;
 
             atomicAdd(mycounts + rowOffset + columnIndex, 1);
             atomicAdd(myweights + rowOffset + columnIndex, weight);
@@ -365,7 +365,7 @@ namespace gpu{
                 mycounts,
                 myweights,
                 mycoverages,
-                msa_weights_row_pitch_floats,
+                msaColumnPitchInElements,
                 query, 
                 queryLength, 
                 isForward,
@@ -399,7 +399,7 @@ namespace gpu{
             int numIndices,
             size_t elementOffsetForTransposedCandidates,
             bool canUseQualityScores, 
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
             float desiredAlignmentMaxErrorRate,
@@ -450,7 +450,7 @@ namespace gpu{
                     mycounts,
                     myweights,
                     mycoverages,
-                    msa_weights_row_pitch_floats,
+                    msaColumnPitchInElements,
                     query, 
                     queryLength, 
                     isForward,
@@ -479,21 +479,20 @@ namespace gpu{
             const unsigned int* __restrict__ myAnchorSequenceData, 
             int subjectIndex,
             int encodedSequencePitchInInts, 
-            size_t msa_pitch,
-            size_t msa_weights_pitch_floats){
+            size_t msaColumnPitchInElements){
 
         const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
         const int firstColumn_incl = myMsaColumnProperties->firstColumn_incl;
         const int lastColumn_excl = myMsaColumnProperties->lastColumn_excl;
 
-        if(lastColumn_excl > msa_weights_pitch_floats){
+        if(lastColumn_excl > msaColumnPitchInElements){
             if(threadIdx.x == 0){
-                printf("%d, %d %lu\n", subjectIndex, lastColumn_excl, msa_weights_pitch_floats);
+                printf("%d, %d %lu\n", subjectIndex, lastColumn_excl, msaColumnPitchInElements);
             }
             __syncthreads();
         }
-        assert(lastColumn_excl <= msa_weights_pitch_floats);
+        assert(lastColumn_excl <= msaColumnPitchInElements);
 
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
         const unsigned int* const subject = myAnchorSequenceData;
@@ -510,7 +509,7 @@ namespace gpu{
         }
 
         for(int column = threadIdx.x; 
-                lastColumn_excl <= column && column < msa_weights_pitch_floats; 
+                lastColumn_excl <= column && column < msaColumnPitchInElements; 
                 column += BLOCKSIZE){
 
             my_support[column] = 0;
@@ -526,21 +525,21 @@ namespace gpu{
         }
 
         for(int column = threadIdx.x; 
-                lastColumn_excl <= column && column < msa_weights_pitch_floats; 
+                lastColumn_excl <= column && column < msaColumnPitchInElements; 
                 column += BLOCKSIZE){
 
             my_consensus[column] = 0;
         }
 
-        const int* const myCountsA = myCounts + 0 * msa_weights_pitch_floats;
-        const int* const myCountsC = myCounts + 1 * msa_weights_pitch_floats;
-        const int* const myCountsG = myCounts + 2 * msa_weights_pitch_floats;
-        const int* const myCountsT = myCounts + 3 * msa_weights_pitch_floats;
+        const int* const myCountsA = myCounts + 0 * msaColumnPitchInElements;
+        const int* const myCountsC = myCounts + 1 * msaColumnPitchInElements;
+        const int* const myCountsG = myCounts + 2 * msaColumnPitchInElements;
+        const int* const myCountsT = myCounts + 3 * msaColumnPitchInElements;
 
-        const float* const my_weightsA = myWeights + 0 * msa_weights_pitch_floats;
-        const float* const my_weightsC = myWeights + 1 * msa_weights_pitch_floats;
-        const float* const my_weightsG = myWeights + 2 * msa_weights_pitch_floats;
-        const float* const my_weightsT = myWeights + 3 * msa_weights_pitch_floats;
+        const float* const my_weightsA = myWeights + 0 * msaColumnPitchInElements;
+        const float* const my_weightsC = myWeights + 1 * msaColumnPitchInElements;
+        const float* const my_weightsG = myWeights + 2 * msaColumnPitchInElements;
+        const float* const my_weightsT = myWeights + 3 * msaColumnPitchInElements;
 
         for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += BLOCKSIZE){
             const int ca = myCountsA[column];
@@ -631,8 +630,7 @@ namespace gpu{
             float desiredAlignmentMaxErrorRate,
             int subjectIndex,
             int encodedSequencePitchInInts,
-            size_t msa_pitch,
-            size_t msa_weights_pitch_floats,
+            size_t msaColumnPitchInElements,
             const int* __restrict__ myIndices,
             const int myNumIndices,
             int dataset_coverage){
@@ -685,7 +683,9 @@ namespace gpu{
             hasMismatchToConsensus |= (consbase != subjectbase);
         }
 
-        hasMismatchToConsensus = BlockReduceBool(*temp_storage_boolreduce).Reduce(hasMismatchToConsensus, [](auto l, auto r){return l || r;});
+        hasMismatchToConsensus = 
+            BlockReduceBool(*temp_storage_boolreduce)
+                .Reduce(hasMismatchToConsensus, [](auto l, auto r){return l || r;});
 
         if(threadIdx.x == 0){
             broadcastbufferbool = hasMismatchToConsensus;
@@ -703,10 +703,10 @@ namespace gpu{
             int foundBaseIndex = std::numeric_limits<int>::max();
             int consindex = std::numeric_limits<int>::max();
 
-            const int* const myCountsA = myCounts + 0 * msa_weights_pitch_floats;
-            const int* const myCountsC = myCounts + 1 * msa_weights_pitch_floats;
-            const int* const myCountsG = myCounts + 2 * msa_weights_pitch_floats;
-            const int* const myCountsT = myCounts + 3 * msa_weights_pitch_floats;
+            const int* const myCountsA = myCounts + 0 * msaColumnPitchInElements;
+            const int* const myCountsC = myCounts + 1 * msaColumnPitchInElements;
+            const int* const myCountsG = myCounts + 2 * msaColumnPitchInElements;
+            const int* const myCountsT = myCounts + 3 * msaColumnPitchInElements;
 
             for(int columnindex = subjectColumnsBegin_incl + threadIdx.x; 
                     columnindex < subjectColumnsEnd_excl && !foundColumn; 
@@ -833,7 +833,8 @@ namespace gpu{
                         }
                     }
 
-                    veryGoodAlignment = BlockReduceBool(*temp_storage_boolreduce).Reduce(veryGoodAlignment, [](auto l, auto r){return l || r;});
+                    veryGoodAlignment = BlockReduceBool(*temp_storage_boolreduce)
+                        .Reduce(veryGoodAlignment, [](auto l, auto r){return l || r;});
 
                     if(threadIdx.x == 0){
                         broadcastbufferbool = veryGoodAlignment;
@@ -985,13 +986,11 @@ namespace gpu{
                 MSAColumnProperties* __restrict__ msaColumnProperties,
                 const int* __restrict__ coverage,
                 const int* __restrict__ d_indices_per_subject,
-                size_t msa_weights_pitch,
+                size_t msaColumnPitchInElements,
                 int n_subjects,
                 const bool* __restrict__ canExecute){
 
         if(*canExecute){
-
-            const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
                 MSAColumnProperties* const properties_ptr = msaColumnProperties + subjectIndex;
@@ -1002,7 +1001,7 @@ namespace gpu{
                 const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
 
                 if(num_indices_for_this_subject > 0){
-                    const int* const my_coverage = coverage + subjectIndex * msa_weights_pitch_floats;
+                    const int* const my_coverage = coverage + subjectIndex * msaColumnPitchInElements;
 
                     for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl-1; column += blockDim.x){
                         assert(my_coverage[column] >= 0);
@@ -1067,8 +1066,7 @@ namespace gpu{
             float desiredAlignmentMaxErrorRate,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             const bool* __restrict__ canExecute){
 
         constexpr bool useSmem = memType == MemoryType::Shared;
@@ -1078,8 +1076,8 @@ namespace gpu{
             extern __shared__ float sharedmem[];
 
             float* const shared_weights = sharedmem;
-            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
-            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
+            int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
+            int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
             
             for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
                 const int numGoodCandidates = d_indices_per_subject[subjectIndex];
@@ -1088,14 +1086,14 @@ namespace gpu{
 
                     const int globalCandidateOffset = d_candidates_per_subject_prefixsum[subjectIndex];
 
-                    int* const inputcounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    float* const inputweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    int* const inputcoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
+                    int* const inputcounts = counts + subjectIndex * 4 * msaColumnPitchInElements;
+                    float* const inputweights = weights + subjectIndex * 4 * msaColumnPitchInElements;
+                    int* const inputcoverages = coverage + subjectIndex * msaColumnPitchInElements;
                     const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
 
                     const int columnsToCheck = myMsaColumnProperties->lastColumn_excl;
 
-                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
+                    assert(columnsToCheck <= msaColumnPitchInElements);
 
                     int* const mycounts = (useSmem ? shared_counts : inputcounts);
                     float* const myweights = (useSmem ? shared_weights : inputweights);
@@ -1135,7 +1133,7 @@ namespace gpu{
                         numGoodCandidates,
                         n_queries,
                         canUseQualityScores, 
-                        msa_weights_row_pitch_floats,
+                        msaColumnPitchInElements,
                         encodedSequencePitchInInts,
                         qualityPitchInBytes,
                         desiredAlignmentMaxErrorRate,
@@ -1148,7 +1146,7 @@ namespace gpu{
                         myMsaColumnProperties,
                         mycounts,
                         myweights,
-                        msa_weights_row_pitch_floats,
+                        msaColumnPitchInElements,
                         subjectIndex
                     ); 
 
@@ -1158,11 +1156,11 @@ namespace gpu{
                         int* const gmemCoverage  = inputcoverages;
                         for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                             for(int k = 0; k < 4; k++){
-                                const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
-                                int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
+                                const int* const srcCounts = mycounts + k * msaColumnPitchInElements + index;
+                                int* const destCounts = inputcounts + k * msaColumnPitchInElements + index;
             
-                                const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
-                                float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
+                                const float* const srcWeights = myweights + k * msaColumnPitchInElements + index;
+                                float* const destWeights = inputweights + k * msaColumnPitchInElements + index;
             
                                 *destCounts = *srcCounts;
                                 *destWeights = *srcWeights;
@@ -1209,8 +1207,7 @@ namespace gpu{
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             const bool* __restrict__ canExecute){
 
         constexpr bool candidatesAreTransposed = true;
@@ -1224,12 +1221,10 @@ namespace gpu{
 
             extern __shared__ float sharedmem[];
 
-
-            //const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-            const int smemsizefloats = 4 * msa_weights_row_pitch_floats + 4 * msa_weights_row_pitch_floats;
+            const int smemsizefloats = 4 * msaColumnPitchInElements + 4 * msaColumnPitchInElements;
 
             float* const shared_weights = sharedmem;
-            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
+            int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
 
             const int requiredLogicalBlocks = d_blocksPerSubjectPrefixSum[n_subjects];
             
@@ -1261,16 +1256,16 @@ namespace gpu{
                         __syncthreads();
                     }
 
-                    int* const mycounts = (useSmem ? shared_counts : counts + subjectIndex * 4 * msa_weights_row_pitch_floats);
-                    float* const myweights = (useSmem ? shared_weights : weights + subjectIndex * 4 * msa_weights_row_pitch_floats);
-                    int* const my_coverage = coverage + subjectIndex * msa_weights_row_pitch_floats;
+                    int* const mycounts = (useSmem ? shared_counts : counts + subjectIndex * 4 * msaColumnPitchInElements);
+                    float* const myweights = (useSmem ? shared_weights : weights + subjectIndex * 4 * msaColumnPitchInElements);
+                    int* const my_coverage = coverage + subjectIndex * msaColumnPitchInElements;
 
                     //add subject
                     const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
                     const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
                     const int columnsToCheck = msaColumnProperties[subjectIndex].lastColumn_excl;
 
-                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
+                    assert(columnsToCheck <= msaColumnPitchInElements);
 
                     const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                     const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
@@ -1281,7 +1276,7 @@ namespace gpu{
                             const int columnIndex = subjectColumnsBegin_incl + i;
                             const char base = get((const char*)subject, subjectLength, i);
                             const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
-                            const int rowOffset = int(base) * msa_weights_row_pitch_floats;
+                            const int rowOffset = int(base) * msaColumnPitchInElements;
 
                             atomicAdd(mycounts + rowOffset + columnIndex, 1);
                             atomicAdd(myweights + rowOffset + columnIndex, weight);
@@ -1340,7 +1335,7 @@ namespace gpu{
                             mycounts,
                             myweights,
                             my_coverage,
-                            msa_weights_row_pitch_floats,
+                            msaColumnPitchInElements,
                             query, 
                             queryLength, 
                             isForward,
@@ -1358,10 +1353,10 @@ namespace gpu{
 
                         for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
                             for(int k = 0; k < 4; k++){
-                                const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
-                                int* const destCounts = counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
-                                const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
-                                float* const destWeights = weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                                const int* const srcCounts = shared_counts + k * msaColumnPitchInElements + index;
+                                int* const destCounts = counts + 4 * msaColumnPitchInElements * subjectIndex + k * msaColumnPitchInElements + index;
+                                const float* const srcWeights = shared_weights + k * msaColumnPitchInElements + index;
+                                float* const destWeights = weights + 4 * msaColumnPitchInElements * subjectIndex + k * msaColumnPitchInElements + index;
                                 atomicAdd(destCounts ,*srcCounts);
                                 atomicAdd(destWeights, *srcWeights);
                             }
@@ -1382,20 +1377,18 @@ namespace gpu{
                                 const float* __restrict__ weights,
                                 const int* __restrict__ d_indices_per_subject,
                                 int nSubjects,
-                                size_t msa_weights_row_pitch,
+                                size_t msaColumnPitchInElements,
                                 const bool* __restrict__ canExecute){
 
         if(*canExecute){
-
-            const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
             for(int subjectIndex = blockIdx.x; subjectIndex < nSubjects; subjectIndex += gridDim.x){
                 if(d_indices_per_subject[subjectIndex] > 0){
                     checkBuiltMSA(
                         msaColumnProperties + subjectIndex,
-                        counts + 4 * msa_weights_row_pitch_floats * subjectIndex,
-                        weights + 4 * msa_weights_row_pitch_floats * subjectIndex,
-                        msa_weights_row_pitch_floats,
+                        counts + 4 * msaColumnPitchInElements * subjectIndex,
+                        weights + 4 * msaColumnPitchInElements * subjectIndex,
+                        msaColumnPitchInElements,
                         subjectIndex
                     );                      
                 }
@@ -1418,28 +1411,25 @@ namespace gpu{
             const int* __restrict__ d_indices_per_subject,
             int n_subjects,
             int encodedSequencePitchInInts,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
+            size_t msaColumnPitchInElements,
             const bool* __restrict__ canExecute){
 
         if(*canExecute){
-
-            const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
             //process multiple sequence alignment of each subject
             //for each column in msa, find consensus and support
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                 if(d_indices_per_subject[subjectIndex] > 0){
 
-                    char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
-                    float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
-                    float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
-                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
+                    char* const my_consensus = d_consensus + subjectIndex * msaColumnPitchInElements;
+                    float* const my_support = d_support + subjectIndex * msaColumnPitchInElements;
+                    float* const my_orig_weights = d_origWeights + subjectIndex * msaColumnPitchInElements;
+                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msaColumnPitchInElements;
 
                     const MSAColumnProperties* const myColumnProperties = d_msaColumnProperties + subjectIndex;
 
-                    const int* const myCounts = d_counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                    const float* const myWeights = d_weights + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const int* const myCounts = d_counts + 4 * msaColumnPitchInElements * subjectIndex;
+                    const float* const myWeights = d_weights + 4 * msaColumnPitchInElements * subjectIndex;
 
                     const unsigned int* const anchorData = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
 
@@ -1454,8 +1444,7 @@ namespace gpu{
                         anchorData, 
                         subjectIndex,
                         encodedSequencePitchInInts, 
-                        msa_pitch,
-                        msa_weights_pitch_floats
+                        msaColumnPitchInElements
                     );
                 }
             }
@@ -1509,8 +1498,7 @@ namespace gpu{
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             const bool* __restrict__ canExecute){
 
         constexpr bool useSmemForAddSequences = (addSequencesMemType == MemoryType::Shared);
@@ -1527,8 +1515,8 @@ namespace gpu{
             typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
 
             float* const shared_weights = sharedmem;
-            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
-            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_row_pitch_floats);
+            int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
+            int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                 const int myNumGoodCandidates = indices_per_subject[subjectIndex];
@@ -1537,13 +1525,13 @@ namespace gpu{
 
                     const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
                     
-                    int* const inputcoverages = coverage + subjectIndex * msa_weights_row_pitch_floats;
-                    int* const inputcounts = counts + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    float* const inputweights = weights + subjectIndex * 4 * msa_weights_row_pitch_floats;
-                    float* const my_support = d_support + subjectIndex * msa_weights_row_pitch_floats;
-                    float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_row_pitch_floats;
-                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_row_pitch_floats;
-                    char* const my_consensus = d_consensus + subjectIndex * msa_row_pitch;
+                    int* const inputcoverages = coverage + subjectIndex * msaColumnPitchInElements;
+                    int* const inputcounts = counts + subjectIndex * 4 * msaColumnPitchInElements;
+                    float* const inputweights = weights + subjectIndex * 4 * msaColumnPitchInElements;
+                    float* const my_support = d_support + subjectIndex * msaColumnPitchInElements;
+                    float* const my_orig_weights = d_origWeights + subjectIndex * msaColumnPitchInElements;
+                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msaColumnPitchInElements;
+                    char* const my_consensus = d_consensus + subjectIndex * msaColumnPitchInElements;
 
                     int* const mycounts = (useSmemForAddSequences ? shared_counts : inputcounts);
                     float* const myweights = (useSmemForAddSequences ? shared_weights : inputweights);
@@ -1587,7 +1575,7 @@ namespace gpu{
 
                     const int columnsToCheck = columnProperties.lastColumn_excl;
 
-                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
+                    assert(columnsToCheck <= msaColumnPitchInElements);
 
                     addSequencesToMSASingleBlock<BLOCKSIZE>(
                         mycounts,
@@ -1607,7 +1595,7 @@ namespace gpu{
                         myNumGoodCandidates,
                         n_candidates,
                         canUseQualityScores, 
-                        msa_weights_row_pitch_floats,
+                        msaColumnPitchInElements,
                         encodedSequencePitchInInts,
                         qualityPitchInBytes,
                         desiredAlignmentMaxErrorRate,
@@ -1620,7 +1608,7 @@ namespace gpu{
                         &columnProperties,
                         mycounts,
                         myweights,
-                        msa_weights_row_pitch_floats,
+                        msaColumnPitchInElements,
                         subjectIndex
                     ); 
 
@@ -1635,8 +1623,7 @@ namespace gpu{
                         myAnchorSequenceData, 
                         subjectIndex,
                         encodedSequencePitchInInts, 
-                        msa_row_pitch,
-                        msa_weights_row_pitch_floats
+                        msaColumnPitchInElements
                     );
 
                     if(useSmemForAddSequences){
@@ -1644,11 +1631,11 @@ namespace gpu{
             
                         for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                             for(int k = 0; k < 4; k++){
-                                const int* const srcCounts = mycounts + k * msa_weights_row_pitch_floats + index;
-                                int* const destCounts = inputcounts + k * msa_weights_row_pitch_floats + index;
+                                const int* const srcCounts = mycounts + k * msaColumnPitchInElements + index;
+                                int* const destCounts = inputcounts + k * msaColumnPitchInElements + index;
             
-                                const float* const srcWeights = myweights + k * msa_weights_row_pitch_floats + index;
-                                float* const destWeights = inputweights + k * msa_weights_row_pitch_floats + index;
+                                const float* const srcWeights = myweights + k * msaColumnPitchInElements + index;
+                                float* const destWeights = inputweights + k * msaColumnPitchInElements + index;
             
                                 *destCounts = *srcCounts;
                                 *destWeights = *srcWeights;
@@ -1697,17 +1684,13 @@ namespace gpu{
             int n_subjects,
             int n_candidates,
             int encodedSequencePitchInInts,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
+            size_t msaColumnPitchInElements,
             const int* __restrict__ d_indices,
             const int* __restrict__ d_indices_per_subject,
             int dataset_coverage,
             const bool* __restrict__ canExecute){
 
         if(*canExecute){
-
-            const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
 
             using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
             using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
@@ -1732,9 +1715,9 @@ namespace gpu{
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;
 
                     const MSAColumnProperties* const myMsaColumnProperties = msaColumnProperties + subjectIndex;
-                    const char* const myConsensus = consensus + msa_pitch * subjectIndex;
-                    const int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                    const float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
+                    const char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
+                    const int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
+                    const float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
 
                     const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                     const int* const myShifts = shifts + globalOffset;
@@ -1769,8 +1752,7 @@ namespace gpu{
                         desiredAlignmentMaxErrorRate,
                         subjectIndex,
                         encodedSequencePitchInInts,
-                        msa_pitch,
-                        msa_weights_pitch_floats,
+                        msaColumnPitchInElements,
                         myIndices,
                         myNumIndices,
                         dataset_coverage
@@ -1823,8 +1805,7 @@ namespace gpu{
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_pitch,
-            size_t msa_weights_pitch_floats,
+            size_t msaColumnPitchInElements,
             const int* __restrict__ d_indices,
             const int* __restrict__ d_indices_per_subject,
             int dataset_coverage,
@@ -1871,13 +1852,13 @@ namespace gpu{
 
                     bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
-                    char* const myConsensus = consensus + msa_pitch * subjectIndex;
-                    int* const myCoverages = coverage + msa_weights_pitch_floats * subjectIndex;
-                    int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                    float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
-                    float* const mySupport = support + msa_weights_pitch_floats * subjectIndex;
-                    int* const myOrigCoverages = origCoverages + msa_weights_pitch_floats * subjectIndex;
-                    float* const myOrigWeights = origWeights + msa_weights_pitch_floats * subjectIndex;
+                    char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
+                    int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
+                    int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
+                    float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
+                    float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
+                    int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
+                    float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
 
                     const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                     const int* const myShifts = shifts + globalOffset;
@@ -1918,8 +1899,7 @@ namespace gpu{
                         desiredAlignmentMaxErrorRate,
                         subjectIndex,
                         encodedSequencePitchInInts,
-                        msa_pitch,
-                        msa_weights_pitch_floats,
+                        msaColumnPitchInElements,
                         myIndices,
                         myNumIndices,
                         dataset_coverage
@@ -1937,8 +1917,8 @@ namespace gpu{
                     if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
 #if 1
                         float* const shared_weights = externsharedmem;
-                        int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_pitch_floats);
-                        int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_pitch_floats);
+                        int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
+                        int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
 
                         MSAColumnProperties columnProperties;
 
@@ -1965,7 +1945,7 @@ namespace gpu{
 
                         const int columnsToCheck = columnProperties.lastColumn_excl;
 
-                        assert(columnsToCheck <= msa_weights_pitch_floats);
+                        assert(columnsToCheck <= msaColumnPitchInElements);
 
                         int* const mycounts_build = (useSmemForAddSequences ? shared_counts : myCounts);
                         float* const myweights_build = (useSmemForAddSequences ? shared_weights : myWeights);
@@ -1989,7 +1969,7 @@ namespace gpu{
                             myNewNumIndices,
                             n_candidates,
                             canUseQualityScores, 
-                            msa_weights_pitch_floats,
+                            msaColumnPitchInElements,
                             encodedSequencePitchInInts,
                             qualityPitchInBytes,
                             desiredAlignmentMaxErrorRate,
@@ -2002,7 +1982,7 @@ namespace gpu{
                             &columnProperties,
                             mycounts_build,
                             myweights_build,
-                            msa_weights_pitch_floats,
+                            msaColumnPitchInElements,
                             subjectIndex
                         ); 
 
@@ -2017,8 +1997,7 @@ namespace gpu{
                             myAnchorSequenceData, 
                             subjectIndex,
                             encodedSequencePitchInInts, 
-                            msa_pitch,
-                            msa_weights_pitch_floats
+                            msaColumnPitchInElements
                         );
 
                         if(useSmemForAddSequences){
@@ -2026,11 +2005,11 @@ namespace gpu{
                 
                             for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                                 for(int k = 0; k < 4; k++){
-                                    const int* const srcCounts = mycounts_build + k * msa_weights_pitch_floats + index;
-                                    int* const destCounts = myCounts + k * msa_weights_pitch_floats + index;
+                                    const int* const srcCounts = mycounts_build + k * msaColumnPitchInElements + index;
+                                    int* const destCounts = myCounts + k * msaColumnPitchInElements + index;
                 
-                                    const float* const srcWeights = myweights_build + k * msa_weights_pitch_floats + index;
-                                    float* const destWeights = myWeights + k * msa_weights_pitch_floats + index;
+                                    const float* const srcWeights = myweights_build + k * msaColumnPitchInElements + index;
+                                    float* const destWeights = myWeights + k * msaColumnPitchInElements + index;
                 
                                     *destCounts = *srcCounts;
                                     *destWeights = *srcWeights;
@@ -2062,7 +2041,7 @@ namespace gpu{
                             myNumIndices,
                             n_candidates,
                             canUseQualityScores, 
-                            msa_weights_pitch_floats,
+                            msaColumnPitchInElements,
                             encodedSequencePitchInInts,
                             qualityPitchInBytes,
                             desiredAlignmentMaxErrorRate,
@@ -2092,8 +2071,7 @@ namespace gpu{
                             myAnchorSequenceData, 
                             subjectIndex,
                             encodedSequencePitchInInts, 
-                            msa_pitch,
-                            msa_weights_pitch_floats
+                            msaColumnPitchInElements
                         );
 
                         __syncthreads();
@@ -2148,8 +2126,7 @@ namespace gpu{
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_pitch,
-            size_t msa_weights_pitch_floats,
+            size_t msaColumnPitchInElements,
             int* __restrict__ d_indices,
             int* __restrict__ d_indices_per_subject,
             int dataset_coverage,
@@ -2208,13 +2185,13 @@ namespace gpu{
 
                         bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
-                        char* const myConsensus = consensus + msa_pitch * subjectIndex;
-                        int* const myCoverages = coverage + msa_weights_pitch_floats * subjectIndex;
-                        int* const myCounts = counts + 4 * msa_weights_pitch_floats * subjectIndex;
-                        float* const myWeights = weights + 4 * msa_weights_pitch_floats * subjectIndex;
-                        float* const mySupport = support + msa_weights_pitch_floats * subjectIndex;
-                        int* const myOrigCoverages = origCoverages + msa_weights_pitch_floats * subjectIndex;
-                        float* const myOrigWeights = origWeights + msa_weights_pitch_floats * subjectIndex;
+                        char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
+                        int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
+                        int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
+                        int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
+                        float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
 
                         const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
                         const int* const myShifts = shifts + globalOffset;
@@ -2255,8 +2232,7 @@ namespace gpu{
                             desiredAlignmentMaxErrorRate,
                             subjectIndex,
                             encodedSequencePitchInInts,
-                            msa_pitch,
-                            msa_weights_pitch_floats,
+                            msaColumnPitchInElements,
                             myIndices,
                             myNumIndices,
                             dataset_coverage
@@ -2270,8 +2246,8 @@ namespace gpu{
                         if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
                         #if 1
                             float* const shared_weights = externsharedmem;
-                            int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_pitch_floats);
-                            int* const shared_coverages = (int*)(shared_counts + 4 * msa_weights_pitch_floats);
+                            int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
+                            int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
 
                             MSAColumnProperties columnProperties;
 
@@ -2298,7 +2274,7 @@ namespace gpu{
 
                             const int columnsToCheck = columnProperties.lastColumn_excl;
 
-                            assert(columnsToCheck <= msa_weights_pitch_floats);
+                            assert(columnsToCheck <= msaColumnPitchInElements);
 
                             int* const mycounts_build = (useSmemForAddSequences ? shared_counts : myCounts);
                             float* const myweights_build = (useSmemForAddSequences ? shared_weights : myWeights);
@@ -2322,7 +2298,7 @@ namespace gpu{
                                 myNewNumIndices,
                                 n_candidates,
                                 canUseQualityScores, 
-                                msa_weights_pitch_floats,
+                                msaColumnPitchInElements,
                                 encodedSequencePitchInInts,
                                 qualityPitchInBytes,
                                 desiredAlignmentMaxErrorRate,
@@ -2335,7 +2311,7 @@ namespace gpu{
                                 &columnProperties,
                                 mycounts_build,
                                 myweights_build,
-                                msa_weights_pitch_floats,
+                                msaColumnPitchInElements,
                                 subjectIndex
                             ); 
 
@@ -2350,8 +2326,7 @@ namespace gpu{
                                 myAnchorSequenceData, 
                                 subjectIndex,
                                 encodedSequencePitchInInts, 
-                                msa_pitch,
-                                msa_weights_pitch_floats
+                                msaColumnPitchInElements
                             );
 
                             if(useSmemForAddSequences){
@@ -2359,11 +2334,11 @@ namespace gpu{
                     
                                 for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
                                     for(int k = 0; k < 4; k++){
-                                        const int* const srcCounts = mycounts_build + k * msa_weights_pitch_floats + index;
-                                        int* const destCounts = myCounts + k * msa_weights_pitch_floats + index;
+                                        const int* const srcCounts = mycounts_build + k * msaColumnPitchInElements + index;
+                                        int* const destCounts = myCounts + k * msaColumnPitchInElements + index;
                     
-                                        const float* const srcWeights = myweights_build + k * msa_weights_pitch_floats + index;
-                                        float* const destWeights = myWeights + k * msa_weights_pitch_floats + index;
+                                        const float* const srcWeights = myweights_build + k * msaColumnPitchInElements + index;
+                                        float* const destWeights = myWeights + k * msaColumnPitchInElements + index;
                     
                                         *destCounts = *srcCounts;
                                         *destWeights = *srcWeights;
@@ -2395,7 +2370,7 @@ namespace gpu{
                                 myNumIndices,
                                 n_candidates,
                                 canUseQualityScores, 
-                                msa_weights_pitch_floats,
+                                msaColumnPitchInElements,
                                 encodedSequencePitchInInts,
                                 qualityPitchInBytes,
                                 desiredAlignmentMaxErrorRate,
@@ -2425,8 +2400,7 @@ namespace gpu{
                                 myAnchorSequenceData, 
                                 subjectIndex,
                                 encodedSequencePitchInInts, 
-                                msa_pitch,
-                                msa_weights_pitch_floats
+                                msaColumnPitchInElements
                             );
 
                             __syncthreads();
@@ -2564,7 +2538,7 @@ namespace gpu{
                     const int* d_coverage,
                     const int* d_indices_per_subject,
                     int n_subjects,
-                    size_t msa_weights_pitch,
+                    size_t msaColumnPitchInElements,
                     const bool* d_canExecute,
                     cudaStream_t stream,
                     KernelLaunchHandle& handle){
@@ -2611,7 +2585,7 @@ namespace gpu{
             d_msaColumnProperties,
             d_coverage,
             d_indices_per_subject,
-            msa_weights_pitch,
+            msaColumnPitchInElements,
             n_subjects,
             d_canExecute
         ); CUERR;
@@ -2651,8 +2625,7 @@ namespace gpu{
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch,
+            size_t msaColumnPitchInElements,
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
@@ -2661,14 +2634,12 @@ namespace gpu{
                      ? KernelId::MSAAddSequencesGlobalSingleBlock
                      : KernelId::MSAAddSequencesSharedSingleBlock);
 
-        const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-
         constexpr int blocksize = 128;
         
         const std::size_t smem = (memType == MemoryType::Global ? 0
-                                    : sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
-                                        + sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
-                                        + sizeof(int) * msa_weights_row_pitch_floats); // coverages
+                                    : sizeof(float) * 4 * msaColumnPitchInElements // weights
+                                        + sizeof(int) * 4 * msaColumnPitchInElements // counts
+                                        + sizeof(int) * msaColumnPitchInElements); // coverages
 
     	int max_blocks_per_device = 1;
 
@@ -2743,8 +2714,7 @@ namespace gpu{
             desiredAlignmentMaxErrorRate,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats,
+            msaColumnPitchInElements,
             d_canExecute
         ); CUERR;
 
@@ -2778,8 +2748,7 @@ namespace gpu{
     			bool canUseQualityScores,
                 int encodedSequencePitchInInts,
     			size_t qualityPitchInBytes,
-    			size_t msa_row_pitch,
-                size_t msa_weights_row_pitch,
+    			size_t msaColumnPitchInElements,
                 const bool* d_canExecute,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
@@ -2837,32 +2806,27 @@ namespace gpu{
             if(*d_canExecute){
                 for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                     if(d_indices_per_subject[subjectIndex] > 0){
-                        const size_t msa_weights_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
-                        int* const mycounts = d_counts + msa_weights_pitch_floats * 4 * subjectIndex;
-                        float* const myweights = d_weights + msa_weights_pitch_floats * 4 * subjectIndex;
-                        int* const mycoverages = d_coverage + msa_weights_pitch_floats * subjectIndex;
+                        int* const mycounts = d_counts + msaColumnPitchInElements * 4 * subjectIndex;
+                        float* const myweights = d_weights + msaColumnPitchInElements * 4 * subjectIndex;
+                        int* const mycoverages = d_coverage + msaColumnPitchInElements * subjectIndex;
 
-                        for(int column = threadIdx.x; column < msa_weights_pitch_floats * 4; column += blockDim.x){
+                        for(int column = threadIdx.x; column < msaColumnPitchInElements * 4; column += blockDim.x){
                             mycounts[column] = 0;
                             myweights[column] = 0;
                         }
 
-                        for(int column = threadIdx.x; column < msa_weights_pitch_floats; column += blockDim.x){
+                        for(int column = threadIdx.x; column < msaColumnPitchInElements; column += blockDim.x){
                             mycoverages[column] = 0;
                         }
                     }
                 }
             }
-        }); CUERR;
-
-        const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-
-        
+        }); CUERR;       
         
         const std::size_t smem = (memType == MemoryType::Global ? 0
-                                    : sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
-                                        + sizeof(int) * 4 * msa_weights_row_pitch_floats); // counts
+                                    : sizeof(float) * 4 * msaColumnPitchInElements // weights
+                                        + sizeof(int) * 4 * msaColumnPitchInElements); // counts
 
     	int max_blocks_per_device = 1;
 
@@ -2976,8 +2940,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats,
+            msaColumnPitchInElements,
             d_canExecute
         ); CUERR;
 
@@ -3011,8 +2974,7 @@ namespace gpu{
     			bool canUseQualityScores,
                 int encodedSequencePitchInInts,
     			size_t qualityPitchInBytes,
-    			size_t msa_row_pitch,
-                size_t msa_weights_row_pitch,
+    			size_t msaColumnPitchInElements,
                 const bool* d_canExecute,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
@@ -3051,8 +3013,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch,
+            msaColumnPitchInElements,
             d_canExecute,
             stream,
             handle
@@ -3068,7 +3029,7 @@ namespace gpu{
             d_weights,
             d_indices_per_subject,
             n_subjects,
-            msa_weights_row_pitch,
+            msaColumnPitchInElements,
             d_canExecute
         ); CUERR;
 
@@ -3102,8 +3063,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch,
+            msaColumnPitchInElements,
             d_canExecute,
             stream,
             handle
@@ -3130,8 +3090,7 @@ namespace gpu{
                             const int* d_indices_per_subject,
                             int n_subjects,
                             int encodedSequencePitchInInts,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
+                            size_t msaColumnPitchInElements,
                             const bool* d_canExecute,
                             cudaStream_t stream,
                             KernelLaunchHandle& handle){
@@ -3198,8 +3157,7 @@ namespace gpu{
                                                                 d_indices_per_subject, \
                                                                 n_subjects, \
                                                                 encodedSequencePitchInInts, \
-                                                                msa_pitch, \
-                                                                msa_weights_pitch, \
+                                                                msaColumnPitchInElements, \
                                                                 d_canExecute); CUERR;
 
         launch(128);
@@ -3224,8 +3182,7 @@ namespace gpu{
             d_indices_per_subject,
             n_subjects,
             encodedSequencePitchInInts,
-            msa_pitch,
-            msa_weights_pitch,
+            msaColumnPitchInElements,
             d_canExecute
         ); CUERR;
     }
@@ -3255,8 +3212,7 @@ namespace gpu{
                 int n_subjects,
                 int n_candidates,
                 int encodedSequencePitchInInts,
-                size_t msa_pitch,
-                size_t msa_weights_pitch,
+                size_t msaColumnPitchInElements,
                 const int* d_indices,
                 const int* d_indices_per_subject,
                 int dataset_coverage,
@@ -3342,8 +3298,7 @@ namespace gpu{
                     n_subjects, \
                     n_candidates, \
                     encodedSequencePitchInInts, \
-                    msa_pitch, \
-                    msa_weights_pitch, \
+                    msaColumnPitchInElements, \
                     d_indices, \
                     d_indices_per_subject, \
                     dataset_coverage, \
@@ -3403,8 +3358,7 @@ namespace gpu{
             bool canUseQualityScores,
             size_t encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_pitch,
-            size_t msa_weights_pitch_floats,
+            size_t msaColumnPitchInElements,
             const int* d_indices,
             const int* d_indices_per_subject,
             int dataset_coverage,
@@ -3428,9 +3382,9 @@ namespace gpu{
         constexpr bool addSequencesUsesSmem = addSequencesMemType == MemoryType::Shared;
 
         const std::size_t smemAddSequences = (addSequencesUsesSmem ? 
-                                                sizeof(float) * 4 * msa_weights_pitch_floats // weights
-                                                    + sizeof(int) * 4 * msa_weights_pitch_floats // counts
-                                                    + sizeof(int) * msa_weights_pitch_floats // coverages
+                                                sizeof(float) * 4 * msaColumnPitchInElements // weights
+                                                    + sizeof(int) * 4 * msaColumnPitchInElements // counts
+                                                    + sizeof(int) * msaColumnPitchInElements // coverages
                                                 : 0);
 
         const std::size_t smem = smemAddSequences;
@@ -3500,8 +3454,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_pitch,
-            msa_weights_pitch_floats,
+            msaColumnPitchInElements,
             d_indices,
             d_indices_per_subject,
             dataset_coverage,
@@ -3543,8 +3496,7 @@ namespace gpu{
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
@@ -3559,9 +3511,9 @@ namespace gpu{
 
         const std::size_t smemCub = sizeof(BlockReduceIntStorage);
         const std::size_t smemAddSequences = (addSequencesUsesSmem ? 
-                                                sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
-                                                    + sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
-                                                    + sizeof(int) * msa_weights_row_pitch_floats // coverages
+                                                sizeof(float) * 4 * msaColumnPitchInElements // weights
+                                                    + sizeof(int) * 4 * msaColumnPitchInElements // counts
+                                                    + sizeof(int) * msaColumnPitchInElements // coverages
                                                 : 0);
 
         const std::size_t smem = std::max(smemCub, smemAddSequences);
@@ -3627,8 +3579,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats,
+            msaColumnPitchInElements,
             d_canExecute
         ); CUERR;
 
@@ -3661,8 +3612,7 @@ namespace gpu{
             bool canUseQualityScores,
             int encodedSequencePitchInInts,
             size_t qualityPitchInBytes,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch_floats,
+            size_t msaColumnPitchInElements,
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_candidatesPerSubjectPrefixSum,
@@ -3716,8 +3666,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats * sizeof(float),
+            msaColumnPitchInElements,
             d_canExecute,
             stream,
             kernelLaunchHandle
@@ -3736,8 +3685,7 @@ namespace gpu{
             d_indices_per_subject,
             n_subjects,
             encodedSequencePitchInInts,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats * sizeof(float),
+            msaColumnPitchInElements,
             d_canExecute,
             stream,
             kernelLaunchHandle
@@ -3775,8 +3723,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
-            msa_weights_row_pitch_floats,
+            msaColumnPitchInElements,
             d_canExecute,
             stream,
             kernelLaunchHandle
