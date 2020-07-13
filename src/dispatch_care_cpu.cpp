@@ -7,8 +7,6 @@
 
 #include <correct_cpu.hpp>
 
-#include <build.hpp>
-
 #include <minhasher.hpp>
 
 #include <correctionresultprocessing.hpp>
