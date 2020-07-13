@@ -380,6 +380,226 @@ namespace gpu{
 
 
 
+
+
+
+
+    template<int BLOCKSIZE>
+    __device__ __forceinline__
+    void addSequencesToMSASingleBlockLessAtomic(
+            int* __restrict__ inputcounts,
+            float* __restrict__ inputweights,
+            int* __restrict__ inputcoverages,
+            const MSAColumnProperties* __restrict__ myMsaColumnProperties,
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myOverlaps,
+            const int* __restrict__ myNops,
+            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const unsigned int* __restrict__ myAnchorSequenceData,
+            const char* __restrict__ myAnchorQualityData,
+            const unsigned int* __restrict__ myTransposedCandidateSequencesData,
+            const char* __restrict__ myCandidateQualities,
+            const int* __restrict__ myCandidateLengths,
+            const int* __restrict__ myIndices,
+            int numIndices,
+            size_t elementOffsetForTransposedCandidates,
+            bool canUseQualityScores, 
+            size_t msaColumnPitchInElements,
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            float desiredAlignmentMaxErrorRate,
+            int subjectIndex){  
+
+        constexpr bool candidatesAreTransposed = true;
+
+        int* const mycounts = inputcounts;
+        float* const myweights = inputweights;
+        int* const mycoverages = inputcoverages;        
+
+        for(int column = threadIdx.x; column < msaColumnPitchInElements * 4; column += BLOCKSIZE){
+            mycounts[column] = 0;
+            myweights[column] = 0;
+        }
+
+        for(int column = threadIdx.x; column < msaColumnPitchInElements; column += BLOCKSIZE){
+            mycoverages[column] = 0;
+        }   
+        
+        //__syncthreads();
+
+        //add subject
+        const int subjectColumnsBegin_incl = myMsaColumnProperties->subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = myMsaColumnProperties->subjectColumnsEnd_excl;
+
+        const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+        const unsigned int* const subject = myAnchorSequenceData;
+        const char* const subjectQualityScore = myAnchorQualityData;
+                        
+        for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+            const int columnIndex = subjectColumnsBegin_incl + i;
+            const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
+            const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
+            const int rowOffset = int(encbase) * msaColumnPitchInElements;
+
+            mycounts[rowOffset + columnIndex] = 1;
+            myweights[rowOffset + columnIndex] = weight;
+            mycoverages[columnIndex] = 1;
+        }
+        __syncthreads();
+
+        const int firstColumn_incl = myMsaColumnProperties->firstColumn_incl;
+        const int lastColumn_excl = myMsaColumnProperties->lastColumn_excl;
+
+        //const int numOuterIters = SDIV(lastColumn_excl, 4);
+
+        //for each column in msa
+        for(int column = threadIdx.x; column < lastColumn_excl; column += BLOCKSIZE){
+
+            if(firstColumn_incl <= column){
+
+                int countA = 0;
+                int countC = 0;
+                int countG = 0;
+                int countT = 0;
+                float weightA = 0;
+                float weightC = 0;
+                float weightG = 0;
+                float weightT = 0;
+                int coverage = 0;
+
+                //for each candidate
+                for(int indexInList = 0; indexInList < numIndices; indexInList += 1){
+                    const int localCandidateIndex = myIndices[indexInList];
+                    const int shift = myShifts[localCandidateIndex];
+                    const int queryLength = myCandidateLengths[localCandidateIndex];
+
+                    //if candidate occupies the column, update column
+                    if(subjectColumnsBegin_incl + shift <= column && column < subjectColumnsBegin_incl + shift + queryLength){
+                    
+                        const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+            
+                        const unsigned int* const query = myTransposedCandidateSequencesData + localCandidateIndex;
+            
+                        const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
+            
+                        const int query_alignment_overlap = myOverlaps[localCandidateIndex];
+                        const int query_alignment_nops = myNops[localCandidateIndex];
+            
+                        const float overlapweight = calculateOverlapWeight(
+                            subjectLength, 
+                            query_alignment_nops, 
+                            query_alignment_overlap,
+                            desiredAlignmentMaxErrorRate
+                        );
+
+                        assert(overlapweight <= 1.0f);
+                        assert(overlapweight >= 0.0f);
+                        assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+            
+                        //const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+            
+                        const bool isForward = flag == BestAlignment_t::Forward;
+
+                        
+                        int positionInSequence = column - subjectColumnsBegin_incl - shift;
+                        if(!isForward){
+                            positionInSequence = queryLength - 1 - positionInSequence;
+                        }                        
+
+                        char quality = 'A';
+
+                        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+                            return ((data >> (30 - 2*pos)) & 0x00000003);
+                        };
+
+                        const unsigned int currentDataInt = query[(positionInSequence / 16) * elementOffsetForTransposedCandidates];
+                        unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, positionInSequence % 16);
+                        if(!isForward){
+                            //reverse complement
+                            encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                        }
+                        if(canUseQualityScores){
+                            quality = queryQualityScore[positionInSequence];
+                        }
+
+                        
+                        const float weight = canUseQualityScores ? getQualityWeight(quality) * overlapweight : overlapweight;
+
+                        assert(weight != 0);
+
+                        if(encodedBaseAsInt == 0){
+                            countA++;
+                            weightA += weight;
+                        }else if(encodedBaseAsInt == 1){
+                            countC++;
+                            weightC += weight;
+                        }else if(encodedBaseAsInt == 2){
+                            countG++;
+                            weightG += weight;
+                        }else{
+                            countT++;
+                            weightT += weight;
+                        }
+
+                        coverage += 1;
+                    }
+                }
+
+#if 0
+
+                if(countA > 0){
+                    mycounts[0 * msaColumnPitchInElements + column] += countA;
+                }
+                if(countC > 0){
+                    mycounts[1 * msaColumnPitchInElements + column] += countC;
+                }
+                if(countG > 0){
+                    mycounts[2 * msaColumnPitchInElements + column] += countG;
+                }
+                if(countT > 0){
+                    mycounts[3 * msaColumnPitchInElements + column] += countT;
+                }
+                if(weightA > 0){
+                    myweights[0 * msaColumnPitchInElements + column] += weightA;
+                }
+                if(weightC > 0){
+                    myweights[1 * msaColumnPitchInElements + column] += weightC;
+                }
+                if(weightG > 0){
+                    myweights[2 * msaColumnPitchInElements + column] += weightG;
+                }
+                if(weightT > 0){
+                    myweights[3 * msaColumnPitchInElements + column] += weightT;
+                }
+                if(coverage > 0){
+                    mycoverages[column] += coverage;
+                }
+
+#else 
+
+
+                    mycounts[0 * msaColumnPitchInElements + column] += countA;
+                    mycounts[1 * msaColumnPitchInElements + column] += countC;
+                    mycounts[2 * msaColumnPitchInElements + column] += countG;
+                    mycounts[3 * msaColumnPitchInElements + column] += countT;
+                    myweights[0 * msaColumnPitchInElements + column] += weightA;
+                    myweights[1 * msaColumnPitchInElements + column] += weightC;
+                    myweights[2 * msaColumnPitchInElements + column] += weightG;
+                    myweights[3 * msaColumnPitchInElements + column] += weightT;
+                    mycoverages[column] += coverage;
+#endif
+            }
+        }
+
+    }
+
+
+
+
+
+
+
+
     template<int BLOCKSIZE, class Selector>
     __device__ __forceinline__
     void removeCandidatesFromMSASingleBlock(
