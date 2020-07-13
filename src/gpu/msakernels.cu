@@ -540,7 +540,218 @@ namespace gpu{
         const float* const my_weightsC = myWeights + 1 * msaColumnPitchInElements;
         const float* const my_weightsG = myWeights + 2 * msaColumnPitchInElements;
         const float* const my_weightsT = myWeights + 3 * msaColumnPitchInElements;
+#if 1
+        const int numOuterIters = SDIV(lastColumn_excl, 4);
 
+        // auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+        //     return ((data >> (30 - 2*pos)) & 0x00000003);
+        // };
+
+#if 1
+        for(int outerIter = threadIdx.x; outerIter < numOuterIters; outerIter += BLOCKSIZE){
+
+            // const int pos1 = (outerIter * 4) - subjectColumnsBegin_incl);
+            // const int pos2 = (outerIter * 4 + 3) - subjectColumnsBegin_incl);
+            // const int intIndex1InEncodedSequence = (max(0, pos1/ 16);
+            // const int intIndex2InEncodedSequence = (max(0, pos2/ 16);
+            // const unsigned int encoded1 = subject[intIndex1InEncodedSequence];
+            // const unsigned int encoded2 = subject[intIndex2InEncodedSequence];
+            // const unsigned int encodedBases16 = encoded1;
+
+            alignas(4) char consensusArray[4];
+
+            #pragma unroll 
+            for(int i = 0; i < 4; i++){
+                const int column = outerIter * 4 + i;
+
+                if(firstColumn_incl <= column && column < lastColumn_excl){
+
+                    const int ca = myCountsA[column];
+                    const int cc = myCountsC[column];
+                    const int cg = myCountsG[column];
+                    const int ct = myCountsT[column];
+                    const float wa = my_weightsA[column];
+                    const float wc = my_weightsC[column];
+                    const float wg = my_weightsG[column];
+                    const float wt = my_weightsT[column];
+
+                    char cons = 'F';
+                    float consWeight = 0.0f;
+                    if(wa > consWeight){
+                        cons = 'A';
+                        consWeight = wa;
+                    }
+                    if(wc > consWeight){
+                        cons = 'C';
+                        consWeight = wc;
+                    }
+                    if(wg > consWeight){
+                        cons = 'G';
+                        consWeight = wg;
+                    }
+                    if(wt > consWeight){
+                        cons = 'T';
+                        consWeight = wt;
+                    }
+
+                    consensusArray[i] = cons;
+
+                    const float columnWeight = wa + wc + wg + wt;
+                    if(columnWeight == 0){
+                        printf("s %d c %d\n", subjectIndex, column);
+                        assert(columnWeight != 0);
+                    }
+                    //assert(weightPerCountSum != 0);
+                    my_support[column] = consWeight / columnWeight;
+                    //my_support[column] = consWeightPerCount / weightPerCountSum;
+
+
+                    if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                        constexpr unsigned int A_enc = 0x00;
+                        constexpr unsigned int C_enc = 0x01;
+                        constexpr unsigned int G_enc = 0x02;
+                        constexpr unsigned int T_enc = 0x03;
+
+                        const int localIndex = column - subjectColumnsBegin_incl;
+                        const unsigned int encNuc = getEncodedNuc2Bit(subject, subjectLength, localIndex);
+
+                        // const unsigned int encNuc2 = getEncodedNucFromInt2Bit(encodedBases16, localIndex % 16);
+
+                        // if(intIndexInEncodedSequence != localIndex / 16){
+                        //     printf("outerIter %d, i %d, intIndexInEncodedSequence %d, localIndex %d, column %d, "
+                        //         "subjectColumnsBegin_incl %d\n", 
+                        //         outerIter, i, intIndexInEncodedSequence, localIndex, column, subjectColumnsBegin_incl);
+                        // }
+                        // assert(intIndexInEncodedSequence == localIndex / 16);
+
+                        // assert(encNuc == encNuc2);
+
+                        if(encNuc == A_enc){
+                            my_orig_weights[column] = wa;
+                            my_orig_coverage[column] = ca;
+                        }else if(encNuc == C_enc){
+                            my_orig_weights[column] = wc;
+                            my_orig_coverage[column] = cc;
+                        }else if(encNuc == G_enc){
+                            my_orig_weights[column] = wg;
+                            my_orig_coverage[column] = cg;
+                        }else if(encNuc == T_enc){
+                            my_orig_weights[column] = wt;
+                            my_orig_coverage[column] = ct;
+                        }
+                    }
+                }
+            }
+
+            *((char4*)(my_consensus + 4*outerIter)) = *((const char4*)(&consensusArray[0]));
+        }
+
+#else        
+        for(int outerIter = threadIdx.x; outerIter < numOuterIters; outerIter += BLOCKSIZE){
+
+            int regCountsA[4];
+            int regCountsC[4];
+            int regCountsG[4];
+            int regCountsT[4];
+            float regWeightsA[4];
+            float regWeightsC[4];
+            float regWeightsG[4];
+            float regWeightsT[4];
+
+            *((int4*)&regCountsA[0]) = *((const int4*)(myCountsA + 4 * outerIter));
+            *((int4*)&regCountsC[0]) = *((const int4*)(myCountsC + 4 * outerIter));
+            *((int4*)&regCountsG[0]) = *((const int4*)(myCountsG + 4 * outerIter));
+            *((int4*)&regCountsT[0]) = *((const int4*)(myCountsT + 4 * outerIter));
+            *((float4*)&regWeightsA[0]) = *((const float4*)(my_weightsA + 4 * outerIter));
+            *((float4*)&regWeightsC[0]) = *((const float4*)(my_weightsC + 4 * outerIter));
+            *((float4*)&regWeightsG[0]) = *((const float4*)(my_weightsG + 4 * outerIter));
+            *((float4*)&regWeightsT[0]) = *((const float4*)(my_weightsT + 4 * outerIter));
+
+
+
+            #pragma unroll 
+            for(int i = 0; i < 4; i++){
+                const int column = outerIter * 4 + i;
+
+                if(firstColumn_incl <= column && column < lastColumn_excl){
+
+                    // const int ca = myCountsA[column];
+                    // const int cc = myCountsC[column];
+                    // const int cg = myCountsG[column];
+                    // const int ct = myCountsT[column];
+                    // const float wa = my_weightsA[column];
+                    // const float wc = my_weightsC[column];
+                    // const float wg = my_weightsG[column];
+                    // const float wt = my_weightsT[column];
+
+                    const int ca = regCountsA[i];
+                    const int cc = regCountsC[i];
+                    const int cg = regCountsG[i];
+                    const int ct = regCountsT[i];
+                    const float wa = regWeightsA[i];
+                    const float wc = regWeightsC[i];
+                    const float wg = regWeightsG[i];
+                    const float wt = regWeightsT[i];
+
+                    char cons = 'F';
+                    float consWeight = 0.0f;
+                    if(wa > consWeight){
+                        cons = 'A';
+                        consWeight = wa;
+                    }
+                    if(wc > consWeight){
+                        cons = 'C';
+                        consWeight = wc;
+                    }
+                    if(wg > consWeight){
+                        cons = 'G';
+                        consWeight = wg;
+                    }
+                    if(wt > consWeight){
+                        cons = 'T';
+                        consWeight = wt;
+                    }
+                    my_consensus[column] = cons;
+                    const float columnWeight = wa + wc + wg + wt;
+                    if(columnWeight == 0){
+                        printf("s %d c %d\n", subjectIndex, column);
+                        assert(columnWeight != 0);
+                    }
+                    //assert(weightPerCountSum != 0);
+                    my_support[column] = consWeight / columnWeight;
+                    //my_support[column] = consWeightPerCount / weightPerCountSum;
+
+
+                    if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                        constexpr unsigned int A_enc = 0x00;
+                        constexpr unsigned int C_enc = 0x01;
+                        constexpr unsigned int G_enc = 0x02;
+                        constexpr unsigned int T_enc = 0x03;
+
+                        const int localIndex = column - subjectColumnsBegin_incl;
+                        const unsigned int encNuc = getEncodedNuc2Bit(subject, subjectLength, localIndex);
+
+                        if(encNuc == A_enc){
+                            my_orig_weights[column] = wa;
+                            my_orig_coverage[column] = ca;
+                        }else if(encNuc == C_enc){
+                            my_orig_weights[column] = wc;
+                            my_orig_coverage[column] = cc;
+                        }else if(encNuc == G_enc){
+                            my_orig_weights[column] = wg;
+                            my_orig_coverage[column] = cg;
+                        }else if(encNuc == T_enc){
+                            my_orig_weights[column] = wt;
+                            my_orig_coverage[column] = ct;
+                        }
+                    }
+                }
+            }
+        }
+
+#endif
+
+#else 
         for(int column = threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += BLOCKSIZE){
             const int ca = myCountsA[column];
             const int cc = myCountsC[column];
@@ -604,6 +815,8 @@ namespace gpu{
                 }
             }
         }
+
+#endif        
     }
 
 
@@ -1517,6 +1730,12 @@ namespace gpu{
             float* const shared_weights = sharedmem;
             int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
             int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
+            // if(blockIdx.x * blockDim.x + threadIdx.x == 0){
+            //     printf("shared_weights: %p \n",shared_weights);
+            //     printf("shared_counts: %p \n",shared_counts);
+            //     printf("shared_coverages: %p \n",shared_coverages);
+            //     printf("msaColumnPitchInElements: %lu \n",msaColumnPitchInElements);
+            // };
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                 const int myNumGoodCandidates = indices_per_subject[subjectIndex];

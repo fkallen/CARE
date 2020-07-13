@@ -3505,7 +3505,7 @@ correct_gpu(
     
             batchData.msa_max_column_count = (3*sequenceFileProperties.maxSequenceLength - 2*batchData.min_overlap);
             //round up to 32 elements
-            batchData.msaColumnPitchInElements = SDIV(batchData.msa_max_column_count, 32) * 32;
+            batchData.msaColumnPitchInElements = SDIV(batchData.msa_max_column_count, 128) * 128;
             
             batchData.numCandidatesLimit = numCandidatesLimitPerGpu[deviceId];
 
