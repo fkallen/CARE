@@ -30,7 +30,9 @@ enum class KernelId {
     MSAAddSequencesSharedSingleBlock,
     MSAAddSequencesSharedMultiBlock,
     MSABuildSingleBlock,
-    MSAFindCandidatesOfDifferentRegionAndRemoveThem,
+    MSABuild2,
+    MSAFindCandidatesOfDifferentRegionAndRemoveThemViaRebuild,
+    MSAFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion,
     FlagCandidatesToBeCorrected,
 };
 
