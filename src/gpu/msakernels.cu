@@ -2786,7 +2786,7 @@ namespace gpu{
             int dataset_coverage,
             const bool* __restrict__ canExecute,
             int iteration,
-            const read_number* __restrict__ d_subjectReadIds){
+            bool* __restrict__ d_anchorIsFinished){
 
         if(*canExecute){
 
@@ -2809,255 +2809,211 @@ namespace gpu{
             const int n_subjects = *d_numAnchors;
             const int n_candidates = *d_numCandidates;
 
-            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){                
-                const int myNumIndices = d_indices_per_subject[subjectIndex];                
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+                //const bool myAnchorIsFinished = d_anchorIsFinished[subjectIndex];
+                const int myNumIndices = d_indices_per_subject[subjectIndex];
 
-                if(myNumIndices > 0){
+                // if(myAnchorIsFinished){
+                //     if(threadIdx.x == 0){
+                //         atomicAdd(d_newNumIndices, myNumIndices);
+                //     }
+                // }else{               
 
-                    if(threadIdx.x == 0){
-                        shared_columnProperties = msaColumnProperties[subjectIndex];
-                    }
-                    __syncthreads();
+                    if(myNumIndices > 0){
 
-                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
-                    const int* myIndices = d_indices + globalOffset;
-
-                    int* const myNewIndicesPtr = d_newIndices + globalOffset;
-                    int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
-
-                    bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
-
-                    char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
-                    int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
-                    int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
-                    float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
-                    float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
-                    int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
-                    float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
-
-                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
-                    const int* const myShifts = shifts + globalOffset;
-                    const int* const myNops = nOps + globalOffset;
-                    const int* const myOverlaps = overlaps + globalOffset;
-
-                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
-                                                                        + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const unsigned int* const myCandidateSequencesData = candidateSequencesData 
-                                                                        + std::size_t(globalOffset) * encodedSequencePitchInInts;
-
-                    const unsigned int* const myTransposedCandidateSequencesData = transposedCandidateSequencesData
-                                                                        + std::size_t(globalOffset);
-                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
-                    const char* const myCandidateQualities = candidateQualities 
-                                                                        + size_t(globalOffset) * qualityPitchInBytes;
-
-                    const int subjectLength = subjectSequencesLength[subjectIndex];
-                    const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
-
-                    findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
-                        (int2*)&temp_storage.int2reduce,
-                        myNewIndicesPtr,
-                        myNewNumIndicesPerSubjectPtr,
-                        &shared_columnProperties,
-                        myConsensus,
-                        myCounts,
-                        myWeights,
-                        myAnchorSequenceData,
-                        subjectLength,
-                        myCandidateSequencesData,
-                        myCandidateLengths,
-                        myAlignmentFlags,
-                        myShifts,
-                        myNops,
-                        myOverlaps,
-                        myShouldBeKept,
-                        desiredAlignmentMaxErrorRate,
-                        subjectIndex,
-                        encodedSequencePitchInInts,
-                        msaColumnPitchInElements,
-                        myIndices,
-                        myNumIndices,
-                        dataset_coverage
-                    );
-
-                    __syncthreads();
-
-                    const int myNewNumIndices = *myNewNumIndicesPerSubjectPtr;
-
-                    if(threadIdx.x == 0){
-                        atomicAdd(d_newNumIndices, myNewNumIndices);
-                    }
-
-                    assert(myNewNumIndices <= myNumIndices);
-                    if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
-#if 1
-                        float* const shared_weights = externsharedmem;
-                        int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
-                        int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
-
-                        MSAColumnProperties columnProperties;
-
-                        msaInit<BLOCKSIZE>(
-                            temp_storage.intreduce,
-                            &columnProperties,
-                            myNewIndicesPtr,
-                            myNewNumIndices,
-                            myShifts,
-                            myAlignmentFlags,
-                            subjectLength,
-                            myCandidateLengths
-                        );
-
-                        //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
                         if(threadIdx.x == 0){
-                            msaColumnProperties[subjectIndex] = columnProperties;
-                            shared_columnProperties = columnProperties;
+                            shared_columnProperties = msaColumnProperties[subjectIndex];
                         }
-
                         __syncthreads();
 
-                        columnProperties = shared_columnProperties;
+                        const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                        const int* myIndices = d_indices + globalOffset;
 
-                        const int columnsToCheck = columnProperties.lastColumn_excl;
+                        int* const myNewIndicesPtr = d_newIndices + globalOffset;
+                        int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
 
-                        assert(columnsToCheck <= msaColumnPitchInElements);
+                        bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
 
-                        int* const mycounts_build = (useSmemForAddSequences ? shared_counts : myCounts);
-                        float* const myweights_build = (useSmemForAddSequences ? shared_weights : myWeights);
-                        int* const mycoverages_build = (useSmemForAddSequences ? shared_coverages : myCoverages);  
+                        char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
+                        int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
+                        int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
+                        int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
+                        float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
 
-                        addSequencesToMSASingleBlock<BLOCKSIZE>(
-                            mycounts_build,
-                            myweights_build,
-                            mycoverages_build,
-                            &columnProperties,
-                            myShifts,
-                            myOverlaps,
-                            myNops,
-                            myAlignmentFlags,
-                            myAnchorSequenceData,
-                            myAnchorQualityData,
-                            myTransposedCandidateSequencesData,
-                            myCandidateQualities,
-                            myCandidateLengths,
+                        const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                        const int* const myShifts = shifts + globalOffset;
+                        const int* const myNops = nOps + globalOffset;
+                        const int* const myOverlaps = overlaps + globalOffset;
+
+                        const unsigned int* const myAnchorSequenceData = subjectSequencesData 
+                                                                            + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                        const unsigned int* const myCandidateSequencesData = candidateSequencesData 
+                                                                            + std::size_t(globalOffset) * encodedSequencePitchInInts;
+
+                        const unsigned int* const myTransposedCandidateSequencesData = transposedCandidateSequencesData
+                                                                            + std::size_t(globalOffset);
+                        const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                        const char* const myCandidateQualities = candidateQualities 
+                                                                            + size_t(globalOffset) * qualityPitchInBytes;
+
+                        const int subjectLength = subjectSequencesLength[subjectIndex];
+                        const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
+
+                        findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
+                            (int2*)&temp_storage.int2reduce,
                             myNewIndicesPtr,
-                            myNewNumIndices,
-                            n_candidates,
-                            canUseQualityScores, 
-                            msaColumnPitchInElements,
-                            encodedSequencePitchInInts,
-                            qualityPitchInBytes,
-                            desiredAlignmentMaxErrorRate,
-                            subjectIndex
-                        );
-
-                        __syncthreads(); //wait until msa is ready
-                
-                        checkBuiltMSA(
-                            &columnProperties,
-                            mycounts_build,
-                            myweights_build,
-                            msaColumnPitchInElements,
-                            subjectIndex
-                        ); 
-
-                        findConsensusSingleBlock<BLOCKSIZE>(
-                            mySupport,
-                            myOrigWeights,
-                            myOrigCoverages,
+                            myNewNumIndicesPerSubjectPtr,
+                            &shared_columnProperties,
                             myConsensus,
-                            &columnProperties,
-                            mycounts_build,
-                            myweights_build,      
-                            myAnchorSequenceData, 
-                            subjectIndex,
-                            encodedSequencePitchInInts, 
-                            msaColumnPitchInElements
-                        );
-
-                        if(useSmemForAddSequences){
-                            // copy from counts and weights and coverages from shared to global
-                
-                            for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
-                                for(int k = 0; k < 4; k++){
-                                    const int* const srcCounts = mycounts_build + k * msaColumnPitchInElements + index;
-                                    int* const destCounts = myCounts + k * msaColumnPitchInElements + index;
-                
-                                    const float* const srcWeights = myweights_build + k * msaColumnPitchInElements + index;
-                                    float* const destWeights = myWeights + k * msaColumnPitchInElements + index;
-                
-                                    *destCounts = *srcCounts;
-                                    *destWeights = *srcWeights;
-                                }
-                                myCoverages[index] = mycoverages_build[index];
-                            }
-                        }
-
-                        __syncthreads(); //wait until data can be reused
-#else
-                        auto selector = [&](int i){
-                            return !myShouldBeKept[i];
-                        };
-
-                        removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
-                            selector,
                             myCounts,
                             myWeights,
-                            myCoverages,
-                            &shared_columnProperties,
-                            myShifts,
-                            myOverlaps,
-                            myNops,
-                            myAlignmentFlags,
-                            myTransposedCandidateSequencesData,
-                            myCandidateQualities,
+                            myAnchorSequenceData,
+                            subjectLength,
+                            myCandidateSequencesData,
                             myCandidateLengths,
+                            myAlignmentFlags,
+                            myShifts,
+                            myNops,
+                            myOverlaps,
+                            myShouldBeKept,
+                            desiredAlignmentMaxErrorRate,
+                            subjectIndex,
+                            encodedSequencePitchInInts,
+                            msaColumnPitchInElements,
                             myIndices,
                             myNumIndices,
-                            n_candidates,
-                            canUseQualityScores, 
-                            msaColumnPitchInElements,
-                            encodedSequencePitchInInts,
-                            qualityPitchInBytes,
-                            desiredAlignmentMaxErrorRate,
-                            subjectIndex
-                        );
-
-                        __syncthreads();
-                        
-                        msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
-                            &shared_columnProperties,
-                            myCoverages
+                            dataset_coverage
                         );
 
                         __syncthreads();
 
-                        assert(shared_columnProperties.firstColumn_incl != -1);
-                        assert(shared_columnProperties.lastColumn_excl != -1);
+                        const int myNewNumIndices = *myNewNumIndicesPerSubjectPtr;
 
-                        findConsensusSingleBlock<BLOCKSIZE>(
-                            mySupport,
-                            myOrigWeights,
-                            myOrigCoverages,
-                            myConsensus,
-                            &shared_columnProperties,
-                            myCounts,
-                            myWeights,
-                            myAnchorSequenceData, 
-                            subjectIndex,
-                            encodedSequencePitchInInts, 
-                            msaColumnPitchInElements
-                        );
+                        if(threadIdx.x == 0){
+                            atomicAdd(d_newNumIndices, myNewNumIndices);
+                        }
 
-                        __syncthreads();
-#endif                        
+                        assert(myNewNumIndices <= myNumIndices);
+                        if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
+
+                            float* const shared_weights = externsharedmem;
+                            int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
+                            int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
+
+                            MSAColumnProperties columnProperties;
+
+                            msaInit<BLOCKSIZE>(
+                                temp_storage.intreduce,
+                                &columnProperties,
+                                myNewIndicesPtr,
+                                myNewNumIndices,
+                                myShifts,
+                                myAlignmentFlags,
+                                subjectLength,
+                                myCandidateLengths
+                            );
+
+                            //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
+                            if(threadIdx.x == 0){
+                                msaColumnProperties[subjectIndex] = columnProperties;
+                                shared_columnProperties = columnProperties;
+                            }
+
+                            __syncthreads();
+
+                            columnProperties = shared_columnProperties;
+
+                            const int columnsToCheck = columnProperties.lastColumn_excl;
+
+                            assert(columnsToCheck <= msaColumnPitchInElements);
+
+                            int* const mycounts_build = (useSmemForAddSequences ? shared_counts : myCounts);
+                            float* const myweights_build = (useSmemForAddSequences ? shared_weights : myWeights);
+                            int* const mycoverages_build = (useSmemForAddSequences ? shared_coverages : myCoverages);  
+
+                            addSequencesToMSASingleBlock<BLOCKSIZE>(
+                                mycounts_build,
+                                myweights_build,
+                                mycoverages_build,
+                                &columnProperties,
+                                myShifts,
+                                myOverlaps,
+                                myNops,
+                                myAlignmentFlags,
+                                myAnchorSequenceData,
+                                myAnchorQualityData,
+                                myTransposedCandidateSequencesData,
+                                myCandidateQualities,
+                                myCandidateLengths,
+                                myNewIndicesPtr,
+                                myNewNumIndices,
+                                n_candidates,
+                                canUseQualityScores, 
+                                msaColumnPitchInElements,
+                                encodedSequencePitchInInts,
+                                qualityPitchInBytes,
+                                desiredAlignmentMaxErrorRate,
+                                subjectIndex
+                            );
+
+                            __syncthreads(); //wait until msa is ready
+                    
+                            checkBuiltMSA(
+                                &columnProperties,
+                                mycounts_build,
+                                myweights_build,
+                                msaColumnPitchInElements,
+                                subjectIndex
+                            ); 
+
+                            findConsensusSingleBlock<BLOCKSIZE>(
+                                mySupport,
+                                myOrigWeights,
+                                myOrigCoverages,
+                                myConsensus,
+                                &columnProperties,
+                                mycounts_build,
+                                myweights_build,      
+                                myAnchorSequenceData, 
+                                subjectIndex,
+                                encodedSequencePitchInInts, 
+                                msaColumnPitchInElements
+                            );
+
+                            if(useSmemForAddSequences){
+                                // copy from counts and weights and coverages from shared to global
+                    
+                                for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
+                                    for(int k = 0; k < 4; k++){
+                                        const int* const srcCounts = mycounts_build + k * msaColumnPitchInElements + index;
+                                        int* const destCounts = myCounts + k * msaColumnPitchInElements + index;
+                    
+                                        const float* const srcWeights = myweights_build + k * msaColumnPitchInElements + index;
+                                        float* const destWeights = myWeights + k * msaColumnPitchInElements + index;
+                    
+                                        *destCounts = *srcCounts;
+                                        *destWeights = *srcWeights;
+                                    }
+                                    myCoverages[index] = mycoverages_build[index];
+                                }
+                            }
+
+                            __syncthreads(); //wait until data can be reused                     
+                        }else{
+                            // if(threadIdx.x == 0){
+                            //     d_anchorIsFinished[subjectIndex] = true;
+                            // }
+                        }
+                    }else{
+                        if(threadIdx.x == 0){
+                            d_newNumIndicesPerSubject[subjectIndex] = 0;
+                            //d_anchorIsFinished[subjectIndex] = true;
+                        }
+                        ; //nothing else to do if there are no candidates in msa
                     }
-                }else{
-                    if(threadIdx.x == 0){
-                        d_newNumIndicesPerSubject[subjectIndex] = 0;
-                    }
-                    ; //nothing else to do if there are no candidates in msa
-                }
+                //}
             }
         }
     }
@@ -3069,8 +3025,23 @@ namespace gpu{
 
 
 
+    #ifdef __CUDACC_DEBUG__
+
+        #define findCandidatesOfDifferentRegionAndRemoveThemViaDeletion_MIN_BLOCKS   1
+        
+    #else
+
+        #if __CUDA_ARCH__ >= 610
+            #define findCandidatesOfDifferentRegionAndRemoveThemViaDeletion_MIN_BLOCKS   4
+        #else
+            #define findCandidatesOfDifferentRegionAndRemoveThemViaDeletion_MIN_BLOCKS   4
+        #endif
+
+    #endif
+
 
     template<int BLOCKSIZE>
+    __launch_bounds__(BLOCKSIZE, findCandidatesOfDifferentRegionAndRemoveThemViaDeletion_MIN_BLOCKS)
     __global__
     void msa_findCandidatesOfDifferentRegionAndRemoveThemViaDeletion_kernel(
             int* __restrict__ d_newIndices,
@@ -3109,7 +3080,7 @@ namespace gpu{
             int dataset_coverage,
             const bool* __restrict__ canExecute,
             int iteration,
-            const read_number* __restrict__ d_subjectReadIds){
+            bool* __restrict__ anchorIsFinished){
 
         if(*canExecute){
 
@@ -3130,153 +3101,170 @@ namespace gpu{
             const int n_subjects = *d_numAnchors;
             const int n_candidates = *d_numCandidates;
 
-            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){                
-                const int myNumIndices = d_indices_per_subject[subjectIndex];                
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+                const bool myAnchorIsFinished = anchorIsFinished[subjectIndex];
+                const int myNumIndices = d_indices_per_subject[subjectIndex];
 
-                if(myNumIndices > 0){
-
+                if(myAnchorIsFinished){
                     if(threadIdx.x == 0){
-                        shared_columnProperties = msaColumnProperties[subjectIndex];
+                        atomicAdd(d_newNumIndices, myNumIndices);
                     }
-                    __syncthreads();
+                }else{                                
 
-                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
-                    const int* myIndices = d_indices + globalOffset;
-
-                    int* const myNewIndicesPtr = d_newIndices + globalOffset;
-                    int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
-
-                    bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
-
-                    char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
-                    int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
-                    int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
-                    float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
-                    float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
-                    int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
-                    float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
-
-                    const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
-                    const int* const myShifts = shifts + globalOffset;
-                    const int* const myNops = nOps + globalOffset;
-                    const int* const myOverlaps = overlaps + globalOffset;
-
-                    const unsigned int* const myAnchorSequenceData = subjectSequencesData 
-                                                                        + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const unsigned int* const myCandidateSequencesData = candidateSequencesData 
-                                                                        + std::size_t(globalOffset) * encodedSequencePitchInInts;
-
-                    const unsigned int* const myTransposedCandidateSequencesData = transposedCandidateSequencesData
-                                                                        + std::size_t(globalOffset);
-                    const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
-                    const char* const myCandidateQualities = candidateQualities 
-                                                                        + size_t(globalOffset) * qualityPitchInBytes;
-
-                    const int subjectLength = subjectSequencesLength[subjectIndex];
-                    const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
-
-                    findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
-                        (int2*)&temp_storage.int2reduce,
-                        myNewIndicesPtr,
-                        myNewNumIndicesPerSubjectPtr,
-                        &shared_columnProperties,
-                        myConsensus,
-                        myCounts,
-                        myWeights,
-                        myAnchorSequenceData,
-                        subjectLength,
-                        myCandidateSequencesData,
-                        myCandidateLengths,
-                        myAlignmentFlags,
-                        myShifts,
-                        myNops,
-                        myOverlaps,
-                        myShouldBeKept,
-                        desiredAlignmentMaxErrorRate,
-                        subjectIndex,
-                        encodedSequencePitchInInts,
-                        msaColumnPitchInElements,
-                        myIndices,
-                        myNumIndices,
-                        dataset_coverage
-                    );
-
-                    __syncthreads();
-
-                    const int myNewNumIndices = *myNewNumIndicesPerSubjectPtr;
-
-                    if(threadIdx.x == 0){
-                        atomicAdd(d_newNumIndices, myNewNumIndices);
-                    }
-
-                    assert(myNewNumIndices <= myNumIndices);
-                    if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
-                        auto selector = [&](int i){
-                            return !myShouldBeKept[i];
-                        };
-
-                        removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
-                            selector,
-                            myCounts,
-                            myWeights,
-                            myCoverages,
-                            &shared_columnProperties,
-                            myShifts,
-                            myOverlaps,
-                            myNops,
-                            myAlignmentFlags,
-                            myTransposedCandidateSequencesData,
-                            myCandidateQualities,
-                            myCandidateLengths,
-                            myIndices,
-                            myNumIndices,
-                            n_candidates,
-                            canUseQualityScores, 
-                            msaColumnPitchInElements,
-                            encodedSequencePitchInInts,
-                            qualityPitchInBytes,
-                            desiredAlignmentMaxErrorRate,
-                            subjectIndex
-                        );
-
-                        __syncthreads();
-                        
-                        msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
-                            &shared_columnProperties,
-                            myCoverages
-                        );
-
-                        __syncthreads();
-
-                        assert(shared_columnProperties.firstColumn_incl != -1);
-                        assert(shared_columnProperties.lastColumn_excl != -1);
-
-                        findConsensusSingleBlock<BLOCKSIZE>(
-                            mySupport,
-                            myOrigWeights,
-                            myOrigCoverages,
-                            myConsensus,
-                            &shared_columnProperties,
-                            myCounts,
-                            myWeights,
-                            myAnchorSequenceData, 
-                            subjectIndex,
-                            encodedSequencePitchInInts, 
-                            msaColumnPitchInElements
-                        );
+                    //if(myNumIndices > 0 && !myAnchorIsFinished){
+                    if(myNumIndices > 0){
 
                         if(threadIdx.x == 0){
-                            msaColumnProperties[subjectIndex] = shared_columnProperties;
+                            shared_columnProperties = msaColumnProperties[subjectIndex];
                         }
+                        __syncthreads();
+
+                        const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                        const int* myIndices = d_indices + globalOffset;
+
+                        int* const myNewIndicesPtr = d_newIndices + globalOffset;
+                        int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
+
+                        bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
+
+                        char* const myConsensus = consensus + msaColumnPitchInElements * subjectIndex;
+                        int* const myCoverages = coverage + msaColumnPitchInElements * subjectIndex;
+                        int* const myCounts = counts + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const myWeights = weights + 4 * msaColumnPitchInElements * subjectIndex;
+                        float* const mySupport = support + msaColumnPitchInElements * subjectIndex;
+                        int* const myOrigCoverages = origCoverages + msaColumnPitchInElements * subjectIndex;
+                        float* const myOrigWeights = origWeights + msaColumnPitchInElements * subjectIndex;
+
+                        const BestAlignment_t* const myAlignmentFlags = bestAlignmentFlags + globalOffset;
+                        const int* const myShifts = shifts + globalOffset;
+                        const int* const myNops = nOps + globalOffset;
+                        const int* const myOverlaps = overlaps + globalOffset;
+
+                        const unsigned int* const myAnchorSequenceData = subjectSequencesData 
+                                                                            + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                        const unsigned int* const myCandidateSequencesData = candidateSequencesData 
+                                                                            + std::size_t(globalOffset) * encodedSequencePitchInInts;
+
+                        const unsigned int* const myTransposedCandidateSequencesData = transposedCandidateSequencesData
+                                                                            + std::size_t(globalOffset);
+                        const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
+                        const char* const myCandidateQualities = candidateQualities 
+                                                                            + size_t(globalOffset) * qualityPitchInBytes;
+
+                        const int subjectLength = subjectSequencesLength[subjectIndex];
+                        const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
+
+                        findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
+                            (int2*)&temp_storage.int2reduce,
+                            myNewIndicesPtr,
+                            myNewNumIndicesPerSubjectPtr,
+                            &shared_columnProperties,
+                            myConsensus,
+                            myCounts,
+                            myWeights,
+                            myAnchorSequenceData,
+                            subjectLength,
+                            myCandidateSequencesData,
+                            myCandidateLengths,
+                            myAlignmentFlags,
+                            myShifts,
+                            myNops,
+                            myOverlaps,
+                            myShouldBeKept,
+                            desiredAlignmentMaxErrorRate,
+                            subjectIndex,
+                            encodedSequencePitchInInts,
+                            msaColumnPitchInElements,
+                            myIndices,
+                            myNumIndices,
+                            dataset_coverage
+                        );
 
                         __syncthreads();
+
+                        const int myNewNumIndices = *myNewNumIndicesPerSubjectPtr;
+
+                        if(threadIdx.x == 0){
+                            atomicAdd(d_newNumIndices, myNewNumIndices);
+                        }
+
+                        assert(myNewNumIndices <= myNumIndices);
+                        if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
+                            auto selector = [&](int i){
+                                return !myShouldBeKept[i];
+                            };
+
+                            removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
+                                selector,
+                                myCounts,
+                                myWeights,
+                                myCoverages,
+                                &shared_columnProperties,
+                                myShifts,
+                                myOverlaps,
+                                myNops,
+                                myAlignmentFlags,
+                                myTransposedCandidateSequencesData,
+                                myCandidateQualities,
+                                myCandidateLengths,
+                                myIndices,
+                                myNumIndices,
+                                n_candidates,
+                                canUseQualityScores, 
+                                msaColumnPitchInElements,
+                                encodedSequencePitchInInts,
+                                qualityPitchInBytes,
+                                desiredAlignmentMaxErrorRate,
+                                subjectIndex
+                            );
+
+                            __syncthreads();
+                            
+                            msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
+                                &shared_columnProperties,
+                                myCoverages
+                            );
+
+                            __syncthreads();
+
+                            assert(shared_columnProperties.firstColumn_incl != -1);
+                            assert(shared_columnProperties.lastColumn_excl != -1);
+
+                            findConsensusSingleBlock<BLOCKSIZE>(
+                                mySupport,
+                                myOrigWeights,
+                                myOrigCoverages,
+                                myConsensus,
+                                &shared_columnProperties,
+                                myCounts,
+                                myWeights,
+                                myAnchorSequenceData, 
+                                subjectIndex,
+                                encodedSequencePitchInInts, 
+                                msaColumnPitchInElements
+                            );
+
+                            if(threadIdx.x == 0){
+                                msaColumnProperties[subjectIndex] = shared_columnProperties;
+                            }
+
+                            __syncthreads();
+                        }else{
+                            assert(myNewNumIndices == myNumIndices);
+                            //could not remove any candidate. this will not change in other iterations
+                            if(threadIdx.x == 0){
+                                anchorIsFinished[subjectIndex] = true;
+                            }
+                        }
+                    }else{
+                        if(threadIdx.x == 0){
+                            d_newNumIndicesPerSubject[subjectIndex] = 0;
+                            anchorIsFinished[subjectIndex] = true;
+                        }
+                        ; //nothing else to do if there are no candidates in msa
                     }
-                }else{
-                    if(threadIdx.x == 0){
-                        d_newNumIndicesPerSubject[subjectIndex] = 0;
-                    }
-                    ; //nothing else to do if there are no candidates in msa
                 }
+                
             }
         }
     }
@@ -4570,7 +4558,7 @@ namespace gpu{
         int dataset_coverage,
         const bool* d_canExecute,
         int iteration,
-        const read_number* d_subjectReadIds,
+        bool* d_anchorIsFinished,
         cudaStream_t stream,
         KernelLaunchHandle& handle
     ){
@@ -4669,7 +4657,7 @@ namespace gpu{
             dataset_coverage,
             d_canExecute,
             iteration,
-            d_subjectReadIds
+            d_anchorIsFinished
         );
     }
 
@@ -4716,7 +4704,7 @@ namespace gpu{
             int dataset_coverage,
             const bool* d_canExecute,
             int iteration,
-            const read_number* d_subjectReadIds,
+            bool* d_anchorIsFinished,
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
@@ -4814,7 +4802,7 @@ namespace gpu{
             dataset_coverage,
             d_canExecute,
             iteration,
-            d_subjectReadIds
+            d_anchorIsFinished
         );
     }
 
@@ -4859,7 +4847,7 @@ namespace gpu{
         int dataset_coverage,
         const bool* d_canExecute,
         int iteration,
-        const read_number* d_subjectReadIds,
+        bool* d_anchorIsFinished,
         cudaStream_t stream,
         KernelLaunchHandle& handle
     ){
@@ -4907,7 +4895,7 @@ namespace gpu{
             dataset_coverage,
             d_canExecute,
             iteration,
-            d_subjectReadIds,
+            d_anchorIsFinished,
             stream,
             handle
         );

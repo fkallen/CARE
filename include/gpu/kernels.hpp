@@ -364,7 +364,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
             int dataset_coverage,
             const bool* d_canExecute,
             int iteration,
-            const read_number* d_subjectReadIds,
+            bool* d_anchorIsFinished,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
@@ -407,7 +407,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async(
             int dataset_coverage,
             const bool* d_canExecute,
             int iteration,
-            const read_number* d_subjectReadIds,
+            bool* d_anchorIsFinished,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
@@ -450,7 +450,7 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletionKernel_async(
         int dataset_coverage,
         const bool* d_canExecute,
         int iteration,
-        const read_number* d_subjectReadIds,
+        bool* d_anchorIsFinished,
         cudaStream_t stream,
         KernelLaunchHandle& handle);          
 

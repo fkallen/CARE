@@ -2569,9 +2569,13 @@ namespace gpu{
         const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;        
 
-        assert(batch.d_tempstorage.sizeInBytes() >= sizeof(bool) * batch.n_queries);
+        const std::size_t requiredTempStorageBytes = 
+            SDIV(sizeof(bool) * batch.n_queries, 128) * 128 // d_shouldBeKept + padding to align the next pointer
+            + (sizeof(bool) * batchsize); // d_anchorIsFinished
+        assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
         
         bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
+        bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * batch.n_queries, 128) * 128);
 
         std::array<int*,2> d_indices_dblbuf{
             batch.d_indices.get(), 
@@ -2586,7 +2590,10 @@ namespace gpu{
             batch.d_num_indices_tmp.get()
         };
 
+        //cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
+
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
+
             callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
                 d_indices_dblbuf[(1 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(1 + iteration) % 2],
@@ -2626,7 +2633,7 @@ namespace gpu{
                 batch.correctionOptions.estimatedCoverage,
                 batch.d_canExecute,
                 iteration,
-                batch.d_subject_read_ids.get(),
+                d_anchorIsFinished,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle
             );
@@ -4008,7 +4015,7 @@ correct_gpu(
     
             batchData.msa_max_column_count = (3*sequenceFileProperties.maxSequenceLength - 2*batchData.min_overlap);
             //round up to 32 elements
-            batchData.msaColumnPitchInElements = SDIV(batchData.msa_max_column_count, 128) * 128;
+            batchData.msaColumnPitchInElements = SDIV(batchData.msa_max_column_count, 32) * 32;
             
             batchData.numCandidatesLimit = numCandidatesLimitPerGpu[deviceId];
 
