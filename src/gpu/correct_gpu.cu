@@ -2590,7 +2590,7 @@ namespace gpu{
             batch.d_num_indices_tmp.get()
         };
 
-        //cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
+        cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 

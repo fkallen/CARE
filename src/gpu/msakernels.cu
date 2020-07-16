@@ -2810,14 +2810,14 @@ namespace gpu{
             const int n_candidates = *d_numCandidates;
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-                //const bool myAnchorIsFinished = d_anchorIsFinished[subjectIndex];
+                const bool myAnchorIsFinished = d_anchorIsFinished[subjectIndex];
                 const int myNumIndices = d_indices_per_subject[subjectIndex];
 
-                // if(myAnchorIsFinished){
-                //     if(threadIdx.x == 0){
-                //         atomicAdd(d_newNumIndices, myNumIndices);
-                //     }
-                // }else{               
+                if(myAnchorIsFinished){
+                    if(threadIdx.x == 0){
+                        atomicAdd(d_newNumIndices, myNumIndices);
+                    }
+                }else{               
 
                     if(myNumIndices > 0){
 
@@ -3002,18 +3002,18 @@ namespace gpu{
 
                             __syncthreads(); //wait until data can be reused                     
                         }else{
-                            // if(threadIdx.x == 0){
-                            //     d_anchorIsFinished[subjectIndex] = true;
-                            // }
+                            if(threadIdx.x == 0){
+                                d_anchorIsFinished[subjectIndex] = true;
+                            }
                         }
                     }else{
                         if(threadIdx.x == 0){
                             d_newNumIndicesPerSubject[subjectIndex] = 0;
-                            //d_anchorIsFinished[subjectIndex] = true;
+                            d_anchorIsFinished[subjectIndex] = true;
                         }
                         ; //nothing else to do if there are no candidates in msa
                     }
-                //}
+                }
             }
         }
     }
@@ -4852,8 +4852,8 @@ namespace gpu{
         KernelLaunchHandle& handle
     ){
 
-        auto func = callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async;
-        //auto func = callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletionKernel_async;
+        //auto func = callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async;
+        auto func = callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletionKernel_async;
 
 
         func(
