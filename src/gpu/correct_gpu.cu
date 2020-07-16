@@ -67,7 +67,7 @@
 #endif
 
 
-//#define USE_CUDA_GRAPH
+#define USE_CUDA_GRAPH
 
 
 namespace care{

@@ -800,13 +800,13 @@ namespace gpu{
             column < firstColumn_incl; 
             column += BLOCKSIZE){
                 
-            my_consensus[column] = 'F';
+            my_consensus[column] = 5;
         }
 
         for(int i = threadIdx.x; i < leftoverRight; i += BLOCKSIZE){
             const int column = lastColumn_excl + i;
 
-            my_consensus[column] = 'F';
+            my_consensus[column] = 5;
         }
 
         const int* const myCountsA = myCounts + 0 * msaColumnPitchInElements;
@@ -853,22 +853,22 @@ namespace gpu{
                     const float wg = my_weightsG[column];
                     const float wt = my_weightsT[column];
 
-                    char cons = 'F';
+                    char cons = 5;
                     float consWeight = 0.0f;
                     if(wa > consWeight){
-                        cons = 'A';
+                        cons = 0;
                         consWeight = wa;
                     }
                     if(wc > consWeight){
-                        cons = 'C';
+                        cons = 1;
                         consWeight = wc;
                     }
                     if(wg > consWeight){
-                        cons = 'G';
+                        cons = 2;
                         consWeight = wg;
                     }
                     if(wt > consWeight){
-                        cons = 'T';
+                        cons = 3;
                         consWeight = wt;
                     }
 
@@ -971,22 +971,22 @@ namespace gpu{
                     const float wg = regWeightsG[i];
                     const float wt = regWeightsT[i];
 
-                    char cons = 'F';
+                    char cons = 5;
                     float consWeight = 0.0f;
                     if(wa > consWeight){
-                        cons = 'A';
+                        cons = 0;
                         consWeight = wa;
                     }
                     if(wc > consWeight){
-                        cons = 'C';
+                        cons = 1;
                         consWeight = wc;
                     }
                     if(wg > consWeight){
-                        cons = 'G';
+                        cons = 2;
                         consWeight = wg;
                     }
                     if(wt > consWeight){
-                        cons = 'T';
+                        cons = 3;
                         consWeight = wt;
                     }
                     my_consensus[column] = cons;
@@ -1045,22 +1045,22 @@ namespace gpu{
             const float wg = my_weightsG[column];
             const float wt = my_weightsT[column];
 
-            char cons = 'F';
+            char cons = 5;
             float consWeight = 0.0f;
             if(wa > consWeight){
-                cons = 'A';
+                cons = 0;
                 consWeight = wa;
             }
             if(wc > consWeight){
-                cons = 'C';
+                cons = 1;
                 consWeight = wc;
             }
             if(wg > consWeight){
-                cons = 'G';
+                cons = 2;
                 consWeight = wg;
             }
             if(wt > consWeight){
-                cons = 'T';
+                cons = 3;
                 consWeight = wt;
             }
             my_consensus[column] = cons;
@@ -1174,7 +1174,7 @@ namespace gpu{
         for(int pos = threadIdx.x; pos < subjectLength && !hasMismatchToConsensus; pos += BLOCKSIZE){
             const int column = subjectColumnsBegin_incl + pos;
             const char consbase = myConsensus[column];
-            const char subjectbase = to_nuc(getEncodedNuc2Bit(subjectptr, subjectLength, pos));
+            const char subjectbase = getEncodedNuc2Bit(subjectptr, subjectLength, pos);
 
             hasMismatchToConsensus |= (consbase != subjectbase);
         }
@@ -1215,14 +1215,9 @@ namespace gpu{
                 counts[3] = myCountsT[columnindex];
 
                 const char consbase = myConsensus[columnindex];
-                consindex = -1;
+                consindex = consbase;
 
-                switch(consbase){
-                    case 'A': consindex = 0;break;
-                    case 'C': consindex = 1;break;
-                    case 'G': consindex = 2;break;
-                    case 'T': consindex = 3;break;
-                }
+                assert(0 <= consindex && consindex < 4);
 
                 //find out if there is a non-consensus base with significant coverage
                 int significantBaseIndex = -1;
@@ -1257,7 +1252,7 @@ namespace gpu{
                 if(packed.x != std::numeric_limits<int>::max()){
                     broadcastbufferint4[0] = 1;
                     broadcastbufferint4[1] = packed.x;
-                    broadcastbufferint4[2] = to_nuc(packed.y);
+                    broadcastbufferint4[2] = packed.y;
                     broadcastbufferint4[3] = packed.y;
                 }else{
                     broadcastbufferint4[0] = 0;
@@ -1286,16 +1281,16 @@ namespace gpu{
                         const int row_begin_incl = subjectColumnsBegin_incl + shift;
                         const int row_end_excl = row_begin_incl + candidateLength;
                         const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                        char base = 'F';
+                        char base = 5;
                         if(!notAffected){
                             if(alignmentFlag == BestAlignment_t::Forward){
-                                base = to_nuc(getEncodedNuc2Bit(candidateptr, candidateLength, (col - row_begin_incl)));
+                                base = getEncodedNuc2Bit(candidateptr, candidateLength, (col - row_begin_incl));
                             }else{
                                 //all candidates of MSA must not have alignmentflag None
                                 assert(alignmentFlag == BestAlignment_t::ReverseComplement); 
 
                                 const unsigned int forwardbaseEncoded = getEncodedNuc2Bit(candidateptr, candidateLength, row_end_excl-1 - col);
-                                base = to_nuc((~forwardbaseEncoded & 0x03));
+                                base = (~forwardbaseEncoded & 0x03);
                             }
                         }
 
@@ -1381,7 +1376,7 @@ namespace gpu{
                 };
 
                 //compare found base to original base
-                const char originalbase = to_nuc(getEncodedNuc2Bit(subjectptr, subjectLength, col - subjectColumnsBegin_incl));
+                const char originalbase = getEncodedNuc2Bit(subjectptr, subjectLength, col - subjectColumnsBegin_incl);
 
                 if(originalbase == foundBase){
                     //discard all candidates whose base in column col differs from foundBase
@@ -2511,22 +2506,22 @@ namespace gpu{
                         const int cov = ca + cc + cg + ct;
                         inputcoverages[column] = cov;
 
-                        char cons = 'F';
+                        char cons = 5;
                         float consWeight = 0.0f;
                         if(wa > consWeight){
-                            cons = 'A';
+                            cons = 0;
                             consWeight = wa;
                         }
                         if(wc > consWeight){
-                            cons = 'C';
+                            cons = 1;
                             consWeight = wc;
                         }
                         if(wg > consWeight){
-                            cons = 'G';
+                            cons = 2;
                             consWeight = wg;
                         }
                         if(wt > consWeight){
-                            cons = 'T';
+                            cons = 3;
                             consWeight = wt;
                         }
                         my_consensus[column] = cons;
@@ -2593,7 +2588,7 @@ namespace gpu{
                         column < firstColumn_incl; 
                         column += blockDim.x * blocksPerAnchor){
                             
-                        my_consensus[column] = 0;
+                        my_consensus[column] = 5;
                     }
 
                     for(int i = threadIdx.x + threadBlockForSubject * blockDim.x; 
@@ -2602,7 +2597,7 @@ namespace gpu{
 
                         const int column = lastColumn_excl + i;
 
-                        my_consensus[column] = 0;
+                        my_consensus[column] = 5;
                     }
                     
 

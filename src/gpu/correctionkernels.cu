@@ -195,7 +195,7 @@ namespace gpu{
                 if(isHQ){
                     for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
                         //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
-                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                        my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_consensus[i]);
                     }
                     if(threadIdx.x == 0){
                         subjectIsCorrected[subjectIndex] = true;
@@ -256,7 +256,7 @@ namespace gpu{
                                     }else{
                                         candidateBaseEnc = get((const char*)candidateptr, candidateLength, candidateBasePosition);
                                     }
-                                    const char candidateBase = to_nuc(candidateBaseEnc);
+                                    const char candidateBase = candidateBaseEnc;
 
                                     const int mynOps = nOps[arrayindex];
                                     const int overlapsize = overlaps[arrayindex];
@@ -358,7 +358,7 @@ namespace gpu{
                                         // }
 
                                         //if(correctToConsensus){
-                                            my_corrected_subject[i] = consensusBase;
+                                            my_corrected_subject[i] = to_nuc(consensusBase);
                                             foundAColumn = true;
                                         // }else{
                                         //     saveUncorrectedPositionInSmem(i);
@@ -585,16 +585,17 @@ namespace gpu{
                 if(flag > 0){
                     for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
                         const char nuc = my_consensus[i];
-                        assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
+                        //assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
+                        assert(0 <= nuc && nuc < 4);
 
-                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                        my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(nuc);
                     }
                 }else{
                     //correct only positions with high support.
                     for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
                         //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
                         if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
-                            my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                            my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_consensus[i]);
                         }else{
                             const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
                             const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
@@ -986,7 +987,7 @@ namespace gpu{
             assert(copyposend - copyposbegin == candidate_length);
 
             for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
-                shared_correctedCandidate[i - queryColumnsBegin_incl] = my_consensus[i];
+                shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(my_consensus[i]);
             }
 
             //const float* const my_support = support + msaColumnPitchInElements * subjectIndex;
@@ -1639,7 +1640,7 @@ namespace gpu{
 
     	dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
-        dim3 grid(max_blocks_per_device);
+        dim3 grid(max_blocks_per_device*2);
         
         assert(smem % sizeof(int) == 0);
 
