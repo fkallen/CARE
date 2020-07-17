@@ -67,7 +67,7 @@
 #endif
 
 
-#define USE_CUDA_GRAPH
+//#define USE_CUDA_GRAPH
 
 
 namespace care{
@@ -476,10 +476,10 @@ namespace gpu{
         PinnedBuffer<int> h_candidate_sequences_lengths;
         PinnedBuffer<int> h_alignment_shifts;
 
-        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
+        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedSubject;
         PinnedBuffer<int> h_numEditsPerCorrectedSubject;
 
-        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedCandidate;
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
 
 
@@ -631,9 +631,9 @@ namespace gpu{
         PinnedBuffer<int> h_num_indices;
         PinnedBuffer<int> h_indices_of_corrected_subjects;
         PinnedBuffer<int> h_num_indices_of_corrected_subjects;
-        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
+        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedSubject;
         PinnedBuffer<int> h_numEditsPerCorrectedSubject;
-        PinnedBuffer<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+        PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedCandidate;
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
         PinnedBuffer<bool> h_anchorContainsN;
         PinnedBuffer<bool> h_candidateContainsN;
@@ -686,9 +686,9 @@ namespace gpu{
         DeviceBuffer<int> d_num_indices_tmp;
         DeviceBuffer<int> d_indices_of_corrected_subjects;
         DeviceBuffer<int> d_num_indices_of_corrected_subjects;
-        DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
+        DeviceBuffer<TempCorrectedSequence::EncodedEdit> d_editsPerCorrectedSubject;
         DeviceBuffer<int> d_numEditsPerCorrectedSubject;
-        DeviceBuffer<TempCorrectedSequence::Edit> d_editsPerCorrectedCandidate;
+        DeviceBuffer<TempCorrectedSequence::EncodedEdit> d_editsPerCorrectedCandidate;
         DeviceBuffer<int> d_numEditsPerCorrectedCandidate;
         DeviceBuffer<bool> d_anchorContainsN;
         DeviceBuffer<bool> d_candidateContainsN;   
@@ -3077,7 +3077,7 @@ namespace gpu{
         cudaMemcpyAsync(
             batch.h_editsPerCorrectedSubject,
             batch.d_editsPerCorrectedSubject,
-            sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * batchsize,
+            sizeof(TempCorrectedSequence::EncodedEdit) * batch.maxNumEditsPerSequence * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -3347,7 +3347,7 @@ namespace gpu{
         // cudaMemcpyAsync(
         //     batch.h_editsPerCorrectedCandidate,
         //     batch.d_editsPerCorrectedCandidate,
-        //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * resultsToCopy,
+        //     sizeof(TempCorrectedSequence::EncodedEdit) * batch.maxNumEditsPerSequence * resultsToCopy,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
@@ -3483,7 +3483,7 @@ namespace gpu{
         // cudaMemcpyAsync(
         //     batch.h_editsPerCorrectedCandidate,
         //     batch.d_editsPerCorrectedCandidate,
-        //     sizeof(TempCorrectedSequence::Edit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
+        //     sizeof(TempCorrectedSequence::EncodedEdit) * batch.maxNumEditsPerSequence * numTotalCorrectedCandidates,
         //     D2H,
         //     streams[primary_stream_index]
         // ); CUERR;
@@ -3701,7 +3701,7 @@ namespace gpu{
                                                 + offsetForCorrectedCandidateData * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
                                                 + offsetForCorrectedCandidateData;
-                const TempCorrectedSequence::Edit* const my_editsPerCorrectedCandidate = rawResults.h_editsPerCorrectedCandidate
+                const TempCorrectedSequence::EncodedEdit* const my_editsPerCorrectedCandidate = rawResults.h_editsPerCorrectedCandidate
                                                         + offsetForCorrectedCandidateData * rawResults.maxNumEditsPerSequence;
 
 

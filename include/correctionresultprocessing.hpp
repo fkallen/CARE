@@ -5,6 +5,7 @@
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
+#include <sequence.hpp>
 
 #include <cstring>
 #include <fstream>
@@ -66,6 +67,115 @@ namespace care{
     // Will be loaded from file during mergeResultFiles
     struct TempCorrectedSequence{
         enum class Type : int {Anchor, Candidate};
+        struct EncodedEdit{
+            // char b;
+            // int p;
+            std::uint16_t data;
+
+            EncodedEdit() = default;
+            
+            HOSTDEVICEQUALIFIER
+            explicit EncodedEdit(int p, char b){
+                data = p;
+                data = data << 2;
+                std::uint16_t enc = convertDNACharToIntNoIf(b);
+                data |= enc;
+
+                // this->p = p;
+                // this->b = b;
+            }
+
+            HOSTDEVICEQUALIFIER
+            explicit EncodedEdit(int p, std::uint8_t b){
+                data = p;
+                data = data << 2;
+                data |= b;
+
+                // this->p = p;
+                // this->b = convertIntToDNACharNoIf(b);
+            }
+
+            HOSTDEVICEQUALIFIER
+            bool operator==(const EncodedEdit& rhs) const{
+                return data == rhs.data;
+            }
+
+            HOSTDEVICEQUALIFIER
+            bool operator!=(const EncodedEdit& rhs) const{
+                return !(operator==(rhs));
+            }
+
+            HOSTDEVICEQUALIFIER
+            int pos() const{
+                return data >> 2;
+                //return p;
+            }
+
+            HOSTDEVICEQUALIFIER
+            char base() const{
+                std::uint8_t enc = data & 0x03;
+                return convertIntToDNACharNoIf(enc);
+                //return b;
+            }
+
+            HOSTDEVICEQUALIFIER
+            void pos(int i){
+                std::uint16_t a = i;
+                data = (a << 2) | (data & 0x03);
+                //p = i;
+            }
+
+            HOSTDEVICEQUALIFIER
+            void base(char b){
+                std::uint16_t enc = convertDNACharToIntNoIf(b);
+                data = (data & ~0x03) | enc;
+                //this->b = b;
+            }
+
+            HOSTDEVICEQUALIFIER
+            void base(std::uint8_t b){
+                std::uint16_t enc = b;
+                data = (data & ~0x03) | enc;
+
+                //this->b = convertIntToDNACharNoIf(b);
+            }
+        };
+
+        // struct EncodedEdit{
+        //     char b;
+        //     int p;
+
+        //     EncodedEdit() = default;
+        //     HOSTDEVICEQUALIFIER
+        //     EncodedEdit(int p, char b) : b(b), p(p){}
+
+        //     HOSTDEVICEQUALIFIER
+        //     bool operator==(const EncodedEdit& rhs) const{
+        //         return b == rhs.b && p == rhs.p;
+        //     }
+
+        //     HOSTDEVICEQUALIFIER
+        //     bool operator!=(const EncodedEdit& rhs) const{
+        //         return !(operator==(rhs));
+        //     }
+
+        //     int pos() const{
+        //         return p;
+        //     }
+
+        //     char base() const{
+        //         return b;
+        //     }
+
+        //     void pos(int i){
+        //         p = i;
+        //     }
+
+        //     void base(char c){
+        //         b = c;
+        //     }
+        // };
+
         struct Edit{
             char base;
             int pos;
@@ -83,7 +193,15 @@ namespace care{
             bool operator!=(const Edit& rhs) const{
                 return !(operator==(rhs));
             }
+
+            Edit& operator=(const Edit& rhs) = default;
+            Edit& operator=(const EncodedEdit& rhs){
+                base = rhs.base();
+                pos = rhs.pos();
+                return *this;
+            }
         };
+
         static constexpr char AnchorChar = 'a';
         static constexpr char CandidateChar = 'c';
 

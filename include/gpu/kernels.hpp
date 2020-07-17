@@ -490,7 +490,7 @@ void call_msaCorrectAnchorsKernel_async(
 
 void callCompactCandidateCorrectionResultsKernel_async(
             char* __restrict__ d_compactedCorrectedCandidates,
-            TempCorrectedSequence::Edit* __restrict__ d_compactedEditsPerCorrectedCandidate,
+            TempCorrectedSequence::EncodedEdit* __restrict__ d_compactedEditsPerCorrectedCandidate,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchor,
             const int* __restrict__ d_numCorrectedCandidatesPerAnchorPrefixsum, //exclusive
             const int* __restrict__ d_high_quality_subject_indices,
@@ -498,7 +498,7 @@ void callCompactCandidateCorrectionResultsKernel_async(
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const char* __restrict__ d_correctedCandidates,
             const int* __restrict__ d_correctedCandidateLengths,
-            const TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+            const TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
             size_t decodedSequencePitch,
             int numEditsThreshold,
             int n_subjects,
@@ -507,7 +507,7 @@ void callCompactCandidateCorrectionResultsKernel_async(
 
 
 void callConstructAnchorResultsKernelAsync(
-            TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedSubject,
+            TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
             int* __restrict__ d_numEditsPerCorrectedSubject,
             int doNotUseEditsValue,
             const int* __restrict__ d_indicesOfCorrectedSubjects,
@@ -548,7 +548,7 @@ void callFlagCandidatesToBeCorrectedKernel_async(
 
 void callCorrectCandidatesWithGroupKernel2_async(
             char* __restrict__ correctedCandidates,
-            TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+            TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
             int* __restrict__ d_numEditsPerCorrectedCandidate,
             const MSAColumnProperties* __restrict__ msaColumnProperties,
             const char* __restrict__ consensus,

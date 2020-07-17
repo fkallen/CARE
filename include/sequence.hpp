@@ -34,12 +34,14 @@ namespace care{
 
         constexpr float a = 167.f/100776.f;
         constexpr float b = -1845.f/33592.f;
-        constexpr float c = 30395.f/50388.f;
+        //constexpr float c = 30395.f/50388.f;
+        constexpr float c2 = 30395.f/50387.f;
         constexpr float d = 0.f;
 
         const float x = (input & 0xDf)-(unsigned char)(65);
 
-        return std::uint8_t((((a * x) + b) * x) + c) * x + d;
+        //return a*x*x*x + b*x*x + c*x + d;
+        return std::uint8_t(((((a * x) + b) * x) + c2) * x + d);
     }
 
     HD_WARNING_DISABLE
