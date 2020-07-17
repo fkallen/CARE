@@ -896,6 +896,8 @@ namespace gpu{
         constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
 
         auto decodedReverseComplementInplaceGroup = [](auto group, char* sequence, int sequencelength){
+            //char4* c4sequence = (char4*)sequence;
+
             auto make_reverse_complement_nuc = [](char in){
                 switch(in){
                     case 'A': return 'T';
@@ -951,6 +953,11 @@ namespace gpu{
         const int groupIdInBlock = threadIdx.x / groupsize;
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
+        // char4* const shared_consensusstage = (char4*)(dynamicsmem + dynamicsmemPitchInInts * numGroups
+        //     + (msaColumnPitchInElements / 4) * groupIdInBlock);
+
+        //char4 shared_consensusstage[256/4];
+        //__shared__ char shared_consensusstage[256];
 
         const int loopEnd = *numCandidatesToBeCorrected;
 
@@ -986,9 +993,27 @@ namespace gpu{
             const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
             assert(copyposend - copyposbegin == candidate_length);
 
+            // const int consChar4Begin = copyposbegin / 4;
+            // const int consChar4End = (copyposend-1) / 4;
+
+            // for(int i = consChar4Begin + tgroup.thread_rank(); i <= consChar4End; i += tgroup.size()){
+            //     char data[4];
+            //     memcpy(data, my_consensus + 4 * i, sizeof(char4));
+
+            //     #pragma unroll
+            //     for(int k = 0; k < 4; k++){
+            //         const int column = i * 4 + k;
+            //         if(copyposbegin <= column && column < copyposend){
+            //             shared_correctedCandidate[column - copyposbegin] = to_nuc(data[k]);
+            //         }
+            //     }
+            // }
+
             for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
                 shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(my_consensus[i]);
             }
+
+
 
             //const float* const my_support = support + msaColumnPitchInElements * subjectIndex;
             
@@ -1147,6 +1172,407 @@ namespace gpu{
                         *myNumEdits = doNotUseEditsValue;
                     }
                 }
+            }
+            
+
+            tgroup.sync(); //sync before handling next candidate
+            
+            //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
+
+
+            
+        }
+    }
+
+
+
+
+
+
+
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msa_correct_candidates_with_group_kernel2_new(
+            char* __restrict__ correctedCandidates,
+            TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+            int* __restrict__ d_numEditsPerCorrectedCandidate,
+            const MSAColumnProperties* __restrict__ msaColumnProperties,
+            const char* __restrict__ consensus,
+            const float* __restrict__ support,
+            const int* __restrict__ shifts,
+            const BestAlignment_t* __restrict__ bestAlignmentFlags,
+            const unsigned int* __restrict__ candidateSequencesData,
+            const int* __restrict__ candidateSequencesLengths,
+            const bool* __restrict__ d_candidateContainsN,
+            const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+            const int* __restrict__ numCandidatesToBeCorrected,
+            const int* __restrict__ anchorIndicesOfCandidates,
+            const int* __restrict__ d_numAnchors,
+            const int* __restrict__ d_numCandidates,
+            int doNotUseEditsValue,
+            int numEditsThreshold,            
+            int encodedSequencePitchInInts,
+            size_t sequence_pitch,
+            size_t msaColumnPitchInElements,
+            size_t dynamicsmemPitchInInts){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+
+        auto decodedReverseComplementInplaceGroup = [](auto group, char* sequence, int sequencelength){
+            //char4* c4sequence = (char4*)sequence;
+
+            auto make_reverse_complement_nuc = [](char in){
+                return in;
+                // switch(in){
+                //     case 'A': return 'T';
+                //     case 'C': return 'G';
+                //     case 'G': return 'C';
+                //     case 'T': return 'A';
+                //     default :return 'F';
+                // }
+            };
+
+            for(int i = group.thread_rank(); i < sequencelength/2; i += group.size()){
+                const std::uint8_t front = make_reverse_complement_nuc(sequence[i]);
+                const std::uint8_t back = make_reverse_complement_nuc(sequence[sequencelength - 1 - i]);
+                sequence[i] = back;
+                sequence[sequencelength - 1 - i] = front;
+            }
+
+            if(sequencelength % 2 == 1 && group.thread_rank() == 0){
+                const int middleindex = sequencelength/2;
+                sequence[middleindex] = make_reverse_complement_nuc(sequence[middleindex]);
+            }
+        };
+
+        auto reverseWithGroup = [](auto& group, char* sequence, int sequenceLength){
+            // assume 4 chars per int, 0 = A, 1 = C, 2 = G, 3 = T
+
+            auto reverse = [](char4 data){
+                char4 s;
+                s.x = data.w;
+                s.y = data.z;
+                s.z = data.y;
+                s.w = data.x;
+                return s;
+            };
+
+            const int arrayLength = SDIV(sequenceLength, 4); // 4 bases per int
+            const int unusedPositions = arrayLength * 4 - sequenceLength;
+            char4* sequenceAsInts = (char4*)sequence;
+
+            for(int i = group.thread_rank(); i < arrayLength/2; i += group.size()){
+                const char4 fdata = ((char4*)sequence)[i];
+                const char4 bdata = ((char4*)sequence)[arrayLength - 1 - i];
+
+                const char4 front = reverse(fdata);
+                const char4 back = reverse(bdata);
+                sequenceAsInts[i] = back;
+                sequenceAsInts[arrayLength - 1 - i] = front;
+            }
+
+            if(arrayLength % 2 == 1 && group.thread_rank() == 0){
+                const int middleindex = arrayLength/2;
+                const char4 mdata = ((char4*)sequence)[middleindex];
+                sequenceAsInts[middleindex] = reverse(mdata);
+            }
+
+            unsigned int* sequenceAsInts2 = (unsigned int*)sequence;
+    
+            if(unusedPositions > 0){
+                for(int i = 0; i < arrayLength-1; i++){
+                    sequenceAsInts2[i] = (sequenceAsInts2[i] << (8*unusedPositions))
+                                                   | (sequenceAsInts2[i+1] >> (8 * (4-unusedPositions)));
+    
+                }
+                sequenceAsInts2[arrayLength-1] <<= (8*unusedPositions);
+            }
+        };
+
+        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+            return ((data >> (30 - 2*pos)) & 0x00000003);
+        };
+
+        auto to_nuc = [](char c){
+            // constexpr char A_enc = 0x00;
+            // constexpr char C_enc = 0x01;
+            // constexpr char G_enc = 0x02;
+            // constexpr char T_enc = 0x03;
+
+            // switch(c){
+            // case A_enc: return 'A';
+            // case C_enc: return 'C';
+            // case G_enc: return 'G';
+            // case T_enc: return 'T';
+            // default: return 'F';
+            // }
+
+            return convertIntToDNACharNoIf(c);
+        };
+
+        __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
+        __shared__ TempCorrectedSequence::Edit shared_Edits[groupsPerBlock][15];
+
+        extern __shared__ int dynamicsmem[]; // for sequences
+
+
+
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
+        // char4* const shared_consensusstage = (char4*)(dynamicsmem + dynamicsmemPitchInInts * numGroups
+        //     + (msaColumnPitchInElements / 4) * groupIdInBlock);
+
+        //char4 shared_consensusstage[256/4];
+        //__shared__ char shared_consensusstage[256];
+
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        for(int id = groupId;
+                id < loopEnd;
+                id += numGroups){
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int subjectIndex = anchorIndicesOfCandidates[candidateIndex];
+            const int destinationIndex = id;
+
+            char* const my_corrected_candidate = correctedCandidates + destinationIndex * sequence_pitch;
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+
+            const int shift = shifts[candidateIndex];
+            const int subjectColumnsBegin_incl = msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+            const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+            const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
+
+            const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            const char* const my_consensus = consensus + msaColumnPitchInElements * subjectIndex;
+
+            if(tgroup.thread_rank() == 0){                        
+                shared_numEditsOfCandidate[groupIdInBlock] = 0;
+            }
+            tgroup.sync();          
+
+            
+            
+
+            const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
+            const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+            assert(copyposend - copyposbegin == candidate_length);
+
+            // const int consChar4Begin = copyposbegin / 4;
+            // const int consChar4End = (copyposend-1) / 4;
+
+            // for(int i = consChar4Begin + tgroup.thread_rank(); i <= consChar4End; i += tgroup.size()){
+            //     char data[4];
+            //     memcpy(data, my_consensus + 4 * i, sizeof(char4));
+
+            //     #pragma unroll
+            //     for(int k = 0; k < 4; k++){
+            //         const int column = i * 4 + k;
+            //         if(copyposbegin <= column && column < copyposend){
+            //             shared_correctedCandidate[column - copyposbegin] = to_nuc(data[k]);
+            //         }
+            //     }
+            // }
+
+            for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(my_consensus[i]);
+            }
+
+
+
+            //const float* const my_support = support + msaColumnPitchInElements * subjectIndex;
+            
+
+            // for(int i = copyposbegin; i < copyposend; i += 1) {
+            //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+            //     if(my_support[i] > 0.90f){
+            //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+            //     }else{
+            //         const char encodedBase = get(candidate, queryColumnsEnd_excl- queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+            //         const char base = to_nuc(encodedBase);
+            //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = base;
+            //     }
+            // }
+
+            
+
+            //the forward strand will be returned -> make reverse complement again
+            if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+                for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                    shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(3-my_consensus[i]);
+                }
+                tgroup.sync(); // threads may access elements in shared memory which were written by another thread
+                //decodedReverseComplementInplaceGroup(tgroup, shared_correctedCandidate, candidate_length);
+                reverseWithGroup(tgroup, shared_correctedCandidate, candidate_length);
+                tgroup.sync();
+            }else{
+                for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                    shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(my_consensus[i]);
+                }
+            }
+
+            // { 
+            //     // leave positions untouched which did not overlap anchor
+
+            //     auto get = [] (const unsigned int* data, int length, int index){
+            //         return getEncodedNuc2Bit(data, length, index);
+            //     };
+
+            //     const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+            //             + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+            //     for(int i = queryColumnsBegin_incl + tgroup.thread_rank(); i < subjectColumnsBegin_incl; i += tgroup.size()) {
+            //         const char encodedBase = get(encUncorrectedCandidate, queryColumnsEnd_excl - queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+            //         const char base = to_nuc(encodedBase);
+            //         shared_correctedCandidate[i - queryColumnsBegin_incl] = base;
+            //     }
+
+            //     const int subjectColumnsEnd_excl = msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+
+            //     for(int i = subjectColumnsEnd_excl + tgroup.thread_rank(); i < queryColumnsEnd_excl; i += tgroup.size()) {
+            //         const char encodedBase = get(encUncorrectedCandidate, queryColumnsEnd_excl - queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+            //         const char base = to_nuc(encodedBase);
+            //         shared_correctedCandidate[i - queryColumnsBegin_incl] = base;
+            //     }
+
+            // }
+
+            
+            //copy from smem to global output
+            const int fullInts1 = candidate_length / sizeof(int);
+
+            for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+            }
+
+            for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+                my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                    = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+            } 
+
+            // for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
+            //     my_corrected_candidate[i] = shared_correctedCandidate[i];
+            // }            
+
+            //compare corrected candidate with uncorrected candidate, calculate edits   
+            
+            const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                        + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+            const bool thisSequenceContainsN = d_candidateContainsN[candidateIndex];            
+            int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
+            TempCorrectedSequence::Edit* const myEdits = d_editsPerCorrectedCandidate + destinationIndex * numEditsThreshold;
+
+            if(thisSequenceContainsN){
+                if(tgroup.thread_rank() == 0){
+                    *myNumEdits = doNotUseEditsValue;
+                }
+            }else{
+                const int maxEdits = min(candidate_length / 7, numEditsThreshold);
+
+                const int fullInts = candidate_length / 16;
+                
+
+                for(int i = 0; i < fullInts; i++){
+                    const unsigned int encodedDataInt = encUncorrectedCandidate[i];
+
+                    //compare with 16 bases of corrected sequence
+
+                    for(int k = tgroup.thread_rank(); k < 16; k += tgroup.size()){
+                        const int posInInt = k;
+                        const int posInSequence = i * 16 + posInInt;
+                        const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                        const char correctedNuc = shared_correctedCandidate[posInSequence];
+
+                        if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
+                            cg::coalesced_group g = cg::coalesced_threads();
+
+                            int currentNumEdits = 0;
+                            if(g.thread_rank() == 0){
+                                currentNumEdits = atomicAdd(&shared_numEditsOfCandidate[groupIdInBlock], g.size());
+                            }
+                            currentNumEdits = g.shfl(currentNumEdits, 0);
+
+                            if(currentNumEdits + g.size() <= maxEdits){
+                                const int myEditOutputPos = g.thread_rank() + currentNumEdits;
+                                const auto theEdit = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                //myEdits[myEditOutputPos] = theEdit;
+                                shared_Edits[groupIdInBlock][myEditOutputPos] = theEdit;
+                            }
+                        }
+                    }
+
+                    tgroup.sync();
+
+                    if(shared_numEditsOfCandidate[groupIdInBlock] > maxEdits){
+                        break;
+                    }
+                }
+
+                //process remaining positions
+                if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
+                    const int remainingPositions = candidate_length - 16 * fullInts;
+                    if(remainingPositions > 0){
+                        const unsigned int encodedDataInt = encUncorrectedCandidate[fullInts];
+                        for(int posInInt = tgroup.thread_rank(); posInInt < remainingPositions; posInInt += tgroup.size()){
+                            const int posInSequence = fullInts * 16 + posInInt;
+                            const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                            const char correctedNuc = shared_correctedCandidate[posInSequence];
+
+                            if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
+                                cg::coalesced_group g = cg::coalesced_threads();
+                                
+                                int currentNumEdits = 0;
+                                if(g.thread_rank() == 0){
+                                    currentNumEdits = atomicAdd(&shared_numEditsOfCandidate[groupIdInBlock], g.size());
+                                }
+                                currentNumEdits = g.shfl(currentNumEdits, 0);
+
+                                if(currentNumEdits + g.size() <= maxEdits){
+                                    const int myEditOutputPos = g.thread_rank() + currentNumEdits;
+                                    if(myEditOutputPos < maxEdits){
+                                        const auto theEdit = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                        //myEdits[myEditOutputPos] = theEdit;
+                                        shared_Edits[groupIdInBlock][myEditOutputPos] = theEdit;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                tgroup.sync();
+
+                if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
+                    if(tgroup.thread_rank() == 0){ 
+                        *myNumEdits = shared_numEditsOfCandidate[groupIdInBlock];
+                    }
+
+                    for(int i = tgroup.thread_rank(); i < shared_numEditsOfCandidate[groupIdInBlock]; i += tgroup.size()){
+                        myEdits[i] = shared_Edits[groupIdInBlock][i];
+                    }
+                }else{
+                    if(tgroup.thread_rank() == 0){
+                        *myNumEdits = doNotUseEditsValue;
+                    }
+                }
+
+                // if(tgroup.thread_rank() == 0){                            
+                //     if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
+                //         *myNumEdits = shared_numEditsOfCandidate[groupIdInBlock];
+                //     }else{
+                //         *myNumEdits = doNotUseEditsValue;
+                //     }
+                // }
             }
             
 
@@ -1593,7 +2019,7 @@ namespace gpu{
         constexpr int numGroupsPerBlock = blocksize / groupsize;
 
         const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
-    	const std::size_t smem = numGroupsPerBlock * sizeof(int) * dynamicsmemPitchInInts;
+        const std::size_t smem = numGroupsPerBlock * (sizeof(int) * (dynamicsmemPitchInInts));
 
     	int max_blocks_per_device = 1;
 
@@ -1612,7 +2038,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = numGroupsPerBlock * sizeof(char) * (SDIV(maximum_sequence_length, 4) * 4); \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                            msa_correct_candidates_with_group_kernel2<(blocksize), groupsize>, \
+                    msa_correct_candidates_with_group_kernel2_new<(blocksize), groupsize>, \
                             kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -1640,11 +2066,11 @@ namespace gpu{
 
     	dim3 block(blocksize, 1, 1);
         //dim3 grid(std::min(max_blocks_per_device, n_candidates * numGroupsPerBlock));
-        dim3 grid(max_blocks_per_device*2);
+        dim3 grid(max_blocks_per_device);
         
         assert(smem % sizeof(int) == 0);
 
-    	#define mycall(blocksize) msa_correct_candidates_with_group_kernel2<(blocksize), groupsize> \
+    	#define mycall(blocksize) msa_correct_candidates_with_group_kernel2_new<(blocksize), groupsize> \
     	        <<<grid, block, smem, stream>>>( \
                     correctedCandidates, \
                     d_editsPerCorrectedCandidate, \
