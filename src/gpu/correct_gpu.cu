@@ -2048,7 +2048,7 @@ namespace gpu{
 
         const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
-#if 0
+#if 1
 
         // SimpleAllocationDevice<int> d_counts2(batch.d_counts.size());
         // SimpleAllocationDevice<int> d_coverage2(batch.d_coverage.size());
@@ -2066,7 +2066,7 @@ namespace gpu{
         // cudaMemsetAsync(batch.d_consensus.get(), 0, batch.d_consensus.sizeInBytes(), streams[primary_stream_index]); CUERR;
 
 
-        callBuildMSA2Kernel_async(
+        callBuildMSA3Kernel_async(
             batch.d_msa_column_properties.get(),
             //d_coverage2.get(),
             batch.d_coverage.get(),

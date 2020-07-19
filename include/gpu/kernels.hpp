@@ -324,6 +324,41 @@ void callBuildMSA2Kernel_async(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
+void callBuildMSA3Kernel_async(
+            MSAColumnProperties* d_msaColumnProperties,
+            int* d_coverage,
+            int* d_counts,
+            float* d_weights,
+            float* d_support,
+            float* d_origWeights,
+            int* d_origCoverages,
+            char* d_consensus,          
+            const int* d_overlaps,
+            const int* d_shifts,
+            const int* d_nOps,
+            const BestAlignment_t* d_bestAlignmentFlags,
+            const int* d_anchorLengths,
+            const int* d_candidateLengths,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_candidatesPerSubjectPrefixSum,            
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesTransposedData,
+            const char* d_subjectQualities,
+            const char* d_candidateQualities,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            float desiredAlignmentMaxErrorRate,
+            int maxNumAnchors,
+            int maxNumCandidates,
+            bool canUseQualityScores,
+            int encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            size_t msaColumnPitchInElements,
+            const bool* d_canExecute,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
 
 void callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
             int* d_newIndices,
