@@ -487,7 +487,53 @@ void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletionKernel_async(
         int iteration,
         bool* d_anchorIsFinished,
         cudaStream_t stream,
-        KernelLaunchHandle& handle);          
+        KernelLaunchHandle& handle);  
+
+
+
+void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKernel_async(
+        int* d_newIndices,
+        int* d_newNumIndicesPerSubject,
+        int* d_newNumIndices,
+        MSAColumnProperties* d_msaColumnProperties,
+        char* d_consensus,
+        int* d_coverage,
+        int* d_counts,
+        float* d_weights,
+        float* d_support,
+        int* d_origCoverages,
+        float* d_origWeights,
+        const BestAlignment_t* d_bestAlignmentFlags,
+        const int* d_shifts,
+        const int* d_nOps,
+        const int* d_overlaps,
+        const unsigned int* d_subjectSequencesData,
+        const unsigned int* d_candidateSequencesData,
+        const unsigned int* d_transposedCandidateSequencesData,
+        const int* d_subjectSequencesLength,
+        const int* d_candidateSequencesLength,
+        const char* d_subjectQualities,
+        const char* d_candidateQualities,
+        bool* d_shouldBeKept,
+        const int* d_candidates_per_subject_prefixsum,
+        const int* d_numAnchors,
+        const int* d_numCandidates,
+        float desiredAlignmentMaxErrorRate,
+        int maxNumAnchors,
+        int maxNumCandidates,
+        bool canUseQualityScores,
+        size_t encodedSequencePitchInInts,
+        size_t qualityPitchInBytes,
+        size_t msaColumnPitchInElements,
+        int* d_indices,
+        int* d_indices_per_subject,
+        int dataset_coverage,
+        const bool* d_canExecute,
+        int numIteration,
+        bool* d_anchorIsFinished,
+        cudaStream_t stream,
+        KernelLaunchHandle& handle
+    ) ;               
 
 // correction kernels
 

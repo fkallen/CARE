@@ -2592,6 +2592,32 @@ namespace gpu{
 
         cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
+        // SimpleAllocationDevice<int,0> d_indices2(batch.d_indices.size());
+        // SimpleAllocationDevice<int,0> d_indices2_new(batch.d_indices.size());
+        // SimpleAllocationDevice<int,0> d_indices_per_subject2(batch.d_indices_per_subject.size());
+        // SimpleAllocationDevice<int,0> d_indices_per_subject2_new(batch.d_indices_per_subject.size());
+        // SimpleAllocationDevice<int,0> d_num_indices2(batch.d_num_indices.size());
+        // SimpleAllocationDevice<int,0> d_num_indices2_new(batch.d_num_indices.size());
+        // SimpleAllocationDevice<MSAColumnProperties, 0> d_msa_column_properties2(batch.d_msa_column_properties.size());
+
+        // SimpleAllocationDevice<int> d_counts2(batch.d_counts.size());
+        // SimpleAllocationDevice<int> d_coverage2(batch.d_coverage.size());
+        // SimpleAllocationDevice<float> d_weights2(batch.d_weights.size());
+        // SimpleAllocationDevice<char> d_consensus2(batch.d_consensus.size());
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // cudaMemcpy(d_indices2.get(), batch.d_indices.get(), batch.d_indices.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_indices_per_subject2.get(), batch.d_indices_per_subject.get(), batch.d_indices_per_subject.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_num_indices2.get(), batch.d_num_indices.get(), batch.d_num_indices.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_msa_column_properties2.get(), batch.d_msa_column_properties.get(), batch.d_msa_column_properties.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_counts2.get(), batch.d_counts.get(), batch.d_counts.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_coverage2.get(), batch.d_coverage.get(), batch.d_coverage.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_weights2.get(), batch.d_weights.get(), batch.d_weights.sizeInBytes(), H2D); CUERR;
+        // cudaMemcpy(d_consensus2.get(), batch.d_consensus.get(), batch.d_consensus.sizeInBytes(), H2D); CUERR;
+
+
+#if 0        
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
             callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
@@ -2640,7 +2666,219 @@ namespace gpu{
 
 
         }
-       
+#endif
+        // cudaDeviceSynchronize(); CUERR;
+
+        // generic_kernel<<<1,1>>>(
+        //     [
+        //         =,
+        //         d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
+        //         d_indices = d_indices_dblbuf[max_num_minimizations % 2],
+        //         d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2],
+        //         d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2]
+        //     ] __device__ (){
+        //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+        //             printf("d_num_indices %d", *d_num_indices);
+        //         }
+
+        //         for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
+        //             const int offset = d_candidates_per_subject_prefixsum[a];
+
+        //             const int num = d_indices_per_subject[a];
+
+        //             printf("num %d\n", num);
+
+        //             for(int i = threadIdx.x; i < num; i += blockDim.x){
+        //                 printf("%d ", d_indices[offset + i]);
+        //             }
+        //             printf("\n");
+        //         }
+        //     }
+        // ); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::exit(0);
+//#else 
+
+//cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
+
+callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKernel_async(
+            //d_indices2_new.get(),
+            //d_indices_per_subject2_new.get(),
+            //d_num_indices2_new.get(),
+            //d_msa_column_properties2.get(),
+            //d_consensus2.get(),
+            //d_coverage2.get(),
+            //d_counts2.get(),
+            //d_weights2.get(),
+            d_indices_dblbuf[1],
+            d_indices_per_subject_dblbuf[1],
+            d_num_indices_dblbuf[1],
+            batch.d_msa_column_properties.get(),
+            batch.d_consensus.get(),
+            batch.d_coverage.get(),
+            batch.d_counts.get(),
+            batch.d_weights.get(),
+            batch.d_support.get(),
+            batch.d_origCoverages.get(),
+            batch.d_origWeights.get(),
+            batch.d_alignment_best_alignment_flags.get(),
+            batch.d_alignment_shifts.get(),
+            batch.d_alignment_nOps.get(),
+            batch.d_alignment_overlaps.get(),
+            batch.d_subject_sequences_data.get(),
+            batch.d_candidate_sequences_data.get(),
+            batch.d_transposedCandidateSequencesData.get(),
+            batch.d_subject_sequences_lengths.get(),
+            batch.d_candidate_sequences_lengths.get(),
+            batch.d_subject_qualities.get(),
+            batch.d_candidate_qualities.get(),
+            d_shouldBeKept,
+            batch.d_candidates_per_subject_prefixsum,
+            batch.d_numAnchors.get(),
+            batch.d_numCandidates.get(),
+            batch.goodAlignmentProperties.maxErrorRate,
+            batchsize,
+            maxCandidates,
+            batch.correctionOptions.useQualityScores,
+            batch.encodedSequencePitchInInts,
+            batch.qualityPitchInBytes,
+            batch.msaColumnPitchInElements,
+            //d_indices2.get(),
+            //d_indices_per_subject2.get(),
+            batch.d_indices.get(),
+            batch.d_indices_per_subject.get(),
+            batch.correctionOptions.estimatedCoverage,
+            batch.d_canExecute,
+            max_num_minimizations,
+            d_anchorIsFinished,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
+
+#if 0        
+        cudaDeviceSynchronize(); CUERR;
+
+        generic_kernel<<<320,128>>>(
+            [
+                =,
+                d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
+                d_indices = d_indices_dblbuf[max_num_minimizations % 2],
+                d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2],
+                d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2],
+                d_indices2 = d_indices2_new.get(),
+                d_indices_per_subject2 = d_indices_per_subject2_new.get(),
+                d_num_indices2 = d_num_indices2_new.get()
+            ] __device__ (){
+
+                constexpr int elemsPerThread = 30;
+
+                using BlockRadixSort = cub::BlockRadixSort<int, 128, elemsPerThread>;
+                using BlockLoad = cub::BlockLoad<int, 128, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+            
+                __shared__ union{
+                    typename BlockRadixSort::TempStorage sort;
+                    typename BlockLoad::TempStorage load;
+                } temp_storage;
+
+                // if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+                //     printf("d_num_indices %d, d_num_indices2 %d", *d_num_indices, *d_num_indices2);
+                // }
+
+                for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
+                    const int offset = d_candidates_per_subject_prefixsum[a];
+
+                    const int num = d_indices_per_subject[a];
+                    const int num2 = d_indices_per_subject2[a];
+
+                    if(num != num2){
+                        printf("a %d, num %d, num2 %d\n", a, num, num2);
+                        assert(num == num2);
+                    }
+
+                    int tempregs[elemsPerThread];
+                    int tempregs2[elemsPerThread];
+
+                    BlockLoad(temp_storage.load).Load(
+                        d_indices + offset, 
+                        tempregs, 
+                        num,
+                        0
+                    );
+
+                    __syncthreads();
+    
+                    BlockRadixSort(temp_storage.sort).Sort(tempregs);
+        
+                    __syncthreads();
+
+                    BlockLoad(temp_storage.load).Load(
+                        d_indices + offset, 
+                        tempregs2, 
+                        num,
+                        0
+                    );
+
+                    __syncthreads();
+    
+                    BlockRadixSort(temp_storage.sort).Sort(tempregs2);
+        
+                    __syncthreads();
+
+                    #pragma unroll
+                    for(int i = 0; i < elemsPerThread; i++){
+                        assert(tempregs[i] == tempregs2[i]);
+                    }
+
+                    // for(int i = threadIdx.x; i < num; i += blockDim.x){
+                    //     //printf("%d ", d_indices[offset + i]);
+                    //     //assert(d_indices[offset+i] == d_indices2[offset+i]);
+                    // }
+
+                    __syncthreads();
+                    //printf("\n");
+                }
+            }
+        ); CUERR;
+
+        cudaDeviceSynchronize(); CUERR;
+#endif
+        // cudaDeviceSynchronize(); CUERR;
+
+        // generic_kernel<<<1,1>>>(
+        //     [
+        //         =,
+        //         d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
+        //         d_indices = d_indices_dblbuf[(1 + 0) % 2],
+        //         d_indices_per_subject = d_indices_per_subject_dblbuf[(1 + 0) % 2],
+        //         d_num_indices = d_num_indices_dblbuf[(1 + 0) % 2]
+        //     ] __device__ (){
+        //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+        //             printf("d_num_indices %d", *d_num_indices);
+        //         }
+
+        //         for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
+        //             const int offset = d_candidates_per_subject_prefixsum[a];
+
+        //             const int num = d_indices_per_subject[a];
+
+        //             printf("num %d\n", num);
+
+        //             for(int i = threadIdx.x; i < num; i += blockDim.x){
+        //                 printf("%d ", d_indices[offset + i]);
+        //             }
+        //             printf("\n");
+        //         }
+        //     }
+        // ); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::exit(0);
+
+
+//#endif
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -2674,8 +2912,8 @@ namespace gpu{
             batch.d_indices_per_subject_tmp.get()
         };
 
-        const int* d_indices_per_subject_msa = d_indices_per_subject_dblbuf_msa[(max_num_minimizations % 2)];
-        const int* d_indices_msa = d_indices_dblbuf_msa[(max_num_minimizations % 2)];
+        const int* d_indices_per_subject_msa = d_indices_per_subject_dblbuf_msa[/*(max_num_minimizations % 2)*/1];
+        const int* d_indices_msa = d_indices_dblbuf_msa[/*(max_num_minimizations % 2)*/1];
 
 
         cudaMemcpyAsync(batch.h_indices,
@@ -2970,8 +3208,8 @@ namespace gpu{
             batch.d_num_indices_tmp.get()
         };
 
-        const int* d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2];
-        const int* d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2];
+        const int* d_indices_per_subject = d_indices_per_subject_dblbuf[/*max_num_minimizations % 2*/ 1];
+        const int* d_num_indices = d_num_indices_dblbuf[/*max_num_minimizations % 2*/ 1];
 
 
         call_msaCorrectAnchorsKernel_async(
@@ -3176,9 +3414,9 @@ namespace gpu{
             batch.d_num_indices_tmp.get()
         };
 
-        const int* d_indices = d_indices_dblbuf[max_num_minimizations % 2];
-        const int* d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2];
-        const int* d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2];
+        const int* d_indices = d_indices_dblbuf[/*max_num_minimizations % 2*/1];
+        const int* d_indices_per_subject = d_indices_per_subject_dblbuf[/*max_num_minimizations % 2*/1];
+        const int* d_num_indices = d_num_indices_dblbuf[/*max_num_minimizations % 2*/1];
 
         callFlagCandidatesToBeCorrectedKernel_async(
             d_candidateCanBeCorrected,
