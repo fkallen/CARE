@@ -2704,14 +2704,14 @@ namespace gpu{
 //cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
 callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKernel_async(
-            //d_indices2_new.get(),
-            //d_indices_per_subject2_new.get(),
-            //d_num_indices2_new.get(),
-            //d_msa_column_properties2.get(),
-            //d_consensus2.get(),
-            //d_coverage2.get(),
-            //d_counts2.get(),
-            //d_weights2.get(),
+            // d_indices2_new.get(),
+            // d_indices_per_subject2_new.get(),
+            // d_num_indices2_new.get(),
+            // d_msa_column_properties2.get(),
+            // d_consensus2.get(),
+            // d_coverage2.get(),
+            // d_counts2.get(),
+            // d_weights2.get(),
             d_indices_dblbuf[1],
             d_indices_per_subject_dblbuf[1],
             d_num_indices_dblbuf[1],
@@ -2745,8 +2745,8 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
             batch.msaColumnPitchInElements,
-            //d_indices2.get(),
-            //d_indices_per_subject2.get(),
+            // d_indices2.get(),
+            // d_indices_per_subject2.get(),
             batch.d_indices.get(),
             batch.d_indices_per_subject.get(),
             batch.correctionOptions.estimatedCoverage,
@@ -2757,19 +2757,26 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
             batch.kernelLaunchHandle
         );
 
-#if 0        
+#if 0       
         cudaDeviceSynchronize(); CUERR;
 
-        generic_kernel<<<320,128>>>(
+        generic_kernel<<<1000,128>>>(
             [
                 =,
+                msaColumnPitchInElements = batch.msaColumnPitchInElements,
                 d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
                 d_indices = d_indices_dblbuf[max_num_minimizations % 2],
                 d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2],
                 d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2],
                 d_indices2 = d_indices2_new.get(),
                 d_indices_per_subject2 = d_indices_per_subject2_new.get(),
-                d_num_indices2 = d_num_indices2_new.get()
+                d_num_indices2 = d_num_indices2_new.get(),
+                d_msa_column_properties = batch.d_msa_column_properties.get(),
+                d_msa_column_properties2 = d_msa_column_properties2.get(),
+                d_counts = batch.d_counts.get(),
+                d_counts2 = d_counts2.get(),
+                d_coverage = batch.d_coverage.get(),
+                d_coverage2 = d_coverage2.get()
             ] __device__ (){
 
                 constexpr int elemsPerThread = 30;
@@ -2797,52 +2804,138 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
                         assert(num == num2);
                     }
 
-                    int tempregs[elemsPerThread];
-                    int tempregs2[elemsPerThread];
+                    if(num > 0){
 
-                    BlockLoad(temp_storage.load).Load(
-                        d_indices + offset, 
-                        tempregs, 
-                        num,
-                        0
-                    );
+                        assert(d_msa_column_properties[a].firstColumn_incl == d_msa_column_properties2[a].firstColumn_incl);
+                        assert(d_msa_column_properties[a].lastColumn_excl == d_msa_column_properties2[a].lastColumn_excl);
 
-                    __syncthreads();
-    
-                    BlockRadixSort(temp_storage.sort).Sort(tempregs);
+                        int tempregs[elemsPerThread];
+                        int tempregs2[elemsPerThread];
+
+                        BlockLoad(temp_storage.load).Load(
+                            d_indices + offset, 
+                            tempregs, 
+                            num,
+                            0
+                        );
+
+                        __syncthreads();
         
-                    __syncthreads();
+                        BlockRadixSort(temp_storage.sort).Sort(tempregs);
+            
+                        __syncthreads();
 
-                    BlockLoad(temp_storage.load).Load(
-                        d_indices + offset, 
-                        tempregs2, 
-                        num,
-                        0
-                    );
+                        BlockLoad(temp_storage.load).Load(
+                            d_indices + offset, 
+                            tempregs2, 
+                            num,
+                            0
+                        );
 
-                    __syncthreads();
-    
-                    BlockRadixSort(temp_storage.sort).Sort(tempregs2);
+                        __syncthreads();
         
-                    __syncthreads();
+                        BlockRadixSort(temp_storage.sort).Sort(tempregs2);
+            
+                        __syncthreads();
 
-                    #pragma unroll
-                    for(int i = 0; i < elemsPerThread; i++){
-                        assert(tempregs[i] == tempregs2[i]);
+                        #pragma unroll
+                        for(int i = 0; i < elemsPerThread; i++){
+                            assert(tempregs[i] == tempregs2[i]);
+                        }
+
+                        // for(int i = threadIdx.x; i < num; i += blockDim.x){
+                        //     //printf("%d ", d_indices[offset + i]);
+                        //     //assert(d_indices[offset+i] == d_indices2[offset+i]);
+                        // }
+
+                        // if(threadIdx.x == 0){
+
+                        //     printf("a %d, num %d, num2 %d, %d %d\n", a, num, num2, d_msa_column_properties[a].firstColumn_incl, d_msa_column_properties[a].lastColumn_excl);
+
+                        //     printf("As: ");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Cs: ");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Gs: ");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Ts: ");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("cov: ");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_coverage[a * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+
+                        //     printf("As2:");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Cs2:");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Gs2:");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("Ts2:");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        //     printf("cov2:");
+                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
+                        //         printf("%d ", d_coverage2[a * msaColumnPitchInElements + i]);
+                        //     }
+                        //     printf("\n");
+                        // }
+
+                        __syncthreads();
+
+                        const int numColumns = d_msa_column_properties[a].lastColumn_excl - d_msa_column_properties[a].firstColumn_incl;
+
+                        for(int i = threadIdx.x; 
+                            i < numColumns; i += blockDim.x){
+                                const int index1 = d_msa_column_properties[a].firstColumn_incl;
+                                const int index2 = d_msa_column_properties2[a].firstColumn_incl;
+
+                            assert(d_counts[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + index2]);
+                            assert(d_counts[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + index2]);
+                            assert(d_counts[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + index2]);
+                            assert(d_counts[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + index2]);
+                            assert(d_coverage[a * msaColumnPitchInElements + index1] == d_coverage2[a * msaColumnPitchInElements + index2]);
+                            // assert(d_weights[0 * msaColumnPitchInElements + i] == d_weights2[0 * msaColumnPitchInElements + i]);
+                            // assert(d_weights[1 * msaColumnPitchInElements + i] == d_weights2[1 * msaColumnPitchInElements + i]);
+                            // assert(d_weights[2 * msaColumnPitchInElements + i] == d_weights2[2 * msaColumnPitchInElements + i]);
+                            // assert(d_weights[3 * msaColumnPitchInElements + i] == d_weights2[3 * msaColumnPitchInElements + i]);
+                            //assert(d_consensus[i] == d_consensus2[i]);
+                        }
+
+                        __syncthreads();
                     }
-
-                    // for(int i = threadIdx.x; i < num; i += blockDim.x){
-                    //     //printf("%d ", d_indices[offset + i]);
-                    //     //assert(d_indices[offset+i] == d_indices2[offset+i]);
-                    // }
-
-                    __syncthreads();
                     //printf("\n");
                 }
             }
         ); CUERR;
 
         cudaDeviceSynchronize(); CUERR;
+
+        //std::exit(0);
 #endif
         // cudaDeviceSynchronize(); CUERR;
 

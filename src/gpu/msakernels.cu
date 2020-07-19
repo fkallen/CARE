@@ -4274,6 +4274,8 @@ namespace gpu{
                         int* const destNumIndices = (refinementIteration % 2 == 0) ?
                             myNewNumIndicesPerSubjectPtr : myNumIndicesPerSubjectPtr;
 
+                        __syncthreads();
+
                         findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
                             (int2*)&temp_storage.int2reduce,
                             destIndices,
@@ -4377,9 +4379,7 @@ namespace gpu{
                             if(refinementIteration == numRefinementIterations - 1){
                                 //copy shared mem msa back to gmem
 
-                                if(useSmemMSA){
-                                    //store counts weights and coverages from smem to gmem
-        
+                                if(useSmemMSA){                                            
                                     for(int k = threadIdx.x; k < 4*msaColumnPitchInElements; k += BLOCKSIZE){
                                         inputcounts[k] = shared_counts[k];
                                         inputweights[k] = shared_weights[k];
@@ -4413,6 +4413,21 @@ namespace gpu{
                                 anchorIsFinished[subjectIndex] = true;
                             }
 
+                            if(useSmemMSA){
+                                 //copy shared mem msa back to gmem
+                                 
+                                if(refinementIteration > 0){ // if iteration 0 fails, no changes were made
+                                    for(int k = threadIdx.x; k < 4*msaColumnPitchInElements; k += BLOCKSIZE){
+                                        inputcounts[k] = shared_counts[k];
+                                        inputweights[k] = shared_weights[k];
+                                    }
+        
+                                    for(int k = threadIdx.x; k < msaColumnPitchInElements; k += BLOCKSIZE){
+                                        inputcoverages[k] = shared_coverages[k];
+                                    }
+                                }
+                            }
+
                             //copy indices to correct output array
                             if(refinementIteration % 2 == 1){
                                 for(int i = threadIdx.x; i < myNumIndices; i += blockDim.x){
@@ -4431,6 +4446,8 @@ namespace gpu{
 
                             break; //stop refinement
                         }
+
+                        
                     }
                 }else{
                     if(threadIdx.x == 0){
