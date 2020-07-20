@@ -2067,15 +2067,8 @@ namespace gpu{
                 }else{               
 
                     if(myNumIndices > 0){
-
                         GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
                         msa.columnProperties = &shared_columnProperties;
-
-                        if(useSmemMSA){
-                            msa.counts = shared_counts;
-                            msa.weights = shared_weights;
-                            msa.coverages = shared_coverages;
-                        }
 
                         tbGroup.sync(); //wait for previous iteration
 
@@ -2160,6 +2153,12 @@ namespace gpu{
                         assert(myNewNumIndices <= myNumIndices);
                         if(myNewNumIndices > 0 && myNewNumIndices < myNumIndices){
 
+                            if(useSmemMSA){
+                                msa.counts = shared_counts;
+                                msa.weights = shared_weights;
+                                msa.coverages = shared_coverages;
+                            }
+
                             auto groupReduceIntMin = [&](int data){
                                 data = BlockReduceInt(temp_storage.intreduce).Reduce(data, cub::Min());
                                 tbGroup.sync();
@@ -2226,6 +2225,8 @@ namespace gpu{
                                 subjectIndex
                             );
 
+                            tbGroup.sync();
+
                             if(useSmemMSA){
                                 // copy from counts and weights and coverages from shared to global
                                 int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
@@ -2245,7 +2246,11 @@ namespace gpu{
                                     }
                                     gmemCoverages[index] = msa.coverages[index];
                                 }
+
+                                tbGroup.sync();
                             }
+
+                            
                     
                         }else{
                             if(threadIdx.x == 0){
