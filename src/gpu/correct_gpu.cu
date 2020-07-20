@@ -67,7 +67,7 @@
 #endif
 
 
-//#define USE_CUDA_GRAPH
+#define USE_CUDA_GRAPH
 
 
 namespace care{
@@ -4662,7 +4662,7 @@ correct_gpu(
                     // }
                     batchDataArray[i].id = deviceIdIndex * max_num_batches + i;
                     batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
-                    batchDataArray[i].unpackWorker = &unpackWorkerArray[i];
+                    batchDataArray[i].unpackWorker = &unpackWorkerArray[0]; //shared by all batches
 
                     backgroundWorkerArray[i].start();
                     unpackWorkerArray[i].start();
@@ -4795,10 +4795,16 @@ correct_gpu(
                     }              
                 }
 #endif
+
+                for(int i = 0; i < max_num_batches; i++){
+                    backgroundWorkerArray[i].stopThread(BackgroundThread::StopType::FinishAndStop);
+                    unpackWorkerArray[i].stopThread(BackgroundThread::StopType::FinishAndStop);
+                }
                 
                 for(int i = 0; i < max_num_batches; i++){
-                    batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
-                    batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    //batchDataArray[i].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    //batchDataArray[i].unpackWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                    
 #if 0                    
                     auto memInfo1 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].subjectSequenceGatherHandle);
                     auto memInfo2 = readStorage.getMemoryInfoOfGatherHandleSequences(batchDataArray[i].candidateSequenceGatherHandle);
