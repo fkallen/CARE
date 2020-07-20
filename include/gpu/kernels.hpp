@@ -125,7 +125,7 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 
 // msa construction kernels
 
-void callBuildMSA3Kernel_async(
+void callConstructMultipleSequenceAlignmentsKernel_async(
         MSAColumnProperties* d_msaColumnProperties,
         int* d_coverage,
         int* d_counts,

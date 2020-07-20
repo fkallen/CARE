@@ -2095,7 +2095,7 @@ namespace gpu{
         // cudaMemsetAsync(batch.d_consensus.get(), 0, batch.d_consensus.sizeInBytes(), streams[primary_stream_index]); CUERR;
 
 
-        callBuildMSA3Kernel_async(
+        callConstructMultipleSequenceAlignmentsKernel_async(
             batch.d_msa_column_properties.get(),
             //d_coverage2.get(),
             batch.d_coverage.get(),
