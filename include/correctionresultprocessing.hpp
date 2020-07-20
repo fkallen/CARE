@@ -15,15 +15,25 @@
 
 namespace care{
 
+    struct TempCorrectedSequence; //forward declaration
 
     struct EncodedTempCorrectedSequence{
-        std::uint32_t encodedflags; //contains size of data in bytes, and boolean flags
-        read_number readId;
-        std::unique_ptr<std::uint8_t[]> data;
+        std::uint32_t encodedflags{}; //contains size of data in bytes, and boolean flags
+        read_number readId{};
+        std::unique_ptr<std::uint8_t[]> data{};
 
         EncodedTempCorrectedSequence() = default;
-        EncodedTempCorrectedSequence(EncodedTempCorrectedSequence&&) = default;
-        EncodedTempCorrectedSequence& operator=(EncodedTempCorrectedSequence&&) = default;
+        EncodedTempCorrectedSequence(EncodedTempCorrectedSequence&& rhs){
+            *this = std::move(rhs);
+        }
+
+        EncodedTempCorrectedSequence& operator=(EncodedTempCorrectedSequence&& rhs){
+            encodedflags = std::exchange(rhs.encodedflags, 0);
+            readId = std::exchange(rhs.readId, 0);
+            data = std::move(rhs.data);
+
+            return *this;
+        }
 
         EncodedTempCorrectedSequence(const EncodedTempCorrectedSequence& rhs){
             *this = rhs;
@@ -40,6 +50,8 @@ namespace care{
             return *this;
         }
 
+        EncodedTempCorrectedSequence& operator=(const TempCorrectedSequence& rhs);
+
         bool writeToBinaryStream(std::ostream& s) const;
         bool readFromBinaryStream(std::istream& s);
 
@@ -47,7 +59,7 @@ namespace care{
         void copyFromContiguousMemory(const std::uint8_t*);
 
         bool operator==(const EncodedTempCorrectedSequence& rhs) const{
-            std::uint32_t numBytes = 123;
+            const std::uint32_t numBytes = getNumBytes();
             return encodedflags == rhs.encodedflags && readId == rhs.readId 
                     && std::memcmp(data.get(), rhs.data.get(), numBytes);
         }
@@ -215,6 +227,7 @@ namespace care{
         TempCorrectedSequence& operator=(const EncodedTempCorrectedSequence&);
 
         EncodedTempCorrectedSequence encode() const;
+        void encodeInto(EncodedTempCorrectedSequence&) const;
         void decode(const EncodedTempCorrectedSequence&);
 
         bool writeToBinaryStream(std::ostream& s) const;

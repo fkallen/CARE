@@ -461,6 +461,20 @@ struct MemoryFileFixedSize{
         }
     }
 
+    bool storeElement(const T* element){
+
+        if(!isUsingFile){
+            bool success = storeInMemory(element);
+            if(!success){
+                isUsingFile = true;
+                success = storeInFile(element);
+            }
+            return success;
+        }else{
+            return storeInFile(element);
+        }
+    }
+
     std::int64_t getNumElementsInMemory() const{
         return memoryStorage.getNumStoredElements();
     }
@@ -597,8 +611,28 @@ private:
         return memoryStorage.insert(element, serialize);
     }
 
+    bool storeInMemory(const T* element){
+
+        auto serialize = [](const auto& element, auto beginptr, auto endptr){
+            return element.copyToContiguousMemory(beginptr, endptr);
+        };
+
+        return memoryStorage.insert(element, serialize);
+    }
+
     bool storeInFile(T&& element){
         outputstream << Twrapper{std::move(element)};
+        bool result = bool(outputstream);
+        if(result){
+            numStoredElementsInFile++;
+        }
+        
+        return result;
+    }
+
+    bool storeInFile(const T* element){
+        element->writeToBinaryStream(outputstream);
+
         bool result = bool(outputstream);
         if(result){
             numStoredElementsInFile++;

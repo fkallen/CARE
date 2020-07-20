@@ -853,12 +853,10 @@ void constructOutputFileFromResults2(
 
 
 
-    TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
-        decode(encoded);
-    }
 
-    TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
-        decode(encoded);
+    EncodedTempCorrectedSequence& EncodedTempCorrectedSequence::operator=(const TempCorrectedSequence& rhs){
+        rhs.encodeInto(*this);
+
         return *this;
     }
 
@@ -917,13 +915,24 @@ void constructOutputFileFromResults2(
         //ptr += numBytes;
     }
 
-    EncodedTempCorrectedSequence TempCorrectedSequence::encode() const{
-        EncodedTempCorrectedSequence encoded;
-        encoded.readId = readId;
 
-        encoded.encodedflags = (std::uint32_t(hq) << 31);
-        encoded.encodedflags |= (std::uint32_t(useEdits) << 30);
-        encoded.encodedflags |= (std::uint32_t(int(type)) << 29);
+    TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
+    }
+
+    TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
+        return *this;
+    }
+
+    void TempCorrectedSequence::encodeInto(EncodedTempCorrectedSequence& target) const{
+        const std::uint32_t oldNumBytes = target.getNumBytes(); 
+
+        target.readId = readId;
+
+        target.encodedflags = (std::uint32_t(hq) << 31);
+        target.encodedflags |= (std::uint32_t(useEdits) << 30);
+        target.encodedflags |= (std::uint32_t(int(type)) << 29);
 
         constexpr std::uint32_t maxNumBytes = (std::uint32_t(1) << 29)-1;
 
@@ -944,13 +953,17 @@ void constructOutputFileFromResults2(
         }
 
         assert(numBytes <= maxNumBytes);
-        encoded.encodedflags |= numBytes;
+        target.encodedflags |= numBytes;
 
-        encoded.data = std::make_unique<std::uint8_t[]>(numBytes);
+        if(numBytes > oldNumBytes){
+            target.data = std::make_unique<std::uint8_t[]>(numBytes);
+        }else{
+            ; //reuse buffer
+        }
 
         //fill buffer
 
-        std::uint8_t* ptr = encoded.data.get();
+        std::uint8_t* ptr = target.data.get();
 
         if(useEdits){
             const int numEdits = edits.size();
@@ -983,6 +996,11 @@ void constructOutputFileFromResults2(
             std::memcpy(ptr, &shift, sizeof(int));
             ptr += sizeof(int);
         }
+    }
+
+    EncodedTempCorrectedSequence TempCorrectedSequence::encode() const{
+        EncodedTempCorrectedSequence encoded;
+        encodeInto(encoded);
 
         return encoded;
     }

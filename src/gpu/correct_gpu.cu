@@ -557,6 +557,9 @@ namespace gpu{
     };
 
     struct OutputData{
+        int numAnchors = 0;
+        int numCandidates = 0;
+
         std::vector<TempCorrectedSequence> anchorCorrections;
         std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
         std::vector<TempCorrectedSequence> candidateCorrections;
@@ -566,6 +569,32 @@ namespace gpu{
         std::vector<std::pair<int,int>> candidateIndicesToProcess;
 
         UnprocessedCorrectionResults rawResults;
+
+        void resizeAnchors(int newNumAnchors){
+            if(newNumAnchors > numAnchors){
+                anchorCorrections.resize(newNumAnchors);
+                encodedAnchorCorrections.resize(newNumAnchors);
+            }
+
+            numAnchors = newNumAnchors;
+        }
+
+        void resizeCandidates(int newNumCandidates){
+            if(newNumCandidates > numCandidates){
+                candidateCorrections.resize(newNumCandidates);
+                encodedCandidateCorrections.resize(newNumCandidates);
+            }
+
+            numCandidates = newNumCandidates;
+        }
+
+        int getNumAnchors() const{
+            return numAnchors;
+        }
+
+        int getNumCandidates() const{
+            return numCandidates;
+        }
     };
 
 
@@ -744,7 +773,7 @@ namespace gpu{
         RuntimeOptions runtimeOptions;
         FileOptions fileOptions;
 		std::atomic_uint8_t* correctionStatusFlagsPerRead;
-        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
+        std::function<void(const TempCorrectedSequence*, const EncodedTempCorrectedSequence*)> saveCorrectedSequence;
 
         WaitableData<OutputData> waitableOutputData;
         NextIterationData nextIterationData;
@@ -3921,10 +3950,8 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
 
 
         nvtx::push_range("resize",1);
-        outputData.anchorCorrections.resize(numCorrectedAnchors);
-        outputData.encodedAnchorCorrections.resize(numCorrectedAnchors);
-        outputData.candidateCorrections.resize(numCorrectedCandidates);
-        outputData.encodedCandidateCorrections.resize(numCorrectedCandidates);
+        outputData.resizeAnchors(numCorrectedAnchors);
+        outputData.resizeCandidates(numCorrectedCandidates);
         nvtx::pop_range();
 
         auto outputDataPtr = &outputData;
@@ -3970,20 +3997,22 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
 
                     const char* const my_corrected_subject_data = rawResults.h_corrected_subjects + subject_index * rawResults.decodedSequencePitchInBytes;
                     const int subject_length = rawResults.h_subject_sequences_lengths[subject_index];
-                    tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};       
+                    //tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};       
+                    tmp.sequence.assign(my_corrected_subject_data, subject_length);
                     
-                    auto isValidSequence = [](const std::string& s){
-                        return std::all_of(s.begin(), s.end(), [](char c){
-                            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-                        });
-                    };
+                    // auto isValidSequence = [](const std::string& s){
+                    //     return std::all_of(s.begin(), s.end(), [](char c){
+                    //         return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                    //     });
+                    // };
     
-                    if(!isValidSequence(tmp.sequence)){
-                        std::cerr << "invalid sequence\n"; //std::cerr << tmp.sequence << "\n";
-                    }
+                    // if(!isValidSequence(tmp.sequence)){
+                    //     std::cerr << "invalid sequence\n"; //std::cerr << tmp.sequence << "\n";
+                    // }
                 }
 
-                tmpencoded = tmp.encode();
+                //tmpencoded = tmp.encode();
+                tmp.encodeInto(tmpencoded);
 
                 // if(readId == 32141191 /* || readId == 10307280 || readId == 42537816*/){
                 //     std::cerr << "readid = " << readId << ", anchor\n";
@@ -4066,13 +4095,15 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
                 }else{
                     const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
                     const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
-                    tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
+                    //tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
+                    tmp.sequence.assign(candidate_data, candidate_length);
                     tmp.edits.clear();
                     tmp.useEdits = false;
                 }
 
                 //TIMERSTARTCPU(encode);
-                tmpencoded = tmp.encode();
+                //tmpencoded = tmp.encode();
+                tmp.encodeInto(tmpencoded); 
                 //TIMERSTOPCPU(encode);
 
                 // if(candidate_read_id == 32141191){
@@ -4143,12 +4174,13 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
             auto& batch = *batchPtr;
             auto& outputData = batch.waitableOutputData.data;
 
-            const int numA = outputData.anchorCorrections.size();
-            const int numC = outputData.candidateCorrections.size();
+            const int numA = outputData.getNumAnchors();
+            const int numC = outputData.getNumCandidates();
 
             nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread"
                 + std::to_string(numA) + " " + std::to_string(numC), 4);
 
+#if 0                
             for(int i = 0; i < numA; i++){
                 batch.saveCorrectedSequence(
                     std::move(outputData.anchorCorrections[i]), 
@@ -4162,6 +4194,23 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
                     std::move(outputData.encodedCandidateCorrections[i])
                 );
             }
+#else 
+
+            for(int i = 0; i < numA; i++){
+                batch.saveCorrectedSequence(
+                    &outputData.anchorCorrections[i], 
+                    &outputData.encodedAnchorCorrections[i]
+                );
+            }
+
+            for(int i = 0; i < numC; i++){
+                batch.saveCorrectedSequence(
+                    &outputData.candidateCorrections[i], 
+                    &outputData.encodedCandidateCorrections[i]
+                );
+            }
+
+#endif
 
             batch.waitableOutputData.signal();
             //std::cerr << "batch " << batch.id << " batch.waitableOutputData.signal() finished\n";
@@ -4307,13 +4356,14 @@ correct_gpu(
             batchData.minhasher = &minhasher;
             batchData.readStorage = &readStorage;
             batchData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
-            batchData.saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
+            batchData.saveCorrectedSequence 
+                    = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
                 //useEditsCountMap[tmp.useEdits]++;
                   //std::cerr << tmp << "\n";
                 //std::unique_lock<std::mutex> l(outputstreammutex);
-                if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+                if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
                     //outputstream << tmp << '\n';
-                    partialResults.storeElement(std::move(encoded));
+                    partialResults.storeElement(encoded);
                     //useEditsSavedCountMap[tmp.useEdits]++;
                     //numEditsHistogram[tmp.edits.size()]++;
       
