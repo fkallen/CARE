@@ -3040,31 +3040,36 @@ namespace gpu{
             float* const shared_weights = sharedmem;
             int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
             int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);
-            // if(blockIdx.x * blockDim.x + threadIdx.x == 0){
-            //     printf("shared_weights: %p \n",shared_weights);
-            //     printf("shared_counts: %p \n",shared_counts);
-            //     printf("shared_coverages: %p \n",shared_coverages);
-            //     printf("msaColumnPitchInElements: %lu \n",msaColumnPitchInElements);
-            // };
+
+            GPUMultiMSA multiMSA;
+
+            multiMSA.numMSAs = n_candidates;
+            multiMSA.columnPitchInElements = msaColumnPitchInElements;
+            multiMSA.counts = counts;
+            multiMSA.weights = weights;
+            multiMSA.coverages = coverage;
+            multiMSA.consensus = d_consensus;
+            multiMSA.support = d_support;
+            multiMSA.origWeights = d_origWeights;
+            multiMSA.origCoverages = d_origCoverages;
+            multiMSA.columnProperties = msaColumnProperties;
 
             for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
                 const int myNumGoodCandidates = indices_per_subject[subjectIndex];
 
                 if(myNumGoodCandidates > 0){
 
-                    const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
-                    
-                    int* const inputcoverages = coverage + subjectIndex * msaColumnPitchInElements;
-                    int* const inputcounts = counts + subjectIndex * 4 * msaColumnPitchInElements;
-                    float* const inputweights = weights + subjectIndex * 4 * msaColumnPitchInElements;
-                    float* const my_support = d_support + subjectIndex * msaColumnPitchInElements;
-                    float* const my_orig_weights = d_origWeights + subjectIndex * msaColumnPitchInElements;
-                    int* const my_orig_coverage = d_origCoverages + subjectIndex * msaColumnPitchInElements;
-                    char* const my_consensus = d_consensus + subjectIndex * msaColumnPitchInElements;
+                    tbGroup.sync(); //wait for smem of previous iteration
 
-                    int* const mycounts = (useSmemForAddSequences ? shared_counts : inputcounts);
-                    float* const myweights = (useSmemForAddSequences ? shared_weights : inputweights);
-                    int* const mycoverages = (useSmemForAddSequences ? shared_coverages : inputcoverages);  
+                    GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+
+                    if(useSmemForAddSequences){
+                        msa.counts = shared_counts;
+                        msa.weights = shared_weights;
+                        msa.coverages = shared_coverages;
+                    }
+
+                    const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
 
                     const int* const myOverlaps = overlaps + globalCandidateOffset;
                     const int* const myShifts = shifts + globalCandidateOffset;
@@ -3081,15 +3086,6 @@ namespace gpu{
 
                     MSAColumnProperties columnProperties;
 
-                    GpuSingleMSA msa;
-                    msa.columnPitchInElements = msaColumnPitchInElements;
-                    msa.counts = mycounts;
-                    msa.weights = myweights;
-                    msa.coverages = mycoverages;
-                    msa.consensus = my_consensus;
-                    msa.support = my_support;
-                    msa.origWeights = my_orig_weights;
-                    msa.origCoverage = my_orig_coverage;
                     msa.columnProperties = &columnProperties;
 
                     auto groupReduceIntMin = [&](int data){
@@ -3116,26 +3112,15 @@ namespace gpu{
                         myCandidateLengths
                     );
 
-                    
-
-                    // msaInit<BLOCKSIZE>(
-                    //     *cubTempStorage,
-                    //     &columnProperties,
-                    //     myIndices,
-                    //     myNumGoodCandidates,
-                    //     myShifts,
-                    //     myAlignmentFlags,
-                    //     subjectLength,
-                    //     myCandidateLengths
-                    // );
-
-                    //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
-                    if(threadIdx.x == 0){
-                        msaColumnProperties[subjectIndex] = columnProperties;
+                    //only thread 0 has valid column properties. 
+                    //save to global memory and broadcast to all threads in block
+                    if(tbGroup.thread_rank() == 0){
+                        auto* globalDest = multiMSA.getColumnPropertiesOfMSA(subjectIndex);
+                        *globalDest = columnProperties;
                         shared_columnProperties = columnProperties;
                     }
 
-                    __syncthreads();
+                    tbGroup.sync();
 
                     columnProperties = shared_columnProperties;
 
@@ -3163,57 +3148,9 @@ namespace gpu{
                         subjectIndex
                     );
 
-                    // addSequencesToMSASingleBlockNotTranposed<BLOCKSIZE>(
-                    //     mycounts,
-                    //     myweights,
-                    //     mycoverages,
-                    //     &columnProperties,
-                    //     myShifts,
-                    //     myOverlaps,
-                    //     myNops,
-                    //     myAlignmentFlags,
-                    //     myAnchorSequenceData,
-                    //     myAnchorQualityData,
-                    //     myCandidateSequencesData,
-                    //     myCandidateQualities,
-                    //     myCandidateLengths,
-                    //     myIndices,
-                    //     myNumGoodCandidates,
-                    //     //n_candidates,
-                    //     1,
-                    //     canUseQualityScores, 
-                    //     msaColumnPitchInElements,
-                    //     encodedSequencePitchInInts,
-                    //     qualityPitchInBytes,
-                    //     desiredAlignmentMaxErrorRate,
-                    //     subjectIndex
-                    // );
-
-                    __syncthreads(); //wait until msa is ready
+                    tbGroup.sync();
             
-                    // checkBuiltMSA(
-                    //     &columnProperties,
-                    //     mycounts,
-                    //     myweights,
-                    //     msaColumnPitchInElements,
-                    //     subjectIndex
-                    // ); 
-
                     msa.checkAfterBuild(tbGroup, subjectIndex);
-
-                    // findConsensusSingleBlock<BLOCKSIZE>(
-                    //     my_support,
-                    //     my_orig_weights,
-                    //     my_orig_coverage,
-                    //     my_consensus,
-                    //     &columnProperties,
-                    //     mycounts,
-                    //     myweights,      
-                    //     myAnchorSequenceData, 
-                    //     subjectIndex,
-                    //     encodedSequencePitchInInts, 
-                    //     msaColumnPitchInElements
-                    // ); 
 
                     msa.findConsensus(
                         tbGroup,
@@ -3224,23 +3161,24 @@ namespace gpu{
 
                     if(useSmemForAddSequences){
                         // copy from counts and weights and coverages from shared to global
-            
-                        for(int index = threadIdx.x; index < columnsToCheck; index += BLOCKSIZE){
+                        int* const gmemCounts = multiMSA.getCountsOfMSA(subjectIndex);
+                        float* const gmemWeights = multiMSA.getWeightsOfMSA(subjectIndex);
+                        int* const gmemCoverages = multiMSA.getCoveragesOfMSA(subjectIndex);
+
+                        for(int index = tbGroup.thread_rank(); index < columnsToCheck; index += tbGroup.size()){
                             for(int k = 0; k < 4; k++){
-                                const int* const srcCounts = mycounts + k * msaColumnPitchInElements + index;
-                                int* const destCounts = inputcounts + k * msaColumnPitchInElements + index;
+                                const int* const srcCounts = msa.counts + k * msaColumnPitchInElements + index;
+                                int* const destCounts = gmemCounts + k * msaColumnPitchInElements + index;
             
-                                const float* const srcWeights = myweights + k * msaColumnPitchInElements + index;
-                                float* const destWeights = inputweights + k * msaColumnPitchInElements + index;
+                                const float* const srcWeights = msa.weights + k * msaColumnPitchInElements + index;
+                                float* const destWeights = gmemWeights + k * msaColumnPitchInElements + index;
             
                                 *destCounts = *srcCounts;
                                 *destWeights = *srcWeights;
                             }
-                            inputcoverages[index] = mycoverages[index];
+                            gmemCoverages[index] = msa.coverages[index];
                         }
                     }
-
-                    __syncthreads(); //wait until data can be reused
                 } 
             }
         }
@@ -4308,7 +4246,7 @@ namespace gpu{
                     msa.consensus = myConsensus;
                     msa.support = mySupport;
                     msa.origWeights = myOrigWeights;
-                    msa.origCoverage = myOrigCoverages;
+                    msa.origCoverages = myOrigCoverages;
                     msa.columnProperties = &shared_columnProperties;
 
 
@@ -4356,16 +4294,25 @@ namespace gpu{
                         int* const destNumIndices = (refinementIteration % 2 == 0) ?
                             myNewNumIndicesPerSubjectPtr : myNumIndicesPerSubjectPtr;
 
-                        __syncthreads();
+                        tbGroup.sync();
 
-                        findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
-                            (int2*)&temp_storage.int2reduce,
+                        auto groupReduceBool = [&](bool b, auto comp){
+                            b = BlockReduceBool(temp_storage.boolreduce).Reduce(b, comp);
+                            return b;
+                        };
+
+                        auto groupReduceInt2 = [&](int2 b, auto comp){
+                            b = BlockReduceInt2(temp_storage.int2reduce).Reduce(b, comp);
+                            return b;
+                        };
+                        
+
+                        msa.flagCandidatesOfDifferentRegion(
+                            tbGroup,
+                            groupReduceBool,
+                            groupReduceInt2,
                             destIndices,
                             destNumIndices,
-                            &shared_columnProperties,
-                            myConsensus,
-                            myCounts,
-                            myWeights,
                             myAnchorSequenceData,
                             subjectLength,
                             myCandidateSequencesData,
@@ -4378,13 +4325,38 @@ namespace gpu{
                             desiredAlignmentMaxErrorRate,
                             subjectIndex,
                             encodedSequencePitchInInts,
-                            msaColumnPitchInElements,
                             srcIndices,
                             *srcNumIndices,
                             dataset_coverage
                         );
 
-                        __syncthreads();
+                        // findCandidatesOfDifferentRegionSingleBlock<BLOCKSIZE>(
+                        //     (int2*)&temp_storage.int2reduce,
+                        //     destIndices,
+                        //     destNumIndices,
+                        //     &shared_columnProperties,
+                        //     myConsensus,
+                        //     myCounts,
+                        //     myWeights,
+                        //     myAnchorSequenceData,
+                        //     subjectLength,
+                        //     myCandidateSequencesData,
+                        //     myCandidateLengths,
+                        //     myAlignmentFlags,
+                        //     myShifts,
+                        //     myNops,
+                        //     myOverlaps,
+                        //     myShouldBeKept,
+                        //     desiredAlignmentMaxErrorRate,
+                        //     subjectIndex,
+                        //     encodedSequencePitchInInts,
+                        //     msaColumnPitchInElements,
+                        //     srcIndices,
+                        //     *srcNumIndices,
+                        //     dataset_coverage
+                        // );
+
+                        tbGroup.sync();
 
                         const int myNewNumIndices = *destNumIndices;
 
@@ -4397,32 +4369,6 @@ namespace gpu{
                             auto selector = [&](int i){
                                 return !myShouldBeKept[i];
                             };
-
-                            //removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
-                            // removeCandidatesFromMSASingleBlockNotTransposed<BLOCKSIZE>(
-                            //     selector,
-                            //     myCounts,
-                            //     myWeights,
-                            //     myCoverages,
-                            //     &shared_columnProperties,
-                            //     myShifts,
-                            //     myOverlaps,
-                            //     myNops,
-                            //     myAlignmentFlags,
-                            //     //myTransposedCandidateSequencesData,
-                            //     myCandidateSequencesData,
-                            //     myCandidateQualities,
-                            //     myCandidateLengths,
-                            //     srcIndices,
-                            //     *srcNumIndices,
-                            //     n_candidates,
-                            //     canUseQualityScores, 
-                            //     msaColumnPitchInElements,
-                            //     encodedSequencePitchInInts,
-                            //     qualityPitchInBytes,
-                            //     desiredAlignmentMaxErrorRate,
-                            //     subjectIndex
-                            // );
 
                             msa.removeCandidates(
                                 tbGroup,
