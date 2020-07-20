@@ -8,7 +8,7 @@
 #include <hostdevicefunctions.cuh>
 
 #include <bestalignment.hpp>
-#include <gpu/kernels.hpp> // MSAColumnProperties
+#include <gpu/MSAColumnProperties.hpp>
 
 #include <sequence.hpp>
 #include <hpc_helpers.cuh>
@@ -25,17 +25,7 @@ namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
-/*
-struct MSAColumnProperties{
-    //int startindex;
-    //int endindex;
-    //int columnsToCheck;
-    int subjectColumnsBegin_incl;
-    int subjectColumnsEnd_excl;
-    int firstColumn_incl;
-    int lastColumn_excl;
-};
-*/
+
     struct GpuSingleMSA{
     public:
 

@@ -7,6 +7,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/minhashkernels.hpp>
+#include <gpu/gpumsa.cuh>
 
 #include <correctionresultprocessing.hpp>
 #include <memorymanagement.hpp>
@@ -2077,37 +2078,22 @@ namespace gpu{
 
         const auto batchsize = batch.correctionOptions.batchsize;
         const auto maxCandidates = batch.numCandidatesLimit;
-#if 1
 
-        // SimpleAllocationDevice<int> d_counts2(batch.d_counts.size());
-        // SimpleAllocationDevice<int> d_coverage2(batch.d_coverage.size());
-        // SimpleAllocationDevice<float> d_weights2(batch.d_weights.size());
-        // SimpleAllocationDevice<char> d_consensus2(batch.d_consensus.size());
+        GPUMultiMSA multiMSA;
 
-        // cudaMemsetAsync(d_counts2.get(), 0, d_counts2.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(d_coverage2.get(), 0, d_coverage2.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(d_weights2.get(), 0, d_weights2.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(d_consensus2.get(), 0, d_consensus2.sizeInBytes(), streams[primary_stream_index]); CUERR;
-
-        // cudaMemsetAsync(batch.d_counts.get(), 0, batch.d_counts.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(batch.d_coverage.get(), 0, batch.d_coverage.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(batch.d_weights.get(), 0, batch.d_weights.sizeInBytes(), streams[primary_stream_index]); CUERR;
-        // cudaMemsetAsync(batch.d_consensus.get(), 0, batch.d_consensus.sizeInBytes(), streams[primary_stream_index]); CUERR;
-
+        multiMSA.numMSAs = batchsize;
+        multiMSA.columnPitchInElements = batch.msaColumnPitchInElements;
+        multiMSA.counts = batch.d_counts.get();
+        multiMSA.weights = batch.d_weights.get();
+        multiMSA.coverages = batch.d_coverage.get();
+        multiMSA.consensus = batch.d_consensus.get();
+        multiMSA.support = batch.d_support.get();
+        multiMSA.origWeights = batch.d_origWeights.get();
+        multiMSA.origCoverages = batch.d_origCoverages.get();
+        multiMSA.columnProperties = batch.d_msa_column_properties.get();
 
         callConstructMultipleSequenceAlignmentsKernel_async(
-            batch.d_msa_column_properties.get(),
-            //d_coverage2.get(),
-            batch.d_coverage.get(),
-            //d_counts2.get(),
-            batch.d_counts.get(),
-            //d_weights2.get(),
-            batch.d_weights.get(),
-            batch.d_support.get(),
-            batch.d_origWeights.get(),
-            batch.d_origCoverages.get(),            
-            //d_consensus2.get(),
-            batch.d_consensus.get(),
+            multiMSA,
             batch.d_alignment_overlaps.get(),
             batch.d_alignment_shifts.get(),
             batch.d_alignment_nOps.get(),
@@ -2122,464 +2108,16 @@ namespace gpu{
             batch.d_subject_qualities.get(),
             batch.d_candidate_qualities.get(),
             batch.d_numAnchors.get(),
-            batch.d_numCandidates.get(),
             batch.goodAlignmentProperties.maxErrorRate,
             batchsize,
             maxCandidates,
             batch.correctionOptions.useQualityScores,
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
-            batch.msaColumnPitchInElements,                 
-            batch.d_canExecute,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
-#else
-        callBuildMSAKernel_async(
-            batch.d_msa_column_properties.get(),
-            batch.d_counts.get(),
-            batch.d_weights.get(),
-            batch.d_coverage.get(),
-            batch.d_origWeights.get(),
-            batch.d_origCoverages.get(),
-            batch.d_support.get(),
-            batch.d_consensus.get(),
-            batch.d_alignment_overlaps.get(),
-            batch.d_alignment_shifts.get(),
-            batch.d_alignment_nOps.get(),
-            batch.d_alignment_best_alignment_flags.get(),
-            batch.d_subject_sequences_data.get(),
-            batch.d_subject_sequences_lengths.get(),
-            batch.d_transposedCandidateSequencesData.get(),
-            batch.d_candidate_sequences_lengths.get(),
-            batch.d_subject_qualities.get(),
-            batch.d_candidate_qualities.get(),
-            batch.correctionOptions.useQualityScores,
-            batch.encodedSequencePitchInInts,
-            batch.qualityPitchInBytes,
-            batch.msaColumnPitchInElements,
-            batch.d_indices,
-            batch.d_indices_per_subject,
-            batch.d_candidates_per_subject_prefixsum,
-            batch.d_numAnchors.get(),
-            batch.d_numCandidates.get(),
-            batch.goodAlignmentProperties.maxErrorRate,
-            batchsize,
-            maxCandidates,
-            batch.d_canExecute,
-            streams[primary_stream_index],
-            batch.kernelLaunchHandle
-        );
-#endif
 
-#if 0
-        generic_kernel<<<128,128,0, streams[primary_stream_index]>>>(
-            [
-                encodedSequencePitchInInts = batch.encodedSequencePitchInInts,
-                msaColumnPitchInElements = batch.msaColumnPitchInElements,
-                d_msa_column_properties = batch.d_msa_column_properties.get(),
-                d_numAnchors = batch.d_numAnchors.get(),
-                d_subject_sequences_data = batch.d_subject_sequences_data.get(),
-                d_subject_sequences_lengths = batch.d_subject_sequences_lengths.get(),
-                d_counts = batch.d_counts.get(),
-                d_counts2 = d_counts2.get(),
-                d_coverage = batch.d_coverage.get(),
-                d_coverage2 = d_coverage2.get(),
-                d_weights = batch.d_weights.get(),
-                d_weights2 = d_weights2.get(),
-                d_consensus = batch.d_consensus.get(),
-                d_consensus2 = d_consensus2.get()
-            ] __device__ (){
-                auto to_nuc = [](unsigned int c){
-                    constexpr unsigned int A_enc = 0x00;
-                    constexpr unsigned int C_enc = 0x01;
-                    constexpr unsigned int G_enc = 0x02;
-                    constexpr unsigned int T_enc = 0x03;
-        
-                    switch(c){
-                    case A_enc: return 'A';
-                    case C_enc: return 'C';
-                    case G_enc: return 'G';
-                    case T_enc: return 'T';
-                    default: return 'F';
-                    }
-                };
-
-                for(int a = blockIdx.x; a < *d_numAnchors; a += gridDim.x){
-                    bool error = false;
-                    // for(int i = d_msa_column_properties[a].firstColumn_incl + threadIdx.x; 
-                    //     i < d_msa_column_properties[a].lastColumn_excl; i += blockDim.x){
-                    //     // error |= !(d_counts[0 * msaColumnPitchInElements + i] == d_counts2[0 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_counts[1 * msaColumnPitchInElements + i] == d_counts2[1 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_counts[2 * msaColumnPitchInElements + i] == d_counts2[2 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_counts[3 * msaColumnPitchInElements + i] == d_counts2[3 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_weights[0 * msaColumnPitchInElements + i] == d_weights2[0 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_weights[1 * msaColumnPitchInElements + i] == d_weights2[1 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_weights[2 * msaColumnPitchInElements + i] == d_weights2[2 * msaColumnPitchInElements + i]);
-                    //     // error |= !(d_weights[3 * msaColumnPitchInElements + i] == d_weights2[3 * msaColumnPitchInElements + i]);
-                    //     error |= !(d_consensus[i] == d_consensus2[i]);
-                    // }
-                    if(error){
-                        printf("subjectColumnsBegin_incl = %d\n", d_msa_column_properties[a].subjectColumnsBegin_incl);
-                        printf("lastColumn_excl = %d\n", d_msa_column_properties[a].lastColumn_excl);
-                        printf("firstColumn_incl = %d\n", d_msa_column_properties[a].firstColumn_incl);
-
-                        printf("Anchor: ");
-                        for(int i = 0; i < d_subject_sequences_lengths[a]; i++){
-                            const unsigned int* ptr = &d_subject_sequences_data[a * encodedSequencePitchInInts];
-                            char base = to_nuc(getEncodedNuc2Bit(ptr, d_subject_sequences_lengths[a], i));
-                            printf("%c", base);
-                        }
-
-                        printf("\n");
-
-                        printf("Coverage1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_coverage[i]);
-                        }
-                        printf("\n");
-
-                        printf("Consensus1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%c ", d_consensus[i]);
-                        }
-                        printf("\n");
-#if 0
-                        printf("As1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts[0 * msaColumnPitchInElements + i]);                        
-                        }
-                        printf("\n");
-                        printf("Cs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts[1 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("Gs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts[2 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("Ts1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts[3 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-#endif
-
-
-#if 0
-                        printf("AWs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights[0 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("CWs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights[1 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("GWs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights[2 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("TWs1: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights[3 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-#endif
-
-
-
-                        printf("Coverage2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_coverage2[i]);
-                        }
-                        printf("\n");
-
-                        printf("Consensus2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%c ", d_consensus2[i]);
-                        }
-                        printf("\n");
-#if 0
-                        printf("As2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts2[0 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("Cs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts2[1 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("Gs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts2[2 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("Ts2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%d ", d_counts2[3 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-#endif
-
-#if 0
-                        printf("AWs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights2[0 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("CWs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights2[1 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("GWs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights2[2 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-                        printf("TWs2: ");
-                        for(int i = 0; i < msaColumnPitchInElements; i++){
-                            if(i == d_msa_column_properties[a].firstColumn_incl){
-                                printf(" | ");
-                            }
-                            if(i == d_msa_column_properties[a].lastColumn_excl){
-                                printf(" | ");
-                            }
-                            printf("%.8f ", d_weights2[3 * msaColumnPitchInElements + i]);
-                        }
-                        printf("\n");
-#endif
-                    }
-                    
-                    for(int i = d_msa_column_properties[a].firstColumn_incl + threadIdx.x; 
-                        i < d_msa_column_properties[a].lastColumn_excl; i += blockDim.x){
-                        // assert(d_counts[0 * msaColumnPitchInElements + i] == d_counts2[0 * msaColumnPitchInElements + i]);
-                        // assert(d_counts[1 * msaColumnPitchInElements + i] == d_counts2[1 * msaColumnPitchInElements + i]);
-                        // assert(d_counts[2 * msaColumnPitchInElements + i] == d_counts2[2 * msaColumnPitchInElements + i]);
-                        // assert(d_counts[3 * msaColumnPitchInElements + i] == d_counts2[3 * msaColumnPitchInElements + i]);
-                        // assert(d_weights[0 * msaColumnPitchInElements + i] == d_weights2[0 * msaColumnPitchInElements + i]);
-                        // assert(d_weights[1 * msaColumnPitchInElements + i] == d_weights2[1 * msaColumnPitchInElements + i]);
-                        // assert(d_weights[2 * msaColumnPitchInElements + i] == d_weights2[2 * msaColumnPitchInElements + i]);
-                        // assert(d_weights[3 * msaColumnPitchInElements + i] == d_weights2[3 * msaColumnPitchInElements + i]);
-                        assert(d_consensus[i] == d_consensus2[i]);
-                    }
-                }
-            }
-        ); CUERR;
-
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-#endif
-
-#if 0
-        generic_kernel<<<1,1,0, streams[primary_stream_index]>>>(
-            [
-                msaColumnPitchInElements = batch.msaColumnPitchInElements,
-                d_msa_column_properties = batch.d_msa_column_properties.get(),
-                d_counts = batch.d_counts.get(),
-                d_weights = batch.d_weights.get(),
-                d_coverage = batch.d_coverage.get(),
-                d_origWeights = batch.d_origWeights.get(),
-                d_origCoverages = batch.d_origCoverages.get(),
-                d_support = batch.d_support.get(),
-                d_consensus = batch.d_consensus.get()
-            ] __device__ (){
-                printf("As: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_counts[0 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("Cs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_counts[1 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("Gs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_counts[2 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("Ts: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_counts[3 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-
-                printf("AWs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_weights[0 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("CWs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_weights[1 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("GWs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_weights[2 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-                printf("TWs: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_weights[3 * msaColumnPitchInElements + i]);
-                }
-                printf("\n");
-
-                printf("cov: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_coverage[i]);
-                }
-                printf("\n");
-
-                printf("d_support: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_support[i]);
-                }
-                printf("\n");
-
-                printf("d_origWeights: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%f ", d_origWeights[i]);
-                }
-                printf("\n");
-
-                printf("d_origCoverages: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%d ", d_origCoverages[i]);
-                }
-                printf("\n");
-
-                printf("d_consensus: ");
-                for(int i = 0; i < msaColumnPitchInElements; i++){
-                    printf("%c ", d_consensus[i]);
-                }
-                printf("\n");
-            }
-        );
-
-        cudaDeviceSynchronize(); CUERR;
-        std::exit(0);
-#endif
         //At this point the msa is built
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -2596,15 +2134,7 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 
         const auto batchsize = batch.correctionOptions.batchsize;
-        const auto maxCandidates = batch.numCandidatesLimit;        
-
-        const std::size_t requiredTempStorageBytes = 
-            SDIV(sizeof(bool) * batch.n_queries, 128) * 128 // d_shouldBeKept + padding to align the next pointer
-            + (sizeof(bool) * batchsize); // d_anchorIsFinished
-        assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
-        
-        bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
-        bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * batch.n_queries, 128) * 128);
+        const auto maxCandidates = batch.numCandidatesLimit;            
 
         std::array<int*,2> d_indices_dblbuf{
             batch.d_indices.get(), 
@@ -2619,55 +2149,46 @@ namespace gpu{
             batch.d_num_indices_tmp.get()
         };
 
+        GPUMultiMSA multiMSA;
+
+        multiMSA.numMSAs = batchsize;
+        multiMSA.columnPitchInElements = batch.msaColumnPitchInElements;
+        multiMSA.counts = batch.d_counts.get();
+        multiMSA.weights = batch.d_weights.get();
+        multiMSA.coverages = batch.d_coverage.get();
+        multiMSA.consensus = batch.d_consensus.get();
+        multiMSA.support = batch.d_support.get();
+        multiMSA.origWeights = batch.d_origWeights.get();
+        multiMSA.origCoverages = batch.d_origCoverages.get();
+        multiMSA.columnProperties = batch.d_msa_column_properties.get();
+
+#if 0        
+
+        static_assert(max_num_minimizations % 2 == 1, "");
+
+        const std::size_t requiredTempStorageBytes = 
+            SDIV(sizeof(bool) * batch.n_queries, 128) * 128 // d_shouldBeKept + padding to align the next pointer
+            + (sizeof(bool) * batchsize); // d_anchorIsFinished
+        assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
+        
+        bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
+        bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * batch.n_queries, 128) * 128);
+
         cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
-        // SimpleAllocationDevice<int,0> d_indices2(batch.d_indices.size());
-        // SimpleAllocationDevice<int,0> d_indices2_new(batch.d_indices.size());
-        // SimpleAllocationDevice<int,0> d_indices_per_subject2(batch.d_indices_per_subject.size());
-        // SimpleAllocationDevice<int,0> d_indices_per_subject2_new(batch.d_indices_per_subject.size());
-        // SimpleAllocationDevice<int,0> d_num_indices2(batch.d_num_indices.size());
-        // SimpleAllocationDevice<int,0> d_num_indices2_new(batch.d_num_indices.size());
-        // SimpleAllocationDevice<MSAColumnProperties, 0> d_msa_column_properties2(batch.d_msa_column_properties.size());
-
-        // SimpleAllocationDevice<int> d_counts2(batch.d_counts.size());
-        // SimpleAllocationDevice<int> d_coverage2(batch.d_coverage.size());
-        // SimpleAllocationDevice<float> d_weights2(batch.d_weights.size());
-        // SimpleAllocationDevice<char> d_consensus2(batch.d_consensus.size());
-
-        // cudaDeviceSynchronize(); CUERR;
-
-        // cudaMemcpy(d_indices2.get(), batch.d_indices.get(), batch.d_indices.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_indices_per_subject2.get(), batch.d_indices_per_subject.get(), batch.d_indices_per_subject.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_num_indices2.get(), batch.d_num_indices.get(), batch.d_num_indices.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_msa_column_properties2.get(), batch.d_msa_column_properties.get(), batch.d_msa_column_properties.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_counts2.get(), batch.d_counts.get(), batch.d_counts.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_coverage2.get(), batch.d_coverage.get(), batch.d_coverage.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_weights2.get(), batch.d_weights.get(), batch.d_weights.sizeInBytes(), H2D); CUERR;
-        // cudaMemcpy(d_consensus2.get(), batch.d_consensus.get(), batch.d_consensus.sizeInBytes(), H2D); CUERR;
-
-
-#if 1        
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
-            callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async(
+            callMsaCandidateRefinementKernel_singleiter_async(
                 d_indices_dblbuf[(1 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(1 + iteration) % 2],
                 d_num_indices_dblbuf[(1 + iteration) % 2],
-                batch.d_msa_column_properties.get(),
-                batch.d_consensus.get(),
-                batch.d_coverage.get(),
-                batch.d_counts.get(),
-                batch.d_weights.get(),
-                batch.d_support.get(),
-                batch.d_origCoverages.get(),
-                batch.d_origWeights.get(),
+                multiMSA,
                 batch.d_alignment_best_alignment_flags.get(),
                 batch.d_alignment_shifts.get(),
                 batch.d_alignment_nOps.get(),
                 batch.d_alignment_overlaps.get(),
                 batch.d_subject_sequences_data.get(),
                 batch.d_candidate_sequences_data.get(),
-                batch.d_transposedCandidateSequencesData.get(),
                 batch.d_subject_sequences_lengths.get(),
                 batch.d_candidate_sequences_lengths.get(),
                 batch.d_subject_qualities.get(),
@@ -2675,18 +2196,15 @@ namespace gpu{
                 d_shouldBeKept,
                 batch.d_candidates_per_subject_prefixsum,
                 batch.d_numAnchors.get(),
-                batch.d_numCandidates.get(),
                 batch.goodAlignmentProperties.maxErrorRate,
                 batchsize,
                 maxCandidates,
                 batch.correctionOptions.useQualityScores,
                 batch.encodedSequencePitchInInts,
                 batch.qualityPitchInBytes,
-                batch.msaColumnPitchInElements,
                 d_indices_dblbuf[(0 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(0 + iteration) % 2],
                 batch.correctionOptions.estimatedCoverage,
-                batch.d_canExecute,
                 iteration,
                 d_anchorIsFinished,
                 streams[primary_stream_index],
@@ -2695,70 +2213,26 @@ namespace gpu{
 
 
         }
-//#endif
-        // cudaDeviceSynchronize(); CUERR;
 
-        // generic_kernel<<<1,1>>>(
-        //     [
-        //         =,
-        //         d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
-        //         d_indices = d_indices_dblbuf[max_num_minimizations % 2],
-        //         d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2],
-        //         d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2]
-        //     ] __device__ (){
-        //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
-        //             printf("d_num_indices %d", *d_num_indices);
-        //         }
-
-        //         for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
-        //             const int offset = d_candidates_per_subject_prefixsum[a];
-
-        //             const int num = d_indices_per_subject[a];
-
-        //             printf("num %d\n", num);
-
-        //             for(int i = threadIdx.x; i < num; i += blockDim.x){
-        //                 printf("%d ", d_indices[offset + i]);
-        //             }
-        //             printf("\n");
-        //         }
-        //     }
-        // ); CUERR;
-
-        // cudaDeviceSynchronize(); CUERR;
-
-        // std::exit(0);
 #else 
 
-//cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
+        const std::size_t requiredTempStorageBytes = sizeof(bool) * batch.n_queries; // d_shouldBeKept
+            
+        assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
 
-callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKernel_async(
-            // d_indices2_new.get(),
-            // d_indices_per_subject2_new.get(),
-            // d_num_indices2_new.get(),
-            // d_msa_column_properties2.get(),
-            // d_consensus2.get(),
-            // d_coverage2.get(),
-            // d_counts2.get(),
-            // d_weights2.get(),
+        bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
+
+        callMsaCandidateRefinementKernel_multiiter_async(
             d_indices_dblbuf[1],
             d_indices_per_subject_dblbuf[1],
             d_num_indices_dblbuf[1],
-            batch.d_msa_column_properties.get(),
-            batch.d_consensus.get(),
-            batch.d_coverage.get(),
-            batch.d_counts.get(),
-            batch.d_weights.get(),
-            batch.d_support.get(),
-            batch.d_origCoverages.get(),
-            batch.d_origWeights.get(),
+            multiMSA,
             batch.d_alignment_best_alignment_flags.get(),
             batch.d_alignment_shifts.get(),
             batch.d_alignment_nOps.get(),
             batch.d_alignment_overlaps.get(),
             batch.d_subject_sequences_data.get(),
             batch.d_candidate_sequences_data.get(),
-            batch.d_transposedCandidateSequencesData.get(),
             batch.d_subject_sequences_lengths.get(),
             batch.d_candidate_sequences_lengths.get(),
             batch.d_subject_qualities.get(),
@@ -2766,241 +2240,21 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
             d_shouldBeKept,
             batch.d_candidates_per_subject_prefixsum,
             batch.d_numAnchors.get(),
-            batch.d_numCandidates.get(),
             batch.goodAlignmentProperties.maxErrorRate,
             batchsize,
             maxCandidates,
             batch.correctionOptions.useQualityScores,
             batch.encodedSequencePitchInInts,
             batch.qualityPitchInBytes,
-            batch.msaColumnPitchInElements,
-            // d_indices2.get(),
-            // d_indices_per_subject2.get(),
             batch.d_indices.get(),
             batch.d_indices_per_subject.get(),
             batch.correctionOptions.estimatedCoverage,
-            batch.d_canExecute,
             max_num_minimizations,
-            d_anchorIsFinished,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
+#endif 
 
-#if 0       
-        cudaDeviceSynchronize(); CUERR;
-
-        generic_kernel<<<1000,128>>>(
-            [
-                =,
-                msaColumnPitchInElements = batch.msaColumnPitchInElements,
-                d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
-                d_indices = d_indices_dblbuf[max_num_minimizations % 2],
-                d_indices_per_subject = d_indices_per_subject_dblbuf[max_num_minimizations % 2],
-                d_num_indices = d_num_indices_dblbuf[max_num_minimizations % 2],
-                d_indices2 = d_indices2_new.get(),
-                d_indices_per_subject2 = d_indices_per_subject2_new.get(),
-                d_num_indices2 = d_num_indices2_new.get(),
-                d_msa_column_properties = batch.d_msa_column_properties.get(),
-                d_msa_column_properties2 = d_msa_column_properties2.get(),
-                d_counts = batch.d_counts.get(),
-                d_counts2 = d_counts2.get(),
-                d_coverage = batch.d_coverage.get(),
-                d_coverage2 = d_coverage2.get()
-            ] __device__ (){
-
-                constexpr int elemsPerThread = 30;
-
-                using BlockRadixSort = cub::BlockRadixSort<int, 128, elemsPerThread>;
-                using BlockLoad = cub::BlockLoad<int, 128, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
-            
-                __shared__ union{
-                    typename BlockRadixSort::TempStorage sort;
-                    typename BlockLoad::TempStorage load;
-                } temp_storage;
-
-                // if(threadIdx.x + blockIdx.x * blockDim.x == 0){
-                //     printf("d_num_indices %d, d_num_indices2 %d", *d_num_indices, *d_num_indices2);
-                // }
-
-                for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
-                    const int offset = d_candidates_per_subject_prefixsum[a];
-
-                    const int num = d_indices_per_subject[a];
-                    const int num2 = d_indices_per_subject2[a];
-
-                    if(num != num2){
-                        printf("a %d, num %d, num2 %d\n", a, num, num2);
-                        assert(num == num2);
-                    }
-
-                    if(num > 0){
-
-                        assert(d_msa_column_properties[a].firstColumn_incl == d_msa_column_properties2[a].firstColumn_incl);
-                        assert(d_msa_column_properties[a].lastColumn_excl == d_msa_column_properties2[a].lastColumn_excl);
-
-                        int tempregs[elemsPerThread];
-                        int tempregs2[elemsPerThread];
-
-                        BlockLoad(temp_storage.load).Load(
-                            d_indices + offset, 
-                            tempregs, 
-                            num,
-                            0
-                        );
-
-                        __syncthreads();
-        
-                        BlockRadixSort(temp_storage.sort).Sort(tempregs);
-            
-                        __syncthreads();
-
-                        BlockLoad(temp_storage.load).Load(
-                            d_indices + offset, 
-                            tempregs2, 
-                            num,
-                            0
-                        );
-
-                        __syncthreads();
-        
-                        BlockRadixSort(temp_storage.sort).Sort(tempregs2);
-            
-                        __syncthreads();
-
-                        #pragma unroll
-                        for(int i = 0; i < elemsPerThread; i++){
-                            assert(tempregs[i] == tempregs2[i]);
-                        }
-
-                        // for(int i = threadIdx.x; i < num; i += blockDim.x){
-                        //     //printf("%d ", d_indices[offset + i]);
-                        //     //assert(d_indices[offset+i] == d_indices2[offset+i]);
-                        // }
-
-                        // if(threadIdx.x == 0){
-
-                        //     printf("a %d, num %d, num2 %d, %d %d\n", a, num, num2, d_msa_column_properties[a].firstColumn_incl, d_msa_column_properties[a].lastColumn_excl);
-
-                        //     printf("As: ");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Cs: ");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Gs: ");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Ts: ");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("cov: ");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_coverage[a * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-
-                        //     printf("As2:");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Cs2:");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Gs2:");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("Ts2:");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_counts2[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        //     printf("cov2:");
-                        //     for(int i = 0; i < msaColumnPitchInElements; i++){
-                        //         printf("%d ", d_coverage2[a * msaColumnPitchInElements + i]);
-                        //     }
-                        //     printf("\n");
-                        // }
-
-                        __syncthreads();
-
-                        const int numColumns = d_msa_column_properties[a].lastColumn_excl - d_msa_column_properties[a].firstColumn_incl;
-
-                        for(int i = threadIdx.x; 
-                            i < numColumns; i += blockDim.x){
-                                const int index1 = d_msa_column_properties[a].firstColumn_incl;
-                                const int index2 = d_msa_column_properties2[a].firstColumn_incl;
-
-                            assert(d_counts[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 0 * msaColumnPitchInElements + index2]);
-                            assert(d_counts[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 1 * msaColumnPitchInElements + index2]);
-                            assert(d_counts[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 2 * msaColumnPitchInElements + index2]);
-                            assert(d_counts[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + index1] == d_counts2[a * 4 * msaColumnPitchInElements + 3 * msaColumnPitchInElements + index2]);
-                            assert(d_coverage[a * msaColumnPitchInElements + index1] == d_coverage2[a * msaColumnPitchInElements + index2]);
-                            // assert(d_weights[0 * msaColumnPitchInElements + i] == d_weights2[0 * msaColumnPitchInElements + i]);
-                            // assert(d_weights[1 * msaColumnPitchInElements + i] == d_weights2[1 * msaColumnPitchInElements + i]);
-                            // assert(d_weights[2 * msaColumnPitchInElements + i] == d_weights2[2 * msaColumnPitchInElements + i]);
-                            // assert(d_weights[3 * msaColumnPitchInElements + i] == d_weights2[3 * msaColumnPitchInElements + i]);
-                            //assert(d_consensus[i] == d_consensus2[i]);
-                        }
-
-                        __syncthreads();
-                    }
-                    //printf("\n");
-                }
-            }
-        ); CUERR;
-
-        cudaDeviceSynchronize(); CUERR;
-
-        //std::exit(0);
-#endif
-        // cudaDeviceSynchronize(); CUERR;
-
-        // generic_kernel<<<1,1>>>(
-        //     [
-        //         =,
-        //         d_candidates_per_subject_prefixsum = batch.d_candidates_per_subject_prefixsum.get(),
-        //         d_indices = d_indices_dblbuf[(1 + 0) % 2],
-        //         d_indices_per_subject = d_indices_per_subject_dblbuf[(1 + 0) % 2],
-        //         d_num_indices = d_num_indices_dblbuf[(1 + 0) % 2]
-        //     ] __device__ (){
-        //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
-        //             printf("d_num_indices %d", *d_num_indices);
-        //         }
-
-        //         for(int a = blockIdx.x; a < batchsize; a += gridDim.x){
-        //             const int offset = d_candidates_per_subject_prefixsum[a];
-
-        //             const int num = d_indices_per_subject[a];
-
-        //             printf("num %d\n", num);
-
-        //             for(int i = threadIdx.x; i < num; i += blockDim.x){
-        //                 printf("%d ", d_indices[offset + i]);
-        //             }
-        //             printf("\n");
-        //         }
-        //     }
-        // ); CUERR;
-
-        // cudaDeviceSynchronize(); CUERR;
-
-        // std::exit(0);
-
-
-#endif
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
