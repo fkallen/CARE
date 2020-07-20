@@ -7,10 +7,10 @@
 #include <bestalignment.hpp>
 #include <gpu/utility_kernels.cuh>
 
-#include <msa.hpp>
+//#include <msa.hpp>
 #include <sequence.hpp>
 
-
+#include <gpu/gpumsa.cuh>
 
 
 #include <hpc_helpers.cuh>
@@ -3031,6 +3031,8 @@ namespace gpu{
 
         if(*canExecute){
 
+            auto tbGroup = cg::this_thread_block();
+
             const int n_subjects = *d_numAnchors;
             const int n_candidates = *d_numCandidates;
             typename BlockReduceInt::TempStorage* const cubTempStorage = (typename BlockReduceInt::TempStorage*)sharedmem;
@@ -3079,9 +3081,33 @@ namespace gpu{
 
                     MSAColumnProperties columnProperties;
 
-                    msaInit<BLOCKSIZE>(
-                        *cubTempStorage,
-                        &columnProperties,
+                    GpuSingleMSA msa;
+                    msa.columnPitchInElements = msaColumnPitchInElements;
+                    msa.counts = mycounts;
+                    msa.weights = myweights;
+                    msa.coverages = mycoverages;
+                    msa.consensus = my_consensus;
+                    msa.support = my_support;
+                    msa.origWeights = my_orig_weights;
+                    msa.origCoverage = my_orig_coverage;
+                    msa.columnProperties = &columnProperties;
+
+                    auto groupReduceIntMin = [&](int data){
+                        data = BlockReduceInt(*cubTempStorage).Reduce(data, cub::Min());
+                        tbGroup.sync();
+                        return data;
+                    };
+
+                    auto groupReduceIntMax = [&](int data){                        
+                        data = BlockReduceInt(*cubTempStorage).Reduce(data, cub::Max());
+                        tbGroup.sync();
+                        return data;
+                    };
+
+                    msa.initColumnProperties(
+                        tbGroup,
+                        groupReduceIntMin,
+                        groupReduceIntMax,
                         myIndices,
                         myNumGoodCandidates,
                         myShifts,
@@ -3089,6 +3115,19 @@ namespace gpu{
                         subjectLength,
                         myCandidateLengths
                     );
+
+                    
+
+                    // msaInit<BLOCKSIZE>(
+                    //     *cubTempStorage,
+                    //     &columnProperties,
+                    //     myIndices,
+                    //     myNumGoodCandidates,
+                    //     myShifts,
+                    //     myAlignmentFlags,
+                    //     subjectLength,
+                    //     myCandidateLengths
+                    // );
 
                     //only thread 0 has valid column properties. save to global memory and broadcast to all threads in block
                     if(threadIdx.x == 0){
@@ -3104,11 +3143,8 @@ namespace gpu{
 
                     assert(columnsToCheck <= msaColumnPitchInElements);
 
-                    addSequencesToMSASingleBlockNotTranposed<BLOCKSIZE>(
-                        mycounts,
-                        myweights,
-                        mycoverages,
-                        &columnProperties,
+                    msa.constructFromSequences(
+                        tbGroup,
                         myShifts,
                         myOverlaps,
                         myNops,
@@ -3120,38 +3156,70 @@ namespace gpu{
                         myCandidateLengths,
                         myIndices,
                         myNumGoodCandidates,
-                        //n_candidates,
-                        1,
                         canUseQualityScores, 
-                        msaColumnPitchInElements,
                         encodedSequencePitchInInts,
                         qualityPitchInBytes,
                         desiredAlignmentMaxErrorRate,
                         subjectIndex
                     );
 
+                    // addSequencesToMSASingleBlockNotTranposed<BLOCKSIZE>(
+                    //     mycounts,
+                    //     myweights,
+                    //     mycoverages,
+                    //     &columnProperties,
+                    //     myShifts,
+                    //     myOverlaps,
+                    //     myNops,
+                    //     myAlignmentFlags,
+                    //     myAnchorSequenceData,
+                    //     myAnchorQualityData,
+                    //     myCandidateSequencesData,
+                    //     myCandidateQualities,
+                    //     myCandidateLengths,
+                    //     myIndices,
+                    //     myNumGoodCandidates,
+                    //     //n_candidates,
+                    //     1,
+                    //     canUseQualityScores, 
+                    //     msaColumnPitchInElements,
+                    //     encodedSequencePitchInInts,
+                    //     qualityPitchInBytes,
+                    //     desiredAlignmentMaxErrorRate,
+                    //     subjectIndex
+                    // );
+
                     __syncthreads(); //wait until msa is ready
             
-                    checkBuiltMSA(
-                        &columnProperties,
-                        mycounts,
-                        myweights,
-                        msaColumnPitchInElements,
-                        subjectIndex
-                    ); 
+                    // checkBuiltMSA(
+                    //     &columnProperties,
+                    //     mycounts,
+                    //     myweights,
+                    //     msaColumnPitchInElements,
+                    //     subjectIndex
+                    // ); 
 
-                    findConsensusSingleBlock<BLOCKSIZE>(
-                        my_support,
-                        my_orig_weights,
-                        my_orig_coverage,
-                        my_consensus,
-                        &columnProperties,
-                        mycounts,
-                        myweights,      
+                    msa.checkAfterBuild(tbGroup, subjectIndex);
+
+                    // findConsensusSingleBlock<BLOCKSIZE>(
+                    //     my_support,
+                    //     my_orig_weights,
+                    //     my_orig_coverage,
+                    //     my_consensus,
+                    //     &columnProperties,
+                    //     mycounts,
+                    //     myweights,      
+                    //     myAnchorSequenceData, 
+                    //     subjectIndex,
+                    //     encodedSequencePitchInInts, 
+                    //     msaColumnPitchInElements
+                    // ); 
+
+                    msa.findConsensus(
+                        tbGroup,
                         myAnchorSequenceData, 
-                        subjectIndex,
                         encodedSequencePitchInInts, 
-                        msaColumnPitchInElements
+                        subjectIndex
                     );
 
                     if(useSmemForAddSequences){
@@ -4187,6 +4255,8 @@ namespace gpu{
 
             assert(numRefinementIterations > 0);
 
+            auto tbGroup = cg::this_thread_block();
+
             float* const shared_weights = externsharedmem;
             int* const shared_counts = (int*)(shared_weights + 4 * msaColumnPitchInElements);
             int* const shared_coverages = (int*)(shared_counts + 4 * msaColumnPitchInElements);            
@@ -4229,6 +4299,18 @@ namespace gpu{
                     int* const myCounts = (useSmemMSA ? shared_counts : inputcounts);
                     float* const myWeights = (useSmemMSA ? shared_weights : inputweights);
                     int* const myCoverages = (useSmemMSA ? shared_coverages : inputcoverages);
+
+                    GpuSingleMSA msa;
+                    msa.columnPitchInElements = msaColumnPitchInElements;
+                    msa.counts = myCounts;
+                    msa.weights = myWeights;
+                    msa.coverages = myCoverages;
+                    msa.consensus = myConsensus;
+                    msa.support = mySupport;
+                    msa.origWeights = myOrigWeights;
+                    msa.origCoverage = myOrigCoverages;
+                    msa.columnProperties = &shared_columnProperties;
+
 
                     if(useSmemMSA){
                         //load counts weights and coverages from gmem to smem
@@ -4317,55 +4399,84 @@ namespace gpu{
                             };
 
                             //removeCandidatesFromMSASingleBlock<BLOCKSIZE>(
-                            removeCandidatesFromMSASingleBlockNotTransposed<BLOCKSIZE>(
+                            // removeCandidatesFromMSASingleBlockNotTransposed<BLOCKSIZE>(
+                            //     selector,
+                            //     myCounts,
+                            //     myWeights,
+                            //     myCoverages,
+                            //     &shared_columnProperties,
+                            //     myShifts,
+                            //     myOverlaps,
+                            //     myNops,
+                            //     myAlignmentFlags,
+                            //     //myTransposedCandidateSequencesData,
+                            //     myCandidateSequencesData,
+                            //     myCandidateQualities,
+                            //     myCandidateLengths,
+                            //     srcIndices,
+                            //     *srcNumIndices,
+                            //     n_candidates,
+                            //     canUseQualityScores, 
+                            //     msaColumnPitchInElements,
+                            //     encodedSequencePitchInInts,
+                            //     qualityPitchInBytes,
+                            //     desiredAlignmentMaxErrorRate,
+                            //     subjectIndex
+                            // );
+
+                            msa.removeCandidates(
+                                tbGroup,
                                 selector,
-                                myCounts,
-                                myWeights,
-                                myCoverages,
-                                &shared_columnProperties,
                                 myShifts,
                                 myOverlaps,
                                 myNops,
                                 myAlignmentFlags,
-                                //myTransposedCandidateSequencesData,
-                                myCandidateSequencesData,
-                                myCandidateQualities,
+                                myCandidateSequencesData, //not transposed
+                                myCandidateQualities, //not transposed
                                 myCandidateLengths,
                                 srcIndices,
                                 *srcNumIndices,
-                                n_candidates,
                                 canUseQualityScores, 
-                                msaColumnPitchInElements,
                                 encodedSequencePitchInInts,
                                 qualityPitchInBytes,
-                                desiredAlignmentMaxErrorRate,
-                                subjectIndex
+                                desiredAlignmentMaxErrorRate
                             );
 
-                            __syncthreads();
+                            __syncthreads();                            
                             
-                            msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
-                                &shared_columnProperties,
-                                myCoverages
-                            );
+                            // msaUpdatePropertiesAfterSequenceRemovalSingleBlock<BLOCKSIZE>(
+                            //     &shared_columnProperties,
+                            //     myCoverages
+                            // );
+
+                            msa.updateColumnProperties(tbGroup);
 
                             __syncthreads();
+
+                            //msa.checkAfterBuild(tbGroup, subjectIndex);
 
                             assert(shared_columnProperties.firstColumn_incl != -1);
                             assert(shared_columnProperties.lastColumn_excl != -1);
 
-                            findConsensusSingleBlock<BLOCKSIZE>(
-                                mySupport,
-                                myOrigWeights,
-                                myOrigCoverages,
-                                myConsensus,
-                                &shared_columnProperties,
-                                myCounts,
-                                myWeights,
+                            // findConsensusSingleBlock<BLOCKSIZE>(
+                            //     mySupport,
+                            //     myOrigWeights,
+                            //     myOrigCoverages,
+                            //     myConsensus,
+                            //     &shared_columnProperties,
+                            //     myCounts,
+                            //     myWeights,
+                            //     myAnchorSequenceData, 
+                            //     subjectIndex,
+                            //     encodedSequencePitchInInts, 
+                            //     msaColumnPitchInElements
+                            // );
+
+                            msa.findConsensus(
+                                tbGroup,
                                 myAnchorSequenceData, 
-                                subjectIndex,
                                 encodedSequencePitchInInts, 
-                                msaColumnPitchInElements
+                                subjectIndex
                             );
 
                             if(threadIdx.x == 0){
