@@ -2646,10 +2646,10 @@ namespace gpu{
         // cudaMemcpy(d_consensus2.get(), batch.d_consensus.get(), batch.d_consensus.sizeInBytes(), H2D); CUERR;
 
 
-#if 0        
+#if 1        
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
-            callMsaFindCandidatesOfDifferentRegionAndRemoveThemKernel_async(
+            callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async(
                 d_indices_dblbuf[(1 + iteration) % 2],
                 d_indices_per_subject_dblbuf[(1 + iteration) % 2],
                 d_num_indices_dblbuf[(1 + iteration) % 2],
@@ -2695,7 +2695,7 @@ namespace gpu{
 
 
         }
-#endif
+//#endif
         // cudaDeviceSynchronize(); CUERR;
 
         // generic_kernel<<<1,1>>>(
@@ -2728,7 +2728,7 @@ namespace gpu{
         // cudaDeviceSynchronize(); CUERR;
 
         // std::exit(0);
-//#else 
+#else 
 
 //cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
@@ -3000,7 +3000,7 @@ callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletion2MultiIterationKer
         // std::exit(0);
 
 
-//#endif
+#endif
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
