@@ -10,8 +10,6 @@
 
 #include <config.hpp>
 
-#include <gpu/MSAColumnProperties.hpp>
-
 #include <map>
 
 
