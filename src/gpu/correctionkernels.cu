@@ -1034,8 +1034,16 @@ namespace gpu{
         const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
         const size_t smemPitchEditsInInts = SDIV((sizeof(TempCorrectedSequence::EncodedEdit) * numEditsThreshold), 
                                                     sizeof(int));
-        const std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts)
+
+        auto calculateSmemUsage = [&](int blockDim){
+            const int numGroupsPerBlock = blockDim / groupsize;
+            std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts)
                 + numGroupsPerBlock * (sizeof(int) * smemPitchEditsInInts);
+
+            return smem;
+        };
+
+        const std::size_t smem = calculateSmemUsage(blocksize);
 
     	int max_blocks_per_device = 1;
 
@@ -1051,7 +1059,7 @@ namespace gpu{
     	    #define getProp(blocksize) { \
                 KernelLaunchConfig kernelLaunchConfig; \
                 kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = numGroupsPerBlock * sizeof(char) * (SDIV(maximum_sequence_length, 4) * 4); \
+                kernelLaunchConfig.smem = calculateSmemUsage((blocksize)); \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                     msa_correct_candidates_with_group_kernel<(blocksize), groupsize>, \
@@ -1069,7 +1077,11 @@ namespace gpu{
     		getProp(256);
 
     		const auto& kernelProperties = mymap[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            
+            // std::cerr << "msa_correct_candidates_with_group_kernel "
+            //     << "multiProcessorCount = " << handle.deviceProperties.multiProcessorCount
+            //     << " max_blocks_per_SM = " << kernelProperties.max_blocks_per_SM << "\n"; 
 
     		handle.kernelPropertiesMap[KernelId::MSACorrectCandidates] = std::move(mymap);
 
@@ -1122,7 +1134,7 @@ namespace gpu{
     	default: mycall(256); break;
     	}
 
-    		#undef mycall
+    		#undef mycall 
     }
 
 
