@@ -3,7 +3,6 @@
 #include <gpu/kernels.hpp>
 #include <hostdevicefunctions.cuh>
 
-//#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
 #include <gpu/utility_kernels.cuh>
 
