@@ -68,7 +68,7 @@
 #endif
 
 
-#define USE_CUDA_GRAPH
+//#define USE_CUDA_GRAPH
 
 
 namespace care{
@@ -2922,10 +2922,14 @@ namespace gpu{
 
         //compute candidate correction in first stream
 
+
         callCorrectCandidatesKernel_async(
             batch.h_corrected_candidates.get(),
             batch.h_editsPerCorrectedCandidate.get(),
             batch.h_numEditsPerCorrectedCandidate.get(),
+            // batch.d_corrected_candidates.get(),
+            // batch.d_editsPerCorrectedCandidate.get(),
+            // batch.d_numEditsPerCorrectedCandidate.get(),
             multiMSA,
             batch.d_alignment_shifts.get(),
             batch.d_alignment_best_alignment_flags.get(),
@@ -2944,127 +2948,147 @@ namespace gpu{
             batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
-        );       
+        ); 
         
-        //cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
-        
-        // cudaMemcpyAsync(
-        //     batch.h_numEditsPerCorrectedCandidate,
-        //     batch.d_numEditsPerCorrectedCandidate,
-        //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
-        //     D2H,
-        //     streams[primary_stream_index]
-        // ); CUERR;
-        
-        // cudaMemcpyAsync(
-        //     batch.h_indices_of_corrected_candidates,
-        //     batch.d_indices_of_corrected_candidates,
-        //     sizeof(int) * maxCandidates, //actually only need sizeof(int) * num_total_corrected_candidates, but its not available on the host
-        //     D2H,
-        //     streams[primary_stream_index]
-        // ); CUERR;
+        //copy candidate correction results from device to host
+#if 0        
+        generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
+            [
+                =,
+                decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
+                maxNumEditsPerSequence = batch.maxNumEditsPerSequence,
+                h_corrected_candidates = batch.h_corrected_candidates.get(),
+                h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get(),
+                h_numEditsPerCorrectedCandidate = batch.h_numEditsPerCorrectedCandidate.get(),
+                d_corrected_candidates = batch.d_corrected_candidates.get(),
+                d_editsPerCorrectedCandidate = batch.d_editsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate = batch.d_numEditsPerCorrectedCandidate.get(),
+                d_num_total_corrected_candidates = batch.d_num_total_corrected_candidates.get(),
+                d_indices_of_corrected_candidates = batch.d_indices_of_corrected_candidates.get()
+            ] __device__ (){
 
-        // const int resultsToCopy = batch.n_queries * 0.2f;
+                constexpr int groupsize = 32;
 
-        // cudaMemcpyAsync(
-        //     batch.h_corrected_candidates,
-        //     batch.d_corrected_candidates,
-        //     batch.decodedSequencePitchInBytes * resultsToCopy,
-        //     D2H,
-        //     streams[primary_stream_index]
-        // ); CUERR;
+                auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
 
-        // cudaMemcpyAsync(
-        //     batch.h_editsPerCorrectedCandidate,
-        //     batch.d_editsPerCorrectedCandidate,
-        //     sizeof(TempCorrectedSequence::EncodedEdit) * batch.maxNumEditsPerSequence * resultsToCopy,
-        //     D2H,
-        //     streams[primary_stream_index]
-        // ); CUERR;
+                const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+                const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+                const int groupIdInBlock = threadIdx.x / groupsize;
 
-        // int* d_remainingResultsToCopy = batch.d_num_high_quality_subject_indices.get(); //reuse
-        // const int* tmpptr = batch.d_num_total_corrected_candidates.get();
+                const int loopEnd = *d_num_total_corrected_candidates;
 
-        // generic_kernel<<<1,1,0, streams[primary_stream_index]>>>([=] __device__ (){
-        //     *d_remainingResultsToCopy = max(0, *tmpptr - resultsToCopy);
-        // }); CUERR;
-        
-        // callMemcpy2DKernel(
-        //     batch.h_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
-        //     batch.d_corrected_candidates.get() + batch.decodedSequencePitchInBytes * resultsToCopy,
-        //     d_remainingResultsToCopy,
-        //     batch.decodedSequencePitchInBytes,
-        //     batch.n_queries - resultsToCopy,
-        //     streams[primary_stream_index]
-        // ); CUERR;
-        
-        // callMemcpy2DKernel(
-        //     batch.h_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
-        //     batch.d_editsPerCorrectedCandidate.get() + batch.maxNumEditsPerSequence * resultsToCopy,
-        //     d_remainingResultsToCopy,
-        //     batch.maxNumEditsPerSequence,
-        //     batch.n_queries - resultsToCopy,
-        //     streams[primary_stream_index]
-        // ); CUERR;
+                for(int id = groupId;
+                        id < loopEnd;
+                        id += numGroups){
 
-        // {
-        //     char* const h_corrected_candidates = batch.h_corrected_candidates.get();
-        //     char* const d_corrected_candidates = batch.d_corrected_candidates.get();
-        //     const int* const d_num_total_corrected_candidates = batch.d_num_total_corrected_candidates.get();
-            
-        //     auto* h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get();
-        //     auto* d_editsPerCorrectedCandidate = batch.d_editsPerCorrectedCandidate.get();
+                    const int candidateIndex = d_indices_of_corrected_candidates[id];
+                    const int destinationIndex = id;
 
-        //     std::size_t decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes;
-        //     std::size_t maxNumEditsPerSequence = batch.maxNumEditsPerSequence;
-            
-        //     generic_kernel<<<640, 256, 0, streams[primary_stream_index]>>>(
-        //         [=] __device__ (){
-        //             using CopyType = int;
-
-        //             const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-        //             const size_t stride = blockDim.x * gridDim.x;
-
-        //             const int numElements = *d_num_total_corrected_candidates;
-
-        //             const size_t bytesToCopy1 = numElements * decodedSequencePitchInBytes;
-
-        //             const int fullIntsToCopy1 = bytesToCopy1 / sizeof(CopyType);
-
-        //             for(int index = tid; index < fullIntsToCopy1; index += stride){
-        //                 ((CopyType*)h_corrected_candidates)[index] = 
-        //                     ((const CopyType*)d_corrected_candidates)[index];
-        //             }
-
-        //             const int remainingBytes1 = bytesToCopy1 - fullIntsToCopy1 * sizeof(CopyType);
-
-        //             if(tid < remainingBytes1){
-        //                 h_corrected_candidates[fullIntsToCopy1 * sizeof(CopyType) + tid] 
-        //                     = d_corrected_candidates[fullIntsToCopy1 * sizeof(CopyType) + tid];
-        //             }
-
-        //             const size_t bytesToCopy2 = numElements * maxNumEditsPerSequence;
-
-        //             const int fullIntsToCopy2 = bytesToCopy2 / sizeof(CopyType);
-
-        //             for(int index = tid; index < fullIntsToCopy2; index += stride){
-        //                 ((CopyType*)h_editsPerCorrectedCandidate)[index] = 
-        //                     ((const CopyType*)d_editsPerCorrectedCandidate)[index];
-        //             }
-
-        //             const int remainingBytes2 = bytesToCopy2 - fullIntsToCopy2 * sizeof(CopyType);
-
-        //             if(tid < remainingBytes2){
-        //                 h_editsPerCorrectedCandidate[fullIntsToCopy2 * sizeof(CopyType) + tid] 
-        //                     = d_editsPerCorrectedCandidate[fullIntsToCopy2 * sizeof(CopyType) + tid];
-        //             }
-
-
+                    const char* const d_my_corrected_candidate = d_corrected_candidates + destinationIndex * decodedSequencePitchInBytes;
+                    char* const h_my_corrected_candidate = h_corrected_candidates + destinationIndex * decodedSequencePitchInBytes;
                     
-        //         }
-        //     ); CUERR;
+                    //copy corrected sequence from smem to global output
+                    const int fullInts1 = decodedSequencePitchInBytes / sizeof(int);
 
-        // }
+                    for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+                        ((int*)h_my_corrected_candidate)[i] = ((int*)d_my_corrected_candidate)[i];
+                    }
+
+                    for(int i = tgroup.thread_rank(); 
+                            i < decodedSequencePitchInBytes - fullInts1 * sizeof(int); 
+                            i += tgroup.size()) {
+                        h_my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+                            = d_my_corrected_candidate[fullInts1 * sizeof(int) + i];
+                    }     
+
+                    const int* const d_myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
+                    int* const h_myNumEdits = h_numEditsPerCorrectedCandidate + candidateIndex;
+
+                    const TempCorrectedSequence::EncodedEdit* const d_myEdits = d_editsPerCorrectedCandidate 
+                        + destinationIndex * maxNumEditsPerSequence;
+
+                    TempCorrectedSequence::EncodedEdit* const h_myEdits = h_editsPerCorrectedCandidate 
+                        + destinationIndex * maxNumEditsPerSequence;
+
+                    if(*d_myNumEdits <= maxNumEditsPerSequence){
+                        const int numEdits = *d_myNumEdits;
+
+                        if(tgroup.thread_rank() == 0){ 
+                            *h_myNumEdits = *d_myNumEdits;
+                        }
+
+                        const int fullInts = (numEdits * sizeof(TempCorrectedSequence::EncodedEdit)) / sizeof(int);
+                        static_assert(sizeof(TempCorrectedSequence::EncodedEdit) * 2 == sizeof(int), "");
+
+                        for(int i = tgroup.thread_rank(); i < fullInts; i += tgroup.size()) {
+                            ((int*)h_myEdits)[i] = ((int*)d_myEdits)[i];
+                        }
+
+                        for(int i = tgroup.thread_rank(); i < numEdits - fullInts * 2; i += tgroup.size()) {
+                            h_myEdits[fullInts * 2 + i] = d_myEdits[fullInts * 2 + i];
+                        } 
+                    }else{
+                        if(tgroup.thread_rank() == 0){
+                            *h_myNumEdits = doNotUseEditsValue;
+                        }
+                    }
+
+
+                }
+            }
+        ); CUERR;
+#endif     
+
+#if 0        
+        generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
+            [
+                =,
+                decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
+                maxNumEditsPerSequence = batch.maxNumEditsPerSequence,
+                h_corrected_candidates = batch.h_corrected_candidates.get(),
+                h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get(),
+                h_numEditsPerCorrectedCandidate = batch.h_numEditsPerCorrectedCandidate.get(),
+                d_corrected_candidates = batch.d_corrected_candidates.get(),
+                d_editsPerCorrectedCandidate = batch.d_editsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate = batch.d_numEditsPerCorrectedCandidate.get(),
+                d_num_total_corrected_candidates = batch.d_num_total_corrected_candidates.get()
+            ] __device__ (){
+
+                using CopyType = int4;
+
+                const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const size_t stride = blockDim.x * gridDim.x;
+
+                const int numElements = *d_num_total_corrected_candidates;
+
+                auto copy = [&](auto* dest, auto* src, size_t numbytes){
+                    const size_t iters = numbytes / sizeof(CopyType);
+
+                    for(size_t index = tid; index < iters; index += stride){
+                        ((CopyType*)dest)[index] = ((CopyType*)src)[index];
+                    }
+                    //remainder
+                    const size_t remainder = numbytes - sizeof(CopyType) * iters;
+                    for(size_t index = tid; index < remainder; index += stride){
+                        dest[sizeof(CopyType) * iters + index] 
+                            = src[sizeof(CopyType) * iters + index];
+                    }
+                };
+
+                const size_t bytesCorrectedCandidates = numElements * decodedSequencePitchInBytes;
+                copy(h_corrected_candidates, d_corrected_candidates, bytesCorrectedCandidates);
+
+                const size_t bytesNumEdits = numElements * sizeof(int);
+                copy(h_numEditsPerCorrectedCandidate, d_numEditsPerCorrectedCandidate, bytesNumEdits);
+
+                const size_t bytesEdits = numElements * maxNumEditsPerSequence 
+                    * sizeof(TempCorrectedSequence::EncodedEdit);
+                copy(h_editsPerCorrectedCandidate, d_editsPerCorrectedCandidate, bytesEdits);
+
+            }
+        ); CUERR;
+#endif        
+    
 
         // callMemcpy2DKernel(
         //     batch.h_corrected_candidates.get(),
@@ -3356,7 +3380,8 @@ namespace gpu{
                 //const bool originalReadContainsN = batch.readStorage->readContainsN(candidate_read_id);
                 
                 
-                const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
+                const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
+
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
                     const auto* gpuedits = my_editsPerCorrectedCandidate + candidateIndex * rawResults.maxNumEditsPerSequence;

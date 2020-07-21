@@ -672,7 +672,9 @@ namespace gpu{
 
                 tgroup.sync();
 
-                int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
+                //int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
+                int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
+
                 TempCorrectedSequence::EncodedEdit* const myEdits = d_editsPerCorrectedCandidate 
                     + destinationIndex * numEditsThreshold;
 
