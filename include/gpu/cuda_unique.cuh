@@ -9,6 +9,9 @@
 #include <cassert>
 #include <cmath>
 
+
+//#define CARE_CUDA_UNIQUE_CHECK_UNIQUENESS
+
 #ifdef __NVCC__
 
 namespace care{
@@ -454,6 +457,7 @@ struct GpuSegmentedUnique{
             );
         }
 
+#ifdef CARE_CUDA_UNIQUE_CHECK_UNIQUENESS        
         cudauniquekernels::checkUniquenessKernel<<<numSegments, 128, 0, stream>>>(
             d_items,
             d_unique_items,
@@ -462,6 +466,7 @@ struct GpuSegmentedUnique{
             d_begin_offsets,
             d_end_offsets
         );
+#endif        
     }
 
     //segments of size larger than 128 * 64 are not processed
