@@ -2587,16 +2587,25 @@ namespace gpu{
         const int* d_indices_per_subject = d_indices_per_subject_dblbuf[/*max_num_minimizations % 2*/ 1];
         const int* d_num_indices = d_num_indices_dblbuf[/*max_num_minimizations % 2*/ 1];
 
+        GPUMultiMSA multiMSA;
+
+        multiMSA.numMSAs = batchsize;
+        multiMSA.columnPitchInElements = batch.msaColumnPitchInElements;
+        multiMSA.counts = batch.d_counts.get();
+        multiMSA.weights = batch.d_weights.get();
+        multiMSA.coverages = batch.d_coverage.get();
+        multiMSA.consensus = batch.d_consensus.get();
+        multiMSA.support = batch.d_support.get();
+        multiMSA.origWeights = batch.d_origWeights.get();
+        multiMSA.origCoverages = batch.d_origCoverages.get();
+        multiMSA.columnProperties = batch.d_msa_column_properties.get();
+
 
         call_msaCorrectAnchorsKernel_async(
             batch.d_corrected_subjects.get(),
             batch.d_subject_is_corrected.get(),
             batch.d_is_high_quality_subject.get(),
-            batch.d_msa_column_properties.get(),
-            batch.d_support.get(),
-            batch.d_coverage.get(),
-            batch.d_origCoverages.get(),
-            batch.d_consensus.get(),
+            multiMSA,
             batch.d_subject_sequences_data.get(),
             batch.d_candidate_sequences_data.get(),
             batch.d_candidate_sequences_lengths.get(),
@@ -2605,7 +2614,6 @@ namespace gpu{
             batchsize,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            batch.msaColumnPitchInElements,
             batch.sequenceFileProperties.maxSequenceLength,
             batch.correctionOptions.estimatedErrorrate,
             batch.goodAlignmentProperties.maxErrorRate,
@@ -2724,7 +2732,6 @@ namespace gpu{
             batch.correctionOptions.m_coverage / 6.0f * batch.correctionOptions.estimatedCoverage);
         const int new_columns_to_correct = batch.correctionOptions.new_columns_to_correct;
 
-
         bool* const d_candidateCanBeCorrected = batch.d_alignment_isValid.get(); //repurpose
 
         int* const d_num_corrected_candidates_per_anchor = batch.d_num_corrected_candidates_per_anchor.get();
@@ -2794,12 +2801,23 @@ namespace gpu{
         const int* d_indices_per_subject = d_indices_per_subject_dblbuf[/*max_num_minimizations % 2*/1];
         const int* d_num_indices = d_num_indices_dblbuf[/*max_num_minimizations % 2*/1];
 
+        GPUMultiMSA multiMSA;
+
+        multiMSA.numMSAs = batchsize;
+        multiMSA.columnPitchInElements = batch.msaColumnPitchInElements;
+        multiMSA.counts = batch.d_counts.get();
+        multiMSA.weights = batch.d_weights.get();
+        multiMSA.coverages = batch.d_coverage.get();
+        multiMSA.consensus = batch.d_consensus.get();
+        multiMSA.support = batch.d_support.get();
+        multiMSA.origWeights = batch.d_origWeights.get();
+        multiMSA.origCoverages = batch.d_origCoverages.get();
+        multiMSA.columnProperties = batch.d_msa_column_properties.get();
+
         callFlagCandidatesToBeCorrectedKernel_async(
             d_candidateCanBeCorrected,
             batch.d_num_corrected_candidates_per_anchor.get(),
-            batch.d_support.get(),
-            batch.d_coverage.get(),
-            batch.d_msa_column_properties.get(),
+            multiMSA,
             batch.d_alignment_shifts.get(),
             batch.d_candidate_sequences_lengths.get(),
             batch.d_anchorIndicesOfCandidates.get(),
@@ -2809,7 +2827,6 @@ namespace gpu{
             d_indices_per_subject,
             d_numAnchors,
             d_numCandidates,
-            batch.msaColumnPitchInElements,
             min_support_threshold,
             min_coverage_threshold,
             new_columns_to_correct,
@@ -2885,6 +2902,8 @@ namespace gpu{
         int* h_indices_of_corrected_candidates = batch.h_indices_of_corrected_candidates.get();
         const int* d_indices_of_corrected_candidates = batch.d_indices_of_corrected_candidates.get();
 
+        //copy alignment shifts and indices of corrected candidates from device to host
+
         generic_kernel<<<320, 256, 0, streams[secondary_stream_index]>>>(
             [=] __device__ (){
                 using CopyType = int;
@@ -2903,13 +2922,11 @@ namespace gpu{
 
         //compute candidate correction in first stream
 
-        callCorrectCandidatesWithGroupKernel2_async(
+        callCorrectCandidatesKernel_async(
             batch.h_corrected_candidates.get(),
             batch.h_editsPerCorrectedCandidate.get(),
             batch.h_numEditsPerCorrectedCandidate.get(),
-            batch.d_msa_column_properties.get(),
-            batch.d_consensus.get(),
-            batch.d_support.get(),
+            multiMSA,
             batch.d_alignment_shifts.get(),
             batch.d_alignment_best_alignment_flags.get(),
             batch.d_candidate_sequences_data.get(),
@@ -2924,7 +2941,6 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
-            batch.msaColumnPitchInElements,
             batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
