@@ -164,7 +164,8 @@ namespace gpu{
 
     constexpr int primary_stream_index = 0;
     constexpr int secondary_stream_index = 1;
-    constexpr int nStreamsPerBatch = 2;
+    constexpr int preparation_stream_index = 2;
+    constexpr int nStreamsPerBatch = 3;
 
     constexpr int correction_finished_event_index = 0;
     constexpr int result_transfer_finished_event_index = 1;
@@ -472,7 +473,7 @@ namespace gpu{
             return info;
         }
 
-        void prepareNewDataForCorrection(){
+        void prepareNewDataForCorrection(cudaStream_t syncStream){
             NextIterationData& nextData = *this;
     
             const int numCandidatesLimit = nextData.numCandidatesLimit;
@@ -503,7 +504,7 @@ namespace gpu{
                 nextData.h_numAnchors.get(),
                 sizeof(int),
                 H2D,
-                nextData.stream
+                syncStream
             ); CUERR;
     
             cudaMemcpyAsync(
@@ -511,7 +512,7 @@ namespace gpu{
                 nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 sizeof(read_number) * nextData.n_new_subjects,
                 H2D,
-                nextData.stream
+                syncStream
             ); CUERR;
     
             // std::cerr << "gather anchors\n";
@@ -525,7 +526,7 @@ namespace gpu{
                 nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 nextData.n_new_subjects,
                 nextData.deviceId,
-                nextData.stream
+                syncStream
             );
     
             nextData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
@@ -533,7 +534,7 @@ namespace gpu{
                 nextData.deviceId,
                 nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 nextData.n_new_subjects,            
-                nextData.stream
+                syncStream
             );
     
             //minhash the retrieved anchors to find candidate ids
@@ -551,7 +552,7 @@ namespace gpu{
                 nextData.d_leftoverAnchorLengths.get() + numLeftoverAnchors,
                 nextData.n_new_subjects,
                 nextData.deviceId, 
-                nextData.stream,
+                syncStream,
                 parallelFor,
                 nextData.d_leftoverCandidateReadIds.get() + numLeftoverCandidates,
                 nextData.d_leftoverCandidatesPerAnchors.get() + numLeftoverAnchors,
@@ -570,7 +571,7 @@ namespace gpu{
                 nextData.d_leftoverCandidatesPerAnchors.get(),
                 nextData.d_candidates_per_subject_prefixsum.get() + 1,
                 nextData.batchsize,
-                nextData.stream
+                syncStream
             ); CUERR;
     
             //find new numbers of leftover candidates and anchors
@@ -582,7 +583,7 @@ namespace gpu{
                 int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
                 
                 
-                generic_kernel<<<1, 1, 0, nextData.stream>>>(
+                generic_kernel<<<1, 1, 0, syncStream>>>(
                     [=]__device__(){
                         const int numAnchors = *d_numAnchors; // leftover + new anchors
     
@@ -646,7 +647,7 @@ namespace gpu{
                 unsigned int* d_subject_sequences_data = nextData.d_subject_sequences_data.get();
                 
                 //copy all data from leftover buffers to output buffers
-                generic_kernel<<<320, 256, 0, nextData.stream>>>(
+                generic_kernel<<<240, 256, 0, syncStream>>>(
                     [=]__device__(){
                         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                         const int stride = blockDim.x * gridDim.x;
@@ -677,7 +678,7 @@ namespace gpu{
                 ); CUERR;
     
                 //copy new leftover data from output buffers to the front of leftover buffers
-                generic_kernel<<<320, 256, 0, nextData.stream>>>(
+                generic_kernel<<<240, 256, 0, syncStream>>>(
                     [=]__device__(){
                         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                         const int stride = blockDim.x * gridDim.x;
@@ -706,70 +707,73 @@ namespace gpu{
             }
     
             nvtx::pop_range();
+
+            //copy data from device to host
+            generic_kernel<<<240, 256, 0, syncStream>>>(
+                [
+                    h_numAnchors = nextData.h_numAnchors.get(),
+                    d_numAnchors = nextData.d_numAnchors.get(),
+                    h_numCandidates = nextData.h_numCandidates.get(),
+                    d_numCandidates = nextData.d_numCandidates.get(),
+                    h_numLeftoverAnchors = nextData.h_numLeftoverAnchors.get(),
+                    d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get(),
+                    h_numLeftoverCandidates = nextData.h_numLeftoverCandidates.get(),
+                    d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get(),
+                    h_candidate_read_ids = nextData.h_candidate_read_ids.get(),
+                    d_candidate_read_ids = nextData.d_candidate_read_ids.get(),
+                    h_leftoverAnchorReadIds = nextData.h_leftoverAnchorReadIds.get(),
+                    d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get(),
+                    h_subject_read_ids = nextData.h_subject_read_ids.get(),
+                    d_subject_read_ids = nextData.d_subject_read_ids.get()
+                ]__device__(){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+
+                    auto copy = [&](auto* dest, auto* src, size_t numbytes){
+                        using CopyType = int4;
+
+                        const size_t iters = numbytes / sizeof(CopyType);
     
-            cudaMemcpyAsync(
-                nextData.h_numAnchors.get(),
-                nextData.d_numAnchors.get(),
-                sizeof(int),
-                D2H,
-                nextData.stream
+                        for(size_t index = tid; index < iters; index += stride){
+                            ((CopyType*)dest)[index] = ((const CopyType*)src)[index];
+                        }
+
+                        const size_t remainder = numbytes - sizeof(CopyType) * iters;
+                        for(size_t index = tid; index < remainder; index += stride){
+                            ((char*)dest)[sizeof(CopyType) * iters + index] 
+                                = ((const char*)src)[sizeof(CopyType) * iters + index];
+                        }
+                    };
+
+                    if(tid == 0){
+                        *h_numAnchors = *d_numAnchors;
+                        *h_numCandidates = *d_numCandidates;
+                        *h_numLeftoverAnchors = *d_numLeftoverAnchors;
+                        *h_numLeftoverCandidates = *d_numLeftoverCandidates;
+                    }
+
+                    copy(
+                        h_candidate_read_ids, 
+                        d_candidate_read_ids, 
+                        *d_numCandidates * sizeof(read_number)
+                    );
+
+                    copy(
+                        h_leftoverAnchorReadIds, 
+                        d_leftoverAnchorReadIds, 
+                        *d_numLeftoverAnchors * sizeof(read_number)
+                    );
+
+                    copy(
+                        h_subject_read_ids, 
+                        d_subject_read_ids, 
+                        *d_numAnchors * sizeof(read_number)
+                    );
+                }
             ); CUERR;
+
     
-            cudaMemcpyAsync(
-                nextData.h_numCandidates.get(),
-                nextData.d_numCandidates.get(),
-                sizeof(int),
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                nextData.h_numLeftoverAnchors.get(),
-                nextData.d_numLeftoverAnchors.get(),
-                sizeof(int),
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                nextData.h_numLeftoverCandidates.get(),
-                nextData.d_numLeftoverCandidates.get(),
-                sizeof(int),
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaStreamSynchronize(nextData.stream); CUERR;
-    
-            cudaMemcpyAsync(
-                nextData.h_candidate_read_ids.get(),
-                nextData.d_candidate_read_ids.get(),
-                sizeof(read_number) * nextData.h_numCandidates[0],
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                nextData.h_leftoverAnchorReadIds.get(),
-                nextData.d_leftoverAnchorReadIds.get(),
-                sizeof(read_number) * nextData.h_numLeftoverAnchors[0],
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                nextData.h_subject_read_ids.get(),
-                nextData.d_subject_read_ids.get(),
-                sizeof(read_number) * nextData.h_numAnchors[0],
-                D2H,
-                nextData.stream
-            ); CUERR;
-    
-            cudaStreamSynchronize(nextData.stream); CUERR;
-    
-    
-            
-    
+            cudaStreamSynchronize(syncStream); CUERR;
         }
     };
 
@@ -1749,305 +1753,6 @@ namespace gpu{
 
 
 
-    void prepareNewDataForCorrection(Batch& batchData){
-        NextIterationData& nextData = batchData.nextIterationData;
-
-        const int numCandidatesLimit = nextData.numCandidatesLimit;
-
-        cudaSetDevice(nextData.deviceId); CUERR;
-
-        const size_t encodedSequencePitchInInts = nextData.encodedSequencePitchInInts;
-        const int numMinhashMaps = nextData.minhasher->getNumberOfMaps();
-
-        //data of new anchors is appended to leftover data
-
-        const int numLeftoverAnchors = *nextData.h_numLeftoverAnchors.get();
-        read_number* const readIdsBegin = nextData.h_leftoverAnchorReadIds.get();
-        read_number* const readIdsEnd = nextData.readIdGenerator->next_n_into_buffer(
-            nextData.batchsize - numLeftoverAnchors, 
-            readIdsBegin + numLeftoverAnchors
-        );
-        nextData.n_new_subjects = std::distance(readIdsBegin + numLeftoverAnchors, readIdsEnd);
-
-        nextData.h_numAnchors[0] = nextData.n_new_subjects + numLeftoverAnchors;
-
-        if(nextData.h_numAnchors[0] == 0){
-            return;
-        };
-
-        cudaMemcpyAsync(
-            nextData.d_numAnchors.get(),
-            nextData.h_numAnchors.get(),
-            sizeof(int),
-            H2D,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            sizeof(read_number) * nextData.n_new_subjects,
-            H2D,
-            nextData.stream
-        ); CUERR;
-
-        // std::cerr << "gather anchors\n";
-        // get sequence data and length of new anchors.
-        nextData.readStorage->gatherSequenceDataToGpuBufferAsync(
-            nextData.threadPool,
-            nextData.subjectSequenceGatherHandle,
-            nextData.d_leftoverAnchorSequences.get() + numLeftoverAnchors * encodedSequencePitchInInts,
-            encodedSequencePitchInInts,
-            nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.n_new_subjects,
-            nextData.deviceId,
-            nextData.stream
-        );
-
-        nextData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
-            nextData.d_leftoverAnchorLengths.get() + numLeftoverAnchors,
-            nextData.deviceId,
-            nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.n_new_subjects,            
-            nextData.stream
-        );
-
-        //minhash the retrieved anchors to find candidate ids
-
-        const int numLeftoverCandidates = nextData.h_numLeftoverCandidates[0];
-
-        ParallelForLoopExecutor parallelFor(nextData.threadPool, &nextData.pforHandle);
-
-        nextData.minhasher->getIdsOfSimilarReads(
-            nextData.minhasherQueryHandle,
-            nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
-            nextData.d_leftoverAnchorSequences.get() + numLeftoverAnchors * encodedSequencePitchInInts,
-            encodedSequencePitchInInts,
-            nextData.d_leftoverAnchorLengths.get() + numLeftoverAnchors,
-            nextData.n_new_subjects,
-            nextData.deviceId, 
-            nextData.stream,
-            parallelFor,
-            nextData.d_leftoverCandidateReadIds.get() + numLeftoverCandidates,
-            nextData.d_leftoverCandidatesPerAnchors.get() + numLeftoverAnchors,
-            nextData.d_candidates_per_subject_prefixsum.get() + numLeftoverAnchors
-        );
-
-        nvtx::push_range("leftover_calculation", 3);
-
-        //fix the prefix sum to include the leftover data
-        std::size_t cubTempBytes = nextData.d_cubTemp.capacityInBytes();
-        void* cubTemp = nextData.d_cubTemp.get();
-        //d_candidates_per_subject_prefixsum[0] is 0
-        cub::DeviceScan::InclusiveSum(
-            cubTemp, 
-            cubTempBytes,
-            nextData.d_leftoverCandidatesPerAnchors.get(),
-            nextData.d_candidates_per_subject_prefixsum.get() + 1,
-            nextData.batchsize,
-            nextData.stream
-        ); CUERR;
-
-        //find new numbers of leftover candidates and anchors
-        {
-            int* d_candidates_per_subject_prefixsum = nextData.d_candidates_per_subject_prefixsum.get();
-            int* d_numAnchors = nextData.d_numAnchors.get();
-            int* d_numCandidates = nextData.d_numCandidates.get();
-            int* d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
-            int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
-            
-            
-            generic_kernel<<<1, 1, 0, nextData.stream>>>(
-                [=]__device__(){
-                    const int numAnchors = *d_numAnchors; // leftover + new anchors
-
-                    const int totalNumCandidates = d_candidates_per_subject_prefixsum[numAnchors];
-
-                    if(totalNumCandidates - numCandidatesLimit > 0){
-
-                        //find the first anchor index which is left over
-                        auto iter = thrust::lower_bound(
-                            thrust::seq,
-                            d_candidates_per_subject_prefixsum,
-                            d_candidates_per_subject_prefixsum + numAnchors + 1,
-                            numCandidatesLimit
-                        );
-
-                        const int index = thrust::distance(d_candidates_per_subject_prefixsum, iter) - 1;
-    
-                        const int newNumLeftoverAnchors = numAnchors - index;
-                        *d_numLeftoverAnchors = newNumLeftoverAnchors;
-                        *d_numAnchors = numAnchors - newNumLeftoverAnchors;
-
-                        if(index < numAnchors){
-
-                            const int newNumLeftoverCandidates = totalNumCandidates - d_candidates_per_subject_prefixsum[index];
-                            
-                            *d_numLeftoverCandidates = newNumLeftoverCandidates;
-                            *d_numCandidates = totalNumCandidates - newNumLeftoverCandidates;
-                        }else{
-                            *d_numLeftoverCandidates = 0;
-                            *d_numCandidates = totalNumCandidates - 0;
-                        }
-                    }else{
-                        *d_numLeftoverAnchors = 0;
-                        *d_numLeftoverCandidates = 0;
-                        *d_numAnchors = numAnchors - 0;
-                        *d_numCandidates = totalNumCandidates - 0;
-                    }
-                }
-            ); CUERR;
-
-        }
-
-        //copy all data from leftover buffers to output buffers 
-        //copy new leftover data from output buffers to the front of leftover buffers
-        {
-            int* d_numAnchors = nextData.d_numAnchors.get();
-            int* d_numCandidates = nextData.d_numCandidates.get();
-            int* d_numLeftoverAnchors = nextData.d_numLeftoverAnchors.get();
-            int* d_numLeftoverCandidates = nextData.d_numLeftoverCandidates.get();
-            int* d_candidates_per_subject = nextData.d_candidates_per_subject.get();
-            int* d_leftoverCandidatesPerAnchors = nextData.d_leftoverCandidatesPerAnchors.get();
-
-            unsigned int* d_leftoverAnchorSequences = nextData.d_leftoverAnchorSequences.get();
-            int* d_leftoverAnchorLengths = nextData.d_leftoverAnchorLengths.get();
-            read_number* d_leftoverAnchorReadIds = nextData.d_leftoverAnchorReadIds.get();
-            read_number* d_leftoverCandidateReadIds = nextData.d_leftoverCandidateReadIds.get();
-            
-            read_number* d_subject_read_ids = nextData.d_subject_read_ids.get();
-            int* d_subject_sequences_lengths = nextData.d_subject_sequences_lengths.get();
-            read_number* d_candidate_read_ids = nextData.d_candidate_read_ids.get();
-            unsigned int* d_subject_sequences_data = nextData.d_subject_sequences_data.get();
-            
-            //copy all data from leftover buffers to output buffers
-            generic_kernel<<<320, 256, 0, nextData.stream>>>(
-                [=]__device__(){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-    
-                    const int numAnchors = *d_numAnchors;
-                    const int numCandidates = *d_numCandidates;
-                    const int numLeftoverAnchors = *d_numLeftoverAnchors;
-                    const int numLeftoverCandidates = *d_numLeftoverCandidates;
-
-                    const int anchorsToCopy = numAnchors + numLeftoverAnchors;
-                    const int candidatesToCopy = numCandidates + numLeftoverCandidates;
-    
-    
-                    for(int i = tid; i < anchorsToCopy; i += stride){
-                        d_subject_read_ids[i] = d_leftoverAnchorReadIds[i];
-                        d_subject_sequences_lengths[i] = d_leftoverAnchorLengths[i];
-                        d_candidates_per_subject[i] = d_leftoverCandidatesPerAnchors[i];
-                    }
-    
-                    for(int i = tid; i < anchorsToCopy * encodedSequencePitchInInts; i += stride){
-                        d_subject_sequences_data[i] = d_leftoverAnchorSequences[i];
-                    }
-
-                    for(int i = tid; i < candidatesToCopy; i += stride){
-                        d_candidate_read_ids[i] = d_leftoverCandidateReadIds[i];
-                    }
-                }
-            ); CUERR;
-
-            //copy new leftover data from output buffers to the front of leftover buffers
-            generic_kernel<<<320, 256, 0, nextData.stream>>>(
-                [=]__device__(){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-    
-                    const int numAnchors = *d_numAnchors;
-                    const int numCandidates = *d_numCandidates;
-                    const int numLeftoverAnchors = *d_numLeftoverAnchors;
-                    const int numLeftoverCandidates = *d_numLeftoverCandidates;    
-    
-                    for(int i = tid; i < numLeftoverAnchors; i += stride){
-                        d_leftoverAnchorReadIds[i] = d_subject_read_ids[numAnchors + i];
-                        d_leftoverAnchorLengths[i] = d_subject_sequences_lengths[numAnchors + i];
-                        d_leftoverCandidatesPerAnchors[i] = d_candidates_per_subject[numAnchors + i];
-                    }
-    
-                    for(int i = tid; i < numLeftoverAnchors * encodedSequencePitchInInts; i += stride){
-                        d_leftoverAnchorSequences[i] 
-                            = d_subject_sequences_data[numAnchors * encodedSequencePitchInInts + i];
-                    }
-
-                    for(int i = tid; i < numLeftoverCandidates; i += stride){
-                        d_leftoverCandidateReadIds[i] = d_candidate_read_ids[numCandidates + i];
-                    }
-                }
-            ); CUERR;
-        }
-
-        nvtx::pop_range();
-
-        cudaMemcpyAsync(
-            nextData.h_numAnchors.get(),
-            nextData.d_numAnchors.get(),
-            sizeof(int),
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_numCandidates.get(),
-            nextData.d_numCandidates.get(),
-            sizeof(int),
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_numLeftoverAnchors.get(),
-            nextData.d_numLeftoverAnchors.get(),
-            sizeof(int),
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_numLeftoverCandidates.get(),
-            nextData.d_numLeftoverCandidates.get(),
-            sizeof(int),
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaStreamSynchronize(nextData.stream); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_candidate_read_ids.get(),
-            nextData.d_candidate_read_ids.get(),
-            sizeof(read_number) * nextData.h_numCandidates[0],
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_leftoverAnchorReadIds.get(),
-            nextData.d_leftoverAnchorReadIds.get(),
-            sizeof(read_number) * nextData.h_numLeftoverAnchors[0],
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_subject_read_ids.get(),
-            nextData.d_subject_read_ids.get(),
-            sizeof(read_number) * nextData.h_numAnchors[0],
-            D2H,
-            nextData.stream
-        ); CUERR;
-
-        cudaStreamSynchronize(nextData.stream); CUERR;
-
-
-        
-
-    }
 
 
 
@@ -2057,9 +1762,12 @@ namespace gpu{
         auto getDataForNextIteration = [batchptr](){
             nvtx::push_range("prepareNewDataForCorrection",1);
 
-            batchptr->nextIterationData.prepareNewDataForCorrection();
+            batchptr->nextIterationData.prepareNewDataForCorrection(
+                batchptr->streams[preparation_stream_index]
+            );
 
-            cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
+            cudaStreamSynchronize(batchptr->streams[preparation_stream_index]); CUERR;
+
             if(batchptr->nextIterationData.h_numAnchors[0] > 0){                
                 batchptr->nextIterationData.syncFlag.signal();
             }else{
@@ -2095,7 +1803,7 @@ namespace gpu{
         
         std::array<cudaEvent_t, nEventsPerBatch>& events = batchData.events;
 
-        cudaEventRecord(events[0], batchData.nextIterationData.stream); CUERR;
+        cudaEventRecord(events[0], streams[preparation_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[primary_stream_index], events[0], 0); CUERR;
         cudaStreamWaitEvent(streams[secondary_stream_index], events[0], 0); CUERR;
 
