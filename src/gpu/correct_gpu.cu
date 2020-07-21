@@ -266,9 +266,7 @@ namespace gpu{
 
         DeviceBuffer<char> d_cubTemp;
 
-        int n_subjects = -1;
         int n_new_subjects = -1;
-        std::atomic<int> n_queries{-1};
 
         const GpuMinhasher* gpuMinhasher;
         GpuMinhasher::QueryHandle minhasherQueryHandle;
@@ -634,10 +632,8 @@ namespace gpu{
         int numCandidatesLimit = 0;        
         int encodedSequencePitchInInts;
         int decodedSequencePitchInBytes;
-        int qualityPitchInBytes;        
-        int maxNumEditsPerSequence;      
-        int n_subjects;
-        int n_queries;        
+        int qualityPitchInBytes;
+        int maxNumEditsPerSequence;     
         int graphindex = 0;
         size_t msaColumnPitchInElements = 0;
 
@@ -907,8 +903,8 @@ namespace gpu{
         }
 
 		void reset(){
-            n_subjects = 0;
-            n_queries = 0;
+            *h_numAnchors = 0;
+            *h_numCandidates = 0;
         }
 
         void resize(
@@ -1258,11 +1254,13 @@ namespace gpu{
             std::swap(d_candidates_per_subject, data.d_candidates_per_subject);
             std::swap(d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
 
-            n_subjects = data.n_subjects;
-            n_queries = data.n_queries;  
+            std::swap(h_numAnchors, data.h_numAnchors);
+            std::swap(d_numAnchors, data.d_numAnchors);
+            std::swap(h_numCandidates, data.h_numCandidates);
+            std::swap(d_numCandidates, data.d_numCandidates);
 
-            data.n_subjects = 0;
-            data.n_queries = 0;
+            data.h_numAnchors[0] = 0;
+            data.h_numCandidates[0] = 0;
 
             graphindex = 1 - graphindex;
         }
@@ -1271,8 +1269,8 @@ namespace gpu{
         void moveResultsToOutputData(OutputData& outputData){
             auto& rawResults = outputData.rawResults;
 
-            rawResults.n_subjects = n_subjects;
-            rawResults.n_queries = n_queries;
+            rawResults.n_subjects = *h_numAnchors;
+            rawResults.n_queries = *h_numCandidates;
             rawResults.encodedSequencePitchInInts = encodedSequencePitchInInts;
             rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
             rawResults.maxNumEditsPerSequence = maxNumEditsPerSequence;
@@ -1451,12 +1449,10 @@ namespace gpu{
             readIdsBegin + numLeftoverAnchors
         );
         nextData.n_new_subjects = std::distance(readIdsBegin + numLeftoverAnchors, readIdsEnd);
-        
-        nextData.n_subjects = nextData.n_new_subjects + numLeftoverAnchors;//debug
 
         nextData.h_numAnchors[0] = nextData.n_new_subjects + numLeftoverAnchors;
 
-        if(nextData.n_subjects == 0){
+        if(nextData.h_numAnchors[0] == 0){
             return;
         };
 
@@ -1703,19 +1699,10 @@ namespace gpu{
 
         cudaStreamSynchronize(nextData.stream); CUERR;
 
-        // std::cerr << "final n_subjects " << nextData.h_numAnchors[0] << " ";
-        // std::cerr << "final n_queries " << nextData.h_numCandidates[0] << " ";
-        // std::cerr << "n_new_subjects " << nextData.n_new_subjects << " ";
-        // std::cerr << "numLeftoverAnchors " << nextData.h_numLeftoverAnchors[0] << " ";
-        // std::cerr << "numLeftoverCandidates " << nextData.h_numLeftoverCandidates[0] << "\n";
-
-        nextData.n_subjects = nextData.h_numAnchors[0];
-        nextData.n_queries = nextData.h_numCandidates[0];
-
         cudaMemcpyAsync(
             nextData.h_candidate_read_ids.get(),
             nextData.d_candidate_read_ids.get(),
-            sizeof(read_number) * nextData.n_queries,
+            sizeof(read_number) * nextData.h_numCandidates[0],
             D2H,
             nextData.stream
         ); CUERR;
@@ -1757,10 +1744,10 @@ namespace gpu{
                 *batchptr->readStorage                
             );
             cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
-            if(batchptr->nextIterationData.n_subjects > 0){                
+            if(batchptr->nextIterationData.h_numAnchors[0] > 0){                
                 batchptr->nextIterationData.syncFlag.signal();
             }else{
-                batchptr->nextIterationData.n_queries = 0;
+                batchptr->nextIterationData.h_numCandidates[0] = 0;
                 batchptr->nextIterationData.syncFlag.signal();
             }
             nvtx::pop_range();
@@ -1809,17 +1796,11 @@ namespace gpu{
 
 
         {
-            int numAnchors = batchData.n_subjects;
-            int numCandidates = batchData.n_queries;
-            int* d_numAnchorsPtr = batchData.d_numAnchors.get();
-            int* d_numCandidatesPtr = batchData.d_numCandidates.get();
             bool* d_canExecutePtr = batchData.d_canExecute.get();
             int* d_numTotalCorrectedCandidatePtr = batchData.d_num_total_corrected_candidates.get();
 
             generic_kernel<<<1,1,0,streams[primary_stream_index]>>>(
                 [=] __device__ (){
-                    *d_numAnchorsPtr = numAnchors;
-                    *d_numCandidatesPtr = numCandidates;
                     *d_canExecutePtr = true;
                     *d_numTotalCorrectedCandidatePtr = 0;
                 }
@@ -1870,7 +1851,7 @@ namespace gpu{
                                         batch.d_candidate_sequences_lengths.get(),
                                         batch.deviceId,
                                         batch.d_candidate_read_ids.get(),
-                                        batch.n_queries,            
+                                        batch.h_numCandidates[0],            
                                         streams[primary_stream_index]);
         // std::cerr << "gather candidates\n";
         readStorage.gatherSequenceDataToGpuBufferAsync(
@@ -1880,14 +1861,14 @@ namespace gpu{
             batch.encodedSequencePitchInInts,
             batch.h_candidate_read_ids,
             batch.d_candidate_read_ids,
-            batch.n_queries,
+            batch.h_numCandidates[0],
             batch.deviceId,
             streams[primary_stream_index]);
 
         call_transpose_kernel(
             batch.d_transposedCandidateSequencesData.get(), 
             batch.d_candidate_sequences_data.get(), 
-            batch.n_queries, 
+            batch.h_numCandidates[0], 
             batch.encodedSequencePitchInInts, 
             batch.encodedSequencePitchInInts, 
             streams[primary_stream_index]
@@ -1926,7 +1907,7 @@ namespace gpu{
                 batch.qualityPitchInBytes,
                 batch.h_subject_read_ids,
                 batch.d_subject_read_ids,
-                batch.n_subjects,
+                batch.h_numAnchors[0],
                 batch.deviceId,
                 streams[primary_stream_index]);
 
@@ -1938,7 +1919,7 @@ namespace gpu{
                 batch.qualityPitchInBytes,
                 batch.h_candidate_read_ids.get(),
                 batch.d_candidate_read_ids.get(),
-                batch.n_queries,
+                batch.h_numCandidates[0],
                 batch.deviceId,
                 streams[primary_stream_index]);
         }
@@ -2050,7 +2031,7 @@ namespace gpu{
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        //std::cerr << "After alignment: " << *batch.h_num_indices << " / " << batch.n_queries << "\n";
+        //std::cerr << "After alignment: " << *batch.h_num_indices << " / " << *batch.h_numCandidates << "\n";
 	}
 
     void buildMultipleSequenceAlignment(Batch& batch){
@@ -2150,12 +2131,12 @@ namespace gpu{
         static_assert(max_num_minimizations % 2 == 1, "");
 
         const std::size_t requiredTempStorageBytes = 
-            SDIV(sizeof(bool) * batch.n_queries, 128) * 128 // d_shouldBeKept + padding to align the next pointer
+            SDIV(sizeof(bool) * batch.h_numCandidates[0], 128) * 128 // d_shouldBeKept + padding to align the next pointer
             + (sizeof(bool) * batchsize); // d_anchorIsFinished
         assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
         
         bool* d_shouldBeKept = (bool*)batch.d_tempstorage.get();
-        bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * batch.n_queries, 128) * 128);
+        bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * batch.h_numCandidates[0], 128) * 128);
 
         cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * batchsize, streams[primary_stream_index]);
 
@@ -2199,7 +2180,7 @@ namespace gpu{
 
 #else 
 
-        const std::size_t requiredTempStorageBytes = sizeof(bool) * batch.n_queries; // d_shouldBeKept
+        const std::size_t requiredTempStorageBytes = sizeof(bool) * batch.h_numCandidates[0]; // d_shouldBeKept
             
         assert(batch.d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
 
@@ -2338,7 +2319,7 @@ namespace gpu{
         auto identity = [](auto i){return i;};
 
 
-        for(int i = 0; i < batch.n_subjects; i++){
+        for(int i = 0; i < batch.h_numAnchors[0]; i++){
             std::cout << "anchor id " <<  batch.h_subject_read_ids[i] << "\n";
             int numind = batch.h_indices_per_subject[i];
             if(numind > 0){
@@ -2487,7 +2468,7 @@ namespace gpu{
 
         const std::size_t msaColumnPitchInElements = batch.msaColumnPitchInElements;
 
-        for(int i = 0; i < batch.n_subjects; i++){
+        for(int i = 0; i < batch.h_numAnchors[0]; i++){
             if(batch.h_subject_read_ids[i] == 13){
                 std::cerr << "subjectColumnsBegin_incl = " << batch.h_msa_column_properties[i].subjectColumnsBegin_incl << "\n";
                 std::cerr << "subjectColumnsEnd_excl = " << batch.h_msa_column_properties[i].subjectColumnsEnd_excl << "\n";
@@ -3750,7 +3731,7 @@ correct_gpu(
 
             poprange();
 
-            if(batchData.n_queries == 0){
+            if(batchData.h_numCandidates[0] == 0){
                 return;
             }
 
@@ -3908,23 +3889,23 @@ correct_gpu(
 
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[0].nextIterationData.n_subjects == 0
+                        && batchDataArray[0].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[0].waitableOutputData.isBusy())) {
 
                     auto& batchData = batchDataArray[batchIndex];
 
                     processBatchUntilCandidateCorrectionStarted(batchData);
 
-                    if(batchData.n_queries == 0){
+                    if(batchData.h_numCandidates[0] == 0){
                         batchData.waitableOutputData.signal();
-                        progressThread.addProgress(batchData.n_subjects);
+                        progressThread.addProgress(batchData.h_numAnchors[0]);
                         batchData.reset();
                         continue;
                     }
 
                     processBatchResults(batchData);
 
-                    progressThread.addProgress(batchData.n_subjects);
+                    progressThread.addProgress(batchData.h_numAnchors[0]);
                     batchData.reset();                   
                 }
 #endif 
@@ -3938,10 +3919,10 @@ correct_gpu(
 
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[0].nextIterationData.n_subjects == 0
+                        && batchDataArray[0].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[0].waitableOutputData.isBusy()
                         && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[1].nextIterationData.n_subjects == 0
+                        && batchDataArray[1].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[1].waitableOutputData.isBusy())) {
 
                     const int nextBatchIndex = 1 - batchIndex;
@@ -3954,9 +3935,9 @@ correct_gpu(
                     }else{
                         processBatchUntilCandidateCorrectionStarted(nextBatchData);
 
-                        if(currentBatchData.n_queries == 0){
+                        if(currentBatchData.h_numCandidates[0] == 0){
                             currentBatchData.waitableOutputData.signal();
-                            progressThread.addProgress(currentBatchData.n_subjects);
+                            progressThread.addProgress(currentBatchData.h_numAnchors[0]);
                             currentBatchData.reset();
                             batchIndex = 1-batchIndex;
                             continue;
@@ -3964,7 +3945,7 @@ correct_gpu(
 
                         processBatchResults(currentBatchData);
     
-                        progressThread.addProgress(currentBatchData.n_subjects);
+                        progressThread.addProgress(currentBatchData.h_numAnchors[0]);
                         currentBatchData.reset();
 
                         batchIndex = 1-batchIndex;
@@ -3985,13 +3966,13 @@ correct_gpu(
 
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[0].nextIterationData.n_subjects == 0
+                        && batchDataArray[0].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[0].waitableOutputData.isBusy()
                         && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[1].nextIterationData.n_subjects == 0
+                        && batchDataArray[1].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[1].waitableOutputData.isBusy()
                         && !batchDataArray[2].nextIterationData.syncFlag.isBusy()
-                        && batchDataArray[2].nextIterationData.n_subjects == 0
+                        && batchDataArray[2].nextIterationData.h_numAnchors[0] == 0
                         && !batchDataArray[2].waitableOutputData.isBusy())) {
 
                     const int nextBatchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
@@ -4008,9 +3989,9 @@ correct_gpu(
                     }else{
                         processBatchUntilCandidateCorrectionStarted(lastBatchData);
 
-                        if(currentBatchData.n_queries == 0){
+                        if(currentBatchData.h_numCandidates[0] == 0){
                             currentBatchData.waitableOutputData.signal();
-                            progressThread.addProgress(currentBatchData.n_subjects);
+                            progressThread.addProgress(currentBatchData.h_numAnchors[0]);
                             currentBatchData.reset();
                             batchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
                             continue;
@@ -4018,7 +3999,7 @@ correct_gpu(
 
                         processBatchResults(currentBatchData);
     
-                        progressThread.addProgress(currentBatchData.n_subjects);
+                        progressThread.addProgress(currentBatchData.h_numAnchors[0]);
                         currentBatchData.reset();
 
                         batchIndex = batchIndex == 2 ? 0 : 1 + batchIndex;
