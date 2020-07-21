@@ -379,8 +379,24 @@ namespace gpu{
 
         SyncFlag syncFlag;
 
-        int graphindex = 0;
-        std::array<CudaGraph,2> leftoverCalculationExecutionGraphs{};
+        struct Pointers{
+            void* h_subject_sequences_data{};
+            void* h_candidate_read_ids{};
+            bool operator<(const Pointers rhs) const{
+                if(h_subject_sequences_data < rhs.h_subject_sequences_data){
+                    return true;
+                }
+                if(h_subject_sequences_data > rhs.h_subject_sequences_data){
+                    return false;
+                }
+                if(h_candidate_read_ids < rhs.h_candidate_read_ids){
+                    return true;
+                }
+                return false;
+            }
+        };
+
+        std::map<Pointers, CudaGraph> leftoverCalculationExecutionGraphs;
 
         void init(   
             const GpuMinhasher& minhasher, 
@@ -561,14 +577,6 @@ namespace gpu{
             }
 
             return info;
-        }
-
-        void swapped(){
-            if(graphindex == 0){
-                graphindex = 1;
-            }else{
-                graphindex = 0;
-            }
         }
 
         void leftoverCalculation(cudaStream_t syncStream){
@@ -798,22 +806,29 @@ namespace gpu{
         }
 
         void executeLeftoverCalculation(cudaStream_t syncStream){
-#if 1
+
+#ifndef USE_CUDA_GRAPH
+
             leftoverCalculation(syncStream);
+
 #else 
 
-            auto& graphwrap = leftoverCalculationExecutionGraphs[graphindex];
+            Pointers pointers;
+            pointers.h_subject_sequences_data = h_subject_sequences_data.get();
+            pointers.h_candidate_read_ids = h_candidate_read_ids.get();
 
-            if(graphwrap.valid){
-                graphwrap.execute(syncStream);
+            auto& graph = leftoverCalculationExecutionGraphs[pointers];
+
+            if(graph.valid){
+                graph.execute(syncStream);
             }else{
-                graphwrap.capture(
+                graph.capture(
                     [this](cudaStream_t stream){
                         leftoverCalculation(stream);
                     }
                 );
-                assert(graphwrap.valid);
-                graphwrap.execute(syncStream);
+                assert(graph.valid);
+                graph.execute(syncStream);
             }
 
 #endif
@@ -1207,7 +1222,7 @@ namespace gpu{
 
 
 
-        std::array<CudaGraph,2> executionGraphs{};
+        std::array<CudaGraph, 2> executionGraphs{};
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
         ThreadPool::ParallelForHandle pforHandle;    
@@ -1695,6 +1710,10 @@ namespace gpu{
             h_numCandidates.destroy();
         }
 
+        void swapped(){
+            graphindex = (graphindex + 1) % executionGraphs.size();
+        }
+
         void updateFromIterationData(NextIterationData& data){
             std::swap(h_subject_sequences_data, data.h_subject_sequences_data);
             std::swap(h_subject_sequences_lengths, data.h_subject_sequences_lengths);
@@ -1716,9 +1735,7 @@ namespace gpu{
             data.h_numAnchors[0] = 0;
             data.h_numCandidates[0] = 0;
 
-            data.swapped();
-
-            graphindex = 1 - graphindex;
+            swapped();
         }
 
 
@@ -3833,7 +3850,7 @@ correct_gpu(
             batchData.waitableOutputData.data.rawResults.destroy();
             batchData.destroy();
 
-            for(int i = 0; i < 2; i++){
+            for(std::size_t i = 0; i < batchData.executionGraphs.size(); i++){
                 if(batchData.executionGraphs[i].execgraph != nullptr){
                     cudaGraphExecDestroy(batchData.executionGraphs[i].execgraph); CUERR;
                     batchData.executionGraphs[i].execgraph = nullptr;
