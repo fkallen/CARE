@@ -155,9 +155,6 @@ namespace gpu{
     }
 
 
-
-    //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
-
     //read status bitmask
     constexpr std::uint8_t readCorrectedAsHQAnchor = 1;
     constexpr std::uint8_t readCouldNotBeCorrectedAsAnchor = 2;
@@ -174,7 +171,6 @@ namespace gpu{
 
     constexpr int doNotUseEditsValue = -1;
 
-    //struct TransitionFunctionData;
 
     struct SyncFlag{
         std::atomic<bool> busy{false};
@@ -306,6 +302,8 @@ namespace gpu{
         }
 
         void execute(cudaStream_t stream){
+            assert(valid);
+            
             cudaGraphLaunch(execgraph, stream); CUERR;
         }
     };
@@ -1103,7 +1101,6 @@ namespace gpu{
         int decodedSequencePitchInBytes;
         int qualityPitchInBytes;
         int maxNumEditsPerSequence;     
-        int graphindex = 0;
         size_t msaColumnPitchInElements = 0;
 
         BackgroundThread* outputThread;
@@ -1221,8 +1218,26 @@ namespace gpu{
         DeviceBuffer<float> d_weights;
 
 
+        struct Pointers{
+            void* h_subject_sequences_data{};
+            void* h_candidate_read_ids{};
+            bool operator<(const Pointers& rhs) const{
+                if(h_subject_sequences_data < rhs.h_subject_sequences_data){
+                    return true;
+                }
+                if(h_subject_sequences_data > rhs.h_subject_sequences_data){
+                    return false;
+                }
+                if(h_candidate_read_ids < rhs.h_candidate_read_ids){
+                    return true;
+                }
+                return false;
+            }
+        };
 
-        std::array<CudaGraph, 2> executionGraphs{};
+        std::map<Pointers, CudaGraph> executionGraphs;
+
+        //std::array<CudaGraph, 2> executionGraphs{};
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
         ThreadPool::ParallelForHandle pforHandle;    
@@ -1710,10 +1725,6 @@ namespace gpu{
             h_numCandidates.destroy();
         }
 
-        void swapped(){
-            graphindex = (graphindex + 1) % executionGraphs.size();
-        }
-
         void updateFromIterationData(NextIterationData& data){
             std::swap(h_subject_sequences_data, data.h_subject_sequences_data);
             std::swap(h_subject_sequences_lengths, data.h_subject_sequences_lengths);
@@ -1734,8 +1745,6 @@ namespace gpu{
 
             data.h_numAnchors[0] = 0;
             data.h_numCandidates[0] = 0;
-
-            swapped();
         }
 
 
@@ -1825,13 +1834,17 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        auto& graphwrap = batch.executionGraphs[batch.graphindex];
+        Batch::Pointers pointers;
+        pointers.h_subject_sequences_data = batch.h_subject_sequences_data.get();
+        pointers.h_candidate_read_ids = batch.h_candidate_read_ids.get();
 
-        if(!graphwrap.valid){
+        auto& cudagraph = batch.executionGraphs[pointers];
+
+        if(!cudagraph.valid){
             // std::cerr << "rebuild graph\n";
 
-            if(graphwrap.execgraph != nullptr){
-                cudaGraphExecDestroy(graphwrap.execgraph); CUERR;
+            if(cudagraph.execgraph != nullptr){
+                cudaGraphExecDestroy(cudagraph.execgraph); CUERR;
             }
             
             //std::cerr << "correct_gpu buildGraphViaCapture start batch id " << batch.id << "\n";
@@ -1879,9 +1892,9 @@ namespace gpu{
 
             cudaGraphDestroy(graph); CUERR;
 
-            graphwrap.execgraph = execGraph;
+            cudagraph.execgraph = execGraph;
 
-            graphwrap.valid = true;
+            cudagraph.valid = true;
         }
     }
 
@@ -1892,10 +1905,14 @@ namespace gpu{
 
         buildGraphViaCapture(batch);
 
-        auto& graphwrap = batch.executionGraphs[batch.graphindex];
+        Batch::Pointers pointers;
+        pointers.h_subject_sequences_data = batch.h_subject_sequences_data.get();
+        pointers.h_candidate_read_ids = batch.h_candidate_read_ids.get();
 
-        assert(graphwrap.valid);
-        cudaGraphLaunch(graphwrap.execgraph, streams[primary_stream_index]); CUERR;
+        auto& graph = batch.executionGraphs[pointers];
+
+        assert(graph.valid);
+        cudaGraphLaunch(graph.execgraph, streams[primary_stream_index]); CUERR;
     }
 
 
@@ -3850,12 +3867,12 @@ correct_gpu(
             batchData.waitableOutputData.data.rawResults.destroy();
             batchData.destroy();
 
-            for(std::size_t i = 0; i < batchData.executionGraphs.size(); i++){
-                if(batchData.executionGraphs[i].execgraph != nullptr){
-                    cudaGraphExecDestroy(batchData.executionGraphs[i].execgraph); CUERR;
-                    batchData.executionGraphs[i].execgraph = nullptr;
-                }
-            }
+            // for(std::size_t i = 0; i < batchData.executionGraphs.size(); i++){
+            //     if(batchData.executionGraphs[i].execgraph != nullptr){
+            //         cudaGraphExecDestroy(batchData.executionGraphs[i].execgraph); CUERR;
+            //         batchData.executionGraphs[i].execgraph = nullptr;
+            //     }
+            // }
     
             for(auto& stream : batchData.streams) {
                 cudaStreamDestroy(stream); CUERR;
