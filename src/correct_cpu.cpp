@@ -1252,6 +1252,7 @@ namespace cpu{
                     
                     if(!originalReadContainsN){
                         const int maxEdits = correctedlength / 7;
+                        tmp.edits.clear();
                         int edits = 0;
                         for(int i = 0; i < correctedlength && edits <= maxEdits; i++){
                             if(correctedSequenceString[i] != task.decodedSubjectSequence[i]){
@@ -1336,6 +1337,7 @@ namespace cpu{
                             assert(uncorrectedCandidateLength == correctedCandidateLength);
                             
                             const int maxEdits = correctedCandidateLength / 7;
+                            tmp.edits.clear();
                             int edits = 0;
                             if(candidateIsForward){
                                 for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
@@ -1499,6 +1501,7 @@ correct_cpu(
         //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
         if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
             //std::cerr << tmp.readId << " " << tmp << '\n';
+            //std::cerr << encoded->getNumBytes() << "\n";
             partialResults.storeElement(encoded);
         }
     };
@@ -1766,6 +1769,9 @@ correct_cpu(
             ](){
 
                 auto& outputData = waitableOutputData->data;
+
+                // std::cerr << "outputData.numAnchors = " << outputData.numAnchors 
+                //     << ", outputData.numCandidates = " << outputData.numCandidates << "\n";
 
                 for(int i = 0; i < outputData.numAnchors; i++){
                     saveCorrectedSequence(
