@@ -382,7 +382,7 @@ void mergeResultFiles2_impl(
             }else{
                 numberOfLQCorrections++;
 
-                const TempCorrectedSequence anchor = *anchorIter;
+                const TempCorrectedSequence& anchor = *anchorIter;
                 //tmpresults.erase(anchorIter);
 
                 // tmpresults.erase(std::remove_if(tmpresults.begin(),
