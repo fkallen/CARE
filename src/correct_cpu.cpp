@@ -132,27 +132,37 @@ namespace cpu{
                 std::vector<TempCorrectedSequence> candidateCorrections;
                 std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
 
-                TempCorrectedSequence& createAndGetAnchorCorrection(int i){
-                    const int currentsize = anchorCorrections.size();
-                    if(i < currentsize){
-                        return anchorCorrections[i];
-                    }else{
-                        anchorCorrections.resize(i+1);
-                        encodedAnchorCorrections.resize(i+1);
-                        return anchorCorrections[i];
-                    }
+                void resizeAnchors(int size){
+                    anchorCorrections.resize(size);
+                    encodedAnchorCorrections.resize(size);
                 }
 
-                TempCorrectedSequence& createAndGetCandidateCorrection(int i){
-                    const int currentsize = candidateCorrections.size();
-                    if(i < currentsize){
-                        return candidateCorrections[i];
-                    }else{
-                        candidateCorrections.resize(i+1);
-                        encodedCandidateCorrections.resize(i+1);
-                        return candidateCorrections[i];
-                    }
+                void resizeCandidates(int size){
+                    candidateCorrections.resize(size);
+                    encodedCandidateCorrections.resize(size);
                 }
+
+                // TempCorrectedSequence& createAndGetAnchorCorrection(int i){
+                //     const int currentsize = anchorCorrections.size();
+                //     if(i < currentsize){
+                //         return anchorCorrections[i];
+                //     }else{
+                //         anchorCorrections.resize(i+1);
+                //         encodedAnchorCorrections.resize(i+1);
+                //         return anchorCorrections[i];
+                //     }
+                // }
+
+                // TempCorrectedSequence& createAndGetCandidateCorrection(int i){
+                //     const int currentsize = candidateCorrections.size();
+                //     if(i < currentsize){
+                //         return candidateCorrections[i];
+                //     }else{
+                //         candidateCorrections.resize(i+1);
+                //         encodedCandidateCorrections.resize(i+1);
+                //         return candidateCorrections[i];
+                //     }
+                // }
             };
 
             struct Task{
@@ -225,7 +235,7 @@ namespace cpu{
             std::vector<int> tmpoverlaps;
 
             int outputdataindex = 0;
-            std::array<WaitableData<OutputData>, 2> waitableOutputData;
+            std::array<WaitableData<OutputData>, 3> waitableOutputData;
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
 
@@ -424,8 +434,6 @@ namespace cpu{
             );
 
             data.subjectQualities.resize(size_t(data.qualityPitchInBytes) * numSubjects);
-            
-            //data.waitableOutputData[data.outputdataindex].data.anchorCorrections.reserve(numSubjects);            
         }
 
         void determineCandidateReadIds(BatchData& data,
@@ -542,7 +550,6 @@ namespace cpu{
             data.filteredReadIds.resize(totalNumCandidates);
             
             //data.waitableOutputData[data.outputdataindex].data.candidateCorrections.reserve(numSubjects * 5);
-
         }
 
         void getCandidateSequenceData(BatchData& data,
@@ -1248,7 +1255,7 @@ namespace cpu{
                     const int correctedlength = correctedSequenceString.length();
                     const bool originalReadContainsN = readStorage.readContainsN(task.subjectReadId);
                     
-                    TempCorrectedSequence& tmp = outputData.createAndGetAnchorCorrection(outputData.numAnchors);
+                    TempCorrectedSequence& tmp = outputData.anchorCorrections[outputData.numAnchors];
                     
                     if(!originalReadContainsN){
                         const int maxEdits = correctedlength / 7;
@@ -1291,7 +1298,7 @@ namespace cpu{
                 
                 
                 
-                for(const auto& correctedCandidate : task.candidateCorrections){
+                for(auto& correctedCandidate : task.candidateCorrections){
                     const read_number candidateId = task.bestCandidateReadIds[correctedCandidate.index];
                     
                     bool savingIsOk = false;
@@ -1303,7 +1310,7 @@ namespace cpu{
                     
                     if (savingIsOk) {                            
                         
-                        TempCorrectedSequence& tmp = outputData.createAndGetCandidateCorrection(outputData.numCandidates);
+                        TempCorrectedSequence& tmp = outputData.candidateCorrections[outputData.numCandidates];
                         
                         tmp.type = TempCorrectedSequence::Type::Candidate;
                         tmp.readId = candidateId;
@@ -1312,18 +1319,17 @@ namespace cpu{
                         const bool candidateIsForward = task.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward;
 
                         if(candidateIsForward){
-                            tmp.sequence = std::move(correctedCandidate.sequence);
+                            std::swap(tmp.sequence, correctedCandidate.sequence);
                         }else{
                             //if input candidate for correction is reverse complement, corrected candidate is also reverse complement
                             //get forward sequence
-                            std::string fwd;
-                            fwd.resize(correctedCandidate.sequence.length());
+
+                            tmp.sequence.resize(correctedCandidate.sequence.length());
                             reverseComplementString(
-                                &fwd[0], 
+                                &tmp.sequence[0], 
                                 correctedCandidate.sequence.c_str(), 
-                                                    correctedCandidate.sequence.length()
+                                correctedCandidate.sequence.length()
                             );
-                            tmp.sequence = std::move(fwd);
                         }
                         
                         const bool originalCandidateReadContainsN = readStorage.readContainsN(candidateId);
@@ -1348,16 +1354,20 @@ namespace cpu{
                                 }
                             }else{
                                 //tmp.sequence is forward sequence, but uncorrectedCandidate is reverse complement
-                                std::string fwduncorrected;
-                                fwduncorrected.resize(uncorrectedCandidateLength);
-                                reverseComplementString(
-                                    &fwduncorrected[0], 
-                                    uncorrectedCandidate, 
-                                    uncorrectedCandidateLength
-                                );
+
+                                auto complement = [](char c){
+                                    if(c == 'A') return 'T';
+                                    if(c == 'C') return 'G';
+                                    if(c == 'G') return 'C';
+                                    return 'A';
+                                };
+
+                                auto fwdCandidate = [&](int pos){
+                                    return complement(uncorrectedCandidate[uncorrectedCandidateLength - 1 - pos]);
+                                };
 
                                 for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
-                                    if(tmp.sequence[pos] != fwduncorrected[pos]){
+                                    if(tmp.sequence[pos] != fwdCandidate(pos)){
                                         tmp.edits.emplace_back(pos, tmp.sequence[pos]);
                                         edits++;
                                     }
@@ -1687,11 +1697,13 @@ correct_cpu(
 
             }
 
-            // const int numSubjects = batchData.subjectReadIds.size();
-            // batchData.waitableOutputData[batchData.outputdataindex].data.reserveAnchors(numSubjects);
-            // batchData.waitableOutputData[batchData.outputdataindex].data.reserveCandidates(numSubjects * 5);
+            const int numAnchors = batchData.subjectReadIds.size();
+            const int numCandidates = batchData.candidatesPerSubjectPrefixSum.back();
 
             batchData.waitableOutputData[batchData.outputdataindex].wait();
+
+            batchData.waitableOutputData[batchData.outputdataindex].data.resizeAnchors(numAnchors);
+            batchData.waitableOutputData[batchData.outputdataindex].data.resizeCandidates(numCandidates);
 
             for(auto& batchTask : batchData.batchTasks){
 
