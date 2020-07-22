@@ -1028,10 +1028,8 @@ namespace gpu{
         KernelLaunchHandle& handle
     ){
 
-
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
-        constexpr int numGroupsPerBlock = blocksize / groupsize;
 
         const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
         const size_t smemPitchEditsInInts = SDIV((sizeof(TempCorrectedSequence::EncodedEdit) * numEditsThreshold), 
