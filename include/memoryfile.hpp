@@ -72,6 +72,7 @@ struct MemoryFile{
         Reader() = default;
         Reader(const std::vector<T>& vec, std::string filename)
                 : 
+                currentIsMemory(true),
                 memoryiterator(vec.begin()),
                 memoryend(vec.end()),
                 fileinputstream(std::ifstream(filename, std::ios::binary)),
@@ -87,17 +88,28 @@ struct MemoryFile{
             assert(hasNext());
 
             if(memoryiterator != memoryend){
-                const T* data = &(*memoryiterator);
+                currentMemoryElement = &(*memoryiterator);
                 ++memoryiterator;
-                return data;
+                return currentMemoryElement;
             }else{
                 currentFileElement = std::move(*fileiterator);
                 ++fileiterator;
+                currentIsMemory = false;
 
                 return &(currentFileElement.data);
             }
         }
 
+        const T* current() const{
+            if(currentIsMemory){}
+                return currentMemoryElement;
+            }else{
+                return &(currentFileElement.data);
+            }
+        }
+
+        bool currentIsMemory;
+        const T* currentMemoryElement;
         Twrapper currentFileElement;
         typename std::vector<T>::const_iterator memoryiterator;
         typename std::vector<T>::const_iterator memoryend;
@@ -362,6 +374,7 @@ struct MemoryFileFixedSize{
             std::int64_t numElementsInMemory_, 
             std::string filename)
                 : 
+                currentIsMemory(true),
                 rawData(rawData_),
                 elementOffsets(elementOffsets_),
                 numElementsInMemory(numElementsInMemory_),
@@ -386,10 +399,21 @@ struct MemoryFileFixedSize{
             }else{
                 currentFileElement = std::move(*fileiterator);
                 ++fileiterator;
+                currentIsMemory = false;
 
                 return &(currentFileElement.data);
             }
         }
+
+        const T* current() const{
+            if(currentIsMemory){
+                return &currentMemoryElement;
+            }else{
+                return &(currentFileElement.data);
+            }
+        }
+
+        bool currentIsMemory;
 
         const std::uint8_t* rawData;
         const std::size_t* elementOffsets;
