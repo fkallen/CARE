@@ -82,6 +82,11 @@ struct MultiInputReader{
     }
 
     int next(){
+        const int numFiles = readerVector.size();
+        if(inputFileId >= numFiles){ //all files have been processed
+            return -1;
+        }
+
         //repeat until a read was retrieved or all files are processed
         while(true){
             const int status = readerVector[inputFileId].next();
@@ -103,10 +108,10 @@ struct MultiInputReader{
                 inputFileId++;
                 readIdInFile = 0;
 
-                const int numFiles = readerVector.size();
-                if(inputFileId >= numFiles){
+                if(inputFileId >= numFiles){ //all files have been processed
                     return -1;
                 }
+                
             }
         }
     }
