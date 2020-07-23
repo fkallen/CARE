@@ -580,6 +580,19 @@ namespace care{
             memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
         }
 
+        auto partialResultsReader = partialResults.makeReader();
+        std::size_t numEdits = 0;
+        TIMERSTARTCPU(countingedits);
+        while(partialResultsReader.hasNext()){
+            const EncodedTempCorrectedSequence* etcs = partialResultsReader.next();
+            TempCorrectedSequence tcs = *etcs;
+
+            numEdits += tcs.edits.size();
+        }
+        TIMERSTOPCPU(countingedits);
+        std::cerr << "total number of edits: " << numEdits << "\n";
+                
+
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
         TIMERSTARTCPU(STEP3);
@@ -592,7 +605,7 @@ namespace care{
         for(const auto& outputfilename : fileOptions.outputfilenames){
             outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
         }
-        constructOutputFileFromResults2(
+        constructOutputFileFromCorrectionResults(
             fileOptions.tempdirectory,
             fileOptions.inputfiles, 
             partialResults, 

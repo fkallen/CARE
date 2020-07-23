@@ -281,7 +281,7 @@ namespace care{
         for(const auto& outputfilename : fileOptions.outputfilenames){
             outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
         }
-        constructOutputFileFromResults2(
+        constructOutputFileFromCorrectionResults(
             fileOptions.tempdirectory,
             fileOptions.inputfiles,            
             partialResults, 
