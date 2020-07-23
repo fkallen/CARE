@@ -56,6 +56,66 @@ struct Read {
 	}
 };
 
+struct ReadWithId{
+    int fileId;
+    std::uint64_t readIdInFile;
+    std::uint64_t globalReadId;
+    Read read;
+};
+
+struct MultiInputReader{
+    int inputFileId{};
+    std::int64_t readIdInFile{};
+    std::int64_t globalReadId{};
+    ReadWithId current{};
+    std::vector<kseqpp::KseqPP> readerVector{};
+    std::vector<std::string> filenames{};
+
+    MultiInputReader() = default;
+
+    MultiInputReader(std::vector<std::string> inputfilenames)
+        : filenames(std::move(inputfilenames))
+    {
+        for(const auto& inputfile : filenames){
+            readerVector.emplace_back(std::move(kseqpp::KseqPP{inputfile}));
+        }
+    }
+
+    int next(){
+        //repeat until a read was retrieved or all files are processed
+        while(true){
+            const int status = readerVector[inputFileId].next();
+
+            if(status >= 0){
+                std::swap(current.read.name, readerVector[inputFileId].getCurrentName());
+                std::swap(current.read.comment, readerVector[inputFileId].getCurrentComment());
+                std::swap(current.read.sequence, readerVector[inputFileId].getCurrentSequence());
+                std::swap(current.read.quality, readerVector[inputFileId].getCurrentQuality());
+                current.fileId = inputFileId;
+                current.readIdInFile = readIdInFile;
+                current.globalReadId = globalReadId;
+
+                readIdInFile++;
+                globalReadId++;
+
+                return status;
+            }else{
+                inputFileId++;
+                readIdInFile = 0;
+
+                const int numFiles = readerVector.size();
+                if(inputFileId >= numFiles){
+                    return -1;
+                }
+            }
+        }
+    }
+
+    ReadWithId& getCurrent(){
+        return current;
+    }
+};
+
 struct SequenceFileWriter{
 
     SequenceFileWriter(const std::string& filename_, FileFormat format_) : filename(filename_), format(format_)
