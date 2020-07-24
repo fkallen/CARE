@@ -325,6 +325,7 @@ void callConstructAnchorResultsKernelAsync(
     int numEditsThreshold,
     size_t encodedSequencePitchInInts,
     size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,
     const int* d_numAnchors,
     int maxNumAnchors,
     cudaStream_t stream,
@@ -369,11 +370,12 @@ void callCorrectCandidatesKernel_async(
     int doNotUseEditsValue,
     int numEditsThreshold,
     int encodedSequencePitchInInts,
-    size_t sequence_pitch,
+    size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,
     int maximum_sequence_length,
     cudaStream_t stream,
     KernelLaunchHandle& handle
-);     
+);
 
 
 

@@ -812,10 +812,6 @@ namespace gpu{
 
     //####################   KERNEL DISPATCH   ####################
     
-    
-
-        constexpr int blocksize = 128;
-
     void callMsaCandidateRefinementKernel_multiiter_async(
         int* d_newIndices,
         int* d_newNumIndicesPerSubject,

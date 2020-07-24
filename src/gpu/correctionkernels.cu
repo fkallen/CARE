@@ -40,7 +40,7 @@ namespace gpu{
             const int* __restrict__ d_indices_per_subject,
             const int* __restrict__ numAnchorsPtr,
             int encodedSequencePitchInInts,
-            size_t sequence_pitch,
+            size_t decodedSequencePitchInBytes,
             int maximumSequenceLength,
             float estimatedErrorrate,
             float desiredAlignmentMaxErrorRate,
@@ -105,7 +105,7 @@ namespace gpu{
 
                 const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
 
-                char* const my_corrected_subject = correctedSubjects + subjectIndex * sequence_pitch;
+                char* const my_corrected_subject = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
 
                 const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
@@ -384,7 +384,8 @@ namespace gpu{
             int doNotUseEditsValue,
             int numEditsThreshold,            
             int encodedSequencePitchInInts,
-            size_t sequence_pitch,
+            size_t decodedSequencePitchInBytes,
+            size_t editsPitchInBytes,
             size_t dynamicsmemSequencePitchInInts){
 
         /*
@@ -468,9 +469,7 @@ namespace gpu{
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
         const int groupIdInBlock = threadIdx.x / groupsize;
 
-        const std::size_t smemPitchEditsInInts 
-            = SDIV((sizeof(TempCorrectedSequence::EncodedEdit) * numEditsThreshold), 
-                sizeof(int));
+        const std::size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
 
         char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
@@ -492,7 +491,7 @@ namespace gpu{
 
             const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
 
-            char* const my_corrected_candidate = correctedCandidates + destinationIndex * sequence_pitch;
+            char* const my_corrected_candidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
             const int candidate_length = candidateSequencesLengths[candidateIndex];
 
             const int shift = shifts[candidateIndex];
@@ -675,8 +674,8 @@ namespace gpu{
                 //int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
                 int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
 
-                TempCorrectedSequence::EncodedEdit* const myEdits = d_editsPerCorrectedCandidate 
-                    + destinationIndex * numEditsThreshold;
+                TempCorrectedSequence::EncodedEdit* const myEdits 
+                    = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedCandidate) + destinationIndex * editsPitchInBytes);
 
                 if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
                     const int numEdits = shared_numEditsOfCandidate[groupIdInBlock];
@@ -714,18 +713,20 @@ namespace gpu{
 
     __global__
     void constructAnchorResultsKernel(
-            TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
-            int* __restrict__ d_numEditsPerCorrectedSubject,
-            int doNotUseEditsValue,
-            const int* __restrict__ d_indicesOfCorrectedSubjects,
-            const int* __restrict__ d_numIndicesOfCorrectedSubjects,
-            const bool* __restrict__ d_readContainsN,
-            const unsigned int* __restrict__ d_uncorrectedSubjects,
-            const int* __restrict__ d_subjectLengths,
-            const char* __restrict__ d_correctedSubjects,
-            int numEditsThreshold,
-            size_t encodedSequencePitchInInts,
-            size_t decodedSequencePitchInBytes){
+        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
+        int* __restrict__ d_numEditsPerCorrectedSubject,
+        int doNotUseEditsValue,
+        const int* __restrict__ d_indicesOfCorrectedSubjects,
+        const int* __restrict__ d_numIndicesOfCorrectedSubjects,
+        const bool* __restrict__ d_readContainsN,
+        const unsigned int* __restrict__ d_uncorrectedSubjects,
+        const int* __restrict__ d_subjectLengths,
+        const char* __restrict__ d_correctedSubjects,
+        int numEditsThreshold,
+        size_t encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        size_t editsPitchInBytes
+    ){
 
         auto get = [] (const unsigned int* data, int length, int index, auto trafo){
             return getEncodedNuc2Bit(data, length, index, trafo);
@@ -768,7 +769,7 @@ namespace gpu{
                 const char* const decodedCorrectedSequence = d_correctedSubjects + decodedSequencePitchInBytes * indexOfCorrectedSubject;
     
                 //TODO Tranpose ?
-                TempCorrectedSequence::EncodedEdit* const myEdits = d_editsPerCorrectedSubject + numEditsThreshold * tid;
+                TempCorrectedSequence::EncodedEdit* const myEdits = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedSubject) + editsPitchInBytes * tid);
 
                 const int maxEdits = min(length / 7, numEditsThreshold);
                 int edits = 0;
@@ -811,7 +812,7 @@ namespace gpu{
         const int* d_numAnchors,
         int maxNumAnchors,
         int encodedSequencePitchInInts,
-        size_t sequence_pitch,
+        size_t decodedSequencePitchInBytes,
         int maximumSequenceLength,
         float estimatedErrorrate,
         float desiredAlignmentMaxErrorRate,
@@ -890,7 +891,7 @@ namespace gpu{
                                     d_indices_per_subject, \
                                     d_numAnchors, \
                                     encodedSequencePitchInInts, \
-                                    sequence_pitch, \
+                                    decodedSequencePitchInBytes, \
                                     maximumSequenceLength, \
                                     estimatedErrorrate, \
                                     desiredAlignmentMaxErrorRate, \
@@ -1022,7 +1023,8 @@ namespace gpu{
         int doNotUseEditsValue,
         int numEditsThreshold,
         int encodedSequencePitchInInts,
-        size_t sequence_pitch,
+        size_t decodedSequencePitchInBytes,
+        size_t editsPitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream,
         KernelLaunchHandle& handle
@@ -1032,8 +1034,7 @@ namespace gpu{
         constexpr int groupsize = 32;
 
         const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
-        const size_t smemPitchEditsInInts = SDIV((sizeof(TempCorrectedSequence::EncodedEdit) * numEditsThreshold), 
-                                                    sizeof(int));
+        const size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
 
         auto calculateSmemUsage = [&](int blockDim){
             const int numGroupsPerBlock = blockDim / groupsize;
@@ -1117,7 +1118,8 @@ namespace gpu{
                     doNotUseEditsValue, \
                     numEditsThreshold, \
                     encodedSequencePitchInInts, \
-                    sequence_pitch, \
+                    decodedSequencePitchInBytes, \
+                    editsPitchInBytes, \
                     dynamicsmemPitchInInts \
                 ); CUERR;
 
@@ -1153,6 +1155,7 @@ namespace gpu{
         int numEditsThreshold,
         size_t encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
+        size_t editsPitchInBytes,
         const int* d_numAnchors,
         int maxNumAnchors,
         cudaStream_t stream,
@@ -1162,7 +1165,7 @@ namespace gpu{
         cudaMemsetAsync(
             d_editsPerCorrectedSubject, 
             0, 
-            sizeof(TempCorrectedSequence::EncodedEdit) * numEditsThreshold * maxNumAnchors, 
+            editsPitchInBytes * maxNumAnchors, 
             stream
         ); CUERR;
 
@@ -1228,7 +1231,8 @@ namespace gpu{
                                         d_correctedSubjects, \
                                         numEditsThreshold, \
                                         encodedSequencePitchInInts, \
-                                        decodedSequencePitchInBytes); CUERR;
+                                        decodedSequencePitchInBytes, \
+                                        editsPitchInBytes); CUERR;
 
         mycall();
 

@@ -937,6 +937,7 @@ namespace gpu{
         int decodedSequencePitchInBytes;
         int encodedSequencePitchInInts;
         int maxNumEditsPerSequence;
+        std::size_t editsPitchInBytes;
 
         PinnedBuffer<read_number> h_subject_read_ids;
         PinnedBuffer<bool> h_subject_is_corrected;
@@ -963,8 +964,12 @@ namespace gpu{
                 int maxCandidates, 
                 int maxNumIdsFromMinhashing,
                 size_t decodedSequencePitchInBytes, 
-                int maxNumEditsPerSequence
+                int maxNumEditsPerSequence,
+                std::size_t editsPitchInBytes
         ){
+            const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * batchsize, sizeof(TempCorrectedSequence::EncodedEdit));
+            const std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(TempCorrectedSequence::EncodedEdit));
+
             h_subject_read_ids.resize(batchsize);
             h_subject_is_corrected.resize(batchsize);
             h_is_high_quality_subject.resize(batchsize);
@@ -977,9 +982,9 @@ namespace gpu{
             h_subject_sequences_lengths.resize(batchsize);
             h_candidate_sequences_lengths.resize(maxCandidates);
             h_alignment_shifts.resize(maxCandidates);
-            h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            h_editsPerCorrectedSubject.resize(numEditsAnchors);
             h_numEditsPerCorrectedSubject.resize(batchsize);
-            h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            h_editsPerCorrectedCandidate.resize(numEditsCandidates);
             h_numEditsPerCorrectedCandidate.resize(maxCandidates);
         }
 
@@ -1100,7 +1105,8 @@ namespace gpu{
         int encodedSequencePitchInInts;
         int decodedSequencePitchInBytes;
         int qualityPitchInBytes;
-        int maxNumEditsPerSequence;     
+        int maxNumEditsPerSequence;
+        size_t editsPitchInBytes = 0;  
         size_t msaColumnPitchInElements = 0;
 
         BackgroundThread* outputThread;
@@ -1408,7 +1414,6 @@ namespace gpu{
             const auto encodedSeqPitchInts = batchData.encodedSequencePitchInInts;
             const auto qualPitchBytes = batchData.qualityPitchInBytes;
             const auto msaColumnPitchInElements = batchData.msaColumnPitchInElements;
-            const auto maxNumEditsPerSequence = batchData.maxNumEditsPerSequence;
                     
             const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
             const int maxNumIds = resultsPerMap * numMinhashMaps * batchsize;
@@ -1473,20 +1478,23 @@ namespace gpu{
             h_num_indices_of_corrected_subjects.resize(1);
             d_indices_of_corrected_subjects.resize(batchsize);
             d_num_indices_of_corrected_subjects.resize(1);
+
+            std::size_t numEditsAnchors = SDIV(editsPitchInBytes * batchsize, sizeof(TempCorrectedSequence::EncodedEdit));
+            std::size_t numEditsCandidates = SDIV(editsPitchInBytes * maxCandidates, sizeof(TempCorrectedSequence::EncodedEdit));
     
-            h_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            h_editsPerCorrectedSubject.resize(numEditsAnchors);
             h_numEditsPerCorrectedSubject.resize(batchsize);
             h_anchorContainsN.resize(batchsize);
     
-            d_editsPerCorrectedSubject.resize(batchsize * maxNumEditsPerSequence);
+            d_editsPerCorrectedSubject.resize(numEditsAnchors);
             d_numEditsPerCorrectedSubject.resize(batchsize);
             d_anchorContainsN.resize(batchsize);
     
-            h_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            h_editsPerCorrectedCandidate.resize(numEditsCandidates);
             h_numEditsPerCorrectedCandidate.resize(maxCandidates);
             h_candidateContainsN.resize(maxCandidates);
     
-            d_editsPerCorrectedCandidate.resize(maxCandidates * maxNumEditsPerSequence);
+            d_editsPerCorrectedCandidate.resize(numEditsCandidates);
             d_numEditsPerCorrectedCandidate.resize(maxCandidates);
             d_candidateContainsN.resize(maxCandidates);
     
@@ -1756,6 +1764,7 @@ namespace gpu{
             rawResults.encodedSequencePitchInInts = encodedSequencePitchInInts;
             rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
             rawResults.maxNumEditsPerSequence = maxNumEditsPerSequence;
+            rawResults.editsPitchInBytes = editsPitchInBytes;
 
             std::swap(h_subject_read_ids, rawResults.h_subject_read_ids);
             std::swap(h_subject_is_corrected, rawResults.h_subject_is_corrected);
@@ -2838,6 +2847,7 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
+            batch.editsPitchInBytes,
             batch.d_numAnchors.get(),
             batch.correctionOptions.batchsize,
             streams[primary_stream_index],
@@ -2850,7 +2860,7 @@ namespace gpu{
         cudaMemcpyAsync(
             batch.h_editsPerCorrectedSubject,
             batch.d_editsPerCorrectedSubject,
-            sizeof(TempCorrectedSequence::EncodedEdit) * batch.maxNumEditsPerSequence * batchsize,
+            batch.editsPitchInBytes * batchsize,
             D2H,
             streams[secondary_stream_index]
         ); CUERR;
@@ -3092,6 +3102,7 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
+            batch.editsPitchInBytes,
             batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -3116,6 +3127,7 @@ namespace gpu{
             batch.maxNumEditsPerSequence,
             batch.encodedSequencePitchInInts,
             batch.decodedSequencePitchInBytes,
+            batch.editsPitchInBytes,
             batch.sequenceFileProperties.maxSequenceLength,
             streams[primary_stream_index],
             batch.kernelLaunchHandle
@@ -3127,7 +3139,6 @@ namespace gpu{
             [
                 =,
                 decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
-                maxNumEditsPerSequence = batch.maxNumEditsPerSequence,
                 h_corrected_candidates = batch.h_corrected_candidates.get(),
                 h_numEditsPerCorrectedCandidate = batch.h_numEditsPerCorrectedCandidate.get(),
                 d_corrected_candidates = batch.d_corrected_candidates.get(),
@@ -3167,7 +3178,7 @@ namespace gpu{
         generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
             [
                 =,
-                maxNumEditsPerSequence = batch.maxNumEditsPerSequence,
+                editsPitchInBytes = batch.editsPitchInBytes,
                 h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get(),
                 h_numEditsPerCorrectedCandidate = batch.h_numEditsPerCorrectedCandidate.get(),
                 d_editsPerCorrectedCandidate = batch.d_editsPerCorrectedCandidate.get(),
@@ -3196,8 +3207,8 @@ namespace gpu{
                     const int numEdits = d_numEditsPerCorrectedCandidate[k];
                     if(numEdits > 0){
                         copyElements(
-                            h_editsPerCorrectedCandidate + k * maxNumEditsPerSequence, 
-                            d_editsPerCorrectedCandidate + k * maxNumEditsPerSequence, 
+                            ((char*)h_editsPerCorrectedCandidate) + k * editsPitchInBytes, 
+                            ((const char*)d_editsPerCorrectedCandidate) + k * editsPitchInBytes, 
                             numEdits
                         );
                     }
@@ -3210,7 +3221,7 @@ namespace gpu{
             [
                 =,
                 decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
-                maxNumEditsPerSequence = batch.maxNumEditsPerSequence,
+                editsPitchInBytes = batch.editsPitchInBytes,
                 h_corrected_candidates = batch.h_corrected_candidates.get(),
                 h_editsPerCorrectedCandidate = batch.h_editsPerCorrectedCandidate.get(),
                 h_numEditsPerCorrectedCandidate = batch.h_numEditsPerCorrectedCandidate.get(),
@@ -3247,8 +3258,7 @@ namespace gpu{
                 const size_t bytesNumEdits = numElements * sizeof(int);
                 copy(h_numEditsPerCorrectedCandidate, d_numEditsPerCorrectedCandidate, bytesNumEdits);
 
-                const size_t bytesEdits = numElements * maxNumEditsPerSequence 
-                    * sizeof(TempCorrectedSequence::EncodedEdit);
+                const size_t bytesEdits = numElements * editsPitchInBytes;
                 copy(h_editsPerCorrectedCandidate, d_editsPerCorrectedCandidate, bytesEdits);
 
             }
@@ -3396,7 +3406,9 @@ namespace gpu{
                 const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
-                    const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
+                    const TempCorrectedSequence::EncodedEdit* const gpuedits 
+                        = (const TempCorrectedSequence::EncodedEdit*)(((const char*)rawResults.h_editsPerCorrectedSubject.get()) 
+                            + positionInVector * rawResults.editsPitchInBytes);
                     std::copy_n(gpuedits, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
@@ -3469,8 +3481,10 @@ namespace gpu{
                                                 + offsetForCorrectedCandidateData * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
                                                 + offsetForCorrectedCandidateData;
-                const TempCorrectedSequence::EncodedEdit* const my_editsPerCorrectedCandidate = rawResults.h_editsPerCorrectedCandidate
-                                                        + offsetForCorrectedCandidateData * rawResults.maxNumEditsPerSequence;
+
+                const TempCorrectedSequence::EncodedEdit* const my_editsPerCorrectedCandidate 
+                    = (const TempCorrectedSequence::EncodedEdit*)(((const char*)rawResults.h_editsPerCorrectedCandidate.get()) 
+                        + offsetForCorrectedCandidateData * rawResults.editsPitchInBytes);
 
 
                 const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
@@ -3498,7 +3512,9 @@ namespace gpu{
 
                 if(numEdits != doNotUseEditsValue){
                     tmp.edits.resize(numEdits);
-                    const auto* gpuedits = my_editsPerCorrectedCandidate + candidateIndex * rawResults.maxNumEditsPerSequence;
+                    const TempCorrectedSequence::EncodedEdit* gpuedits 
+                        = (const TempCorrectedSequence::EncodedEdit*)(((const char*)my_editsPerCorrectedCandidate) 
+                            + candidateIndex * rawResults.editsPitchInBytes);
                     std::copy_n(gpuedits, numEdits, tmp.edits.begin());
                     tmp.useEdits = true;
                 }else{
@@ -3784,6 +3800,10 @@ correct_gpu(
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
             batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
             batchData.maxNumEditsPerSequence = std::max(1,sequenceFileProperties.maxSequenceLength / 7);
+
+            //pad to multiple of 128 bytes
+            batchData.editsPitchInBytes = SDIV(batchData.maxNumEditsPerSequence * sizeof(TempCorrectedSequence::EncodedEdit), 128) * 128;
+
             batchData.min_overlap = std::max(
                 1, 
                 std::max(
@@ -3822,7 +3842,8 @@ correct_gpu(
                 numCandidatesLimitPerGpu[deviceId], 
                 maxNumIds,
                 batchData.decodedSequencePitchInBytes, 
-                batchData.maxNumEditsPerSequence
+                batchData.maxNumEditsPerSequence,
+                batchData.editsPitchInBytes
             );
 
             batchData.resize(
