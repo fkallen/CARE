@@ -566,13 +566,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     std::array<TempCorrectedSequenceBatch, 4> tcsBatches;
 
-    std::queue<TempCorrectedSequenceBatch*> freeTcsBatches;
-    std::mutex freeTcsBatchesMutex;
-    std::condition_variable freeTcsBatches_producer_cv;
+    SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> freeTcsBatches;
 
-    std::queue<TempCorrectedSequenceBatch*> unprocessedTcsBatches;
-    std::mutex unprocessedTcsBatchesMutex;
-    std::condition_variable unprocessedTcsBatches_consumer_cv;
+    SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> unprocessedTcsBatches;
 
     std::atomic<bool> noMoreTcsBatches{false};
 
@@ -589,16 +585,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
             TIMERSTARTCPU(tcsparsing);
 
             while(partialResultsReader.hasNext()){
-                std::unique_lock<std::mutex> ul(freeTcsBatchesMutex);
-                if(freeTcsBatches.empty()){
-                    while(freeTcsBatches.empty()){
-                        freeTcsBatches_producer_cv.wait(ul);
-                    }
-                }
-
-                TempCorrectedSequenceBatch* batch = freeTcsBatches.front();
-                freeTcsBatches.pop();
-                ul.unlock();
+                TempCorrectedSequenceBatch* batch = freeTcsBatches.pop();
 
                 batch->items.resize(maxbatchsize);
 
@@ -611,10 +598,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 batch->processedItems = 0;
                 batch->validItems = batchsize;
 
-                std::unique_lock<std::mutex> ul2(unprocessedTcsBatchesMutex);
                 unprocessedTcsBatches.push(batch);
-                unprocessedTcsBatches_consumer_cv.notify_one();
-                ul2.unlock();
             }
 
             TIMERSTOPCPU(tcsparsing);
@@ -632,13 +616,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     std::array<InputSequencesBatch, 4> inputreadBatches;
 
-    std::queue<InputSequencesBatch*> freeInputreadBatches;
-    std::mutex freeInputreadBatchesMutex;
-    std::condition_variable freeInputreadBatches_producer_cv;
-
-    std::queue<InputSequencesBatch*> unprocessedInputreadBatches;
-    std::mutex unprocessedInputreadBatchesMutex;
-    std::condition_variable unprocessedInputreadBatches_consumer_cv;
+    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> freeInputreadBatches;
+    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> unprocessedInputreadBatches;
 
     std::atomic<bool> noMoreInputreadBatches{false};
 
@@ -656,18 +635,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
             while(multiInputReader.next() >= 0){
 
-                std::unique_lock<std::mutex> ul(freeInputreadBatchesMutex);
-
-                if(freeInputreadBatches.empty()){
-                    while(freeInputreadBatches.empty()){
-                        freeInputreadBatches_producer_cv.wait(ul);
-                    }
-                }
-
-                InputSequencesBatch* batch = freeInputreadBatches.front();
-                //std::cerr << "inputreader thread. batch ptr = " << &batch << "\n";
-                freeInputreadBatches.pop();
-                ul.unlock();
+                InputSequencesBatch* batch = freeInputreadBatches.pop();
 
                 batch->items.resize(maxbatchsize);
 
@@ -682,10 +650,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 batch->processedItems = 0;
                 batch->validItems = batchsize;
 
-                std::unique_lock<std::mutex> ul2(unprocessedInputreadBatchesMutex);
-                unprocessedInputreadBatches.push(batch);
-                unprocessedInputreadBatches_consumer_cv.notify_one();
-                ul2.unlock();
+                unprocessedInputreadBatches.push(batch);                
             }
 
             TIMERSTOPCPU(inputparsing);
@@ -707,32 +672,14 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
         writerVector.emplace_back(makeSequenceWriter(outputfile, outputFormat));
     }
 
-    TempCorrectedSequenceBatch* tcsBatch = nullptr;
-    InputSequencesBatch* inputBatch = nullptr;
+    TempCorrectedSequenceBatch* tcsBatch = unprocessedTcsBatches.popOrDefault(
+        [&](){
+            return !noMoreTcsBatches;  //its possible that there are no corrections. In that case, return nullptr
+        },
+        nullptr
+    ); 
 
-    std::unique_lock<std::mutex> ul(unprocessedTcsBatchesMutex);
-    if(!noMoreTcsBatches || !unprocessedTcsBatches.empty()){
-        while(!noMoreTcsBatches && unprocessedTcsBatches.empty()){
-            unprocessedTcsBatches_consumer_cv.wait(ul);
-        }
-        if(!unprocessedTcsBatches.empty()){
-            tcsBatch = unprocessedTcsBatches.front();
-            unprocessedTcsBatches.pop();
-        }
-    }
-    ul.unlock();
-
-    std::unique_lock<std::mutex> ul2(unprocessedInputreadBatchesMutex);
-    if(!noMoreInputreadBatches || !unprocessedInputreadBatches.empty()){
-        while(!noMoreInputreadBatches && unprocessedInputreadBatches.empty()){
-            unprocessedInputreadBatches_consumer_cv.wait(ul2);
-        }
-        if(!unprocessedInputreadBatches.empty()){
-            inputBatch = unprocessedInputreadBatches.front();
-            unprocessedInputreadBatches.pop();
-        }
-    }
-    ul2.unlock();
+    InputSequencesBatch* inputBatch = unprocessedInputreadBatches.pop();
 
     assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
 
@@ -781,28 +728,20 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                         tcsBatch->processedItems++;
 
                         if(first2 == last2){
-                            std::unique_lock<std::mutex> ul3(freeTcsBatchesMutex);
                             freeTcsBatches.push(tcsBatch);
-                            freeTcsBatches_producer_cv.notify_one();
-                            ul3.unlock();
 
-                            std::unique_lock<std::mutex> ul4(unprocessedTcsBatchesMutex);
-                            if(!noMoreTcsBatches || !unprocessedTcsBatches.empty()){
-                                while(!noMoreTcsBatches && unprocessedTcsBatches.empty()){
-                                    unprocessedTcsBatches_consumer_cv.wait(ul4);
-                                }
-                                if(!unprocessedTcsBatches.empty()){
-                                    tcsBatch = unprocessedTcsBatches.front();
-                                    unprocessedTcsBatches.pop();
-                                    last2 = tcsBatch->items.begin() + tcsBatch->validItems;
-                                    first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
-                                }else{
-                                    tcsBatch = nullptr;
-                                }
-                            }else{
-                                tcsBatch = nullptr;
+                            tcsBatch = unprocessedTcsBatches.popOrDefault(
+                                [&](){
+                                    return !noMoreTcsBatches;  //its possible that there are no more corrections. In that case, return nullptr
+                                },
+                                nullptr
+                            );
+
+                            if(tcsBatch != nullptr){
+                                //new batch could be fetched. update begin and end accordingly
+                                last2 = tcsBatch->items.begin() + tcsBatch->validItems;
+                                first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
                             }
-                            ul4.unlock();
                         }
                     }
                     for(auto& tmpres : buffer){
@@ -840,26 +779,14 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
         assert(inputBatch != nullptr);
 
-        std::unique_lock<std::mutex> ul3(freeInputreadBatchesMutex);
         freeInputreadBatches.push(inputBatch);
-        freeInputreadBatches_producer_cv.notify_one();
-        ul3.unlock();
 
-        std::unique_lock<std::mutex> ul4(unprocessedInputreadBatchesMutex);
-        if(!noMoreInputreadBatches || !unprocessedInputreadBatches.empty()){
-            while(!noMoreInputreadBatches && unprocessedInputreadBatches.empty()){
-                unprocessedInputreadBatches_consumer_cv.wait(ul4);
-            }
-            if(!unprocessedInputreadBatches.empty()){
-                inputBatch = unprocessedInputreadBatches.front();
-                unprocessedInputreadBatches.pop();
-            }else{
-                inputBatch = nullptr;
-            }
-        }else{
-            inputBatch = nullptr;
-        }
-        ul4.unlock();        
+        inputBatch = unprocessedInputreadBatches.popOrDefault(
+            [&](){
+                return !noMoreInputreadBatches;
+            },
+            nullptr
+        );  
         
         assert(!(inputBatch == nullptr && tcsBatch != nullptr));
 

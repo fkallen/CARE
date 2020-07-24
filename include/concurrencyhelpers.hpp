@@ -4,7 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
-
+#include <queue>
 #include <cassert>
 
 namespace care{
@@ -62,6 +62,53 @@ struct WaitableData{
 };
 
 
+template<class T>
+struct SimpleSingleProducerSingleConsumerQueue{
+    std::queue<T> queue;
+    std::mutex mutex;
+    std::condition_variable cv;
+
+    void push(T item){
+        std::lock_guard<std::mutex> lg(mutex);
+        queue.emplace(std::move(item));
+        cv.notify_one();
+    }
+
+    //wait until queue is not empty, then remove first element from queue and return it
+    T pop(){
+        std::unique_lock<std::mutex> ul(mutex);
+
+        while(queue.empty()){
+            cv.wait(ul);
+        }
+
+        T item = queue.front();
+        queue.pop();
+        return item;
+    }
+
+    //Wait until func() == false or queue is not empty.
+    //if func() == false, return defaultElement, else the first element in queue
+    template<class Func>
+    T popOrDefault(Func func, T defaultElement){
+        std::unique_lock<std::mutex> ul(mutex);
+
+        if(func() || !queue.empty()){
+            while(func() && queue.empty()){
+                cv.wait(ul);
+            }
+            if(!queue.empty()){
+                T item = queue.front();
+                queue.pop();
+                return item;
+            }else{
+                return defaultElement;
+            }
+        }else{
+            return defaultElement;
+        }
+    }
+};
 
 
 }
