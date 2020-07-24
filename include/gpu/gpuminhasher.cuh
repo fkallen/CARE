@@ -698,6 +698,8 @@ namespace gpu{
                 }
             );
 
+            CUERR;
+
 
 #else 
 
@@ -1155,6 +1157,11 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+
+            if(numSequences == 0){
+                return;
+            }
+            
 #ifndef GPUMINHASHER_UNIQUE
             getIdsOfSimilarReadsNormal(
                 handle,
