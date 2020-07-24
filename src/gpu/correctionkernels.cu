@@ -1001,6 +1001,8 @@ namespace gpu{
             new_columns_to_correct
         );
 
+        CUERR;
+
     }
 
 

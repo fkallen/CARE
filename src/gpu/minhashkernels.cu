@@ -196,6 +196,8 @@ namespace care{
             numHashFuncs,
             firstHashFunc
         );
+
+        CUERR;
     }
 
     void callMinhashSignaturesKernel_async(
@@ -232,6 +234,8 @@ namespace care{
             numHashFuncs,
             firstHashFunc
         );
+
+        CUERR;
     }
 
 
@@ -719,6 +723,8 @@ void callUniqueMinhashSignaturesKernel_async(
         numHashFuncs
     );
 
+    CUERR;
+
     const std::size_t kmersRowPitchElements = numHashFuncs;
 
     keepUniqueKmerKernel<64, 1><<<numSequences, 64, 0, stream>>>(
@@ -733,6 +739,8 @@ void callUniqueMinhashSignaturesKernel_async(
         numHashFuncs,
         k
     );
+
+    CUERR;
 }
 
 
@@ -974,6 +982,8 @@ void callMinhashSignaturesOfUniqueKmersKernel128_async(
         k,
         numHashFuncs
     );
+
+    CUERR;
 }
 
 

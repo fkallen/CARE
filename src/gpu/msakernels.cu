@@ -929,6 +929,8 @@ namespace gpu{
             dataset_coverage,
             numIterations
         );
+
+        CUERR;
     }
 
 
@@ -1053,6 +1055,8 @@ namespace gpu{
             iteration,
             d_anchorIsFinished
         );
+
+        CUERR;
     }
 
 

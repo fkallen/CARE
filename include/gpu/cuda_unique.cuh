@@ -466,6 +466,8 @@ struct GpuSegmentedUnique{
             d_begin_offsets,
             d_end_offsets
         );
+
+        CUERR;
 #endif        
     }
 
@@ -622,6 +624,8 @@ struct GpuSegmentedUnique{
             stream
         );
 
+        CUERR;
+
         cudauniquekernels::makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread>
                 <<<numSegments, blocksize, 0, stream>>>(
             d_output, //output
@@ -631,6 +635,8 @@ struct GpuSegmentedUnique{
             d_begin_offsets,
             d_end_offsets 
         );
+
+        CUERR;
     }
 
 };

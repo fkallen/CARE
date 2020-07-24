@@ -493,7 +493,7 @@ namespace care{
                             }
                         }
                     );
-
+                    CUERR;
                 }
 
                 cudaMemcpyAsync(
