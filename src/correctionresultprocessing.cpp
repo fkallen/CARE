@@ -306,7 +306,6 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
 };
 
 
-#if 1
 CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     std::vector<TempCorrectedSequence>& tmpresults, 
     ReadWithId& readWithId
@@ -315,13 +314,6 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
         CombinedCorrectionResult result;
         result.corrected = false;        
         return result;
-    }
-
-    static bool once = true;
-
-    if(once){
-        std::cerr << "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\n";
-        once = false;
     }
 
     constexpr bool outputHQ = true;
@@ -529,7 +521,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
 
 };
 
-#endif
+
 
 
 
@@ -1146,16 +1138,23 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     std::chrono::time_point<std::chrono::system_clock> cbegin, cend;
     std::chrono::duration<double> cdelta{0};
 
+    std::vector<TempCorrectedSequence> buffer;
+
     while(!(inputBatch == nullptr && tcsBatch == nullptr)){
+        bbegin = std::chrono::system_clock::now();
+        
         OutputSequencesBatch* outputBatch = freeOutputreadBatches.pop();
         outputBatch->items.resize(inputreader_maxbatchsize);
         outputBatch->validItems = 0;
         outputBatch->processedItems = 0;
 
+        bend = std::chrono::system_clock::now();
+        bdelta += bend - bbegin;
+
         if(tcsBatch == nullptr){
             //all correction results are processed
             //copy remaining input reads to output file
-            bbegin = std::chrono::system_clock::now();
+            abegin = std::chrono::system_clock::now();
             
             std::for_each(
                 inputBatch->items.begin() + inputBatch->processedItems, 
@@ -1168,23 +1167,22 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
             inputBatch->processedItems = inputBatch->validItems;
 
-            bend = std::chrono::system_clock::now();
-            bdelta += bend - bbegin;
+            aend = std::chrono::system_clock::now();
+            adelta += aend - abegin;
         }else{
+
+            abegin = std::chrono::system_clock::now();
 
             auto last1 = inputBatch->items.begin() + inputBatch->validItems;
             auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
 
             auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
-            auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
-
-            cbegin = std::chrono::system_clock::now();            
+            auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;      
 
             while(first1 != last1) {
                 if(first2 == last2){
                     //all correction results are processed
                     //copy remaining input reads to output file
-                    bbegin = std::chrono::system_clock::now();
 
                     std::for_each(
                         first1, 
@@ -1196,22 +1194,27 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     );
                     inputBatch->processedItems += std::distance(first1, last1);
 
-                    bend = std::chrono::system_clock::now();
-                    bdelta += bend - bbegin;
+                    aend = std::chrono::system_clock::now();
+                    adelta += aend - abegin;
                     break;
                 }
                 assert(first2->readId >= first1->globalReadId);
                 {
-                    abegin = std::chrono::system_clock::now();
 
                     ReadWithId& readWithId = *first1;
-                    std::vector<TempCorrectedSequence> buffer;
+                    
+                    buffer.clear();
                     while(first2 != last2 && !(first1->globalReadId < first2->readId)){
                         buffer.push_back(*first2);
                         ++first2;
                         tcsBatch->processedItems++;
 
                         if(first2 == last2){
+                            aend = std::chrono::system_clock::now();
+                            adelta += aend - abegin;
+
+                            bbegin = std::chrono::system_clock::now();
+                            
                             freeTcsBatches.push(tcsBatch);
 
                             tcsBatch = unprocessedTcsBatches.popOrDefault(
@@ -1221,31 +1224,23 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                                 nullptr
                             );
 
+                            bend = std::chrono::system_clock::now();
+                            bdelta += bend - bbegin;
+
+                            abegin = std::chrono::system_clock::now();
+
                             if(tcsBatch != nullptr){
                                 //new batch could be fetched. update begin and end accordingly
                                 last2 = tcsBatch->items.begin() + tcsBatch->validItems;
                                 first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
                             }
                         }
-                    }
-                    // for(auto& tmpres : buffer){
-                    //     if(tmpres.useEdits){
-                    //         tmpres.sequence = readWithId.read.sequence;
-                    //         for(const auto& edit : tmpres.edits){
-                    //             tmpres.sequence[edit.pos] = edit.base;
-                    //         }
-                    //     }
-                    // }
-
-                    
+                    }                    
 
                     CombinedCorrectionResult combinedresult = combineMultipleCorrectionResults1_rawtcs2(
                         buffer, 
                         readWithId
                     );
-
-                    aend = std::chrono::system_clock::now();
-                    adelta += aend - abegin;
 
                     if(combinedresult.corrected){
                         if(!isValidSequence(readWithId.read.sequence)){
@@ -1256,13 +1251,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                         }
                     }      
 
-                    bbegin = std::chrono::system_clock::now();
-
                     std::swap(outputBatch->items[outputBatch->validItems], readWithId);
                     outputBatch->validItems++;
-
-                    bend = std::chrono::system_clock::now();
-                    bdelta += bend - bbegin;
 
                     ++first1;
                     inputBatch->processedItems++;
@@ -1270,9 +1260,11 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 
             }
 
-            cend = std::chrono::system_clock::now();
-            cdelta += cend - cbegin;
+            aend = std::chrono::system_clock::now();
+            adelta += aend - abegin;
         }
+
+        bbegin = std::chrono::system_clock::now();
 
         unprocessedOutputreadBatches.push(outputBatch);
 
@@ -1286,6 +1278,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
             },
             nullptr
         );  
+
+        bend = std::chrono::system_clock::now();
+        bdelta += bend - bbegin;
         
         assert(!(inputBatch == nullptr && tcsBatch != nullptr));
 
@@ -1295,7 +1290,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     std::cout << "# elapsed time ("<< "a" <<"): " << adelta.count()  << " s" << std::endl;
     std::cout << "# elapsed time ("<< "b" <<"): " << bdelta.count()  << " s" << std::endl;
-    std::cout << "# elapsed time ("<< "c" <<"): " << cdelta.count()  << " s" << std::endl;
+    //std::cout << "# elapsed time ("<< "c" <<"): " << cdelta.count()  << " s" << std::endl;
 
     decoderFuture.wait();
     inputReaderFuture.wait();
