@@ -383,6 +383,14 @@ struct MemoryFileFixedSize{
                 fileend(std::istream_iterator<Twrapper>()){
         }
 
+        Reader(const Reader& rhs) = delete;
+        Reader(Reader&& rhs) = default;
+
+        Reader& operator=(const Reader& rhs) = delete;
+        Reader& operator=(Reader&& rhs) = default;
+
+        ~Reader(){}
+
         bool hasNext() const{
             return (elementIndexInMemory != numElementsInMemory) || (fileiterator != fileend);
         }
