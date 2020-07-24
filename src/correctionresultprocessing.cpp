@@ -940,32 +940,34 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
         freeTcsBatches.push(&batch);
     }
 
+    constexpr int decoder_maxbatchsize = 100000;
+
     auto decoderFuture = std::async(std::launch::async,
         [&](){
-            constexpr int maxbatchsize = 65536;
+            
 
             auto partialResultsReader = partialResults.makeReader();
 
-            std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            std::chrono::duration<double> adelta{0};
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
 
-            TIMERSTARTCPU(tcsparsing);
+            // TIMERSTARTCPU(tcsparsing);
 
             while(partialResultsReader.hasNext()){
                 TempCorrectedSequenceBatch* batch = freeTcsBatches.pop();
 
-                abegin = std::chrono::system_clock::now();
+                //abegin = std::chrono::system_clock::now();
 
-                batch->items.resize(maxbatchsize);
+                batch->items.resize(decoder_maxbatchsize);
 
                 int batchsize = 0;
-                while(batchsize < maxbatchsize && partialResultsReader.hasNext()){
+                while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
                     batch->items[batchsize] = *(partialResultsReader.next());
                     batchsize++;
                 }
 
-                aend = std::chrono::system_clock::now();
-                adelta += aend - abegin;
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
 
                 batch->processedItems = 0;
                 batch->validItems = batchsize;
@@ -973,9 +975,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 unprocessedTcsBatches.push(batch);
             }
 
-            std::cout << "# elapsed time ("<< "tcsparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+            //std::cout << "# elapsed time ("<< "tcsparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
-            TIMERSTOPCPU(tcsparsing);
+            // TIMERSTOPCPU(tcsparsing);
 
             noMoreTcsBatches = true;
         }
@@ -995,7 +997,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     std::atomic<bool> noMoreInputreadBatches{false};
 
-    constexpr int inputreader_maxbatchsize = 65536;
+    constexpr int inputreader_maxbatchsize = 100000;
 
     for(auto& batch : inputreadBatches){
         freeInputreadBatches.push(&batch);
@@ -1006,16 +1008,16 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
             MultiInputReader multiInputReader(originalReadFiles);
 
-            TIMERSTARTCPU(inputparsing);
+            // TIMERSTARTCPU(inputparsing);
 
-            std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            std::chrono::duration<double> adelta{0};
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
 
             while(multiInputReader.next() >= 0){
 
                 InputSequencesBatch* batch = freeInputreadBatches.pop();
 
-                abegin = std::chrono::system_clock::now();
+                // abegin = std::chrono::system_clock::now();
 
                 batch->items.resize(inputreader_maxbatchsize);
 
@@ -1027,8 +1029,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     batchsize++;
                 }
 
-                aend = std::chrono::system_clock::now();
-                adelta += aend - abegin;
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
 
                 batch->processedItems = 0;
                 batch->validItems = batchsize;
@@ -1036,9 +1038,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 unprocessedInputreadBatches.push(batch);                
             }
 
-            std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
+            // std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
-            TIMERSTOPCPU(inputparsing);
+            // TIMERSTOPCPU(inputparsing);
 
             noMoreInputreadBatches = true;
         }
@@ -1078,16 +1080,16 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 writerVector.emplace_back(makeSequenceWriter(outputfile, format));
             }
 
-            TIMERSTARTCPU(outputwriting);
+            // TIMERSTARTCPU(outputwriting);
 
-            std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            std::chrono::duration<double> adelta{0};
+            // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+            // std::chrono::duration<double> adelta{0};
 
             OutputSequencesBatch* outputBatch = unprocessedOutputreadBatches.pop();
 
             while(outputBatch != nullptr){                
 
-                abegin = std::chrono::system_clock::now();
+                // abegin = std::chrono::system_clock::now();
                 
                 int processed = outputBatch->processedItems;
                 const int valid = outputBatch->validItems;
@@ -1099,8 +1101,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     processed++;
                 }
 
-                aend = std::chrono::system_clock::now();
-                adelta += aend - abegin;
+                // aend = std::chrono::system_clock::now();
+                // adelta += aend - abegin;
 
                 freeOutputreadBatches.push(outputBatch);     
 
@@ -1112,9 +1114,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 );            
             }
 
-            std::cout << "# elapsed time ("<< "outputwriting without queues" <<"): " << adelta.count()  << " s" << std::endl;
+            // std::cout << "# elapsed time ("<< "outputwriting without queues" <<"): " << adelta.count()  << " s" << std::endl;
 
-            TIMERSTOPCPU(outputwriting);
+            // TIMERSTOPCPU(outputwriting);
         }
     );
 
@@ -1129,32 +1131,32 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
 
-    std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-    std::chrono::duration<double> adelta{0};
+    // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
+    // std::chrono::duration<double> adelta{0};
 
-    std::chrono::time_point<std::chrono::system_clock> bbegin, bend;
-    std::chrono::duration<double> bdelta{0};
+    // std::chrono::time_point<std::chrono::system_clock> bbegin, bend;
+    // std::chrono::duration<double> bdelta{0};
 
-    std::chrono::time_point<std::chrono::system_clock> cbegin, cend;
-    std::chrono::duration<double> cdelta{0};
+    // std::chrono::time_point<std::chrono::system_clock> cbegin, cend;
+    // std::chrono::duration<double> cdelta{0};
 
     std::vector<TempCorrectedSequence> buffer;
 
     while(!(inputBatch == nullptr && tcsBatch == nullptr)){
-        bbegin = std::chrono::system_clock::now();
+        // bbegin = std::chrono::system_clock::now();
         
         OutputSequencesBatch* outputBatch = freeOutputreadBatches.pop();
         outputBatch->items.resize(inputreader_maxbatchsize);
         outputBatch->validItems = 0;
         outputBatch->processedItems = 0;
 
-        bend = std::chrono::system_clock::now();
-        bdelta += bend - bbegin;
+        // bend = std::chrono::system_clock::now();
+        // bdelta += bend - bbegin;
 
         if(tcsBatch == nullptr){
             //all correction results are processed
             //copy remaining input reads to output file
-            abegin = std::chrono::system_clock::now();
+            // abegin = std::chrono::system_clock::now();
             
             std::for_each(
                 inputBatch->items.begin() + inputBatch->processedItems, 
@@ -1167,11 +1169,11 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
             inputBatch->processedItems = inputBatch->validItems;
 
-            aend = std::chrono::system_clock::now();
-            adelta += aend - abegin;
+            // aend = std::chrono::system_clock::now();
+            // adelta += aend - abegin;
         }else{
 
-            abegin = std::chrono::system_clock::now();
+            // abegin = std::chrono::system_clock::now();
 
             auto last1 = inputBatch->items.begin() + inputBatch->validItems;
             auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
@@ -1194,8 +1196,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     );
                     inputBatch->processedItems += std::distance(first1, last1);
 
-                    aend = std::chrono::system_clock::now();
-                    adelta += aend - abegin;
+                    // aend = std::chrono::system_clock::now();
+                    // adelta += aend - abegin;
                     break;
                 }
                 assert(first2->readId >= first1->globalReadId);
@@ -1210,10 +1212,10 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                         tcsBatch->processedItems++;
 
                         if(first2 == last2){
-                            aend = std::chrono::system_clock::now();
-                            adelta += aend - abegin;
+                            // aend = std::chrono::system_clock::now();
+                            // adelta += aend - abegin;
 
-                            bbegin = std::chrono::system_clock::now();
+                            // bbegin = std::chrono::system_clock::now();
                             
                             freeTcsBatches.push(tcsBatch);
 
@@ -1224,10 +1226,10 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                                 nullptr
                             );
 
-                            bend = std::chrono::system_clock::now();
-                            bdelta += bend - bbegin;
+                            // bend = std::chrono::system_clock::now();
+                            // bdelta += bend - bbegin;
 
-                            abegin = std::chrono::system_clock::now();
+                            // abegin = std::chrono::system_clock::now();
 
                             if(tcsBatch != nullptr){
                                 //new batch could be fetched. update begin and end accordingly
@@ -1260,11 +1262,11 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 
             }
 
-            aend = std::chrono::system_clock::now();
-            adelta += aend - abegin;
+            // aend = std::chrono::system_clock::now();
+            // adelta += aend - abegin;
         }
 
-        bbegin = std::chrono::system_clock::now();
+        // bbegin = std::chrono::system_clock::now();
 
         unprocessedOutputreadBatches.push(outputBatch);
 
@@ -1279,8 +1281,8 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
             nullptr
         );  
 
-        bend = std::chrono::system_clock::now();
-        bdelta += bend - bbegin;
+        // bend = std::chrono::system_clock::now();
+        // bdelta += bend - bbegin;
         
         assert(!(inputBatch == nullptr && tcsBatch != nullptr));
 
@@ -1288,9 +1290,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     noMoreOutputreadBatches = true;
 
-    std::cout << "# elapsed time ("<< "a" <<"): " << adelta.count()  << " s" << std::endl;
-    std::cout << "# elapsed time ("<< "b" <<"): " << bdelta.count()  << " s" << std::endl;
-    //std::cout << "# elapsed time ("<< "c" <<"): " << cdelta.count()  << " s" << std::endl;
+    // std::cout << "# elapsed time ("<< "a" <<"): " << adelta.count()  << " s" << std::endl;
+    // std::cout << "# elapsed time ("<< "b" <<"): " << bdelta.count()  << " s" << std::endl;
+    // std::cout << "# elapsed time ("<< "c" <<"): " << cdelta.count()  << " s" << std::endl;
 
     decoderFuture.wait();
     inputReaderFuture.wait();
