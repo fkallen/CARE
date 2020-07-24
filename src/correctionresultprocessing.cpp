@@ -931,7 +931,6 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     std::array<TempCorrectedSequenceBatch, 4> tcsBatches;
 
     SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> freeTcsBatches;
-
     SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> unprocessedTcsBatches;
 
     std::atomic<bool> noMoreTcsBatches{false};
@@ -984,23 +983,25 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     );
 
 
-    struct InputSequencesBatch{
+    struct ReadBatch{
         int validItems = 0;
         int processedItems = 0;
         std::vector<ReadWithId> items;
     };
 
-    std::array<InputSequencesBatch, 4> inputreadBatches;
+    std::array<ReadBatch, 4> readBatches;
 
-    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> freeInputreadBatches;
-    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> unprocessedInputreadBatches;
+    // free -> unprocessed input -> unprocessed output -> free -> ...
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> freeReadBatches;
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedInputreadBatches;
+    SimpleSingleProducerSingleConsumerQueue<ReadBatch*> unprocessedOutputreadBatches;
 
     std::atomic<bool> noMoreInputreadBatches{false};
 
-    constexpr int inputreader_maxbatchsize = 100000;
+    constexpr int inputreader_maxbatchsize = 200000;
 
-    for(auto& batch : inputreadBatches){
-        freeInputreadBatches.push(&batch);
+    for(auto& batch : readBatches){
+        freeReadBatches.push(&batch);
     }
 
     auto inputReaderFuture = std::async(std::launch::async,
@@ -1015,7 +1016,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
             while(multiInputReader.next() >= 0){
 
-                InputSequencesBatch* batch = freeInputreadBatches.pop();
+                ReadBatch* batch = freeReadBatches.pop();
 
                 // abegin = std::chrono::system_clock::now();
 
@@ -1046,22 +1047,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
         }
     );
 
-    struct OutputSequencesBatch{
-        int validItems = 0;
-        int processedItems = 0;
-        std::vector<ReadWithId> items;
-    };
-
-    std::array<OutputSequencesBatch, 4> outputreadBatches;
-
-    SimpleSingleProducerSingleConsumerQueue<OutputSequencesBatch*> freeOutputreadBatches;
-    SimpleSingleProducerSingleConsumerQueue<OutputSequencesBatch*> unprocessedOutputreadBatches;
-
     std::atomic<bool> noMoreOutputreadBatches{false};
-
-    for(auto& batch : outputreadBatches){
-        freeOutputreadBatches.push(&batch);
-    }
 
     auto outputWriterFuture = std::async(std::launch::async,
         [&](){
@@ -1085,7 +1071,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
             // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
             // std::chrono::duration<double> adelta{0};
 
-            OutputSequencesBatch* outputBatch = unprocessedOutputreadBatches.pop();
+            ReadBatch* outputBatch = unprocessedOutputreadBatches.pop();
 
             while(outputBatch != nullptr){                
 
@@ -1104,7 +1090,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                 // aend = std::chrono::system_clock::now();
                 // adelta += aend - abegin;
 
-                freeOutputreadBatches.push(outputBatch);     
+                freeReadBatches.push(outputBatch);     
 
                 outputBatch = unprocessedOutputreadBatches.popOrDefault(
                     [&](){
@@ -1127,7 +1113,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
         nullptr
     ); 
 
-    InputSequencesBatch* inputBatch = unprocessedInputreadBatches.pop();
+    ReadBatch* inputBatch = unprocessedInputreadBatches.pop();
 
     assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
 
@@ -1145,29 +1131,18 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     while(!(inputBatch == nullptr && tcsBatch == nullptr)){
         // bbegin = std::chrono::system_clock::now();
         
-        OutputSequencesBatch* outputBatch = freeOutputreadBatches.pop();
-        outputBatch->items.resize(inputreader_maxbatchsize);
-        outputBatch->validItems = 0;
-        outputBatch->processedItems = 0;
-
         // bend = std::chrono::system_clock::now();
         // bdelta += bend - bbegin;
+
+        //modify reads in inputbatch, applying corrections.
+        //then place inputbatch in outputqueue
 
         if(tcsBatch == nullptr){
             //all correction results are processed
             //copy remaining input reads to output file
             // abegin = std::chrono::system_clock::now();
             
-            std::for_each(
-                inputBatch->items.begin() + inputBatch->processedItems, 
-                inputBatch->items.begin() + inputBatch->validItems,
-                [&](auto& readWithId){
-                    std::swap(outputBatch->items[outputBatch->validItems], readWithId);
-                    outputBatch->validItems++;
-                }
-            );
-
-            inputBatch->processedItems = inputBatch->validItems;
+            ; //nothing to do
 
             // aend = std::chrono::system_clock::now();
             // adelta += aend - abegin;
@@ -1186,15 +1161,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     //all correction results are processed
                     //copy remaining input reads to output file
 
-                    std::for_each(
-                        first1, 
-                        last1,
-                        [&](auto& readWithId){
-                            std::swap(outputBatch->items[outputBatch->validItems], readWithId);
-                            outputBatch->validItems++;
-                        }
-                    );
-                    inputBatch->processedItems += std::distance(first1, last1);
+                    ; //nothing to do
 
                     // aend = std::chrono::system_clock::now();
                     // adelta += aend - abegin;
@@ -1253,11 +1220,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                         }
                     }      
 
-                    std::swap(outputBatch->items[outputBatch->validItems], readWithId);
-                    outputBatch->validItems++;
-
                     ++first1;
-                    inputBatch->processedItems++;
                 }
                 
             }
@@ -1268,11 +1231,9 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
         // bbegin = std::chrono::system_clock::now();
 
-        unprocessedOutputreadBatches.push(outputBatch);
-
         assert(inputBatch != nullptr);
 
-        freeInputreadBatches.push(inputBatch);
+        unprocessedOutputreadBatches.push(inputBatch);
 
         inputBatch = unprocessedInputreadBatches.popOrDefault(
             [&](){
