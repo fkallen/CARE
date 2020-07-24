@@ -306,6 +306,233 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs(
 };
 
 
+#if 1
+CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
+    std::vector<TempCorrectedSequence>& tmpresults, 
+    ReadWithId& readWithId
+){
+    if(tmpresults.empty()){
+        CombinedCorrectionResult result;
+        result.corrected = false;        
+        return result;
+    }
+
+    static bool once = true;
+
+    if(once){
+        std::cerr << "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\n";
+        once = false;
+    }
+
+    constexpr bool outputHQ = true;
+    constexpr bool outputLQWithCandidates = true;
+    constexpr bool outputLQOnlyAnchor = true;
+    // constexpr bool outputOnlyCand = false;
+
+    auto isAnchor = [](const auto& tcs){
+        return tcs.type == TempCorrectedSequence::Type::Anchor;
+    };
+
+    auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isAnchor);
+
+    if(anchorIter != tmpresults.end()){
+        //if there is a correction using a high quality alignment, use it
+        if(anchorIter->hq){
+            if(outputHQ){
+                if(anchorIter->useEdits){
+                    for(const auto& edit : anchorIter->edits){
+                        readWithId.read.sequence[edit.pos] = edit.base;
+                    }
+                }else{
+                    std::swap(readWithId.read.sequence, anchorIter->sequence);
+                }
+
+                //assert(anchorIter->sequence.size() == originalSequence.size());
+                CombinedCorrectionResult result;
+
+                result.corrected = true;
+                result.hqCorrection = true;
+                
+                return result;
+            }else{
+                CombinedCorrectionResult result;
+
+                result.corrected = false;
+                return result;
+            }
+        }else{
+
+            auto isEqualSequenceOneHasEdits = [&](const auto& tcswithedit, const auto& tcs2){
+                assert(tcswithedit.useEdits);
+                assert(!tcs2.useEdits);
+
+                const int len1 = readWithId.read.sequence.length();
+
+                auto editIter = tcswithedit.edits.begin();
+                int pos = 0;
+                while(pos != len1 && editIter != tcswithedit.edits.end()){
+                    if(pos != editIter->pos){
+                        if(readWithId.read.sequence[pos] != tcs2.sequence[pos]){
+                            return false;
+                        }
+                    }else{
+                        if(editIter->base != tcs2.sequence[pos]){
+                            return false;
+                        }
+                        ++editIter;
+                    }
+
+                    pos++;
+                }
+                while(pos != len1){
+                    if(readWithId.read.sequence[pos] != tcs2.sequence[pos]){
+                        return false;
+                    }
+                    pos++;
+                }
+                return true;
+            };
+
+            auto isEqualSequence = [&](const auto& tcs1, const auto& tcs2){
+                
+                const int len1 = tcs1.useEdits ? readWithId.read.sequence.length() : tcs1.sequence.length();
+                const int len2 = tcs2.useEdits ? readWithId.read.sequence.length() : tcs2.sequence.length();
+                if(len1 == len2){
+                    if(tcs1.useEdits && tcs2.useEdits){
+                        return tcs1.edits == tcs2.edits;
+                    }else if(!tcs1.useEdits && !tcs2.useEdits){
+                        return tcs1.sequence == tcs2.sequence;
+                    }else if(tcs1.useEdits && !tcs2.useEdits){
+                        if(tcs1.edits.empty()){
+                            return readWithId.read.sequence == tcs2.sequence;
+                        }else{
+                            return isEqualSequenceOneHasEdits(tcs1, tcs2);
+                        }
+                    }else{
+                        //if(!tcs1.useEdits && tcs2.useEdits)
+                        if(tcs2.edits.empty()){
+                            return readWithId.read.sequence == tcs1.sequence;
+                        }else{
+                            return isEqualSequenceOneHasEdits(tcs2, tcs1);
+                        }
+                    }
+                }else{
+                    return false;
+                }
+            };
+
+            if(tmpresults.size() >= 3){
+
+                // for(auto& tmpres : tmpresults){
+                //     if(tmpres.useEdits){
+                //         tmpres.sequence = readWithId.read.sequence;
+                //         for(const auto& edit : tmpres.edits){
+                //             tmpres.sequence[edit.pos] = edit.base;
+                //         }
+                //     }
+                // }
+
+                const bool sizelimitok = true; //tmpresults.size() > 3;
+
+                // const bool sameCorrections2 = std::all_of(tmpresults.begin()+1,
+                //                                         tmpresults.end(),
+                //                                         [&](const auto& tcs){
+                //                                             return tmpresults[0].sequence == tcs.sequence;
+                //                                         });
+
+                const bool sameCorrections = std::all_of(tmpresults.begin()+1,
+                                                        tmpresults.end(),
+                                                        [&](const auto& tcs){
+                                                            return isEqualSequence(tmpresults[0], tcs);
+                                                        });
+
+                //assert(sameCorrections == sameCorrections2);                
+
+                if(sameCorrections && sizelimitok){
+                    if(outputLQWithCandidates){
+                        CombinedCorrectionResult result;
+                        result.corrected = true;
+                        result.lqCorrectionWithCandidates = true;
+
+                        if(tmpresults[0].useEdits){
+                            for(const auto& edit : tmpresults[0].edits){
+                                readWithId.read.sequence[edit.pos] = edit.base;
+                            }
+                        }else{
+                            std::swap(readWithId.read.sequence, tmpresults[0].sequence);
+                        }
+
+                        
+                        return result;
+                    }else{
+                        CombinedCorrectionResult result;
+                        result.corrected = false;
+                        return result;
+                    }
+                }else{
+                    CombinedCorrectionResult result;
+                    result.corrected = false;
+                    return result;
+                }
+            }else{
+                if(outputLQOnlyAnchor){
+                    if(anchorIter->useEdits){
+                        for(const auto& edit : anchorIter->edits){
+                            readWithId.read.sequence[edit.pos] = edit.base;
+                        }
+                    }else{
+                        std::swap(readWithId.read.sequence, anchorIter->sequence);
+                    }
+                    
+                    CombinedCorrectionResult result;
+                    result.corrected = true;
+                    result.lqCorrectionOnlyAnchor = true;
+                    return result;
+                }else{
+                    CombinedCorrectionResult result;
+                    result.corrected = false;
+                    return result;
+                }
+            }
+        }
+    }else{
+
+        CombinedCorrectionResult result;
+        result.corrected = false;
+        return result;
+
+        // tmpresults.erase(std::remove_if(tmpresults.begin(),
+        //                                 tmpresults.end(),
+        //                                 [](const auto& tcs){
+        //                                     return std::abs(tcs.shift) > 0;
+        //                                 }),
+        //                   tmpresults.end());
+        //
+        // if(tmpresults.size() >= 1){
+        //
+        //     const bool sameCorrections = std::all_of(tmpresults.begin()+1,
+        //                                             tmpresults.end(),
+        //                                             [&](const auto& tcs){
+        //                                                 return tmpresults[0].sequence == tcs.sequence;
+        //                                             });
+        //
+        //     if(sameCorrections){
+        //         return std::make_pair(tmpresults[0].sequence, outputOnlyCand);
+        //     }else{
+        //         return std::make_pair(std::string{""}, false);
+        //     }
+        // }else{
+        //     return std::make_pair(std::string{""}, false);
+        // }
+
+    }
+
+};
+
+#endif
+
+
+
 template<class MemoryFile_t>
 void constructOutputFileFromCorrectionResults_impl(
                     const std::string& tempdir,
@@ -776,349 +1003,6 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     std::atomic<bool> noMoreInputreadBatches{false};
 
-    for(auto& batch : inputreadBatches){
-        freeInputreadBatches.push(&batch);
-    }
-
-    auto inputReaderFuture = std::async(std::launch::async,
-        [&](){
-            constexpr int maxbatchsize = 65536;
-
-            MultiInputReader multiInputReader(originalReadFiles);
-
-            TIMERSTARTCPU(inputparsing);
-
-            std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            std::chrono::duration<double> adelta{0};
-
-            while(multiInputReader.next() >= 0){
-
-                InputSequencesBatch* batch = freeInputreadBatches.pop();
-
-                abegin = std::chrono::system_clock::now();
-
-                batch->items.resize(maxbatchsize);
-
-                std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
-                int batchsize = 1;
-
-                while(batchsize < maxbatchsize && multiInputReader.next() >= 0){
-                    std::swap(batch->items[batchsize], multiInputReader.getCurrent());
-                    batchsize++;
-                }
-
-                aend = std::chrono::system_clock::now();
-                adelta += aend - abegin;
-
-                batch->processedItems = 0;
-                batch->validItems = batchsize;
-
-                unprocessedInputreadBatches.push(batch);                
-            }
-
-            std::cout << "# elapsed time ("<< "inputparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
-
-            TIMERSTOPCPU(inputparsing);
-
-            noMoreInputreadBatches = true;
-        }
-    );
-
-    //no gz output
-    if(outputFormat == FileFormat::FASTQGZ)
-        outputFormat = FileFormat::FASTQ;
-    if(outputFormat == FileFormat::FASTAGZ)
-        outputFormat = FileFormat::FASTA;
-
-    std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
-
-
-    for(const auto& outputfile : outputfiles){
-        writerVector.emplace_back(makeSequenceWriter(outputfile, outputFormat));
-    }
-
-    TempCorrectedSequenceBatch* tcsBatch = unprocessedTcsBatches.popOrDefault(
-        [&](){
-            return !noMoreTcsBatches;  //its possible that there are no corrections. In that case, return nullptr
-        },
-        nullptr
-    ); 
-
-    InputSequencesBatch* inputBatch = unprocessedInputreadBatches.pop();
-
-    assert(!(inputBatch == nullptr && tcsBatch != nullptr)); //there must be at least one batch of input reads
-
-    std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-    std::chrono::duration<double> adelta{0};
-
-    std::chrono::time_point<std::chrono::system_clock> bbegin, bend;
-    std::chrono::duration<double> bdelta{0};
-
-    std::chrono::time_point<std::chrono::system_clock> cbegin, cend;
-    std::chrono::duration<double> cdelta{0};
-
-    while(!(inputBatch == nullptr && tcsBatch == nullptr)){
-        if(tcsBatch == nullptr){
-            //all correction results are processed
-            //copy remaining input reads to output file
-            bbegin = std::chrono::system_clock::now();
-
-            std::for_each(
-                inputBatch->items.begin() + inputBatch->processedItems, 
-                inputBatch->items.begin() + inputBatch->validItems,
-                [&](const auto& readWithId){
-                    writerVector[readWithId.fileId]->writeRead(readWithId.read);
-                }
-            );
-            inputBatch->processedItems = inputBatch->validItems;
-
-            bend = std::chrono::system_clock::now();
-            bdelta += bend - bbegin;
-        }else{
-
-            auto last1 = inputBatch->items.begin() + inputBatch->validItems;
-            auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
-
-            auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
-            auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
-
-            cbegin = std::chrono::system_clock::now();            
-
-            while(first1 != last1) {
-                if(first2 == last2){
-                    //all correction results are processed
-                    //copy remaining input reads to output file
-                    bbegin = std::chrono::system_clock::now();
-
-                    std::for_each(
-                        first1, 
-                        last1,
-                        [&](const auto& readWithId){
-                            writerVector[readWithId.fileId]->writeRead(readWithId.read);
-                        }
-                    );
-                    inputBatch->processedItems += std::distance(first1, last1);
-
-                    bend = std::chrono::system_clock::now();
-                    bdelta += bend - bbegin;
-                    break;
-                }
-                if(first2->readId < first1->globalReadId) {
-                    assert(false); //cannot happen
-                }else{
-                    abegin = std::chrono::system_clock::now();
-
-                    ReadWithId& readWithId = *first1;
-                    std::vector<TempCorrectedSequence> buffer;
-                    while(first2 != last2 && !(first1->globalReadId < first2->readId)){
-                        buffer.push_back(*first2);
-                        ++first2;
-                        tcsBatch->processedItems++;
-
-                        if(first2 == last2){
-                            freeTcsBatches.push(tcsBatch);
-
-                            tcsBatch = unprocessedTcsBatches.popOrDefault(
-                                [&](){
-                                    return !noMoreTcsBatches;  //its possible that there are no more corrections. In that case, return nullptr
-                                },
-                                nullptr
-                            );
-
-                            if(tcsBatch != nullptr){
-                                //new batch could be fetched. update begin and end accordingly
-                                last2 = tcsBatch->items.begin() + tcsBatch->validItems;
-                                first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;
-                            }
-                        }
-                    }
-                    // for(auto& tmpres : buffer){
-                    //     if(tmpres.useEdits){
-                    //         tmpres.sequence = readWithId.read.sequence;
-                    //         for(const auto& edit : tmpres.edits){
-                    //             tmpres.sequence[edit.pos] = edit.base;
-                    //         }
-                    //     }
-                    // }
-
-                    
-
-                    CombinedCorrectionResult combinedresult = combineMultipleCorrectionResults1_rawtcs(
-                        buffer, 
-                        readWithId.read.sequence
-                    );
-
-                    aend = std::chrono::system_clock::now();
-                    adelta += aend - abegin;
-
-                    if(combinedresult.corrected){
-                        if(!isValidSequence(combinedresult.correctedSequence)){
-                            std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                                    << " with header " << readWithId.read.name << " " << readWithId.read.comment
-                                    << "does contain an invalid DNA base!\n"
-                                    << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
-                        }
-                    }      
-
-                    bbegin = std::chrono::system_clock::now();
-
-                    std::swap(readWithId.read.sequence, combinedresult.correctedSequence);
-                    writerVector[readWithId.fileId]->writeRead(readWithId.read);
-
-                    bend = std::chrono::system_clock::now();
-                    bdelta += bend - bbegin;
-
-                    ++first1;
-                    inputBatch->processedItems++;
-                }
-                
-            }
-
-            cend = std::chrono::system_clock::now();
-            cdelta += cend - cbegin;
-        }
-
-        assert(inputBatch != nullptr);
-
-        freeInputreadBatches.push(inputBatch);
-
-        inputBatch = unprocessedInputreadBatches.popOrDefault(
-            [&](){
-                return !noMoreInputreadBatches;
-            },
-            nullptr
-        );  
-        
-        assert(!(inputBatch == nullptr && tcsBatch != nullptr));
-
-    }
-
-    std::cout << "# elapsed time ("<< "a" <<"): " << adelta.count()  << " s" << std::endl;
-    std::cout << "# elapsed time ("<< "b" <<"): " << bdelta.count()  << " s" << std::endl;
-    std::cout << "# elapsed time ("<< "c" <<"): " << cdelta.count()  << " s" << std::endl;
-
-    decoderFuture.wait();
-    inputReaderFuture.wait();
-
-
-    TIMERSTOPCPU(merging);
-}
-
-
-
-
-template<class MemoryFile_t>
-void constructOutputFileFromCorrectionResults_multithreading2_impl(
-                    const std::string& tempdir,
-                    const std::vector<std::string>& originalReadFiles,
-                    MemoryFile_t& partialResults, 
-                    std::size_t memoryForSorting,
-                    FileFormat outputFormat,
-                    const std::vector<std::string>& outputfiles,
-                    bool isSorted){
-
-    assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
-
-
-    if(!isSorted){
-        auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-            read_number id1, id2;
-            std::memcpy(&id1, ptr1, sizeof(read_number));
-            std::memcpy(&id2, ptr2, sizeof(read_number));
-            
-            return id1 < id2;
-        };
-
-        auto elementcomparator = [](const auto& l, const auto& r){
-            return l.readId < r.readId;
-        };
-
-        TIMERSTARTCPU(sort_results_by_read_id);
-        partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_results_by_read_id);
-    }
-
-    TIMERSTARTCPU(merging);
-
-    auto isValidSequence = [](const std::string& s){
-        return std::all_of(s.begin(), s.end(), [](char c){
-            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-        });
-    };
-
-    struct TempCorrectedSequenceBatch{
-        int validItems = 0;
-        int processedItems = 0;
-        std::vector<TempCorrectedSequence> items;
-    };
-
-    std::array<TempCorrectedSequenceBatch, 4> tcsBatches;
-
-    SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> freeTcsBatches;
-
-    SimpleSingleProducerSingleConsumerQueue<TempCorrectedSequenceBatch*> unprocessedTcsBatches;
-
-    std::atomic<bool> noMoreTcsBatches{false};
-
-    for(auto& batch : tcsBatches){
-        freeTcsBatches.push(&batch);
-    }
-
-    auto decoderFuture = std::async(std::launch::async,
-        [&](){
-            constexpr int maxbatchsize = 65536;
-
-            auto partialResultsReader = partialResults.makeReader();
-
-            std::chrono::time_point<std::chrono::system_clock> abegin, aend;
-            std::chrono::duration<double> adelta{0};
-
-            TIMERSTARTCPU(tcsparsing);
-
-            while(partialResultsReader.hasNext()){
-                TempCorrectedSequenceBatch* batch = freeTcsBatches.pop();
-
-                abegin = std::chrono::system_clock::now();
-
-                batch->items.resize(maxbatchsize);
-
-                int batchsize = 0;
-                while(batchsize < maxbatchsize && partialResultsReader.hasNext()){
-                    batch->items[batchsize] = *(partialResultsReader.next());
-                    batchsize++;
-                }
-
-                aend = std::chrono::system_clock::now();
-                adelta += aend - abegin;
-
-                batch->processedItems = 0;
-                batch->validItems = batchsize;
-
-                unprocessedTcsBatches.push(batch);
-            }
-
-            std::cout << "# elapsed time ("<< "tcsparsing without queues" <<"): " << adelta.count()  << " s" << std::endl;
-
-            TIMERSTOPCPU(tcsparsing);
-
-            noMoreTcsBatches = true;
-        }
-    );
-
-
-    struct InputSequencesBatch{
-        int validItems = 0;
-        int processedItems = 0;
-        std::vector<ReadWithId> items;
-    };
-
-    std::array<InputSequencesBatch, 4> inputreadBatches;
-
-    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> freeInputreadBatches;
-    SimpleSingleProducerSingleConsumerQueue<InputSequencesBatch*> unprocessedInputreadBatches;
-
-    std::atomic<bool> noMoreInputreadBatches{false};
-
     constexpr int inputreader_maxbatchsize = 65536;
 
     for(auto& batch : inputreadBatches){
@@ -1316,9 +1200,8 @@ void constructOutputFileFromCorrectionResults_multithreading2_impl(
                     bdelta += bend - bbegin;
                     break;
                 }
-                if(first2->readId < first1->globalReadId) {
-                    assert(false); //cannot happen
-                }else{
+                assert(first2->readId >= first1->globalReadId);
+                {
                     abegin = std::chrono::system_clock::now();
 
                     ReadWithId& readWithId = *first1;
@@ -1356,26 +1239,25 @@ void constructOutputFileFromCorrectionResults_multithreading2_impl(
 
                     
 
-                    CombinedCorrectionResult combinedresult = combineMultipleCorrectionResults1_rawtcs(
+                    CombinedCorrectionResult combinedresult = combineMultipleCorrectionResults1_rawtcs2(
                         buffer, 
-                        readWithId.read.sequence
+                        readWithId
                     );
 
                     aend = std::chrono::system_clock::now();
                     adelta += aend - abegin;
 
                     if(combinedresult.corrected){
-                        if(!isValidSequence(combinedresult.correctedSequence)){
+                        if(!isValidSequence(readWithId.read.sequence)){
                             std::cerr << "Warning. Corrected read " << readWithId.globalReadId
                                     << " with header " << readWithId.read.name << " " << readWithId.read.comment
                                     << "does contain an invalid DNA base!\n"
-                                    << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
+                                    << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                         }
                     }      
 
                     bbegin = std::chrono::system_clock::now();
 
-                    std::swap(readWithId.read.sequence, combinedresult.correctedSequence);
                     std::swap(outputBatch->items[outputBatch->validItems], readWithId);
                     outputBatch->validItems++;
 
@@ -1434,7 +1316,7 @@ void constructOutputFileFromCorrectionResults(
 ){
                         
     //constructOutputFileFromCorrectionResults2_impl(
-    constructOutputFileFromCorrectionResults_multithreading2_impl(
+    constructOutputFileFromCorrectionResults_multithreading_impl(
         tempdir, 
         originalReadFiles, 
         partialResults, 
