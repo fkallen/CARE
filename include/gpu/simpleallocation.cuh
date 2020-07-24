@@ -1,23 +1,14 @@
 #ifndef SIMPLEALLOCATION_HPP
 #define SIMPLEALLOCATION_HPP
 
+#include <hpc_helpers.cuh>
+
 #ifdef __NVCC__
 
 #include <iostream>
 #include <stdexcept>
 #include <cassert>
-#ifndef CUERR
 
-#define CUERR {                                                            \
-    cudaError_t err;                                                       \
-    if ((err = cudaGetLastError()) != cudaSuccess) {                       \
-        std::cerr << "CUDA error: " << cudaGetErrorString(err) << " : "    \
-                  << __FILE__ << ", line " << __LINE__ << "\n";       \
-        exit(1);                                                           \
-    }                                                                      \
-}
-
-#endif
 
 namespace detail{
 
