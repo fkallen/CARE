@@ -7,6 +7,8 @@
 #include <queue>
 #include <cassert>
 
+#include <moodycamel/readerwriterqueue/readerwriterqueue.h>
+
 namespace care{
 
 struct SyncFlag{
@@ -106,6 +108,44 @@ struct SimpleSingleProducerSingleConsumerQueue{
             }
         }else{
             return defaultElement;
+        }
+    }
+};
+
+template<class T>
+struct SingleProducerSingleConsumerQueue{
+    moodycamel::BlockingReaderWriterQueue<T> queue;
+
+    void push(T item){
+        queue.enqueue(item); 
+    }
+
+    //wait until queue is not empty, then remove first element from queue and return it
+    T pop(){
+        T item;
+        queue.wait_dequeue(item);
+        return item;
+    }
+
+    //Wait until func() == false or queue is not empty.
+    //if func() == false, return defaultElement, else the first element in queue
+    template<class Func>
+    T popOrDefault(Func func, T defaultElement){
+        T item;
+        bool success = false;
+
+        while(!success && (func() || queue.size_approx() > 0)){
+            success = queue.try_dequeue(item);
+            
+            if(!success){
+                std::this_thread::sleep_for(std::chrono::milliseconds{1});
+            }
+        }
+
+        if(!success){
+            return defaultElement;
+        }else{
+            return item;
         }
     }
 };
