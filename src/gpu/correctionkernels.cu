@@ -394,7 +394,8 @@ namespace gpu{
         static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
         constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
 
-        auto reverseWithGroup = [](auto& group, char* sequence, int sequenceLength){
+        auto reverseWithGroupShfl = [](auto& group, char* sequence, int sequenceLength){
+
             auto reverse = [](char4 data){
                 char4 s;
                 s.x = data.w;
@@ -460,7 +461,7 @@ namespace gpu{
                 s.w = right.z;
                 return s;
             };
-
+        
             if(sequenceLength <= 1) return;
         
             const int arrayLength = SDIV(sequenceLength, 4); // 4 bases per int
@@ -486,23 +487,56 @@ namespace gpu{
             group.sync();
         
             if(unusedPositions > 0){
+        
+                char4 left;
+                char4 right;
+                char4 tmp;
+        
+                const int numIterations = SDIV(arrayLength-1, group.size());
+        
+                for(int iteration = 0; iteration < numIterations; iteration++){
+                    const int index = iteration * group.size() + group.thread_rank();
+                    if(index < arrayLength){
+                        left = sequenceAsChar4[index];
+                    }
+                    const int index2 = (iteration+1) * group.size() + group.thread_rank();
+                    if(index2 < arrayLength && group.thread_rank() == 0){
+                        tmp = sequenceAsChar4[index2];
+                    }
+        
+                    right = group.shfl_down(left, 1);
+                    tmp = group.shfl(tmp, 0);
+                    if(group.thread_rank() == group.size() - 1){
+                        right = tmp;
+                    }
+        
+                    if(unusedPositions == 1){
+                        char4 result = handleUnusedPositions1(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }else if(unusedPositions == 2){
+                        char4 result = handleUnusedPositions2(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }else{
+                        char4 result = handleUnusedPositions3(left, right);
+                        if(index < arrayLength - 1){
+                            sequenceAsChar4[index] = result;
+                        }
+                    }
+                }
+        
+                group.sync();
+        
                 if(group.thread_rank() == 0){
                     if(unusedPositions == 1){
-                        for(int i = 0; i < arrayLength-1; i++){
-                            sequenceAsChar4[i] = handleUnusedPositions1(sequenceAsChar4[i], sequenceAsChar4[i+1]);
-                        }
                         sequenceAsChar4[arrayLength-1] = shiftLeft1(sequenceAsChar4[arrayLength-1]);
                     }else if(unusedPositions == 2){
-                        for(int i = 0; i < arrayLength-1; i++){
-                            sequenceAsChar4[i] = handleUnusedPositions2(sequenceAsChar4[i], sequenceAsChar4[i+1]);
-                        }
                         sequenceAsChar4[arrayLength-1] = shiftLeft2(sequenceAsChar4[arrayLength-1]);
                     }else{
                         assert(unusedPositions == 3);
-        
-                        for(int i = 0; i < arrayLength-1; i++){
-                            sequenceAsChar4[i] = handleUnusedPositions3(sequenceAsChar4[i], sequenceAsChar4[i+1]);
-                        }
                         sequenceAsChar4[arrayLength-1] = shiftLeft3(sequenceAsChar4[arrayLength-1]);
                     }
                 }
@@ -610,7 +644,7 @@ namespace gpu{
                     shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(3-msa.consensus[i]);
                 }
                 tgroup.sync(); // threads may access elements in shared memory which were written by another thread
-                reverseWithGroup(tgroup, shared_correctedCandidate, candidate_length);
+                reverseWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
                 tgroup.sync();
             }else{
                 for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
