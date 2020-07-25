@@ -395,8 +395,6 @@ namespace gpu{
         constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
 
         auto reverseWithGroup = [](auto& group, char* sequence, int sequenceLength){
-            // assume 4 chars per int, 0 = A, 1 = C, 2 = G, 3 = T
-
             auto reverse = [](char4 data){
                 char4 s;
                 s.x = data.w;
@@ -405,36 +403,107 @@ namespace gpu{
                 s.w = data.x;
                 return s;
             };
-
+        
+            auto shiftLeft1 = [](char4 data){
+                char4 s;
+                s.x = data.y;
+                s.y = data.z;
+                s.z = data.w;
+                s.w = '\0';
+                return s;
+            };
+        
+            auto shiftLeft2 = [](char4 data){
+                char4 s;
+                s.x = data.z;
+                s.y = data.w;
+                s.z = '\0';
+                s.w = '\0';
+                return s;
+            };
+        
+            auto shiftLeft3 = [](char4 data){
+                char4 s;
+                s.x = data.z;
+                s.y = '\0';
+                s.z = '\0';
+                s.w = '\0';
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by one char. return leftmost 4 chars
+            auto handleUnusedPositions1 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.y;
+                s.y = left.z;
+                s.z = left.w;
+                s.w = right.x;
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by two chars. return leftmost 4 chars
+            auto handleUnusedPositions2 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.z;
+                s.y = left.w;
+                s.z = right.x;
+                s.w = right.y;
+                return s;
+            };
+        
+            //treat [left,right] as "char8", shift to the left by three chars. return leftmost 4 chars
+            auto handleUnusedPositions3 = [](char4 left, char4 right){
+                char4 s;
+                s.x = left.w;
+                s.y = right.x;
+                s.z = right.y;
+                s.w = right.z;
+                return s;
+            };
+        
             const int arrayLength = SDIV(sequenceLength, 4); // 4 bases per int
             const int unusedPositions = arrayLength * 4 - sequenceLength;
-            char4* sequenceAsInts = (char4*)sequence;
-
+            char4* sequenceAsChar4 = (char4*)sequence;
+        
             for(int i = group.thread_rank(); i < arrayLength/2; i += group.size()){
                 const char4 fdata = ((char4*)sequence)[i];
                 const char4 bdata = ((char4*)sequence)[arrayLength - 1 - i];
-
+        
                 const char4 front = reverse(fdata);
                 const char4 back = reverse(bdata);
-                sequenceAsInts[i] = back;
-                sequenceAsInts[arrayLength - 1 - i] = front;
+                sequenceAsChar4[i] = back;
+                sequenceAsChar4[arrayLength - 1 - i] = front;
             }
-
+        
             if(arrayLength % 2 == 1 && group.thread_rank() == 0){
                 const int middleindex = arrayLength/2;
                 const char4 mdata = ((char4*)sequence)[middleindex];
-                sequenceAsInts[middleindex] = reverse(mdata);
+                sequenceAsChar4[middleindex] = reverse(mdata);
             }
-
-            unsigned int* sequenceAsInts2 = (unsigned int*)sequence;
-    
+        
+            group.sync();
+        
             if(unusedPositions > 0){
-                for(int i = 0; i < arrayLength-1; i++){
-                    sequenceAsInts2[i] = (sequenceAsInts2[i] << (8*unusedPositions))
-                                                   | (sequenceAsInts2[i+1] >> (8 * (4-unusedPositions)));
-    
+                if(group.thread_rank() == 0){
+                    if(unusedPositions == 1){
+                        for(int i = 0; i < arrayLength-1; i++){
+                            sequenceAsChar4[i] = handleUnusedPositions1(sequenceAsChar4[i], sequenceAsChar4[i+1]);
+                        }
+                        sequenceAsChar4[arrayLength-1] = shiftLeft1(sequenceAsChar4[arrayLength-1]);
+                    }else if(unusedPositions == 2){
+                        for(int i = 0; i < arrayLength-1; i++){
+                            sequenceAsChar4[i] = handleUnusedPositions2(sequenceAsChar4[i], sequenceAsChar4[i+1]);
+                        }
+                        sequenceAsChar4[arrayLength-1] = shiftLeft2(sequenceAsChar4[arrayLength-1]);
+                    }else{
+                        assert(unusedPositions == 3);
+        
+                        for(int i = 0; i < arrayLength-1; i++){
+                            sequenceAsChar4[i] = handleUnusedPositions3(sequenceAsChar4[i], sequenceAsChar4[i+1]);
+                        }
+                        sequenceAsChar4[arrayLength-1] = shiftLeft3(sequenceAsChar4[arrayLength-1]);
+                    }
                 }
-                sequenceAsInts2[arrayLength-1] <<= (8*unusedPositions);
             }
         };
 
@@ -545,6 +614,7 @@ namespace gpu{
                 for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
                     shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(msa.consensus[i]);
                 }
+                tgroup.sync();
             }
             
             //copy corrected sequence from smem to global output
