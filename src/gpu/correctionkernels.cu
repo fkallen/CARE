@@ -460,6 +460,8 @@ namespace gpu{
                 s.w = right.z;
                 return s;
             };
+
+            if(sequenceLength <= 1) return;
         
             const int arrayLength = SDIV(sequenceLength, 4); // 4 bases per int
             const int unusedPositions = arrayLength * 4 - sequenceLength;
