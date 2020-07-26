@@ -105,6 +105,9 @@ public:
     Gpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignment)
         : numRows(numRows), numColumns(numColumns), rowPitchInBytes(rowPitchInBytes)
     {
+        assert(numRows > 0);
+        assert(numColumns > 0);
+        assert(alignment > 0);
         assert(alignment % sizeof(T) == 0);
 
         cudaGetDevice(&deviceId); CUERR;
@@ -165,6 +168,8 @@ public:
     }
 
     void gather(T* d_dest, size_t destRowPitchInBytes, const int* d_indices, int numIndices, cudaStream_t stream = 0){
+        if(numIndices == 0) return;
+
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(numIndices * numColumns, block.x), 1, 1);
 
@@ -182,6 +187,8 @@ public:
     }
 
     void scatter(const T* d_src, size_t srcRowPitchInBytes, const int* d_indices, int numIndices, cudaStream_t stream = 0){
+        if(numIndices == 0) return;
+
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(numIndices * numColumns, block.x), 1, 1);
 
@@ -217,7 +224,10 @@ public:
     Cpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignment)
         : numRows(numRows), numColumns(numColumns), rowPitchInBytes(rowPitchInBytes)
     {
-        assert(alignment % sizeof(T) == 0);
+        assert(numRows > 0);
+        assert(numColumns > 0);
+        assert(alignment > 0);
+        assert(alignment % sizeof(T) == 0);        
         
         const size_t minbytesPerRow = sizeof(T) * numColumns;
         rowPitchInBytes = SDIV(minbytesPerRow, alignment) * alignment;
@@ -265,6 +275,8 @@ public:
     }
 
     void gather(T* h_dest, size_t destRowPitchInBytes, const int* h_indices, int numIndices){
+        if(numIndices == 0) return;
+
         TwoDimensionalArray<T> array = wrapper();
         SingleThreadGroup group{};
 
@@ -278,6 +290,8 @@ public:
     }
 
     void scatter(const T* h_src, size_t srcRowPitchInBytes, const int* h_indices, int numIndices){
+        if(numIndices == 0) return;
+
         TwoDimensionalArray<T> array = wrapper();
         SingleThreadGroup group{};
 
