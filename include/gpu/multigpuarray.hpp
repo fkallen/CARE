@@ -344,10 +344,11 @@ public:
                 cub::ArgIndexInputIterator<int*, int> d_indicesWithPosition(deviceBuffers.d_indices.get());
 
                 auto selectOp = [
-                    deviceId, ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto indexPositionPair){
                     //key == position, value == index
-                    return (ps[deviceId] <= indexPositionPair.key && indexPositionPair.key < ps[deviceId+1]);
+                    return (ps[deviceIdIndex] <= indexPositionPair.value && indexPositionPair.value < ps[deviceIdIndex+1]);
                 };
 
                 size_t temp_storage_bytes = 0;
@@ -377,10 +378,11 @@ public:
                 );
 
                 auto gatherIndexGenerator = [
-                    deviceId, d_indicesWithPosition, ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    d_indicesWithPosition, ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
                     const int index = d_indicesWithPosition[i].value;
-                    return index - ps[deviceId]; //transform into local index for this gpuArray
+                    return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
                 };
 
                 gpuArray->gather(
@@ -434,7 +436,6 @@ public:
                 dim3 grid(SDIV(numIndices, block.x), 1, 1);
 
                 auto scatterIndexGenerator = [
-                    deviceId, 
                     d_indicesWithPosition = callerDeviceBuffer.d_selectedIndicesWithPositions.get(),
                     ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
@@ -498,10 +499,11 @@ public:
                 cub::ArgIndexInputIterator<const int*, int> d_indicesWithPosition(d_indices);
 
                 auto selectOp = [
-                    deviceId, ps = callerDeviceBuffer.d_multigpuarrayOffsetsPrefixSum.get()
+                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    ps = callerDeviceBuffer.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto indexPositionPair){
                     //key == position, value == index
-                    return (ps[deviceId] <= indexPositionPair.key && indexPositionPair.key < ps[deviceId+1]);
+                    return (ps[deviceIdIndex] <= indexPositionPair.key && indexPositionPair.key < ps[deviceIdIndex+1]);
                 };
 
                 size_t temp_storage_bytes = 0;
@@ -531,7 +533,7 @@ public:
                 );
 
                 auto gatherIndexGenerator = [
-                    deviceId, d_indicesWithPosition, 
+                    d_indicesWithPosition, 
                     ps = callerDeviceBuffer.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
                     const int index = d_indicesWithPosition[i].key; // position in array
@@ -557,7 +559,7 @@ public:
                     deviceId, 
                     callerDeviceBuffer.d_numSelected.get(), 
                     srcDeviceId, 
-                    sizeof(int) * numIndices, 
+                    sizeof(int), 
                     srcStream
                 );
 
@@ -587,10 +589,11 @@ public:
                 cudaStreamWaitEvent(targetDeviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
                 auto scatterIndexGenerator = [
-                    deviceId, d_indicesWithPosition, ps = targetDeviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    d_indicesWithPosition, ps = targetDeviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
                     const int index = d_indicesWithPosition[i].value;
-                    return index - ps[deviceId]; //transform into local index for this gpuArray
+                    return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
                 };
 
                 gpuArray->scatter(
@@ -654,7 +657,9 @@ private:
         size_t count, 
         cudaStream_t stream = 0
     ) const{
-        cudaMemcpyAsync(dst, src, count, D2D, stream);
+        if(dstDevice == srcDevice && dst == src) return;
+
+        cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream); CUERR;
     }
 
     void init(
@@ -702,17 +707,35 @@ private:
 
         assert(remaining == 0);
 
+        std::vector<int> usedDeviceIds;
+
         for(int i = 0; i < numGpus; i++){
-            cub::SwitchDevice sd(dataDeviceIds[i]);
-            auto arrayptr = std::make_unique<Gpu2dArrayManaged<T>>(
-                rowsPerGpu[i], getNumColumns(), getAlignmentInBytes()
-            );
-            gpuArrays.emplace_back(std::move(arrayptr));
+            if(rowsPerGpu[i] > 0){
+                cub::SwitchDevice sd(dataDeviceIds[i]);
+                auto arrayptr = std::make_unique<Gpu2dArrayManaged<T>>(
+                    rowsPerGpu[i], getNumColumns(), getAlignmentInBytes()
+                );
+                gpuArrays.emplace_back(std::move(arrayptr));
+
+                usedDeviceIds.emplace_back(dataDeviceIds[i]);
+            }
         }
+
+        dataDeviceIds = usedDeviceIds;
 
         std::copy(rowsPerGpu.begin(), rowsPerGpu.end(), h_arrayOffsets.get());
         std::partial_sum(rowsPerGpu.begin(), rowsPerGpu.end(), h_arrayOffsetsPrefixSum.get() + 1);
         h_arrayOffsetsPrefixSum[0] = 0;
+    }
+
+    int getDeviceIdIndex(int deviceId) const{
+        auto it = std::find(dataDeviceIds.begin(), dataDeviceIds.end(), deviceId);
+        if(it != dataDeviceIds.end()){
+            return std::distance(dataDeviceIds.begin(), it);
+        }else{
+            assert(false);
+            return -1;
+        }
     }
 
     size_t numRows{};
