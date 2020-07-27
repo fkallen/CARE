@@ -171,6 +171,9 @@ namespace detail{
                 alloc.deallocate(data_);
                 data_ = nullptr;
             }
+
+            size_ = 0;
+            capacity_ = 0;
         }
 
         T& operator[](size_t i){
