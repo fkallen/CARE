@@ -56,6 +56,21 @@ public:
         }
     }
 
+    template<class Group, class IndexGenerator>
+    HOSTDEVICEQUALIFIER
+    void gather(Group& group, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, int numIndices){
+        const size_t elementsToCopy = numIndices * numColumns;
+
+        for(size_t i = group.thread_rank(); i < elementsToCopy; i += group.size()){
+            const size_t outputRow = i / numColumns;
+            const size_t inputRow = indices(outputRow);
+            const size_t column = i % numColumns;
+            
+            ((T*)(((char*)dest) + outputRow * destRowPitchInBytes))[column] 
+                = ((const T*)(((const char*)arraydata) + inputRow * rowPitchInBytes))[column];
+        }
+    }
+
     //gather rows from array to dest
     template<class Group>
     HOSTDEVICEQUALIFIER
@@ -132,10 +147,12 @@ namespace Gpu2dArrayManagedKernels{
         array.scatter(gridGroup, src, srcRowPitchInBytes, rowBegin, rowEnd);
     }
 
-    template<class T>
+    template<class T, class IndexGenerator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, const int* __restrict__ indices, int numIndices){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, const int* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
+
+        const int numIndices = *d_numIndices;
 
         array.gather(gridGroup, dest, destRowPitchInBytes, indices, numIndices);
     }
@@ -155,15 +172,20 @@ public:
     struct StreamMetaData{
         size_t numRows;
         size_t numColumns;
-        size_t alignmentInBytes;
     };
 
-    Gpu2dArrayManaged(){
+    Gpu2dArrayManaged()
+    : alignmentInBytes(sizeof(T)){
         cudaGetDevice(&deviceId); CUERR;
     }
 
-    Gpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes){
-        init(numRows, numColumns, alignmentInBytes);
+    Gpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes)
+    : alignmentInBytes(alignmentInBytes){
+
+        assert(alignmentInBytes > 0);
+        assert(alignmentInBytes % sizeof(T) == 0);
+
+        init(numRows, numColumns);
     }
 
     ~Gpu2dArrayManaged(){
@@ -171,7 +193,7 @@ public:
     }
 
     Gpu2dArrayManaged(const Gpu2dArrayManaged& rhs)
-        : Gpu2dArrayManaged(rhs.numRows, rhs.numColumns, rhs.rowPitchInBytes)
+        : Gpu2dArrayManaged(rhs.numRows, rhs.numColumns, rhs.alignmentInBytes)
     {
         cudaMemcpy(arraydata, rhs.arraydata, numRows * rowPitchInBytes, D2D); CUERR;
     }
@@ -197,15 +219,12 @@ public:
         std::swap(l.arraydata, r.arraydata);
     }
 
-    void init(size_t numRows, size_t numColumns, size_t alignmentInBytes){
+    void init(size_t numRows, size_t numColumns){
         assert(numRows > 0);
         assert(numColumns > 0);
-        assert(alignmentInBytes > 0);
-        assert(alignmentInBytes % sizeof(T) == 0);
 
         this->numRows = numRows;
         this->numColumns = numColumns;
-        this->alignmentInBytes = alignmentInBytes;
 
         cudaGetDevice(&deviceId); CUERR;
         
@@ -242,7 +261,8 @@ public:
         return wrapper();
     }
 
-    void gather(T* d_dest, size_t destRowPitchInBytes, const int* d_indices, int numIndices, cudaStream_t stream = 0) const{
+    template<class IndexGenerator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, int numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
 
         dim3 block(128, 1, 1);
@@ -256,6 +276,25 @@ public:
             destRowPitchInBytes, 
             d_indices, 
             numIndices
+        );
+
+        CUERR;
+    }
+
+    template<class IndexGenerator>
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, int* d_numIndices, int maxNumIndices, cudaStream_t stream = 0) const{
+        
+        dim3 block(128, 1, 1);
+        dim3 grid(SDIV(maxNumIndices * numColumns, block.x), 1, 1);
+
+        TwoDimensionalArray<T> array = wrapper();
+
+        Gpu2dArrayManagedKernels::gatherkernel<<<grid, block, 0, stream>>>(
+            array, 
+            d_dest, 
+            destRowPitchInBytes, 
+            d_indices, 
+            d_numIndices
         );
 
         CUERR;
@@ -321,96 +360,109 @@ public:
         CUERR;
     }
 
-    void writeMetadataToStream(std::ostream& out) const{
-        StreamMetaData metaData;
-        metaData.numRows = numRows;
-        metaData.numColumns = numColumns;
-        metaData.alignmentInBytes = alignmentInBytes;
+    // void writeMetadataToStream(std::ostream& out) const{
+    //     StreamMetaData metaData;
+    //     metaData.numRows = numRows;
+    //     metaData.numColumns = numColumns;
 
-        out.write(reinterpret_cast<const char*>(&metaData), sizeof(StreamMetaData));
-    }
+    //     out.write(reinterpret_cast<const char*>(&metaData), sizeof(StreamMetaData));
+    // }
 
-    void readMetadataFromStream(std::istream& is){
-        StreamMetaData metaData;
-        is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
+    // void readMetadataFromStream(std::istream& is){
+    //     StreamMetaData metaData;
+    //     is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
 
-        destroy();
+    //     destroy();
 
-        init(metaData.numRows, metaData.numColumns, metaData.alignmentInBytes);
-    }
+    //     init(metaData.numRows, metaData.numColumns);
+    // }
 
-    void skipMetadata(std::istream& is) const{
-        StreamMetaData metaData;
-        is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
-    }
+    // void skipMetadata(std::istream& is) const{
+    //     StreamMetaData metaData;
+    //     is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
+    // }
 
-    void writeDataToStream(std::ostream& out) const{
-        cub::SwitchDevice sd(deviceId);
+    // void writeToStream(std::ostream& out) const{
+    //     cub::SwitchDevice sd(deviceId);
 
-        constexpr size_t mb = 1 << 20;
-        constexpr size_t buffersize = 16 * mb;
+    //     StreamMetaData metaData;
+    //     metaData.numRows = numRows;
+    //     metaData.numColumns = numColumns;
 
-        T* h_transferbuffer;
-        cudaMallocHost(&h_transferbuffer, buffersize); CUERR;
+    //     out.write(reinterpret_cast<const char*>(&metaData), sizeof(StreamMetaData));
 
-        cudaStream_t stream = 0;
+    //     constexpr size_t mb = 1 << 20;
+    //     constexpr size_t buffersize = 16 * mb;
 
-        const size_t maxRowsInTransferbuffer = buffersize / numColumns;
-        assert(maxRowsInTransferbuffer > 0);
+    //     T* h_transferbuffer;
+    //     cudaMallocHost(&h_transferbuffer, buffersize); CUERR;
 
-        const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
+    //     cudaStream_t stream = 0;
 
-        for(size_t i = 0; i < numIterations; i++){
-            const size_t rowBegin = i * maxRowsInTransferbuffer;
-            const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
-            const size_t batchsizerows = rowEnd - rowBegin;
+    //     const size_t maxRowsInTransferbuffer = buffersize / numColumns;
+    //     assert(maxRowsInTransferbuffer > 0);
 
-            cudaStreamSynchronize(stream);
+    //     const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
 
-            gather(h_transferbuffer, numColumns * sizeof(T),  rowBegin, rowEnd, stream); CUERR;
+    //     for(size_t i = 0; i < numIterations; i++){
+    //         const size_t rowBegin = i * maxRowsInTransferbuffer;
+    //         const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
+    //         const size_t batchsizerows = rowEnd - rowBegin;
 
-            cudaStreamSynchronize(stream);
+    //         cudaStreamSynchronize(stream);
 
-            out.write(reinterpret_cast<const char*>(h_transferbuffer), batchsizerows * numColumns * sizeof(T));
-        }        
+    //         gather(h_transferbuffer, numColumns * sizeof(T),  rowBegin, rowEnd, stream); CUERR;
 
-        cudaFreeHost(h_transferbuffer);
-    }
+    //         cudaStreamSynchronize(stream);
 
-    void readDataFromStream(std::istream& in) const{
-        assert(numRows > 0);
-        assert(numColumns > 0);
+    //         out.write(reinterpret_cast<const char*>(h_transferbuffer), batchsizerows * numColumns * sizeof(T));
+    //     }        
 
-        cub::SwitchDevice sd(deviceId);
+    //     cudaFreeHost(h_transferbuffer);
+    // }
 
-        constexpr size_t mb = 1 << 20;
-        constexpr size_t buffersize = 16 * mb;
+    // void readDataFromStream(std::istream& in) const{
+    //     assert(numRows > 0);
+    //     assert(numColumns > 0);
 
-        T* h_transferbuffer;
-        cudaMallocHost(&h_transferbuffer, buffersize); CUERR;
+    //     cub::SwitchDevice sd(deviceId);
 
-        cudaStream_t stream = 0;
+    //     constexpr size_t mb = 1 << 20;
+    //     constexpr size_t buffersize = 16 * mb;
 
-        const size_t maxRowsInTransferbuffer = buffersize / numColumns;
-        assert(maxRowsInTransferbuffer > 0);
+    //     T* h_transferbuffer;
+    //     cudaMallocHost(&h_transferbuffer, buffersize); CUERR;
 
-        const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
+    //     cudaStream_t stream = 0;
 
-        for(size_t i = 0; i < numIterations; i++){
-            const size_t rowBegin = i * maxRowsInTransferbuffer;
-            const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
-            const size_t batchsizerows = rowEnd - rowBegin;
+    //     const size_t maxRowsInTransferbuffer = buffersize / numColumns;
+    //     assert(maxRowsInTransferbuffer > 0);
 
-            cudaStreamSynchronize(stream);
+    //     const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
 
-            in.read(reinterpret_cast<char*>(h_transferbuffer), batchsizerows * numColumns * sizeof(T));            
+    //     for(size_t i = 0; i < numIterations; i++){
+    //         const size_t rowBegin = i * maxRowsInTransferbuffer;
+    //         const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
+    //         const size_t batchsizerows = rowEnd - rowBegin;
 
-            scatter(h_transferbuffer, numColumns * sizeof(T),  rowBegin, rowEnd, stream); CUERR;
+    //         cudaStreamSynchronize(stream);
 
-            cudaStreamSynchronize(stream);            
-        }        
+    //         in.read(reinterpret_cast<char*>(h_transferbuffer), batchsizerows * numColumns * sizeof(T));            
 
-        cudaFreeHost(h_transferbuffer);
+    //         scatter(h_transferbuffer, numColumns * sizeof(T),  rowBegin, rowEnd, stream); CUERR;
+
+    //         cudaStreamSynchronize(stream);            
+    //     }        
+
+    //     cudaFreeHost(h_transferbuffer);
+    // }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage result;
+        result.host = 0;
+        result[getDeviceId()] = getNumRows() * rowPitchInBytes;
+
+        return result;
     }
 
     int getDeviceId() const noexcept{
@@ -451,10 +503,18 @@ public:
         size_t alignmentInBytes;
     };
 
-    Cpu2dArrayManaged() = default;
+    Cpu2dArrayManaged() 
+    : alignmentInBytes(sizeof(T)){
 
-    Cpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes){
-        init(numRows, numColumns, alignmentInBytes);
+    }
+
+    Cpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes)
+        : alignmentInBytes(alignmentInBytes){
+
+        assert(alignmentInBytes > 0);
+        assert(alignmentInBytes % sizeof(T) == 0);
+
+        init(numRows, numColumns);
     }
 
     ~Cpu2dArrayManaged(){
@@ -462,7 +522,7 @@ public:
     }
 
     Cpu2dArrayManaged(const Cpu2dArrayManaged& rhs)
-        : Cpu2dArrayManaged(rhs.numRows, rhs.numColumns, rhs.rowPitchInBytes)
+        : Cpu2dArrayManaged(rhs.numRows, rhs.numColumns, rhs.alignmentInBytes)
     {
         std::copy(rhs.arraydata.begin(), rhs.arraydata.end(), arraydata.begin());
     }
@@ -483,19 +543,17 @@ public:
     {
         std::swap(l.numRows, r.numRows);
         std::swap(l.numColumns, r.numColumns);
+        std::swap(l.alignmentInBytes, r.alignmentInBytes);
         std::swap(l.rowPitchInBytes, r.rowPitchInBytes);
         std::swap(l.arraydata, r.arraydata);
     }
 
-    void init(size_t numRows, size_t numColumns, size_t alignmentInBytes){
+    void init(size_t numRows, size_t numColumns){
         assert(numRows > 0);
         assert(numColumns > 0);
-        assert(alignmentInBytes > 0);
-        assert(alignmentInBytes % sizeof(T) == 0);
 
         this->numRows = numRows;
         this->numColumns = numColumns;
-        this->alignmentInBytes = alignmentInBytes; 
         
         const size_t minbytesPerRow = sizeof(T) * numColumns;
         rowPitchInBytes = SDIV(minbytesPerRow, alignmentInBytes) * alignmentInBytes;
@@ -585,75 +643,82 @@ public:
         );
     }
 
-    void writeMetadataToStream(std::ostream& out) const{
-        StreamMetaData metaData;
-        metaData.numRows = numRows;
-        metaData.numColumns = numColumns;
-        metaData.alignmentInBytes = alignmentInBytes;
+    // void writeMetadataToStream(std::ostream& out) const{
+    //     StreamMetaData metaData;
+    //     metaData.numRows = numRows;
+    //     metaData.numColumns = numColumns;
+    //     metaData.alignmentInBytes = alignmentInBytes;
 
-        out.write(reinterpret_cast<const char*>(&metaData), sizeof(StreamMetaData));
-    }
+    //     out.write(reinterpret_cast<const char*>(&metaData), sizeof(StreamMetaData));
+    // }
 
-    void readMetadataFromStream(std::istream& is){
-        StreamMetaData metaData;
-        is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
+    // void readMetadataFromStream(std::istream& is){
+    //     StreamMetaData metaData;
+    //     is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
 
-        destroy();
+    //     destroy();
 
-        init(metaData.numRows, metaData.numColumns, metaData.alignmentInBytes);
-    }
+    //     init(metaData.numRows, metaData.numColumns, metaData.alignmentInBytes);
+    // }
 
-    void skipMetadata(std::istream& is) const{
-        StreamMetaData metaData;
-        is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
-    }
+    // void skipMetadata(std::istream& is) const{
+    //     StreamMetaData metaData;
+    //     is.read(reinterpret_cast<char*>(&metaData), sizeof(StreamMetaData));
+    // }
 
-    void writeDataToStream(std::ostream& out) const{
-        constexpr size_t mb = 1 << 20;
-        constexpr size_t buffersize = 16 * mb;
+    // void writeDataToStream(std::ostream& out) const{
+    //     constexpr size_t mb = 1 << 20;
+    //     constexpr size_t buffersize = 16 * mb;
 
-        std::vector<char> h_transferbuffer(buffersize);
+    //     std::vector<char> h_transferbuffer(buffersize);
 
-        const size_t maxRowsInTransferbuffer = buffersize / numColumns;
-        assert(maxRowsInTransferbuffer > 0);
+    //     const size_t maxRowsInTransferbuffer = buffersize / numColumns;
+    //     assert(maxRowsInTransferbuffer > 0);
 
-        const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
+    //     const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
 
-        for(size_t i = 0; i < numIterations; i++){
-            const size_t rowBegin = i * maxRowsInTransferbuffer;
-            const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
-            const size_t batchsizerows = rowEnd - rowBegin;
+    //     for(size_t i = 0; i < numIterations; i++){
+    //         const size_t rowBegin = i * maxRowsInTransferbuffer;
+    //         const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
+    //         const size_t batchsizerows = rowEnd - rowBegin;
 
-            gather((T*)h_transferbuffer.data(), numColumns * sizeof(T),  rowBegin, rowEnd); CUERR;
+    //         gather((T*)h_transferbuffer.data(), numColumns * sizeof(T),  rowBegin, rowEnd); CUERR;
 
-            out.write(reinterpret_cast<const char*>(h_transferbuffer.data()), batchsizerows * numColumns * sizeof(T));
-        }
-    }
+    //         out.write(reinterpret_cast<const char*>(h_transferbuffer.data()), batchsizerows * numColumns * sizeof(T));
+    //     }
+    // }
 
-    void readDataFromStream(std::istream& in) const{
-        assert(numRows > 0);
-        assert(numColumns > 0);
+    // void readDataFromStream(std::istream& in) const{
+    //     assert(numRows > 0);
+    //     assert(numColumns > 0);
 
-        constexpr size_t mb = 1 << 20;
-        constexpr size_t buffersize = 16 * mb;
+    //     constexpr size_t mb = 1 << 20;
+    //     constexpr size_t buffersize = 16 * mb;
 
-        std::vector<char> h_transferbuffer(buffersize);
+    //     std::vector<char> h_transferbuffer(buffersize);
 
-        const size_t maxRowsInTransferbuffer = buffersize / numColumns;
-        assert(maxRowsInTransferbuffer > 0);
+    //     const size_t maxRowsInTransferbuffer = buffersize / numColumns;
+    //     assert(maxRowsInTransferbuffer > 0);
 
-        const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
+    //     const size_t numIterations = SDIV(numRows, maxRowsInTransferbuffer);
 
-        for(size_t i = 0; i < numIterations; i++){
-            const size_t rowBegin = i * maxRowsInTransferbuffer;
-            const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
-            const size_t batchsizerows = rowEnd - rowBegin;
+    //     for(size_t i = 0; i < numIterations; i++){
+    //         const size_t rowBegin = i * maxRowsInTransferbuffer;
+    //         const size_t rowEnd = std::min((i+1) * maxRowsInTransferbuffer, numRows);
+    //         const size_t batchsizerows = rowEnd - rowBegin;
 
-            in.read(reinterpret_cast<char*>(h_transferbuffer.data()), batchsizerows * numColumns * sizeof(T));            
+    //         in.read(reinterpret_cast<char*>(h_transferbuffer.data()), batchsizerows * numColumns * sizeof(T));            
 
-            scatter((const T*)h_transferbuffer.data(), numColumns * sizeof(T),  rowBegin, rowEnd); CUERR;       
-        }        
+    //         scatter((const T*)h_transferbuffer.data(), numColumns * sizeof(T),  rowBegin, rowEnd); CUERR;       
+    //     }        
 
+    // }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage result;
+        result.host = getNumRows() * rowPitchInBytes;
+
+        return result;
     }
 
     size_t getNumRows() const noexcept{
