@@ -3,6 +3,7 @@
 
 #include <hpc_helpers.cuh>
 #include <gpu/coopgrouphelpers.hpp>
+#include <memorymanagement.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -40,22 +41,7 @@ public:
         arraydata(arraydata){
     }
 
-    //gather rows from array to dest
-    template<class Group>
-    HOSTDEVICEQUALIFIER
-    void gather(Group& group, T* __restrict__ dest, size_t destRowPitchInBytes, const int* __restrict__ indices, int numIndices){
-        const size_t elementsToCopy = numIndices * numColumns;
-
-        for(size_t i = group.thread_rank(); i < elementsToCopy; i += group.size()){
-            const size_t outputRow = i / numColumns;
-            const size_t inputRow = indices[outputRow];
-            const size_t column = i % numColumns;
-            
-            ((T*)(((char*)dest) + outputRow * destRowPitchInBytes))[column] 
-                = ((const T*)(((const char*)arraydata) + inputRow * rowPitchInBytes))[column];
-        }
-    }
-
+    HD_WARNING_DISABLE
     template<class Group, class IndexGenerator>
     HOSTDEVICEQUALIFIER
     void gather(Group& group, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, int numIndices){
@@ -71,49 +57,16 @@ public:
         }
     }
 
-    //gather rows from array to dest
-    template<class Group>
-    HOSTDEVICEQUALIFIER
-    void gather(Group& group, T* __restrict__ dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd){
-        const size_t numRows = rowEnd - rowBegin;
-        const size_t elementsToCopy = numRows * numColumns;
-
-        for(size_t i = group.thread_rank(); i < elementsToCopy; i += group.size()){
-            const size_t outputRow = i / numColumns;
-            const size_t inputRow = rowBegin + outputRow;
-            const size_t column = i % numColumns;
-            
-            ((T*)(((char*)dest) + outputRow * destRowPitchInBytes))[column] 
-                = ((const T*)(((const char*)arraydata) + inputRow * rowPitchInBytes))[column];
-        }
-    }
-
+    HD_WARNING_DISABLE
     //scatter rows from src into array
-    template<class Group>
+    template<class Group, class IndexGenerator>
     HOSTDEVICEQUALIFIER
-    void scatter(Group& group, const T* __restrict__ src, size_t srcRowPitchInBytes, const int* __restrict__ indices, int numIndices){
+    void scatter(Group& group, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, int numIndices){
         const size_t elementsToCopy = numIndices * numColumns;
 
         for(size_t i = group.thread_rank(); i < elementsToCopy; i += group.size()){
             const size_t inputRow = i / numColumns;
-            const size_t outputRow = indices[inputRow];
-            const size_t column = i % numColumns;
-            
-            ((T*)(((char*)arraydata) + outputRow * rowPitchInBytes))[column] 
-                = ((const T*)(((const char*)src) + inputRow * srcRowPitchInBytes))[column];
-        }
-    }
-
-    //scatter rows from src into array
-    template<class Group>
-    HOSTDEVICEQUALIFIER
-    void scatter(Group& group, const T* __restrict__ src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd){
-        const size_t numRows = rowEnd - rowBegin;
-        const size_t elementsToCopy = numRows * numColumns;
-
-        for(size_t i = group.thread_rank(); i < elementsToCopy; i += group.size()){
-            const size_t inputRow = i / numColumns;
-            const size_t outputRow = rowBegin + inputRow;
+            const size_t outputRow = indices(inputRow);
             const size_t column = i % numColumns;
             
             ((T*)(((char*)arraydata) + outputRow * rowPitchInBytes))[column] 
@@ -131,20 +84,22 @@ private:
 
 namespace Gpu2dArrayManagedKernels{
 
-    template<class T>
+    template<class T, class IndexGenerator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, const int* __restrict__ indices, int numIndices){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, const int* __restrict__ d_numIndices){
         auto gridGroup = cg::this_grid();
+
+        const int numIndices = *d_numIndices;
 
         array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T>
+    template<class T, class IndexGenerator>
     __global__
-    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd){
+    void scatterkernel(TwoDimensionalArray<T> array, const T* __restrict__ src, size_t srcRowPitchInBytes, IndexGenerator indices, int numIndices){
         auto gridGroup = cg::this_grid();
 
-        array.scatter(gridGroup, src, srcRowPitchInBytes, rowBegin, rowEnd);
+        array.scatter(gridGroup, src, srcRowPitchInBytes, indices, numIndices);
     }
 
     template<class T, class IndexGenerator>
@@ -157,13 +112,14 @@ namespace Gpu2dArrayManagedKernels{
         array.gather(gridGroup, dest, destRowPitchInBytes, indices, numIndices);
     }
 
-    template<class T>
+    template<class T, class IndexGenerator>
     __global__
-    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd){
+    void gatherkernel(TwoDimensionalArray<T> array, T* __restrict__ dest, size_t destRowPitchInBytes, IndexGenerator indices, int numIndices){
         auto gridGroup = cg::this_grid();
 
-        array.gather(gridGroup, dest, destRowPitchInBytes, rowBegin, rowEnd);
+        array.gather(gridGroup, dest, destRowPitchInBytes, indices, numIndices);
     }
+
 }
 
 template<class T>
@@ -231,8 +187,12 @@ public:
         const size_t minbytesPerRow = sizeof(T) * numColumns;
         rowPitchInBytes = SDIV(minbytesPerRow, alignmentInBytes) * alignmentInBytes;
 
-        cudaMalloc(&arraydata, numRows * rowPitchInBytes); CUERR;
-        cudaMemset(arraydata, 0, numRows * rowPitchInBytes); CUERR;
+        if(numRows > 0 && numColumns > 0){
+
+            cudaMalloc(&arraydata, numRows * rowPitchInBytes); CUERR;
+            cudaMemset(arraydata, 0, numRows * rowPitchInBytes); CUERR;
+
+        }
     }
 
     void destroy(){
@@ -282,8 +242,9 @@ public:
     }
 
     template<class IndexGenerator>
-    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, int* d_numIndices, int maxNumIndices, cudaStream_t stream = 0) const{
-        
+    void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, const int* d_numIndices, int maxNumIndices, cudaStream_t stream = 0) const{
+        if(maxNumIndices == 0) return;
+
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(maxNumIndices * numColumns, block.x), 1, 1);
 
@@ -310,18 +271,24 @@ public:
 
         TwoDimensionalArray<T> array = wrapper();
 
+        auto indexgenerator = [rowBegin] __device__ (auto i){
+            return rowBegin + i;
+        };
+
         Gpu2dArrayManagedKernels::gatherkernel<<<grid, block, 0, stream>>>(
             array, 
             d_dest, 
             destRowPitchInBytes, 
-            rowBegin, 
-            rowEnd
+            indexgenerator, 
+            rows
         );
 
         CUERR;
     }
 
-    void scatter(const T* d_src, size_t srcRowPitchInBytes, const int* d_indices, int numIndices, cudaStream_t stream = 0) const{
+
+    template<class IndexGenerator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, int numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
 
         dim3 block(128, 1, 1);
@@ -340,6 +307,26 @@ public:
         CUERR;
     }
 
+    template<class IndexGenerator>
+    void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, const int* d_numIndices, int maxNumIndices, cudaStream_t stream = 0) const{
+        if(maxNumIndices == 0) return;
+
+        dim3 block(128, 1, 1);
+        dim3 grid(SDIV(maxNumIndices * numColumns, block.x), 1, 1);
+
+        TwoDimensionalArray<T> array = wrapper();
+
+        Gpu2dArrayManagedKernels::scatterkernel<<<grid, block, 0, stream>>>(
+            array, 
+            d_src, 
+            srcRowPitchInBytes, 
+            d_indices, 
+            d_numIndices
+        );
+
+        CUERR;
+    }
+
     void scatter(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
         const size_t rows = rowEnd - rowBegin;
         if(rows == 0) return;
@@ -349,12 +336,16 @@ public:
 
         TwoDimensionalArray<T> array = wrapper();
 
+        auto indexgenerator = [rowBegin] __device__ (auto i){
+            return rowBegin + i;
+        };
+
         Gpu2dArrayManagedKernels::scatterkernel<<<grid, block, 0, stream>>>(
             array, 
             d_src, 
             srcRowPitchInBytes, 
-            rowBegin, 
-            rowEnd
+            indexgenerator, 
+            rows
         );
 
         CUERR;
@@ -500,7 +491,6 @@ public:
     struct StreamMetaData{
         size_t numRows;
         size_t numColumns;
-        size_t alignmentInBytes;
     };
 
     Cpu2dArrayManaged() 
@@ -581,7 +571,8 @@ public:
         return wrapper();
     }
 
-    void gather(T* h_dest, size_t destRowPitchInBytes, const int* h_indices, int numIndices){
+    template<class IndexGenerator>
+    void gather(T* h_dest, size_t destRowPitchInBytes, IndexGenerator h_indices, int numIndices) const{
         if(numIndices == 0) return;
 
         TwoDimensionalArray<T> array = wrapper();
@@ -596,7 +587,28 @@ public:
         );
     }
 
-    void scatter(const T* h_src, size_t srcRowPitchInBytes, const int* h_indices, int numIndices){
+    void gather(T* h_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd) const{
+        const size_t rows = rowEnd - rowBegin;
+        if(rows == 0) return;
+
+        TwoDimensionalArray<T> array = wrapper();
+        SingleThreadGroup group{};
+
+        auto indexgenerator = [rowBegin](auto i){
+            return rowBegin + i;
+        };
+
+        array.gather(
+            group, 
+            h_dest, 
+            destRowPitchInBytes, 
+            indexgenerator, 
+            rows
+        );
+    }
+
+    template<class IndexGenerator>
+    void scatter(const T* h_src, size_t srcRowPitchInBytes, IndexGenerator h_indices, int numIndices){
         if(numIndices == 0) return;
 
         TwoDimensionalArray<T> array = wrapper();
@@ -608,22 +620,6 @@ public:
             srcRowPitchInBytes, 
             h_indices, 
             numIndices
-        );
-    }
-
-    void gather(T* h_dest, size_t destRowPitchInBytes, size_t rowBegin, size_t rowEnd){
-        const size_t rows = rowEnd - rowBegin;
-        if(rows == 0) return;
-
-        TwoDimensionalArray<T> array = wrapper();
-        SingleThreadGroup group{};
-
-        array.gather(
-            group, 
-            h_dest, 
-            destRowPitchInBytes, 
-            rowBegin, 
-            rowEnd
         );
     }
 
@@ -634,12 +630,16 @@ public:
         TwoDimensionalArray<T> array = wrapper();
         SingleThreadGroup group{};
 
+        auto indexgenerator = [rowBegin] (auto i){
+            return rowBegin + i;
+        };
+
         array.scatter(
             group,
             h_src, 
             srcRowPitchInBytes, 
-            rowBegin, 
-            rowEnd
+            indexgenerator, 
+            rows
         );
     }
 
