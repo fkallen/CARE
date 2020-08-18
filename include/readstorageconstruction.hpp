@@ -308,18 +308,7 @@ void constructReadStorageFromPairedEndFiles(
     constexpr int maxbuffersize = 65536;
     constexpr int numBuffers = 3;
 
-    /*
-        accept either a single input file or two input files
-    
-        If two input files are present, it is assumed that the mate of i-th read in file 1
-        is the i-th read in file 2. The first read in file 1 has id 0. The first read in file 2 has id 1.
-        Read ids within a file increase by 2.
 
-
-        If one input file is present, it is assumed that the i-th read pair consists of reads 2*i and 2*i+1
-    */
-    assert(fileOptions.inputfiles.size() > 0);
-    assert(fileOptions.inputfiles.size() <= 2);
 
     std::array<std::vector<read_number>, numBuffers> indicesBuffers;
     std::array<std::vector<Read>, numBuffers> readsBuffers;
@@ -437,21 +426,33 @@ void constructReadStorageFromPairedEndFiles(
 
     };
 
-    if(fileOptions.inputfiles.size() == 1){
+    /*
+        accept either a single input file or two input files
+    
+        If two input files are present, it is assumed that the mate of i-th read in file 1
+        is the i-th read in file 2. The first read in file 1 has id 0. The first read in file 2 has id 1.
+        Read ids within a file increase by 2.
 
-        const auto& filename1 = fileOptions.inputfiles[0];
+
+        If one input file is present, it is assumed that the i-th read pair consists of reads 2*i and 2*i+1
+    */
+    assert(inputfiles.size() > 0);
+    assert(inputfiles.size() <= 2);
+
+    if(inputfiles.size() == 1){
+
+        const auto& filename1 = inputfiles[0];
 
         std::cout << "Converting paired reads of files " 
             << filename1  << ", storing them in memory\n";
 
         forEachReadInFile(filename1, work);
     
-    }
+    }else{
+        assert(inputfiles.size() == 2);
 
-    if(fileOptions.inputfiles.size() == 2){
-
-        const auto& filename1 = fileOptions.inputfiles[0];
-        const auto& filename2 = fileOptions.inputfiles[1];
+        const auto& filename1 = inputfiles[0];
+        const auto& filename2 = inputfiles[1];
 
         std::cout << "Converting paired reads of files " 
             << filename1 << " and " << filename2 << ", storing them in memory\n";

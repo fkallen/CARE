@@ -230,6 +230,41 @@ namespace cpu{
      
         }
 
+        void constructPaired(
+            std::vector<std::string> inputfiles,
+            bool useQualityScores,
+            read_number expectedNumberOfReads,
+            int expectedMinimumReadLength,
+            int expectedMaximumReadLength,
+            int threads,
+            bool showProgress
+        ){
+
+            auto makeInserterFunc = [this](){
+                return [&, this](ThreadPool* tp, read_number* indices, Read* reads, int count){
+                    this->setReads(tp, indices, reads, count);
+                };
+            };
+            auto makeReadContainsNFunc = [this](){
+                return [&, this](read_number readId, bool contains){
+                    this->setReadContainsN(readId, contains);
+                };
+            };
+
+            constructReadStorageFromPairedEndFiles(
+                inputfiles,
+                useQualityScores,
+                expectedNumberOfReads,
+                expectedMinimumReadLength,
+                expectedMaximumReadLength,
+                threads,
+                showProgress,
+                makeInserterFunc,
+                makeReadContainsNFunc
+            );
+     
+        }
+
         std::size_t size() const{
             //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
 
