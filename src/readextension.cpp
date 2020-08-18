@@ -205,6 +205,11 @@ public:
                 }
             );
 
+            if(std::distance(mateIdsToKeep.begin(), mateIdsToKeep_end) == 0){
+                abort = true;
+                break; //terminate while loop
+            }
+
             std::vector<read_number> tmp(std::min(newCandidateReadIds[0].size(), mateIdsToKeep.size()));
             assert(tmp.size() == std::min(newCandidateReadIds[1].size(), mateIdsToKeep.size()));
 
@@ -715,7 +720,7 @@ public:
                     std::copy(
                         totalDecodedAnchors[0][c].begin(),
                         totalDecodedAnchors[0][c].end(),
-                        stepstrings.begin() + c * maxlen
+                        stepstrings.begin() + (c-1) * maxlen
                     );
                     stepstringlengths[c-1] = totalDecodedAnchors[0][c].size();
                 }
@@ -912,7 +917,7 @@ extend_cpu(
 
     omp_set_num_threads(1);
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         ReadExtender readExtender{
             insertSize,
@@ -997,15 +1002,19 @@ extend_cpu(
                     );
                 } 
 
-                return extendResult.success;  
+                return extendResult;  
             };
 
             // it is not known which of both reads is on the forward strand / reverse strand. try both combinations
-            bool success0 = processReadOrder({0,1});
+            auto extendResult0 = processReadOrder({0,1});
 
-            bool success1 = processReadOrder({1,0});
+            auto extendResult1 = processReadOrder({1,0});
 
-            std::cerr << "success0 " << success0 << ", success1 " << success1 << "\n";            
+            //std::cerr << "success0 " << success0 << ", success1 " << success1 << "\n";
+            if(extendResult0.success || extendResult1.success){
+                std::cerr << "success0 " << extendResult0.success 
+                    << ", success1 " << extendResult1.success << "\n";
+            }
             
         }
         
