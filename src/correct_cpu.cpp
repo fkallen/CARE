@@ -907,18 +907,21 @@ namespace cpu{
                                                     task.bestCandidateQualities
                                                     : nullptr;
 
-            data.multipleSequenceAlignment.build(task.decodedSubjectSequence,
-                                            task.subjectSequenceLength,
-                                            data.decodedCandidateSequences.data(),
-                                            task.bestCandidateLengths,
-                                            task.numFilteredCandidates,
-                                            task.bestAlignmentShifts,
-                                            task.bestAlignmentWeights,
-                                            task.subjectQualities,
-                                            candidateQualityPtr,
-                                            data.decodedSequencePitchInBytes,
-                                            data.qualityPitchInBytes,
-                                            correctionOptions.useQualityScores);
+            MultipleSequenceAlignment::InputData buildArgs;
+            buildArgs.useQualityScores = correctionOptions.useQualityScores;
+            buildArgs.subjectLength = task.subjectSequenceLength;
+            buildArgs.nCandidates = task.numFilteredCandidates;
+            buildArgs.candidatesPitch = data.decodedSequencePitchInBytes;
+            buildArgs.candidateQualitiesPitch = data.qualityPitchInBytes;
+            buildArgs.subject = task.decodedSubjectSequence;
+            buildArgs.candidates = data.decodedCandidateSequences.data();
+            buildArgs.subjectQualities = task.subjectQualities;
+            buildArgs.candidateQualities = candidateQualityPtr;
+            buildArgs.candidateLengths = task.bestCandidateLengths;
+            buildArgs.candidateShifts = task.bestAlignmentShifts;
+            buildArgs.candidateDefaultWeightFactors = task.bestAlignmentWeights;
+            
+            data.multipleSequenceAlignment.build(buildArgs);
         }
 
 
