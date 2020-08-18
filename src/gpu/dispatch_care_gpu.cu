@@ -493,7 +493,7 @@ namespace care{
                             }
                         }
                     );
-
+                    CUERR;
                 }
 
                 cudaMemcpyAsync(
@@ -578,7 +578,7 @@ namespace care{
 
         if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
             memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
-        }
+        }               
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
@@ -592,7 +592,7 @@ namespace care{
         for(const auto& outputfilename : fileOptions.outputfilenames){
             outputfiles.emplace_back(fileOptions.outputdirectory + "/" + outputfilename);
         }
-        constructOutputFileFromResults2(
+        constructOutputFileFromCorrectionResults(
             fileOptions.tempdirectory,
             fileOptions.inputfiles, 
             partialResults, 

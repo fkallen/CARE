@@ -11,12 +11,18 @@
 #include <threadpool.hpp>
 #include <util.hpp>
 
+#include <readstorageconstruction.hpp>
+
 #include <atomic>
 #include <fstream>
 #include <omp.h>
 #include <algorithm>
 #include <iterator>
 #include <numeric>
+
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
 
 #ifdef __NVCC__
 
@@ -283,189 +289,27 @@ void DistributedReadStorage::construct(
     int threads,
     bool showProgress
 ){
-    constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
 
-    auto checkRead = [&, this](read_number readIndex, Read& read, int& Ncount){
-        const int readLength = int(read.sequence.size());
-
-        if(readIndex >= expectedNumberOfReads){
-            throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
-                                    + " reads, but file contains at least "
-                                    + std::to_string(readIndex+1) + " reads.");
-        }
-
-        if(readLength > expectedMaximumReadLength){
-            throw std::runtime_error("Error! Expected maximum read length = "
-                                    + std::to_string(expectedMaximumReadLength)
-                                    + ", but read " + std::to_string(readIndex)
-                                    + "has length " + std::to_string(readLength));
-        }
-
-        auto isValidBase = [](char c){
-            constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
-            return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+    auto makeInserterFunc = [&](){return makeReadInserter();};
+    auto makeReadContainsNFunc = [this](){
+        return [&](read_number readId, bool contains){
+            this->setReadContainsN(readId, contains);
         };
-
-        const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
-            return !isValidBase(c);
-        });
-
-        //nmap[undeterminedBasesInRead]++;
-
-        if(undeterminedBasesInRead > 0){
-            setReadContainsN(readIndex, true);
-        }
-
-        for(auto& c : read.sequence){
-            if(c == 'a') c = 'A';
-            else if(c == 'c') c = 'C';
-            else if(c == 'g') c = 'G';
-            else if(c == 't') c = 'T';
-            else if(!isValidBase(c)){
-                c = bases[Ncount];
-                Ncount = (Ncount + 1) % 4;
-            }
-        }
     };
 
-    constexpr size_t maxbuffersize = 1000000;
-    constexpr int numBuffers = 2;
-
-    std::array<std::vector<read_number>, numBuffers> indicesBuffers;
-    std::array<std::vector<Read>, numBuffers> readsBuffers;
-    std::array<bool, numBuffers> canBeUsed;
-    std::array<std::mutex, numBuffers> mutex;
-    std::array<std::condition_variable, numBuffers> cv;
-
-    ThreadPool threadPool(threads);
-
-    for(int i = 0; i < numBuffers; i++){
-        indicesBuffers[i].reserve(maxbuffersize);
-        readsBuffers[i].reserve(maxbuffersize);
-        canBeUsed[i] = true;
-    }
-
-    int bufferindex = 0;
-    read_number globalReadId = 0;
-
-    auto showProgressFunc = [show = showProgress](auto totalCount, auto seconds){
-        if(show){
-            std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                            << seconds << " seconds." << std::endl;
-        }
-    };
-
-    auto updateShowProgressInterval = [](auto duration){
-        return duration * 2;
-    };
-
-    ProgressThread<read_number> progressThread(
-        expectedNumberOfReads, 
-        showProgressFunc, 
-        updateShowProgressInterval
+    constructReadStorageFromFiles(
+        inputfiles,
+        useQualityScores,
+        expectedNumberOfReads,
+        expectedMinimumReadLength,
+        expectedMaximumReadLength,
+        threads,
+        showProgress,
+        makeInserterFunc,
+        makeReadContainsNFunc
     );
 
-    for(const auto& inputfile : inputfiles){
-        std::cout << "Converting reads of file " << inputfile << ", storing them in memory\n";
-
-        forEachReadInFile(inputfile,
-                        [&](auto /*readnum*/, const auto& read){
-
-                if(!canBeUsed[bufferindex]){
-                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                    if(!canBeUsed[bufferindex]){
-                        //std::cerr << "waiting for other buffer\n";
-                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                    }
-                }
-
-                auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                auto readsBufferPtr = &readsBuffers[bufferindex];
-                indicesBufferPtr->emplace_back(globalReadId);
-                readsBufferPtr->emplace_back(read);
-
-                ++globalReadId;
-
-                progressThread.addProgress(1);
-
-                if(indicesBufferPtr->size() >= maxbuffersize){
-                    canBeUsed[bufferindex] = false;
-
-                    //std::cerr << "launch other thread\n";
-                    threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                        //std::cerr << "buffer " << bufferindex << " running\n";
-                        int nmodcounter = 0;
-
-                        for(int i = 0; i < int(readsBufferPtr->size()); i++){
-                            read_number readId = (*indicesBufferPtr)[i];
-                            auto& read = (*readsBufferPtr)[i];
-                            checkRead(readId, read, nmodcounter);
-                        }
-
-                        setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
-
-                        //TIMERSTARTCPU(clear);
-                        indicesBufferPtr->clear();
-                        readsBufferPtr->clear();
-                        //TIMERSTOPCPU(clear);
-                        
-                        std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                        canBeUsed[bufferindex] = true;
-                        cv[bufferindex].notify_one();
-
-                        //std::cerr << "buffer " << bufferindex << " finished\n";
-                    });
-
-                    bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-                }
-
-        });
-    }
-
-    auto indicesBufferPtr = &indicesBuffers[bufferindex];
-    auto readsBufferPtr = &readsBuffers[bufferindex];
-
-    if(int(readsBufferPtr->size()) > 0){
-        if(!canBeUsed[bufferindex]){
-            std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-            if(!canBeUsed[bufferindex]){
-                //std::cerr << "waiting for other buffer\n";
-                cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-            }
-        }
-
-        int nmodcounter = 0;
-
-        for(int i = 0; i < int(readsBufferPtr->size()); i++){
-            read_number readId = (*indicesBufferPtr)[i];
-            auto& read = (*readsBufferPtr)[i];
-            checkRead(readId, read, nmodcounter);
-        }
-
-        setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
-
-        indicesBufferPtr->clear();
-        readsBufferPtr->clear();
-    }
-
-    for(int i = 0; i < numBuffers; i++){
-        std::unique_lock<std::mutex> ul(mutex[i]);
-        if(!canBeUsed[i]){
-            //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
-            cv[i].wait(ul, [&](){ return canBeUsed[i]; });
-        }
-    }
-
-    progressThread.finished();
-
-    // std::cerr << "occurences of n/N:\n";
-    // for(const auto& p : nmap){
-    //     std::cerr << p.first << " " << p.second << '\n';
-    // }
-
-    constructionIsComplete();
-
-        
+    constructionIsComplete();        
 }
 
 MemoryUsage DistributedReadStorage::getMemoryInfo() const{
@@ -566,41 +410,26 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
     return deviceIds;
 }
 
-void DistributedReadStorage::setReads(ThreadPool* threadPool,
-                                    read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads){
-    assert(!isReadOnly);
 
-    std::vector<read_number> indices(lastIndex_excl-firstIndex);
-    std::iota(indices.begin(), indices.end(), firstIndex);
 
-    setReads(threadPool, indices, reads, numReads);
-}
 
-void DistributedReadStorage::setReads(ThreadPool* threadPool,
-                                    read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads){
-    assert(!isReadOnly);
-
-    setReads(threadPool, firstIndex, lastIndex_excl, reads.data(), int(reads.size()));
-}
-
-void DistributedReadStorage::setReads(ThreadPool* threadPool,
-                                    const std::vector<read_number>& indices, const std::vector<Read>& reads){
-    assert(!isReadOnly);
-
-    setReads(threadPool, indices, reads.data(), int(reads.size()));
-}
-
-void DistributedReadStorage::setReads(ThreadPool* threadPool,
-                                    const std::vector<read_number>& indices, const Read* reads, int numReads){
+void DistributedReadStorage::setReads(
+    ReadInserterHandle& handle,
+    ThreadPool* threadPool, 
+    const read_number* indices, 
+    const Read* reads, 
+    int numReads
+){
+    if(numReads == 0) return;
+    
     assert(!isReadOnly);
 
     //TIMERSTARTCPU(internalinit);
     auto lengthInRange = [&](Length_t length){
         return getSequenceLengthLowerBound() <= length && length <= getSequenceLengthUpperBound();
     };
-    assert(indices.size() > 0);
-    assert(numReads == int(indices.size()));
-    assert(std::all_of(indices.begin(), indices.end(), [&](auto i){ return i < getMaximumNumberOfReads();}));
+    assert(numReads > 0);
+    assert(std::all_of(indices, indices + numReads, [&](auto i){ return i < getMaximumNumberOfReads();}));
     assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return lengthInRange(Length_t(r.sequence.length()));}));
     
     if(canUseQualityScores()){
@@ -614,78 +443,275 @@ void DistributedReadStorage::setReads(ThreadPool* threadPool,
     statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(minmax.first->sequence.length()));
     statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(minmax.second->sequence.length()));
 
-    read_number maxIndex = *std::max_element(indices.begin(), indices.end());
+    read_number maxIndex = *std::max_element(indices, indices + numReads);
 
     read_number prev_value = numberOfInsertedReads;
     while(prev_value < maxIndex+1 && !numberOfInsertedReads.compare_exchange_weak(prev_value, maxIndex+1)){
         ;
-    }
-        
+    }      
 
-    std::vector<char> sequenceData;
-    std::vector<Length_t> sequenceLengths;
-    std::vector<char> qualityData;
+    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(getSequenceLengthUpperBound());
+    const std::size_t qualityPitch = getSequenceLengthUpperBound();
 
-    const size_t encodedSequencePitch = getEncodedNumInts2Bit(getSequenceLengthUpperBound()) * sizeof(int);
-    const size_t qualityPitch = getSequenceLengthUpperBound();
+    const std::size_t decodedSequencePitch = SDIV(statistics.maximumSequenceLength, 128) * 128;
 
-    sequenceData.resize(encodedSequencePitch * numReads, 0);
+    constexpr std::size_t buffersize = std::size_t{1} << 20;
+
+    const int readsPerIteration = buffersize / decodedSequencePitch;
+    const int iterations = SDIV(numReads, readsPerIteration);
+
+    handle.h_decodedSequences.resize(buffersize * 2);
+    handle.d_decodedSequences.resize(buffersize * 2);
+    handle.h_encodedSequences.resize(encodedSequencePitchInInts * readsPerIteration * 2);
+    handle.d_encodedSequences.resize(encodedSequencePitchInInts * readsPerIteration * 2);
+    handle.h_lengths.resize(readsPerIteration * 2);
+    handle.d_lengths.resize(readsPerIteration * 2);
+    
+
+    char* h_decodedSequences = handle.h_decodedSequences.get();
+    char* d_decodedSequences = handle.d_decodedSequences.get();
+    unsigned int* h_encodedSequences = handle.h_encodedSequences.get();
+    unsigned int* d_encodedSequences = handle.d_encodedSequences.get();
+    int* h_lengths = handle.h_lengths.get();
+    int* d_lengths = handle.d_lengths.get();
+
+    std::array<char*, 2> h_decodedSequences_arr{h_decodedSequences, h_decodedSequences + buffersize};
+    std::array<char*, 2> d_decodedSequences_arr{d_decodedSequences, d_decodedSequences + buffersize};
+    std::array<unsigned int*, 2> h_encodedSequences_arr{h_encodedSequences, h_encodedSequences + encodedSequencePitchInInts * readsPerIteration};
+    std::array<unsigned int*, 2> d_encodedSequences_arr{d_encodedSequences, d_encodedSequences + encodedSequencePitchInInts * readsPerIteration};
+    std::array<int*, 2> h_lengths_arr{h_lengths, h_lengths + readsPerIteration};
+    std::array<int*, 2> d_lengths_arr{d_lengths, d_lengths + readsPerIteration};
+
+    std::array<cudaStream_t, 2> streams{handle.stream1, handle.stream2};
+
+
+    std::vector<char>& sequenceData = handle.sequenceData;
+    std::vector<Length_t>& sequenceLengths = handle.sequenceLengths;
+    std::vector<char>& qualityData = handle.qualityData;
+
+    sequenceData.resize(statistics.maximumSequenceLength * numReads, 0);
     sequenceLengths.resize(numReads, 0);
+
     if(canUseQualityScores()){
         qualityData.resize(getSequenceLengthUpperBound() * numReads, 0);
     }
 
-    //TIMERSTOPCPU(internalinit);
-
-    auto prepare = [&](int begin, int end, int /*threadId*/){
-        for(int i = begin; i < end; i++){
-            const Read& r = reads[i];
-
-            unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(i) * encodedSequencePitch];
-            encodeSequence2Bit(dest,
-                                    r.sequence.c_str(),
-                                    r.sequence.length());
-            sequenceLengths[i] = Length_t(r.sequence.length());
-            if(canUseQualityScores()){
-                std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + i * qualityPitch);
-            }
-        }
-    };
-
     ThreadPool::ParallelForHandle pforHandle;
 
-    threadPool->parallelFor(pforHandle, 0, numReads, prepare);
+    int currentbuf = 0;
 
-    //TIMERSTOPCPU(internal);
+    for(int iteration = 0; iteration < iterations; iteration++){
 
-    //TIMERSTARTCPU(internalset);
-    setSequences(indices, sequenceData.data());
-    setSequenceLengths(indices, sequenceLengths.data());
-    if(canUseQualityScores()){
-        setQualities(indices, qualityData.data());
+        const int begin = iteration * readsPerIteration;
+        const int end = std::min((iteration+1) * readsPerIteration, numReads);
+        const int chunksize = end - begin;
+        
+        for(int i = 0; i < chunksize; i++){
+            const auto& r = reads[begin + i];
+
+            std::copy(
+                r.sequence.begin(), 
+                r.sequence.end(), 
+                h_decodedSequences_arr[currentbuf] + i * decodedSequencePitch
+            );
+
+            h_lengths_arr[currentbuf][i] = r.sequence.size();
+        }
+
+        cudaMemcpyAsync(
+            d_decodedSequences_arr[currentbuf],
+            h_decodedSequences_arr[currentbuf],
+            sizeof(char) * chunksize * decodedSequencePitch,
+            H2D,
+            streams[currentbuf]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_lengths_arr[currentbuf],
+            h_lengths_arr[currentbuf],
+            sizeof(int) * chunksize,
+            H2D,
+            streams[currentbuf]
+        ); CUERR;
+
+        // //kernel for encoding
+
+        generic_kernel<<<640, 128, 0, streams[currentbuf]>>>(
+            [
+                =, 
+                decodedSequences = d_decodedSequences_arr[currentbuf],
+                encodedSequences = d_encodedSequences_arr[currentbuf],
+                lengths = d_lengths_arr[currentbuf]
+            ] __device__ (){
+
+                //use one thread block tile per sequence to encode the sequence into 2bit format
+                constexpr int tilesize = 8;
+
+                assert(decodedSequencePitch % sizeof(unsigned int) == 0);
+
+                auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+                const int numTiles = blockDim.x * gridDim.x / tilesize;
+                const int tileId = (threadIdx.x + blockIdx.x * blockDim.x) / tilesize;
+
+                auto encode = [](unsigned int& dest, char base){
+                    if(base == 'A'){
+                        dest = (dest << 2) | encodedbaseA;
+                    }
+                    if(base == 'C'){
+                        dest = (dest << 2) | encodedbaseC;
+                    }
+                    if(base == 'G'){
+                        dest = (dest << 2) | encodedbaseG;
+                    }
+                    if(base == 'T'){
+                        dest = (dest << 2) | encodedbaseT;
+                    }
+                };
+
+
+                for(int sequenceIndex = tileId; sequenceIndex < chunksize; sequenceIndex += numTiles){
+                    const char* const sequenceinput = decodedSequences + sequenceIndex * decodedSequencePitch;
+                    unsigned int* const output = encodedSequences + sequenceIndex * encodedSequencePitchInInts;
+
+                    const int length = lengths[sequenceIndex];
+                    const int numRequiredInts = getEncodedNumInts2Bit(length);
+
+                    for(int outputIntIndex = tile.thread_rank(); outputIntIndex < numRequiredInts; outputIntIndex += tile.size()){
+
+                        const char4* const myInput = ((const char4*)sequenceinput) + 4 * outputIntIndex;
+
+                        unsigned int outputdata = 0;
+
+                        #pragma unroll
+                        for(int i = 0; i < 4; i++){
+                            const char4 data = myInput[i];
+
+                            if(outputIntIndex * 16 + i * 4 + 0 < length){
+                                encode(outputdata, data.x);
+                            }
+                            if(outputIntIndex * 16 + i * 4 + 1 < length){
+                                encode(outputdata, data.y);
+                            }
+                            if(outputIntIndex * 16 + i * 4 + 2 < length){
+                                encode(outputdata, data.z);
+                            }
+                            if(outputIntIndex * 16 + i * 4 + 3 < length){
+                                encode(outputdata, data.w);
+                            }
+                        } 
+
+                        if(outputIntIndex == numRequiredInts - 1){
+                            //pack bits of last integer into higher order bits
+                            int leftoverbits = 2 * (numRequiredInts * basesPerInt2Bit - length);
+                            if(leftoverbits > 0){
+                                outputdata <<= leftoverbits;
+                            }
+                        }
+
+                        output[outputIntIndex] = outputdata;
+                    }
+
+                }
+            }
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_encodedSequences_arr[currentbuf],
+            d_encodedSequences_arr[currentbuf],
+            sizeof(unsigned int) * chunksize * encodedSequencePitchInInts,
+            D2H,
+            streams[currentbuf]
+        ); CUERR;
+
+        if(iteration > 0){
+            //process results of previous iteration
+            const int otherbuf = 1 - currentbuf;
+
+            const int otherbegin = (iteration-1) * readsPerIteration;
+            const int otherend = iteration * readsPerIteration;
+            const int otherchunksize = otherend - otherbegin;
+
+            cudaStreamSynchronize(streams[otherbuf]);
+
+            for(int i = 0; i < otherchunksize; i++){
+                const auto& r = reads[otherbegin + i];
+    
+                std::copy(
+                    h_encodedSequences_arr[otherbuf] + i * encodedSequencePitchInInts,
+                    h_encodedSequences_arr[otherbuf] + (i+1) * encodedSequencePitchInInts,
+                    ((unsigned int*)sequenceData.data()) + (otherbegin + i)* encodedSequencePitchInInts
+                );
+    
+                sequenceLengths[otherbegin + i] = h_lengths_arr[otherbuf][i];
+
+                if(canUseQualityScores()){
+                    std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + (otherbegin + i) * qualityPitch);
+                }
+            }
+        } 
+
+        if(iteration == iterations - 1){
+            //process results of current (final) iteration
+
+            cudaStreamSynchronize(streams[currentbuf]);
+
+            for(int i = 0; i < chunksize; i++){
+
+                const auto& r = reads[begin + i];
+    
+                std::copy(
+                    h_encodedSequences_arr[currentbuf] + i * encodedSequencePitchInInts,
+                    h_encodedSequences_arr[currentbuf] + (i+1) * encodedSequencePitchInInts,
+                    ((unsigned int*)sequenceData.data()) + (begin + i)* encodedSequencePitchInInts
+                );
+    
+                sequenceLengths[begin + i] = h_lengths_arr[currentbuf][i];
+
+                if(canUseQualityScores()){
+                    std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + (begin + i) * qualityPitch);
+                }
+            }
+
+        } 
+
+        currentbuf = 1 - currentbuf;
+
     }
-    //TIMERSTOPCPU(internalset);
+
+    setSequences(indices, sequenceData.data(), numReads);
+    setSequenceLengths(indices, sequenceLengths.data(), numReads);
+    if(canUseQualityScores()){
+        setQualities(indices, qualityData.data(), numReads);
+    }
+
 }
+
+
+
+
+
+
+
+
 
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
     assert(!isReadOnly);
+
+    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
 
     auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
                                         readIdsOfReadsWithUndeterminedBase.end(),
                                         readId);
 
-
     if(contains){
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             ; //already marked
         }else{
-            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
         }
     }else{
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             //remove mark
-            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.erase(pos);
         }else{
             ; //already unmarked
@@ -811,10 +837,10 @@ void DistributedReadStorage::setSequences(read_number firstIndex, read_number la
     distributedSequenceData.setSafe(firstIndex, lastIndex_excl, reinterpret_cast<const unsigned int*>(data));
 }
 
-void DistributedReadStorage::setSequences(const std::vector<read_number>& indices, const char* data){
+void DistributedReadStorage::setSequences(const read_number* indices, const char* data, int numReads){
     assert(!isReadOnly);
 
-    distributedSequenceData.setSafe(indices, reinterpret_cast<const unsigned int*>(data));
+    distributedSequenceData.setSafe(indices, reinterpret_cast<const unsigned int*>(data), numReads);
 }
 
 void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
@@ -825,10 +851,10 @@ void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_num
     }
 }
 
-void DistributedReadStorage::setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data){
+void DistributedReadStorage::setSequenceLengths(const read_number* indices, const Length_t* data, int numReads){
     assert(!isReadOnly);
 
-    for(std::size_t i = 0; i < indices.size(); i++){
+    for(int i = 0; i < numReads; i++){
         lengthStorage.setLength(indices[i], data[i]);
     }
 }
@@ -839,10 +865,10 @@ void DistributedReadStorage::setQualities(read_number firstIndex, read_number la
     distributedQualities.setSafe(firstIndex, lastIndex_excl, data);
 }
 
-void DistributedReadStorage::setQualities(const std::vector<read_number>& indices, const char* data){
+void DistributedReadStorage::setQualities(const read_number* indices, const char* data, int numReads){
     assert(!isReadOnly);
     
-    distributedQualities.setSafe(indices, data);
+    distributedQualities.setSafe(indices, data, numReads);
 }
 
 DistributedReadStorage::GatherHandleSequences DistributedReadStorage::makeGatherHandleSequences() const{

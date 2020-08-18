@@ -6,6 +6,10 @@
 #include <lengthstorage.hpp>
 #include <memorymanagement.hpp>
 
+#include <threadpool.hpp>
+#include <util.hpp>
+#include <readstorageconstruction.hpp>
+
 #include <algorithm>
 #include <limits>
 #include <cassert>
@@ -191,6 +195,41 @@ namespace cpu{
             return !(*this == other);
         }
 
+        void construct(
+            std::vector<std::string> inputfiles,
+            bool useQualityScores,
+            read_number expectedNumberOfReads,
+            int expectedMinimumReadLength,
+            int expectedMaximumReadLength,
+            int threads,
+            bool showProgress
+        ){
+
+            auto makeInserterFunc = [this](){
+                return [&, this](ThreadPool* tp, read_number* indices, Read* reads, int count){
+                    this->setReads(tp, indices, reads, count);
+                };
+            };
+            auto makeReadContainsNFunc = [this](){
+                return [&, this](read_number readId, bool contains){
+                    this->setReadContainsN(readId, contains);
+                };
+            };
+
+            constructReadStorageFromFiles(
+                inputfiles,
+                useQualityScores,
+                expectedNumberOfReads,
+                expectedMinimumReadLength,
+                expectedMaximumReadLength,
+                threads,
+                showProgress,
+                makeInserterFunc,
+                makeReadContainsNFunc
+            );
+     
+        }
+
         std::size_t size() const{
             //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
 
@@ -227,6 +266,8 @@ namespace cpu{
 
         void setReadContainsN(read_number readId, bool contains){
 
+            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+
             auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
                                                 readIdsOfReadsWithUndeterminedBase.end(),
                                                 readId);
@@ -234,14 +275,12 @@ namespace cpu{
             if(contains){
                 if(pos != readIdsOfReadsWithUndeterminedBase.end()){
                     ; //already marked
-                }else{
-                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+                }else{                    
                     readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
                 }
             }else{
                 if(pos != readIdsOfReadsWithUndeterminedBase.end()){
                     //remove mark
-                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
                     readIdsOfReadsWithUndeterminedBase.erase(pos);
                 }else{
                     ; //already unmarked
@@ -301,6 +340,58 @@ private:
             }
         }
 public:
+
+        void setReads(
+            ThreadPool* threadPool, 
+            const read_number* indices, 
+            const Read* reads, 
+            int numReads
+        ){
+            if(numReads == 0) return;
+            
+            //TIMERSTARTCPU(internalinit);
+            auto lengthInRange = [&](Length_t length){
+                return getSequenceLengthLowerBound() <= length && length <= getSequenceLengthUpperBound();
+            };
+            assert(numReads > 0);
+            assert(std::all_of(indices, indices + numReads, [&](auto i){ return i < getMaximumNumberOfSequences();}));
+            assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return lengthInRange(Length_t(r.sequence.length()));}));
+            
+            if(canUseQualityScores()){
+                assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
+            }
+
+            auto minmax = std::minmax_element(reads, reads + numReads, [](const auto& r1, const auto& r2){
+                return r1.sequence.length() < r2.sequence.length();
+            });
+
+            statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(minmax.first->sequence.length()));
+            statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(minmax.second->sequence.length()));
+
+            read_number maxIndex = *std::max_element(indices, indices + numReads);
+
+            read_number prev_value = numberOfInsertedReads;
+            while(prev_value < maxIndex+1 && !numberOfInsertedReads.compare_exchange_weak(prev_value, maxIndex+1)){
+                ;
+            }
+
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            auto body = [&](auto begin, auto end, int /*threadid*/){
+                for(auto i = begin; i < end; i++){
+                    const auto& myRead = reads[i];
+                    const read_number myReadNumber = indices[i];
+
+                    insertRead(myReadNumber, myRead.sequence, myRead.quality);
+                }
+            };
+
+            threadPool->parallelFor(pforHandle, 0, numReads, body);
+
+        }
+
+
         void insertRead(read_number readNumber, const std::string& sequence){
             assert(readNumber < getMaximumNumberOfSequences());
             assert(int(sequence.length()) <= sequenceLengthUpperBound);

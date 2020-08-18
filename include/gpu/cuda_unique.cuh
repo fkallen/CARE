@@ -9,6 +9,9 @@
 #include <cassert>
 #include <cmath>
 
+
+//#define CARE_CUDA_UNIQUE_CHECK_UNIQUENESS
+
 #ifdef __NVCC__
 
 namespace care{
@@ -338,17 +341,8 @@ struct GpuSegmentedUnique{
             info.host = 0;
             info.device[gpu] = 0;
 
-            auto handlehost = [&](const auto& buff){
-                info.host += buff.capacityInBytes();
-            };
-
             auto handledevice = [&](const auto& buff){
                 info.device[gpu] += buff.capacityInBytes();
-            };
-
-            auto handlevector = [&](const auto& buff){
-                info.host += 
-                    sizeof(typename std::remove_reference<decltype(buff)>::type::value_type) * buff.capacity();
             };
 
             handledevice(d_temp_storage);
@@ -463,6 +457,7 @@ struct GpuSegmentedUnique{
             );
         }
 
+#ifdef CARE_CUDA_UNIQUE_CHECK_UNIQUENESS        
         cudauniquekernels::checkUniquenessKernel<<<numSegments, 128, 0, stream>>>(
             d_items,
             d_unique_items,
@@ -471,6 +466,9 @@ struct GpuSegmentedUnique{
             d_begin_offsets,
             d_end_offsets
         );
+
+        CUERR;
+#endif        
     }
 
     //segments of size larger than 128 * 64 are not processed
@@ -626,6 +624,8 @@ struct GpuSegmentedUnique{
             stream
         );
 
+        CUERR;
+
         cudauniquekernels::makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread>
                 <<<numSegments, blocksize, 0, stream>>>(
             d_output, //output
@@ -635,6 +635,8 @@ struct GpuSegmentedUnique{
             d_begin_offsets,
             d_end_offsets 
         );
+
+        CUERR;
     }
 
 };

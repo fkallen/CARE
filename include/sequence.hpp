@@ -3,9 +3,9 @@
 
 #include <config.hpp>
 
-
 #include "hpc_helpers.cuh"
 
+#include <cstdint>
 
 namespace care{
 
@@ -15,6 +15,57 @@ namespace care{
     constexpr unsigned int encodedbaseT = 0x00000003;
 
     constexpr int basesPerInt2Bit = sizeof(unsigned int) * 8 / 2;
+
+
+    //########################### Conversion functions without IF
+
+    HD_WARNING_DISABLE
+    HOSTDEVICEQUALIFIER
+    __inline__
+    std::uint8_t convertDNACharToIntNoIf(unsigned char input){
+        // 'A' -> 0
+        // 'C' -> 1
+        // 'G' -> 2
+        // 'T' -> 3
+        // 'a' -> 0
+        // 'c' -> 1
+        // 'g' -> 2
+        // 't' -> 3
+
+        constexpr float a = 167.f/100776.f;
+        constexpr float b = -1845.f/33592.f;
+        //constexpr float c = 30395.f/50388.f;
+        constexpr float c2 = 30395.f/50387.f;
+        constexpr float d = 0.f;
+
+        const float x = (input & 0xDf)-(unsigned char)(65);
+
+        //return a*x*x*x + b*x*x + c*x + d;
+        return std::uint8_t(((((a * x) + b) * x) + c2) * x + d);
+    }
+
+    HD_WARNING_DISABLE
+    HOSTDEVICEQUALIFIER
+    __inline__
+    char convertIntToDNACharNoIf(std::uint8_t input){
+        // 0 -> 'A'
+        // 1 -> 'C'
+        // 2 -> 'G'
+        // 3 -> 'T'
+
+        constexpr float a = 7.f / 6.f;
+        constexpr float b = -5.f / 2.f;
+        constexpr float c = 10.f / 3.f;
+        constexpr float d = 65.f;
+
+        const float x = input;
+
+        return char(((((a * x) + b) * x) + c) * x + d);
+    }
+
+
+
+
 
 
     //###########################

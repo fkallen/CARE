@@ -18,6 +18,9 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
+#include <hostdevicefunctions.cuh>
+
+#include <concurrencyhelpers.hpp>
 
 #include <array>
 #include <chrono>
@@ -113,11 +116,53 @@ namespace cpu{
         };        
 
         struct BatchData{
+            // struct OutputData{
+            //     std::vector<TempCorrectedSequence> anchorCorrections;
+            //     std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+            //     std::vector<TempCorrectedSequence> candidateCorrections;
+            //     std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+            // };
+
             struct OutputData{
+                int numAnchors = 0;
+                int numCandidates = 0;
+
                 std::vector<TempCorrectedSequence> anchorCorrections;
                 std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
                 std::vector<TempCorrectedSequence> candidateCorrections;
                 std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+
+                void resizeAnchors(int size){
+                    anchorCorrections.resize(size);
+                    encodedAnchorCorrections.resize(size);
+                }
+
+                void resizeCandidates(int size){
+                    candidateCorrections.resize(size);
+                    encodedCandidateCorrections.resize(size);
+                }
+
+                // TempCorrectedSequence& createAndGetAnchorCorrection(int i){
+                //     const int currentsize = anchorCorrections.size();
+                //     if(i < currentsize){
+                //         return anchorCorrections[i];
+                //     }else{
+                //         anchorCorrections.resize(i+1);
+                //         encodedAnchorCorrections.resize(i+1);
+                //         return anchorCorrections[i];
+                //     }
+                // }
+
+                // TempCorrectedSequence& createAndGetCandidateCorrection(int i){
+                //     const int currentsize = candidateCorrections.size();
+                //     if(i < currentsize){
+                //         return candidateCorrections[i];
+                //     }else{
+                //         candidateCorrections.resize(i+1);
+                //         encodedCandidateCorrections.resize(i+1);
+                //         return candidateCorrections[i];
+                //     }
+                // }
             };
 
             struct Task{
@@ -189,7 +234,8 @@ namespace cpu{
             std::vector<int> tmpnOps;
             std::vector<int> tmpoverlaps;
 
-            OutputData outputData;
+            int outputdataindex = 0;
+            std::array<WaitableData<OutputData>, 3> waitableOutputData;
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
 
@@ -388,8 +434,6 @@ namespace cpu{
             );
 
             data.subjectQualities.resize(size_t(data.qualityPitchInBytes) * numSubjects);
-            
-            data.outputData.anchorCorrections.reserve(numSubjects);            
         }
 
         void determineCandidateReadIds(BatchData& data,
@@ -423,12 +467,11 @@ namespace cpu{
                     decode2BitSequence(decodedBegin,
                                         &data.subjectSequencesData[i * data.encodedSequencePitchInInts],
                                         length);
-                    //TODO modify minhasher to work with char ptr + size instead of string
-                    std::string sequence(decodedBegin, length);
 
                     minhasher.getCandidates_any_map(
                         data.minhashHandle,
-                        sequence,
+                        decodedBegin,
+                        length,
                         0
                     );
 
@@ -506,8 +549,7 @@ namespace cpu{
 
             data.filteredReadIds.resize(totalNumCandidates);
             
-            data.outputData.candidateCorrections.reserve(numSubjects * 5);
-
+            //data.waitableOutputData[data.outputdataindex].data.candidateCorrections.reserve(numSubjects * 5);
         }
 
         void getCandidateSequenceData(BatchData& data,
@@ -713,19 +755,14 @@ namespace cpu{
                     );
                 }
 
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
-
                 for(int i = 0; i < task.numFilteredCandidates; i++){
                     task.bestAlignmentShifts[i] = task.bestAlignments[i].shift;
 
                     task.bestAlignmentWeights[i] = calculateOverlapWeight(
                         task.subjectSequenceLength, 
                         task.bestAlignments[i].nOps, 
-                        task.bestAlignments[i].overlap
+                        task.bestAlignments[i].overlap,
+                        alignmentProps.maxErrorRate
                     );
                 }
             }
@@ -889,7 +926,8 @@ namespace cpu{
         void removeCandidatesOfDifferentRegionFromMSA(
                 BatchData& data,
                 BatchData::Task& task,
-                const CorrectionOptions& correctionOptions){
+                const CorrectionOptions& correctionOptions,
+                const GoodAlignmentProperties& alignmentProps){
 
             constexpr int max_num_minimizations = 5;
 
@@ -914,7 +952,8 @@ namespace cpu{
                                                         data.multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                         data.multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                         task.bestAlignmentShifts,
-                                                        correctionOptions.estimatedCoverage);
+                                                        correctionOptions.estimatedCoverage,
+                                                        alignmentProps.maxErrorRate);
             };
 
             auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
@@ -1188,12 +1227,26 @@ namespace cpu{
                 }
             }
         }
+
+        // int getNumberOfCandidateCorrections() const{
+        //     int num = 0;
+
+        //     for(const auto& task : batchTasks){
+        //         if(task.active){
+        //             num += task.candidateCorrections.size();
+        //         }
+        //     }
+
+        //     return num;
+        // }
         
         void makeOutputDataOfTask(
                 BatchData& data,
                 BatchData::Task& task,
                 const cpu::ContiguousReadStorage& readStorage,
-                const std::uint8_t* correctionStatusFlagsPerRead){            
+                const std::uint8_t* correctionStatusFlagsPerRead){
+
+            auto& outputData = data.waitableOutputData[data.outputdataindex].data;       
                
             if(task.active){
                 
@@ -1202,10 +1255,11 @@ namespace cpu{
                     const int correctedlength = correctedSequenceString.length();
                     const bool originalReadContainsN = readStorage.readContainsN(task.subjectReadId);
                     
-                    TempCorrectedSequence tmp;
+                    TempCorrectedSequence& tmp = outputData.anchorCorrections[outputData.numAnchors];
                     
                     if(!originalReadContainsN){
                         const int maxEdits = correctedlength / 7;
+                        tmp.edits.clear();
                         int edits = 0;
                         for(int i = 0; i < correctedlength && edits <= maxEdits; i++){
                             if(correctedSequenceString[i] != task.decodedSubjectSequence[i]){
@@ -1238,12 +1292,13 @@ namespace cpu{
                     //     }                           
                     // }
                     
-                    data.outputData.anchorCorrections.emplace_back(std::move(tmp));
+                    //outputData.anchorCorrections.emplace_back(std::move(tmp));
+                    outputData.numAnchors++;
                 }
                 
                 
                 
-                for(const auto& correctedCandidate : task.candidateCorrections){
+                for(auto& correctedCandidate : task.candidateCorrections){
                     const read_number candidateId = task.bestCandidateReadIds[correctedCandidate.index];
                     
                     bool savingIsOk = false;
@@ -1255,7 +1310,7 @@ namespace cpu{
                     
                     if (savingIsOk) {                            
                         
-                        TempCorrectedSequence tmp;
+                        TempCorrectedSequence& tmp = outputData.candidateCorrections[outputData.numCandidates];
                         
                         tmp.type = TempCorrectedSequence::Type::Candidate;
                         tmp.readId = candidateId;
@@ -1264,18 +1319,17 @@ namespace cpu{
                         const bool candidateIsForward = task.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward;
 
                         if(candidateIsForward){
-                            tmp.sequence = std::move(correctedCandidate.sequence);
+                            std::swap(tmp.sequence, correctedCandidate.sequence);
                         }else{
                             //if input candidate for correction is reverse complement, corrected candidate is also reverse complement
                             //get forward sequence
-                            std::string fwd;
-                            fwd.resize(correctedCandidate.sequence.length());
+
+                            tmp.sequence.resize(correctedCandidate.sequence.length());
                             reverseComplementString(
-                                &fwd[0], 
+                                &tmp.sequence[0], 
                                 correctedCandidate.sequence.c_str(), 
-                                                    correctedCandidate.sequence.length()
+                                correctedCandidate.sequence.length()
                             );
-                            tmp.sequence = std::move(fwd);
                         }
                         
                         const bool originalCandidateReadContainsN = readStorage.readContainsN(candidateId);
@@ -1289,6 +1343,7 @@ namespace cpu{
                             assert(uncorrectedCandidateLength == correctedCandidateLength);
                             
                             const int maxEdits = correctedCandidateLength / 7;
+                            tmp.edits.clear();
                             int edits = 0;
                             if(candidateIsForward){
                                 for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
@@ -1299,16 +1354,20 @@ namespace cpu{
                                 }
                             }else{
                                 //tmp.sequence is forward sequence, but uncorrectedCandidate is reverse complement
-                                std::string fwduncorrected;
-                                fwduncorrected.resize(uncorrectedCandidateLength);
-                                reverseComplementString(
-                                    &fwduncorrected[0], 
-                                    uncorrectedCandidate, 
-                                    uncorrectedCandidateLength
-                                );
+
+                                auto complement = [](char c){
+                                    if(c == 'A') return 'T';
+                                    if(c == 'C') return 'G';
+                                    if(c == 'G') return 'C';
+                                    return 'A';
+                                };
+
+                                auto fwdCandidate = [&](int pos){
+                                    return complement(uncorrectedCandidate[uncorrectedCandidateLength - 1 - pos]);
+                                };
 
                                 for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
-                                    if(tmp.sequence[pos] != fwduncorrected[pos]){
+                                    if(tmp.sequence[pos] != fwdCandidate(pos)){
                                         tmp.edits.emplace_back(pos, tmp.sequence[pos]);
                                         edits++;
                                     }
@@ -1335,7 +1394,8 @@ namespace cpu{
                         //     }                            
                         // }
                         
-                        data.outputData.candidateCorrections.emplace_back(std::move(tmp));
+                        //outputData.candidateCorrections.emplace_back(std::move(tmp));
+                        outputData.numCandidates++;
                     }
                 }
             }
@@ -1344,16 +1404,26 @@ namespace cpu{
 
         void encodeOutputData(BatchData& data){
 
-            data.outputData.encodedAnchorCorrections.reserve(data.outputData.anchorCorrections.size());
-            data.outputData.encodedCandidateCorrections.reserve(data.outputData.candidateCorrections.size());
+            auto& outputData = data.waitableOutputData[data.outputdataindex].data;
 
-            for(const auto& tmp : data.outputData.anchorCorrections){
-                data.outputData.encodedAnchorCorrections.emplace_back(tmp.encode());
+            // outputData.encodedAnchorCorrections.reserve(outputData.anchorCorrections.size());
+            // outputData.encodedCandidateCorrections.reserve(outputData.candidateCorrections.size());
+
+            for(int i = 0; i < outputData.numAnchors; i++){
+                outputData.anchorCorrections[i].encodeInto(outputData.encodedAnchorCorrections[i]);
             }
 
-            for(const auto& tmp : data.outputData.candidateCorrections){
-                data.outputData.encodedCandidateCorrections.emplace_back(tmp.encode());
+            for(int i = 0; i < outputData.numCandidates; i++){
+                outputData.candidateCorrections[i].encodeInto(outputData.encodedCandidateCorrections[i]);
             }
+
+            // for(const auto& tmp : outputData.anchorCorrections){
+            //     outputData.encodedAnchorCorrections.emplace_back(tmp.encode());
+            // }
+
+            // for(const auto& tmp : outputData.candidateCorrections){
+            //     outputData.encodedCandidateCorrections.emplace_back(tmp.encode());
+            // }
         }
 
 
@@ -1427,14 +1497,24 @@ correct_cpu(
 #endif
 
 
-    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
-          //std::unique_lock<std::mutex> l(outputstreammutex);
-          //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
-          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              //std::cerr << tmp.readId << " " << tmp << '\n';
-              partialResults.storeElement(std::move(encoded));
-          }
-      };
+    // auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
+    //     //std::unique_lock<std::mutex> l(outputstreammutex);
+    //     //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
+    //     if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+    //         //std::cerr << tmp.readId << " " << tmp << '\n';
+    //         partialResults.storeElement(std::move(encoded));
+    //     }
+    // };
+
+    auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
+        //std::unique_lock<std::mutex> l(outputstreammutex);
+        //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
+        if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
+            //std::cerr << tmp.readId << " " << tmp << '\n';
+            //std::cerr << encoded->getNumBytes() << "\n";
+            partialResults.storeElement(encoded);
+        }
+    };
 
     // std::size_t nLocksForProcessedFlags = runtimeOptions.threads * 1000;
     // std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
@@ -1611,11 +1691,19 @@ correct_cpu(
 
                 getQualities(batchData, readStorage);
 
-                #ifdef ENABLE_TIMING
+                #ifdef ENABLE_TIMINGup
                 batchData.timings.fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
             }
+
+            const int numAnchors = batchData.subjectReadIds.size();
+            const int numCandidates = batchData.candidatesPerSubjectPrefixSum.back();
+
+            batchData.waitableOutputData[batchData.outputdataindex].wait();
+
+            batchData.waitableOutputData[batchData.outputdataindex].data.resizeAnchors(numAnchors);
+            batchData.waitableOutputData[batchData.outputdataindex].data.resizeCandidates(numCandidates);
 
             for(auto& batchTask : batchData.batchTasks){
 
@@ -1643,7 +1731,12 @@ correct_cpu(
                 tpa = std::chrono::system_clock::now();
                 #endif
 
-                removeCandidatesOfDifferentRegionFromMSA(batchData, batchTask, correctionOptions);
+                removeCandidatesOfDifferentRegionFromMSA(
+                    batchData, 
+                    batchTask, 
+                    correctionOptions, 
+                    goodAlignmentProperties
+                );
 
                 #ifdef ENABLE_TIMING
                 batchData.timings.msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1682,23 +1775,39 @@ correct_cpu(
 
             encodeOutputData(batchData);
 
-            auto outputfunction = [&, outputData = std::move(batchData.outputData)](){
-                for(int i = 0; i < int(outputData.anchorCorrections.size()); i++){
+            auto outputfunction = [
+                &, 
+                waitableOutputData = &batchData.waitableOutputData[batchData.outputdataindex]
+            ](){
+
+                auto& outputData = waitableOutputData->data;
+
+                // std::cerr << "outputData.numAnchors = " << outputData.numAnchors 
+                //     << ", outputData.numCandidates = " << outputData.numCandidates << "\n";
+
+                for(int i = 0; i < outputData.numAnchors; i++){
                     saveCorrectedSequence(
-                        std::move(outputData.anchorCorrections[i]), 
-                        std::move(outputData.encodedAnchorCorrections[i])
+                        &outputData.anchorCorrections[i], 
+                        &outputData.encodedAnchorCorrections[i]
                     );
                 }
 
-                for(int i = 0; i < int(outputData.candidateCorrections.size()); i++){
+                for(int i = 0; i < outputData.numCandidates; i++){
                     saveCorrectedSequence(
-                        std::move(outputData.candidateCorrections[i]), 
-                        std::move(outputData.encodedCandidateCorrections[i])
+                        &outputData.candidateCorrections[i], 
+                        &outputData.encodedCandidateCorrections[i]
                     );
                 }
+
+                outputData.numAnchors = 0;
+                outputData.numCandidates = 0;
+
+                waitableOutputData->signal();
             };
 
             outputThread.enqueue(std::move(outputfunction));
+
+            batchData.outputdataindex = (batchData.outputdataindex + 1) % batchData.waitableOutputData.size();
 
             progressThread.addProgress(batchData.subjectReadIds.size()); 
         } //while unprocessed reads exist loop end   
