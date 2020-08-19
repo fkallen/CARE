@@ -5,12 +5,12 @@
 * OpenMP
 * Zlib
 * GNU Make
-* Thrust 1.9 or newer.
+* Thrust 1.9 or newer. https://github.com/thrust/thrust
 
 # Additional prerequisites for GPU version
 * CUDA Toolkit 10 or newer
 * A CUDA capable Pascal or Volta card. Other cards may work, but have not been tested.
-* CUB Version 1.8.0 or newer.
+* CUB Version 1.8.0 or newer. CUB is included in CUDA Toolkit 11. https://github.com/thrust/cub
 * Thrust 1.9 or newer. Thrust is shipped together with the CUDA Toolkit
 
 
@@ -48,9 +48,12 @@ The simplest command which only includes mandatory options is
 ```
 
 This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30.
-The outputfile named correctedreads.fastq will be placed in the directory outputdir.
+The outputfile named correctedreads.fastq will be placed in the directory outputdir. The available program parameters are listed below.
 
-Available program parameters:
+Input files must be in fasta or fastq format, and may be gzip'ed.
+Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
+
+# Available program parameters:
 ```
  Mandatory options:
   -d, --outdir arg           The output directory. Will be created if it does
@@ -60,7 +63,7 @@ Available program parameters:
   -i, --inputfiles arg       The file(s) to correct. Fasta or Fastq format.
                              May be gzip'ed. Repeat this option for each input
                              file (e.g. -i file1.fastq -i file2.fastq). Must
-                             not mix fasta and fastq files. Input files are
+                             not specify both fasta and fastq files. Input files are
                              treated as unpaired. The collection of input files
                              is treated as a single read library.
   -o, --outputfilenames arg  The names of outputfiles. Repeat this option for
@@ -165,8 +168,10 @@ For example, to specify three input files the following options are equivalent:
 -i file1 -i file2,file3
 ```
 
+
+
 # Algorithm
-Please refer to the description in the paper: 
+Please refer to the description in the paper: t.b.a.
 
 
 
