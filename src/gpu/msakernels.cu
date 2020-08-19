@@ -778,8 +778,6 @@ namespace gpu{
                         }
 
                     }else{
-                        assert(myNewNumIndices == myNumIndices);
-
                         if(useSmemMSA){                                 
                             if(refinementIteration > 0){ // if iteration 0 fails, no changes were made
                                 storeSmemMSAToGmem();
