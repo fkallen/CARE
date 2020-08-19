@@ -1471,7 +1471,7 @@ correct_cpu(
         correctionStatusFlagsPerRead[i] = 0;
     }
 
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+    std::cerr << "Status flags per reads require " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
     if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
         memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
@@ -1485,6 +1485,9 @@ correct_cpu(
     if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
+
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
     const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);

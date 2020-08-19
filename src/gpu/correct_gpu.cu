@@ -3614,11 +3614,13 @@ correct_gpu(
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
     std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+
     if(memoryAvailableBytesHost > rsMemInfo.host){
         memoryAvailableBytesHost -= rsMemInfo.host;
     }else{
         memoryAvailableBytesHost = 0;
     }
+
     if(memoryAvailableBytesHost > mhMemInfo.host){
         memoryAvailableBytesHost -= mhMemInfo.host;
     }else{
@@ -3632,7 +3634,7 @@ correct_gpu(
         correctionStatusFlagsPerRead[i] = 0;
     }
 
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+    std::cerr << "Status flags per reads require " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
     if(memoryAvailableBytesHost > sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads){
         memoryAvailableBytesHost -= sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads;
@@ -3646,6 +3648,9 @@ correct_gpu(
     if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
         memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
     }
+
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
 
     const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
