@@ -64,9 +64,9 @@ Output files will be uncompressed. The order of reads will be preserved. Read he
   -i, --inputfiles arg       The file(s) to correct. Fasta or Fastq format.
                              May be gzip'ed. Repeat this option for each input
                              file (e.g. -i file1.fastq -i file2.fastq). Must
-                             not specify both fasta and fastq files. Input files are
+                             not mix fasta and fastq files. Input files are
                              treated as unpaired. The collection of input files
-                             is treated as a single read library.
+                             is treated as a single read library
   -o, --outputfilenames arg  The names of outputfiles. Repeat this option for
                              each output file (e.g. -o file1_corrected.fastq
                              -o file2_corrected.fastq). If a single output
@@ -76,6 +76,9 @@ Output files will be uncompressed. The order of reads will be preserved. Read he
                              must be equal to the number of input files. In this
                              case, output file i will contain the results of
                              input file i. Output files are uncompressed.
+
+ Mandatory GPU options:
+  -g, --gpu arg  One or more GPU device ids to be used for correction. 
 
  Additional options:
       --help                    Show this help message
@@ -113,17 +116,14 @@ Output files will be uncompressed. The order of reads will be preserved. Read he
                                 mismatches. Default: 0.200000
       --minalignmentoverlap arg
                                 Overlap between anchor and candidate must be
-                                at least this long. Default: 20
+                                at least this long. Default: 30
       --minalignmentoverlapratio arg
                                 Overlap between anchor and candidate must be
                                 at least as long as (minalignmentoverlapratio
-                                * candidatelength). Default: 0.200000
+                                * candidatelength). Default: 0.300000
       --errorfactortuning arg   errorfactortuning. Default: 0.060000
       --coveragefactortuning arg
                                 coveragefactortuning. Default: 0.600000
-  -g, --gpu arg                 One or more GPU device ids to be used for
-                                correction. When running the CARE GPU, at least
-                                one valid device id is required.
       --nReads arg              Upper bound for number of reads in the
                                 inputfile. If missing or set 0, the input file is
                                 parsed to find the exact number of reads before
