@@ -19,6 +19,7 @@ CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SY
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
 NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
 
+# This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
 			-gencode=arch=compute_70,code=sm_70 \
   			-gencode=arch=compute_70,code=compute_70

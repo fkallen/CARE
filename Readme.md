@@ -16,12 +16,13 @@
 
 
 ## Build
-First, run the configure script to specify include paths and directories.
+First, run the configure script to specify include paths and directories. The default values assume CUDA 11 is installed and can be accessed via /usr/local/cuda .
+
 ``` 
 ./configure --help
 
     --prefix=PREFIX          make install will copy executables to PREFIX/bin/ [/usr/local]
-    --with-cuda-dir=DIR      The installation directory of the CUDA toolkit. [/usr/local/cuda/]
+    --with-cuda-dir=DIR      The top directory of the CUDA toolkit. [/usr/local/cuda/]
     --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [/usr/local/cuda/include/]
     --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [/usr/local/cuda/include/]
 ```
