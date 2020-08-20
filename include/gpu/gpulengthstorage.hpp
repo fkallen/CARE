@@ -3,7 +3,6 @@
 
 #include <config.hpp>
 
-#include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <lengthstorage.hpp>
 #include <memorymanagement.hpp>
@@ -117,13 +116,13 @@ struct GPULengthStore{
         int bitsPerLength = lengthStore.getRawBitsPerLength();
 
         if(minLen == maxLen){
-            call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
         }else{
 
             dim3 block(128,1,1);
             dim3 grid(SDIV(numIds, block.x));
 
-            generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+            helpers::lambda_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
                 auto getBits = [=](Data_t l, Data_t r, int begin, int endExcl){
                     assert(0 <= begin && begin < endExcl && endExcl <= 2 * databits);
                     

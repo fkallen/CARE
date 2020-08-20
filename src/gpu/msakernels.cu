@@ -4,9 +4,7 @@
 #include <hostdevicefunctions.cuh>
 
 #include <bestalignment.hpp>
-#include <gpu/utility_kernels.cuh>
 
-//#include <msa.hpp>
 #include <sequence.hpp>
 
 #include <gpu/gpumsa.cuh>
@@ -842,7 +840,7 @@ namespace gpu{
         KernelLaunchHandle& handle
     ){
 
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             d_newNumIndices,
             1,
             0,
@@ -968,7 +966,7 @@ namespace gpu{
         KernelLaunchHandle& handle
     ){
 
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             d_newNumIndices,
             1,
             0,

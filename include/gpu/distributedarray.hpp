@@ -5,7 +5,6 @@
 #ifdef __NVCC__
 
 #include <gpu/simpleallocation.cuh>
-#include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <threadpool.hpp>
 //#include <util.hpp>
@@ -1378,7 +1377,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[deviceId].get(), 
             numLocations, 
             Index_t(0), 
@@ -1678,7 +1677,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
             numLocations, 
             Index_t(0), 
@@ -1914,7 +1913,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
             numLocations, 
             Index_t(0), 

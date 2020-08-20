@@ -617,7 +617,7 @@ namespace gpu{
                 stream
             );
 
-            generic_kernel<<<numSequences, 128, 0, stream>>>(
+            helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [=,
                     d_begin_offsets = handle.d_begin_offsets.get(),
                     input = handle.d_candidate_read_ids_tmp.get(),

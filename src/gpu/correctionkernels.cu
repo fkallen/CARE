@@ -6,7 +6,6 @@
 #include <gpu/gpumsa.cuh>
 
 #include <bestalignment.hpp>
-#include <gpu/utility_kernels.cuh>
 
 #include <sequence.hpp>
 #include <correctionresultprocessing.hpp>

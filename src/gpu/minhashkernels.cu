@@ -1,12 +1,12 @@
 #include <gpu/minhashkernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <hpc_helpers.cuh>
-#include <gpu/utility_kernels.cuh>
+
 #include <config.hpp>
 
 #include <sequence.hpp>
 
-#include <nvToolsExt.h>
+//#include <nvToolsExt.h>
 
 #include <cub/cub.cuh>
 #include <cub/iterator/discard_output_iterator.cuh>

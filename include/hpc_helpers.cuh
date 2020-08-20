@@ -12,7 +12,7 @@
 //#include "hpc_helpers/include/simple_allocation.cuh"
 #include "hpc_helpers/include/timers.cuh"
 #include "hpc_helpers/include/type_helpers.h"
-//#include "hpc_helpers/include/utility_kernels.cuh"
+#include "hpc_helpers/include/utility_kernels.cuh"
 
 
 
