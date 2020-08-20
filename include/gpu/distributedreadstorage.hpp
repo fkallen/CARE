@@ -9,8 +9,10 @@
 #include <gpu/gpubitarray.cuh>
 
 #include <memorymanagement.hpp>
+#include <cub/util_allocator.cuh>
 
 #include <config.hpp>
+#include <options.hpp>
 #include <readlibraryio.hpp>
 
 #include <atomic>
@@ -59,6 +61,139 @@ public:
 
         std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
+
+    struct ReadInserterHandle{
+    public:
+        int deviceId;
+
+        cudaStream_t stream1 = nullptr;
+        cudaStream_t stream2 = nullptr;
+        SimpleAllocationPinnedHost<char> h_decodedSequences;
+        SimpleAllocationDevice<char> d_decodedSequences;
+        SimpleAllocationPinnedHost<unsigned int> h_encodedSequences;
+        SimpleAllocationDevice<unsigned int> d_encodedSequences;
+        SimpleAllocationPinnedHost<int> h_lengths;
+        SimpleAllocationDevice<int> d_lengths;
+        std::vector<char> sequenceData;
+        std::vector<int> sequenceLengths;
+        std::vector<char> qualityData;
+
+        ReadInserterHandle(){
+            cudaGetDevice(&deviceId); CUERR;
+            create();
+        }
+
+        ReadInserterHandle(int deviceId) : deviceId(deviceId){
+            create();
+        }
+
+        ~ReadInserterHandle(){
+            int cur = 0;
+            cudaGetDevice(&cur); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+            cudaStreamDestroy(stream1); CUERR;
+            cudaStreamDestroy(stream2); CUERR;
+            cudaSetDevice(cur); CUERR;
+        }
+
+        ReadInserterHandle(const ReadInserterHandle&) = delete;
+        ReadInserterHandle& operator=(const ReadInserterHandle&) = delete;
+
+        ReadInserterHandle(ReadInserterHandle&& rhs){
+            *this = std::move(rhs);
+        }
+
+        ReadInserterHandle& operator=(ReadInserterHandle&& rhs){
+            std::swap(deviceId, rhs.deviceId);
+            std::swap(stream1, rhs.stream1);
+            std::swap(stream2, rhs.stream2);
+            std::swap(h_decodedSequences, rhs.h_decodedSequences);
+            std::swap(d_decodedSequences, rhs.d_decodedSequences);
+            std::swap(h_encodedSequences, rhs.h_encodedSequences);
+            std::swap(d_encodedSequences, rhs.d_encodedSequences);
+            std::swap(h_lengths, rhs.h_lengths);
+            std::swap(d_lengths, rhs.d_lengths);
+            std::swap(sequenceData, rhs.sequenceData);
+            std::swap(sequenceLengths, rhs.sequenceLengths);
+            std::swap(qualityData, rhs.qualityData);
+
+            return *this;
+        }
+        
+        void create(){
+            int cur = 0;
+            cudaGetDevice(&cur); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+            cudaStreamCreate(&stream1); CUERR;
+            cudaStreamCreate(&stream2); CUERR;
+            cudaSetDevice(cur); CUERR;
+        }    
+    };
+
+    // struct ReadInserter{
+    // public:
+    //     ReadInserter() = default;
+    //     ReadInserter(const ReadInserter&) = delete;
+    //     ReadInserter& operator=(const ReadInserter&) = delete;
+    //     ReadInserter(ReadInserter&&) = default;
+    //     ReadInserter& operator=(ReadInserter&&) = default;
+
+    //     void setReads(
+    //         ThreadPool* threadPool, 
+    //         const read_number* indices, 
+    //         const Read* reads, 
+    //         int numReads
+    //     )
+    // private:
+    //     struct ReadInserterHandle{
+    //     public:
+    //         int deviceId;
+
+    //         cudaStream_t stream1 = nullptr;
+    //         cudaStream_t stream2 = nullptr;
+    //         SimpleAllocationPinnedHost<char> h_decodedSequences;
+    //         SimpleAllocationDevice<char> d_decodedSequences;
+    //         SimpleAllocationPinnedHost<char> h_encodedSequences;
+    //         SimpleAllocationDevice<char> d_encodedSequences;
+    //         SimpleAllocationPinnedHost<char> h_lengths;
+    //         SimpleAllocationDevice<char> d_lengths;
+
+    //         ReadInserterHandle(){
+    //             cudaGetDevice(&deviceId); CUERR;
+    //             create();
+    //         }
+
+    //         ReadInserterHandle(int deviceId) : deviceId(deviceId){
+    //             create();
+    //         }
+
+    //         ~ReadInserterHandle(){
+    //             int cur = 0;
+    //             cudaGetDevice(&cur); CUERR;
+    //             cudaSetDevice(deviceId); CUERR;
+    //             cudaStreamDestroy(stream1); CUERR;
+    //             cudaStreamDestroy(stream2); CUERR;
+    //             cudaSetDevice(cur); CUERR;
+    //         }
+
+    //         ReadInserterHandle(const ReadInserterHandle&) = delete;
+    //         ReadInserterHandle& operator=(const ReadInserterHandle&) = delete;
+    //         ReadInserterHandle(ReadInserterHandle&&) = default;
+    //         ReadInserterHandle& operator=(ReadInserterHandle&&) = default;
+            
+    //         void create(){
+    //             int cur = 0;
+    //             cudaGetDevice(&cur); CUERR;
+    //             cudaSetDevice(deviceId); CUERR;
+    //             cudaStreamCreate(&stream1); CUERR;
+    //             cudaStreamCreate(&stream2); CUERR;
+    //             cudaSetDevice(cur); CUERR;
+    //         }    
+    //     };
+
+        
+    //     ReadInserterHandle handle;
+    // }; 
     
     using Length_t = int;
 
@@ -83,6 +218,8 @@ public:
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
     mutable DistributedArray<char, read_number> distributedQualities;
 
+    cub::CachingDeviceAllocator cubCachingAllocator;
+
     std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
 
 
@@ -104,6 +241,16 @@ public:
 	DistributedReadStorage(DistributedReadStorage&& other);
 
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
+
+    void construct(
+        std::vector<std::string> inputfiles,
+        bool useQualityScores,
+        read_number expectedNumberOfReads,
+        int expectedMinimumReadLength,
+        int expectedMaximumReadLength,
+        int threads,
+        bool showProgress
+    );
 
 	MemoryUsage getMemoryInfo() const;
     MemoryUsage getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const;
@@ -149,10 +296,32 @@ public:
 
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
-    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
-    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
-    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const Read* reads, int numReads);
-    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const std::vector<Read>& reads);
+    
+
+    void setReads(
+        ReadInserterHandle& handle,
+        ThreadPool* threadPool, 
+        const read_number* indices, 
+        const Read* reads, 
+        int numReads
+    );
+
+    auto makeReadInserter(int deviceId = 0){
+        auto handleptr = std::make_unique<ReadInserterHandle>(deviceId);
+
+        return  [
+                    this, 
+                    handleptr = std::move(handleptr)
+                ](
+                    ThreadPool* threadPool, 
+                    const read_number* indices, 
+                    const Read* reads, 
+                    int numReads
+                ){
+                    this->setReads(*handleptr, threadPool, indices, reads, numReads);
+                };
+        
+    }
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
@@ -231,11 +400,11 @@ public:
         void init(const std::vector<int>& deviceIds_, const std::vector<SequenceFileProperties>& sequenceFileProperties, bool qualityScores);
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
-        void setSequences(const std::vector<read_number>& indices, const char* data);
+        void setSequences(const read_number* indices, const char* data, int numReads);
         void setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data);
-        void setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data);
+        void setSequenceLengths(const read_number* indices, const Length_t* data, int numReads);
         void setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data);
-        void setQualities(const std::vector<read_number>& indices, const char* data);
+        void setQualities(const read_number* indices, const char* data, int numReads);
 };
 
 

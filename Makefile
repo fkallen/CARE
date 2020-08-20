@@ -19,6 +19,7 @@ CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SY
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
 NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
 
+# This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
 			-gencode=arch=compute_70,code=sm_70 \
   			-gencode=arch=compute_70,code=compute_70
@@ -28,13 +29,13 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out src/build.cpp src/correct_cpu.cpp src/dispatch_care_cpu.cpp,$(SOURCES_CPU_AND_GPU_))
+SOURCES_CPU_AND_GPU = $(filter-out src/correct_cpu.cpp src/dispatch_care_cpu.cpp,$(SOURCES_CPU_AND_GPU_))
 
 # sources which are used by gpu version exclusively
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
-SOURCES_ONLY_CPU = src/build.cpp src/correct_cpu.cpp src/dispatch_care_cpu.cpp
+SOURCES_ONLY_CPU = src/correct_cpu.cpp src/dispatch_care_cpu.cpp
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))

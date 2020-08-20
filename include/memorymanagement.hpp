@@ -15,6 +15,23 @@
     struct MemoryUsage{
         std::size_t host = 0;
         std::map<int, std::size_t> device;
+
+        MemoryUsage operator+(const MemoryUsage rhs) const{
+            MemoryUsage res;
+            res.host = host + rhs.host;
+            res.device = device;
+            for(auto pair : rhs.device){
+                res.device[pair.first] += pair.second;
+            }
+
+            return res;
+        }
+
+        MemoryUsage& operator+=(const MemoryUsage rhs){
+            MemoryUsage m = operator+(rhs);
+            *this = m;
+            return *this;
+        }
     };
 
 

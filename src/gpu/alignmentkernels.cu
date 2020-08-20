@@ -158,10 +158,6 @@ namespace gpu{
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
         };
 
-        auto no_bank_conflict_index_tile = [&](int logical_index) -> int {
-            return logical_index * tilesize;
-        };
-
         auto no_bank_conflict_index = [](int logical_index) -> int {
             return logical_index * blockDim.x;
         };
@@ -467,10 +463,6 @@ namespace gpu{
 
         const int n_subjects = *numAnchorsPtr;
         const int n_candidates = *numCandidatesPtr;
-
-        auto identity = [](auto logical_index){
-            return logical_index;
-        };
 
         auto popcount = [](auto i){return __popc(i);};
 

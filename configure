@@ -16,7 +16,7 @@ an installation prefix other than \`$PREFIX' using \`--prefix',
 for instance \`--prefix=\$HOME'.
 The following options can be used to manually specify the
 locations of dependencies:
-  --with-cuda-dir=DIR      The installation directory of the CUDA toolkit. [$CUDA_DIR]
+  --with-cuda-dir=DIR      The top directory of the CUDA toolkit. [$CUDA_DIR]
   --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [$CUB_INCDIR]
   --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [$THRUST_INCDIR]
 " 

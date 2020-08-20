@@ -72,6 +72,7 @@ struct MemoryFile{
         Reader() = default;
         Reader(const std::vector<T>& vec, std::string filename)
                 : 
+                currentIsMemory(true),
                 memoryiterator(vec.begin()),
                 memoryend(vec.end()),
                 fileinputstream(std::ifstream(filename, std::ios::binary)),
@@ -87,17 +88,28 @@ struct MemoryFile{
             assert(hasNext());
 
             if(memoryiterator != memoryend){
-                const T* data = &(*memoryiterator);
+                currentMemoryElement = &(*memoryiterator);
                 ++memoryiterator;
-                return data;
+                return currentMemoryElement;
             }else{
                 currentFileElement = std::move(*fileiterator);
                 ++fileiterator;
+                currentIsMemory = false;
 
                 return &(currentFileElement.data);
             }
         }
 
+        const T* current() const{
+            if(currentIsMemory){}
+                return currentMemoryElement;
+            }else{
+                return &(currentFileElement.data);
+            }
+        }
+
+        bool currentIsMemory;
+        const T* currentMemoryElement;
         Twrapper currentFileElement;
         typename std::vector<T>::const_iterator memoryiterator;
         typename std::vector<T>::const_iterator memoryend;
@@ -362,6 +374,7 @@ struct MemoryFileFixedSize{
             std::int64_t numElementsInMemory_, 
             std::string filename)
                 : 
+                currentIsMemory(true),
                 rawData(rawData_),
                 elementOffsets(elementOffsets_),
                 numElementsInMemory(numElementsInMemory_),
@@ -369,6 +382,14 @@ struct MemoryFileFixedSize{
                 fileiterator(std::istream_iterator<Twrapper>(fileinputstream)),
                 fileend(std::istream_iterator<Twrapper>()){
         }
+
+        Reader(const Reader& rhs) = delete;
+        Reader(Reader&& rhs) = default;
+
+        Reader& operator=(const Reader& rhs) = delete;
+        Reader& operator=(Reader&& rhs) = default;
+
+        ~Reader(){}
 
         bool hasNext() const{
             return (elementIndexInMemory != numElementsInMemory) || (fileiterator != fileend);
@@ -386,10 +407,21 @@ struct MemoryFileFixedSize{
             }else{
                 currentFileElement = std::move(*fileiterator);
                 ++fileiterator;
+                currentIsMemory = false;
 
                 return &(currentFileElement.data);
             }
         }
+
+        const T* current() const{
+            if(currentIsMemory){
+                return &currentMemoryElement;
+            }else{
+                return &(currentFileElement.data);
+            }
+        }
+
+        bool currentIsMemory;
 
         const std::uint8_t* rawData;
         const std::size_t* elementOffsets;
@@ -458,6 +490,20 @@ struct MemoryFileFixedSize{
             return success;
         }else{
             return storeInFile(std::move(tmp));
+        }
+    }
+
+    bool storeElement(const T* element){
+
+        if(!isUsingFile){
+            bool success = storeInMemory(element);
+            if(!success){
+                isUsingFile = true;
+                success = storeInFile(element);
+            }
+            return success;
+        }else{
+            return storeInFile(element);
         }
     }
 
@@ -597,8 +643,28 @@ private:
         return memoryStorage.insert(element, serialize);
     }
 
+    bool storeInMemory(const T* element){
+
+        auto serialize = [](const auto& element, auto beginptr, auto endptr){
+            return element.copyToContiguousMemory(beginptr, endptr);
+        };
+
+        return memoryStorage.insert(element, serialize);
+    }
+
     bool storeInFile(T&& element){
         outputstream << Twrapper{std::move(element)};
+        bool result = bool(outputstream);
+        if(result){
+            numStoredElementsInFile++;
+        }
+        
+        return result;
+    }
+
+    bool storeInFile(const T* element){
+        element->writeToBinaryStream(outputstream);
+
         bool result = bool(outputstream);
         if(result){
             numStoredElementsInFile++;

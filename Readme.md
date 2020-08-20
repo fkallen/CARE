@@ -5,23 +5,24 @@
 * OpenMP
 * Zlib
 * GNU Make
-* Thrust 1.9 or newer.
+* Thrust 1.9 or newer. https://github.com/thrust/thrust
 
 # Additional prerequisites for GPU version
 * CUDA Toolkit 10 or newer
 * A CUDA capable Pascal or Volta card. Other cards may work, but have not been tested.
-* CUB Version 1.8.0 or newer.
+* CUB Version 1.8.0 or newer. CUB is included in CUDA Toolkit 11. https://github.com/thrust/cub
 * Thrust 1.9 or newer. Thrust is shipped together with the CUDA Toolkit
 
 
 
 ## Build
-First, run the configure script to specify include paths and directories.
+First, run the configure script to specify include paths and directories. The default values assume CUDA 11 is installed and can be accessed via /usr/local/cuda .
+
 ``` 
 ./configure --help
 
     --prefix=PREFIX          make install will copy executables to PREFIX/bin/ [/usr/local]
-    --with-cuda-dir=DIR      The installation directory of the CUDA toolkit. [/usr/local/cuda/]
+    --with-cuda-dir=DIR      The top directory of the CUDA toolkit. [/usr/local/cuda/]
     --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [/usr/local/cuda/include/]
     --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [/usr/local/cuda/include/]
 ```
@@ -48,9 +49,12 @@ The simplest command which only includes mandatory options is
 ```
 
 This command will attempt to correct the reads from file reads.fastq, assuming a read coverage of 30.
-The outputfile named correctedreads.fastq will be placed in the directory outputdir.
+The outputfile named correctedreads.fastq will be placed in the directory outputdir. The available program parameters are listed below.
 
-Available program parameters:
+Input files must be in fasta or fastq format, and may be gzip'ed.
+Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
+
+# Available program parameters:
 ```
  Mandatory options:
   -d, --outdir arg           The output directory. Will be created if it does
@@ -62,7 +66,7 @@ Available program parameters:
                              file (e.g. -i file1.fastq -i file2.fastq). Must
                              not mix fasta and fastq files. Input files are
                              treated as unpaired. The collection of input files
-                             is treated as a single read library.
+                             is treated as a single read library
   -o, --outputfilenames arg  The names of outputfiles. Repeat this option for
                              each output file (e.g. -o file1_corrected.fastq
                              -o file2_corrected.fastq). If a single output
@@ -72,6 +76,9 @@ Available program parameters:
                              must be equal to the number of input files. In this
                              case, output file i will contain the results of
                              input file i. Output files are uncompressed.
+
+ Mandatory GPU options:
+  -g, --gpu arg  One or more GPU device ids to be used for correction. 
 
  Additional options:
       --help                    Show this help message
@@ -109,17 +116,14 @@ Available program parameters:
                                 mismatches. Default: 0.200000
       --minalignmentoverlap arg
                                 Overlap between anchor and candidate must be
-                                at least this long. Default: 20
+                                at least this long. Default: 30
       --minalignmentoverlapratio arg
                                 Overlap between anchor and candidate must be
                                 at least as long as (minalignmentoverlapratio
-                                * candidatelength). Default: 0.200000
+                                * candidatelength). Default: 0.300000
       --errorfactortuning arg   errorfactortuning. Default: 0.060000
       --coveragefactortuning arg
                                 coveragefactortuning. Default: 0.600000
-  -g, --gpu arg                 One or more GPU device ids to be used for
-                                correction. When running the CARE GPU, at least
-                                one valid device id is required.
       --nReads arg              Upper bound for number of reads in the
                                 inputfile. If missing or set 0, the input file is
                                 parsed to find the exact number of reads before
@@ -165,8 +169,10 @@ For example, to specify three input files the following options are equivalent:
 -i file1 -i file2,file3
 ```
 
+
+
 # Algorithm
-Please refer to the description in the paper: 
+Please refer to the description in the paper: t.b.a.
 
 
 

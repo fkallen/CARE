@@ -751,7 +751,8 @@ public:
         std::vector<Index_t> indices(lastIndex_excl - firstIndex);
         std::iota(indices.begin(), indices.end(), firstIndex);
 
-        setSafe(indices, data);
+        const std::size_t n = indices.size();
+        setSafe(indices.data(), data, n);
     }
 
     //indices must be strictly increasing sequence where indices[i+1] == indices[i]+1
@@ -816,9 +817,16 @@ public:
         wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
-    void setSafe(const std::vector<Index_t>& indices, const Value_t* data){
-        assert(std::is_sorted(indices.begin(), indices.end()));
-        assert(!indices.empty());
+    void setSafe(const Index_t* indices, const Value_t* data, std::size_t n){
+        setSafeFromHostData(indices, data, n);
+    }
+
+    void setSafeFromHostData(const Index_t* indices, const Value_t* data, std::size_t n){
+        assert(std::is_sorted(indices, indices + n));
+
+        if(n == 0){
+            return;
+        }
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
@@ -829,7 +837,7 @@ public:
             const int locationId = singlePartitionInfo.locationId;
 
             bool isConsecutiveIndices = true;
-            for(size_t k = 0; k < indices.size()-1; k++){
+            for(size_t k = 0; k < n-1; k++){
                 if(indices[k]+1 != indices[k+1]){
                     isConsecutiveIndices = false;
                     break;
@@ -843,13 +851,13 @@ public:
                     Index_t start = indices[0];
                     Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
 
-                    std::copy_n(data, indices.size() * numColumns, destPtr);
+                    std::copy_n(data, n * numColumns, destPtr);
                     return;
                 }else{
                     Index_t start = indices[0];
                     Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
                     wrapperCudaSetDevice(deviceIds[locationId]); CUERR;
-                    cudaMemcpy(destPtr, data, indices.size() * sizeOfElement, H2D); CUERR;
+                    cudaMemcpy(destPtr, data, n * sizeOfElement, H2D); CUERR;
                     wrapperCudaSetDevice(oldDevice); CUERR;
                     return;
                 }
@@ -858,10 +866,10 @@ public:
 
         }
 
-        std::vector<int> localIndices(indices.size(), -1);
+        std::vector<int> localIndices(n, -1);
         std::vector<int> hitsPerLocation(numLocations, 0);
 
-        for(size_t i = 0; i < size_t(indices.size()); i++){
+        for(size_t i = 0; i < n; i++){
             int location = getLocation(indices[i]);
             Index_t localIndex = indices[i] - elementsPerLocationPS[location];
             localIndices[i] = localIndex;
@@ -901,6 +909,8 @@ public:
 
         wrapperCudaSetDevice(oldDevice); CUERR;
     }
+
+
 
     void get(Index_t index, Value_t* result){
         int location = getLocation(index);

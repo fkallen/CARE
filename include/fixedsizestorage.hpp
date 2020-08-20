@@ -139,6 +139,29 @@ namespace care{
             }
         }
 
+        template<class Serializer>
+        bool insert(const T* element, Serializer serialize){
+            std::size_t* newOffsetsBegin = offsetsBegin - 1;
+
+            //check that new offset does not reach into element buffer
+            if(((void*)elementsEnd) > ((void*)newOffsetsBegin)){
+                return false;
+            }
+
+            std::uint8_t* const newDataPtr = serialize(*element, elementsEnd, (std::uint8_t*)newOffsetsBegin);
+
+            if(newDataPtr != nullptr){
+                offsetsBegin = newOffsetsBegin;
+                *offsetsBegin = std::distance(elementsBegin, elementsEnd);
+
+                elementsEnd = newDataPtr;
+                numStoredElementsInMemory++;
+                return true;
+            }else{
+                return false;
+            }
+        }
+
         bool insert(const FixedSizeStorage<T>& other){
             std::size_t otherBytes = other.getNumOccupiedRawElementBytes() + other.getNumOccupiedRawOffsetBytes();
 
