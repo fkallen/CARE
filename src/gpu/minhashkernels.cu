@@ -1,13 +1,12 @@
 #include <gpu/minhashkernels.hpp>
-#include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <hpc_helpers.cuh>
-#include <gpu/utility_kernels.cuh>
+
 #include <config.hpp>
 
 #include <sequence.hpp>
 
-#include <nvToolsExt.h>
+//#include <nvToolsExt.h>
 
 #include <cub/cub.cuh>
 #include <cub/iterator/discard_output_iterator.cuh>
@@ -2164,7 +2163,6 @@ void mergeRangesGpuAsync(
 
     //int longestRange = 0;
 
-    //nvtx::push_range("longestrange", 4);
     int maxNumResults = 0;
     for(int i = 0; i < numSequences; i++){   
         //int rangeOfSequence = 0;     
@@ -2176,7 +2174,6 @@ void mergeRangesGpuAsync(
         //longestRange = std::max(longestRange, rangeOfSequence);
         handle.h_rangesBeginPerSequence[i+1] = maxNumResults;
     }
-    //nvtx::pop_range();
 
     //std::cerr << "longestRange = " << longestRange << "\n";
     handle.d_data.resize(maxNumResults);

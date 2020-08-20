@@ -128,11 +128,11 @@ namespace care{
             - construct minhash signatures of all reads and store them in hash tables
         */
 
-        TIMERSTARTCPU(STEP1);
+        helpers::CpuTimer step1timer("STEP1");
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
-        TIMERSTARTCPU(build_readstorage);
+        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
         gpu::DistributedReadStorage readStorage(
             runtimeOptions.deviceIds, 
@@ -144,9 +144,7 @@ namespace care{
 
         if(fileOptions.load_binary_reads_from != ""){
 
-            TIMERSTARTCPU(load_from_file);
             readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
-            TIMERSTOPCPU(load_from_file);
 
             if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
@@ -170,13 +168,13 @@ namespace care{
 
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
-            TIMERSTARTCPU(save_to_file);
+            helpers::CpuTimer timer("save_to_file");
             readStorage.saveToFile(fileOptions.save_binary_reads_to);
-            TIMERSTOPCPU(save_to_file);
+            timer.print();
     		std::cout << "Saved reads" << std::endl;
         }
 
-        TIMERSTOPCPU(build_readstorage);
+        buildReadStorageTimer.print();
         
         SequenceFileProperties totalInputFileProperties;
 
@@ -215,7 +213,7 @@ namespace care{
         printDataStructureMemoryUsage(readStorage, "reads");
 
 
-        TIMERSTARTCPU(build_newgpuminhasher);
+        helpers::CpuTimer buildMinhasherTimer("build_minhasher");
         gpu::GpuMinhasher newGpuMinhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
@@ -252,8 +250,9 @@ namespace care{
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
             std::ofstream os(fileOptions.save_hashtables_to);
             assert((bool)os);
-
+            helpers::CpuTimer timer("save_to_file");
             newGpuMinhasher.writeToStream(os);
+            timer.print();
 
     		std::cout << "Saved minhasher" << std::endl;
         }
@@ -262,9 +261,9 @@ namespace care{
 
 
 
-        TIMERSTOPCPU(build_newgpuminhasher);
+        buildMinhasherTimer.print();
 
-        TIMERSTOPCPU(STEP1)
+        step1timer.print();
 
 
 
@@ -551,7 +550,7 @@ namespace care{
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
-        TIMERSTARTCPU(STEP2);
+        helpers::CpuTimer step2timer("STEP2");
 
         auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
@@ -565,9 +564,10 @@ namespace care{
             readStorage
         );
 
-        TIMERSTOPCPU(STEP2);
+        step2timer.print();
 
-        //minhasher.destroy();
+        std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
+
         newGpuMinhasher.destroy();
         readStorage.destroy();
 
@@ -582,7 +582,7 @@ namespace care{
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
-        TIMERSTARTCPU(STEP3);
+        helpers::CpuTimer step3timer("STEP3");
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -602,7 +602,7 @@ namespace care{
             false
         );
 
-        TIMERSTOPCPU(STEP3);
+        step3timer.print();
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

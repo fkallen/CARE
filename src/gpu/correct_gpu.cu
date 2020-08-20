@@ -2,7 +2,6 @@
 
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
@@ -545,7 +544,7 @@ namespace gpu{
     
             //find new numbers of leftover candidates and anchors
 
-            generic_kernel<<<1, 1, 0, syncStream>>>(
+            helpers::lambda_kernel<<<1, 1, 0, syncStream>>>(
                 [
                     d_candidates_per_subject_prefixsum = nextData.d_candidates_per_subject_prefixsum.get(),
                     d_numAnchors = nextData.d_numAnchors.get(),
@@ -595,7 +594,7 @@ namespace gpu{
  
                 
             //copy all data from leftover buffers to output buffers
-            generic_kernel<<<240, 256, 0, syncStream>>>(
+            helpers::lambda_kernel<<<240, 256, 0, syncStream>>>(
                 [
                     d_numAnchors = nextData.d_numAnchors.get(),
                     d_numCandidates = nextData.d_numCandidates.get(),
@@ -644,7 +643,7 @@ namespace gpu{
             ); CUERR;
 
             //copy new leftover data from output buffers to the front of leftover buffers
-            generic_kernel<<<240, 256, 0, syncStream>>>(
+            helpers::lambda_kernel<<<240, 256, 0, syncStream>>>(
                 [
                     d_numAnchors = nextData.d_numAnchors.get(),
                     d_numCandidates = nextData.d_numCandidates.get(),
@@ -690,7 +689,7 @@ namespace gpu{
             ); CUERR;
 
             //copy data from device to host
-            generic_kernel<<<240, 256, 0, syncStream>>>(
+            helpers::lambda_kernel<<<240, 256, 0, syncStream>>>(
                 [
                     h_numAnchors = nextData.h_numAnchors.get(),
                     d_numAnchors = nextData.d_numAnchors.get(),
@@ -1883,7 +1882,7 @@ namespace gpu{
         Batch* batchptr = &batchData;
 
         auto getDataForNextIteration = [batchptr](){
-            nvtx::push_range("prepareNewDataForCorrection",1);
+            nvtx::ScopedRange r("prepareNewDataForCorrection",1);
 
             batchptr->nextIterationData.prepareNewDataForCorrection(
                 batchptr->streams[preparation_stream_index]
@@ -1897,7 +1896,7 @@ namespace gpu{
                 batchptr->nextIterationData.h_numCandidates[0] = 0;
                 batchptr->nextIterationData.syncFlag.signal();
             }
-            nvtx::pop_range();
+
         };
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batchData.streams;
@@ -1946,7 +1945,7 @@ namespace gpu{
             bool* d_canExecutePtr = batchData.d_canExecute.get();
             int* d_numTotalCorrectedCandidatePtr = batchData.d_num_total_corrected_candidates.get();
 
-            generic_kernel<<<1,1,0,streams[primary_stream_index]>>>(
+            helpers::lambda_kernel<<<1,1,0,streams[primary_stream_index]>>>(
                 [=] __device__ (){
                     *d_canExecutePtr = true;
                     *d_numTotalCorrectedCandidatePtr = 0;
@@ -2012,7 +2011,7 @@ namespace gpu{
             batch.deviceId,
             streams[primary_stream_index]);
 
-        call_transpose_kernel(
+        helpers::call_transpose_kernel(
             batch.d_transposedCandidateSequencesData.get(), 
             batch.d_candidate_sequences_data.get(), 
             batch.h_numCandidates[0], 
@@ -2880,7 +2879,7 @@ namespace gpu{
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        generic_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
+        helpers::lambda_kernel<<<640, 128, 0, streams[primary_stream_index]>>>(
             [=] __device__ (){
                 const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                 const int stride = blockDim.x * gridDim.x;
@@ -3016,7 +3015,7 @@ namespace gpu{
 
         //copy alignment shifts and indices of corrected candidates from device to host
 
-        generic_kernel<<<320, 256, 0, streams[secondary_stream_index]>>>(
+        helpers::lambda_kernel<<<320, 256, 0, streams[secondary_stream_index]>>>(
             [=] __device__ (){
                 using CopyType = int;
 
@@ -3086,7 +3085,7 @@ namespace gpu{
     
         //copy candidate correction results from device to host  
 #if 0        
-        generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
+        helpers::lambda_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
             [
                 =,
                 decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
@@ -3126,7 +3125,7 @@ namespace gpu{
             }
         ); CUERR;    
         
-        generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
+        helpers::lambda_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
             [
                 =,
                 editsPitchInBytes = batch.editsPitchInBytes,
@@ -3168,7 +3167,7 @@ namespace gpu{
             }
         ); CUERR;
 #else 
-        generic_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
+        helpers::lambda_kernel<<<480, 256, 0, streams[primary_stream_index]>>>(
             [
                 =,
                 decodedSequencePitchInBytes = batch.decodedSequencePitchInBytes,
