@@ -261,6 +261,8 @@ namespace care{
 
         step2Timer.print();
 
+        std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2Timer.elapsed()) << " reads/second.\n";
+
         minhasher.destroy();
         readStorage.destroy();
 

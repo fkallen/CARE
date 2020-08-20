@@ -566,7 +566,8 @@ namespace care{
 
         step2timer.print();
 
-        //minhasher.destroy();
+        std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
+
         newGpuMinhasher.destroy();
         readStorage.destroy();
 
