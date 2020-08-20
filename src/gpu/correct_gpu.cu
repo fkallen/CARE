@@ -2,7 +2,6 @@
 
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
@@ -1883,7 +1882,7 @@ namespace gpu{
         Batch* batchptr = &batchData;
 
         auto getDataForNextIteration = [batchptr](){
-            nvtx::push_range("prepareNewDataForCorrection",1);
+            nvtx::ScopedRange r("prepareNewDataForCorrection",1);
 
             batchptr->nextIterationData.prepareNewDataForCorrection(
                 batchptr->streams[preparation_stream_index]
@@ -1897,7 +1896,7 @@ namespace gpu{
                 batchptr->nextIterationData.h_numCandidates[0] = 0;
                 batchptr->nextIterationData.syncFlag.signal();
             }
-            nvtx::pop_range();
+
         };
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batchData.streams;

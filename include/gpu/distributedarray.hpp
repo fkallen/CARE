@@ -7,8 +7,6 @@
 #include <gpu/simpleallocation.cuh>
 #include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
-#include <gpu/nvtxtimelinemarkers.hpp>
-#include <gpu/peeraccess.hpp>
 #include <threadpool.hpp>
 //#include <util.hpp>
 #include <memorymanagement.hpp>
@@ -417,7 +415,7 @@ public:
     };
 
     using GatherHandle = std::unique_ptr<GatherHandleStruct>;
-    using PeerAccess_t = PeerAccess;
+    using PeerAccess_t = helpers::PeerAccess;
 
     MemoryUsage getMemoryInfoOfHandle(const GatherHandle& handle) const{
 
@@ -1147,7 +1145,8 @@ public:
         //std::lock_guard<std::mutex> l(handle->mutex);
 
         if(singlePartitionInfo.isSinglePartition){
-            nvtx::push_range("singlePartitionGather", 0);
+            nvtx::ScopedRange r("singlePartitionGather", 0);
+
             gatherElementsInGpuMemAsyncSinglePartitionMode(
                 forLoop,
                 handle,
@@ -1159,12 +1158,11 @@ public:
                 resultPitch,
                 syncstream
             );
-            nvtx::pop_range();
 
         }else{
 
             if(elementsPerLocation[hostLocation] == 0){
-                nvtx::push_range("nohostGather", 1);
+                nvtx::ScopedRange r("nohostGather", 1);
 
                 gatherElementsInGpuMemAsyncNoHostPartition(
                     forLoop,
@@ -1178,10 +1176,9 @@ public:
                     syncstream
                 );
 
-                nvtx::pop_range();
             }else{        
 
-                nvtx::push_range("generalGather", 2);
+                nvtx::ScopedRange r("generalGather", 2);
 
                 gatherElementsInGpuMemAsyncGeneral(
                     forLoop,
@@ -1194,8 +1191,6 @@ public:
                     resultPitch,
                     syncstream
                 );
-
-                nvtx::pop_range();
 
             }
 
@@ -2011,7 +2006,8 @@ public:
             // std::cerr << "\n";
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                nvtx::push_range("generalgather_host", 7);
+                nvtx::ScopedRange r("generalgather_host", 7);
+
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
 
@@ -2020,7 +2016,7 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
-                nvtx::pop_range();
+
             };
 
             forLoop( 
@@ -2143,7 +2139,8 @@ public:
             const Index_t* const myIndices = handle->pinnedIndicesOfHostLocation.get();
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                nvtx::push_range("generalgather_host", 7);
+                nvtx::ScopedRange r("generalgather_host", 7);
+
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
 
@@ -2152,7 +2149,7 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
-                nvtx::pop_range();
+
             };
 
             forLoop( 

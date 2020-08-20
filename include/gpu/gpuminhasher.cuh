@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 
-#include <gpu/nvtxtimelinemarkers.hpp>
+
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
