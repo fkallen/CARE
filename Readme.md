@@ -7,16 +7,19 @@
 * GNU Make
 * Thrust 1.9 or newer. https://github.com/thrust/thrust
 
-# Additional prerequisites for GPU version
+## Additional prerequisites for GPU version
 * CUDA Toolkit 10 or newer
 * A CUDA capable Pascal or Volta card. Other cards may work, but have not been tested.
 * CUB Version 1.8.0 or newer. CUB is included in CUDA Toolkit 11. https://github.com/thrust/cub
 * Thrust 1.9 or newer. Thrust is shipped together with the CUDA Toolkit
 
+# Download
+Clone the repository and initialize submodules: `git clone --recurse-submodules ...`
 
 
-## Build
-First, run the configure script to specify include paths and directories. The default values assume CUDA 11 is installed and can be accessed via /usr/local/cuda .
+# Build
+## Configure
+First, run the configure script to specify include paths and directories. The default values assume CUDA 11 is installed and can be accessed via /usr/local/cuda . If any of --with-cub-incdir or --with-thrust-incdir is not specified but --with-cuda-dir is specified, cuda-dir/include will be used for unspecified include directories.
 
 ``` 
 ./configure --help
@@ -27,7 +30,8 @@ First, run the configure script to specify include paths and directories. The de
     --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [/usr/local/cuda/include/]
 ```
 
-Then, run make to generate the executables.
+## Make
+Run make to generate the executables.
 
 CPU version: This produces an executable file care-cpu in the top-level directory of CARE
 ```
@@ -54,7 +58,7 @@ The outputfile named correctedreads.fastq will be placed in the directory output
 Input files must be in fasta or fastq format, and may be gzip'ed.
 Output files will be uncompressed. The order of reads will be preserved. Read headers and quality scores (if fastq) remain unchanged.
 
-# Available program parameters:
+# Available program parameters
 ```
  Mandatory options:
   -d, --outdir arg           The output directory. Will be created if it does
