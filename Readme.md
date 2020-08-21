@@ -14,7 +14,7 @@
 * Thrust 1.9 or newer. Thrust is shipped together with the CUDA Toolkit
 
 # Download
-Clone the repository and initialize submodules: `git clone --recurse-submodules ...`
+Clone the repository and initialize submodules: `git clone --recurse-submodules url`
 
 
 # Build
@@ -176,7 +176,10 @@ For example, to specify three input files the following options are equivalent:
 
 
 # Algorithm
-Please refer to the description in the paper: t.b.a.
+
+This work is presented in the following paper.
+
+Felix Kallenborn, Andreas Hildebrandt, Bertil Schmidt, CARE: Context-Aware Sequencing Read Error Correction, Bioinformatics, , btaa738, [https://doi.org/10.1093/bioinformatics/btaa738](https://doi.org/10.1093/bioinformatics/btaa738)
 
 
 
