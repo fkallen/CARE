@@ -605,23 +605,23 @@ public:
                     );
                 }
 
+                MultipleSequenceAlignment::InputData msaInput;
+                msaInput.useQualityScores = false;
+                msaInput.subjectLength = currentAnchorLength[i];
+                msaInput.nCandidates = numRemainingCandidates;
+                msaInput.candidatesPitch = decodedSequencePitchInBytes;
+                msaInput.candidateQualitiesPitch = 0;
+                msaInput.subject = decodedAnchor.c_str();
+                msaInput.candidates = candidateStrings.data();
+                msaInput.subjectQualities = nullptr;
+                msaInput.candidateQualities = nullptr;
+                msaInput.candidateLengths = newCandidateSequenceLengths[i].data();
+                msaInput.candidateShifts = candidateShifts.data();
+                msaInput.candidateDefaultWeightFactors = candidateOverlapWeights.data();
 
                 MultipleSequenceAlignment msa;
 
-                msa.build(
-                    decodedAnchor.c_str(),
-                    currentAnchorLength[i],
-                    candidateStrings.data(),
-                    newCandidateSequenceLengths[i].data(),
-                    numRemainingCandidates,
-                    candidateShifts.data(),
-                    candidateOverlapWeights.data(),
-                    nullptr, //subjectQualities,
-                    nullptr, //candidateQualities,
-                    encodedSequencePitchInInts,
-                    0, // candidateQualitiesPitch,
-                    false // useQualityScores
-                );
+                msa.build(msaInput);
 
 
                 if(!mateHasBeenFound){
@@ -725,23 +725,24 @@ public:
                     stepstringlengths[c-1] = totalDecodedAnchors[0][c].size();
                 }
 
+                MultipleSequenceAlignment::InputData msaInput;
+                msaInput.useQualityScores = false;
+                msaInput.subjectLength = decodedAnchor.length();
+                msaInput.nCandidates = numsteps-1;
+                msaInput.candidatesPitch = maxlen;
+                msaInput.candidateQualitiesPitch = 0;
+                msaInput.subject = decodedAnchor.c_str();
+                msaInput.candidates = stepstrings.data();
+                msaInput.subjectQualities = nullptr;
+                msaInput.candidateQualities = nullptr;
+                msaInput.candidateLengths = stepstringlengths.data();
+                msaInput.candidateShifts = shifts.data();
+                msaInput.candidateDefaultWeightFactors = initialWeights.data();
+
                 MultipleSequenceAlignment msa;
 
-                msa.build(
-                    decodedAnchor.c_str(),
-                    decodedAnchor.length(),
-                    stepstrings.data(),
-                    stepstringlengths.data(),
-                    numsteps-1,
-                    shifts.data(),
-                    initialWeights.data(),
-                    nullptr, //subjectQualities,
-                    nullptr, //candidateQualities,
-                    maxlen,
-                    0, // candidateQualitiesPitch,
-                    false // useQualityScores
-                );
-
+                msa.build(msaInput);
+                
                 extendResult.success = true;
 
                 std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
