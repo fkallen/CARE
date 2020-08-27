@@ -437,7 +437,7 @@ namespace care{
         TIMERSTARTCPU(build_minhasher);
         Minhasher minhasher(
             correctionOptions.kmerlength, 
-            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage) * 10
         );
 
         if(fileOptions.load_hashtables_from != ""){
@@ -536,9 +536,28 @@ namespace care{
 
 
         std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
-            fileOptions.outputdirectory + "/extensionresult.txt", 
+            //fileOptions.outputdirectory + "/extensionresult.txt", 
+            outputfiles[0],
             outputFormat
         );
+
+        if(true){
+            auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
+                read_number id1, id2;
+                std::memcpy(&id1, ptr1, sizeof(read_number));
+                std::memcpy(&id2, ptr2, sizeof(read_number));
+                
+                return id1 < id2;
+            };
+
+            auto elementcomparator = [](const auto& l, const auto& r){
+                return l.readId < r.readId;
+            };
+
+            TIMERSTARTCPU(sort_results_by_read_id);
+            partialResults.sort(fileOptions.tempdirectory, memoryForSorting, ptrcomparator, elementcomparator);
+            TIMERSTOPCPU(sort_results_by_read_id);
+        }
 
         std::int64_t count = 0;
         auto partialResultsReader = partialResults.makeReader();

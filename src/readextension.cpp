@@ -15,7 +15,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
-
+#include <mutex>
 
 
 
@@ -33,12 +33,26 @@
 namespace care{
 
 
+constexpr int maxextension = 20;
+
+
 struct ReadExtender{
 public:
+    enum class AbortReason{
+        MsaNotExtended, 
+        NoPairedCandidates, 
+        NoPairedCandidatesAfterAlignment, 
+        None
+    };
+
     struct ExtendResult{
         bool success = false;
+        bool aborted = false;
+        int numIterations = 0;
+        AbortReason abortReason = AbortReason::None;
         // (read number of forward strand read, extended read for forward strand)
         std::vector<std::pair<read_number, std::string>> extendedReads;
+
     };
 
     struct WorkingSet{
@@ -52,36 +66,41 @@ public:
     };
 
     struct ExtendInput{
-        read_number readId1;
-        const unsigned int* encodedRead1;
-        int readLength1;
-        int numInts1;
-        read_number readId2;
-        const unsigned int* encodedRead2;
-        int readLength2;
-        int numInts2;
+        read_number readId1{};
+        const unsigned int* encodedRead1{};
+        int readLength1{};
+        int numInts1{};
+        read_number readId2{};
+        const unsigned int* encodedRead2{};
+        int readLength2{};
+        int numInts2{};
+        bool verbose{};
+        std::mutex* verboseMutex;
     };
 
     ReadExtender(
         int insertSize,
         int maximumSequenceLength,
         const cpu::ContiguousReadStorage& rs, 
-        const Minhasher& mh
-        
-    ) : insertSize(insertSize), maximumSequenceLength(maximumSequenceLength),
-        minhasher(&mh), readStorage(&rs){
+        const Minhasher& mh,
+        const CorrectionOptions& coropts,
+        const GoodAlignmentProperties& gap        
+    ) : insertSize(insertSize), 
+            maximumSequenceLength(maximumSequenceLength),
+            minhasher(&mh), readStorage(&rs), 
+            correctionOptions(coropts),
+            goodAlignmentProperties(gap){
 
         encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
         decodedSequencePitchInBytes = maximumSequenceLength;
         qualityPitchInBytes = maximumSequenceLength;
-
     }
 
     /*
         Assumes read1 is on the forward strand, read2 is on the reverse strand
     */
     ExtendResult extendPairedRead(
-        ExtendInput& input
+        const ExtendInput& input
     ){
 
         std::array<std::vector<unsigned int>, 2> currentAnchor;
@@ -100,6 +119,7 @@ public:
         std::array<std::vector<read_number>, 2> totalCandidateReadIds; 
 
         bool abort = false;
+        AbortReason abortReason = AbortReason::None;
         bool mateHasBeenFound = false;
         std::vector<read_number>::iterator mateIdLocationIter;
 
@@ -118,6 +138,12 @@ public:
         accumExtensionLengths[0] = 0;
         accumExtensionLengths[1] = 0;
 
+        std::stringstream verboseStream;
+
+        if(input.verbose){
+            verboseStream << "readId1 " << input.readId1 << ", readId2 " << input.readId2 << "\n";
+        }
+
         int iter = 0;
         while(iter < insertSize && !abort && !mateHasBeenFound){
 
@@ -135,7 +161,25 @@ public:
                 totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
             }
             
+            if(input.verbose){
+                verboseStream << "Iteration " << iter << "\n";
+            }
 
+            if(input.verbose){    
+                verboseStream << "anchor0: " << totalDecodedAnchors[0].back() << ", anchor1: " << totalDecodedAnchors[1].back() << "\n";
+            }
+
+            if(input.verbose){    
+                for(int i = 0; i < 2; i++){
+                    verboseStream << "totalAnchorBeginInExtendedRead["<< i << "]: ";
+                    std::copy(
+                        totalAnchorBeginInExtendedRead[i].begin(),
+                        totalAnchorBeginInExtendedRead[i].end(),
+                        std::ostream_iterator<int>(verboseStream, ", ")
+                    );
+                    verboseStream << "\n";
+                }
+            }
             
 
             
@@ -169,6 +213,51 @@ public:
                         newCandidateReadIds[i].erase(readIdPos);
                     }
                 }
+                
+            }
+
+            //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
+            if(input.readLength2 + accumExtensionLengths[0] < insertSize){
+                auto readIdPos = std::lower_bound(
+                    newCandidateReadIds[0].begin(),                                            
+                    newCandidateReadIds[0].end(),
+                    input.readId2
+                );
+
+                if(readIdPos != newCandidateReadIds[0].end() && *readIdPos == input.readId2){
+                    newCandidateReadIds[0].erase(readIdPos);
+                }
+            }
+
+            //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
+            if(input.readLength1 + accumExtensionLengths[1] < insertSize){
+                auto readIdPos = std::lower_bound(
+                    newCandidateReadIds[1].begin(),                                            
+                    newCandidateReadIds[1].end(),
+                    input.readId1
+                );
+
+                if(readIdPos != newCandidateReadIds[1].end() && *readIdPos == input.readId1){
+                    newCandidateReadIds[1].erase(readIdPos);
+                }
+            }
+
+            if(input.verbose){    
+                verboseStream << "initial candidate read ids for anchor 0:\n";
+                std::copy(
+                    newCandidateReadIds[0].begin(),
+                    newCandidateReadIds[0].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
+
+                verboseStream << "initial candidate read ids for anchor 1:\n";
+                std::copy(
+                    newCandidateReadIds[1].begin(),
+                    newCandidateReadIds[1].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
             }
 
             /*
@@ -207,6 +296,7 @@ public:
 
             if(std::distance(mateIdsToKeep.begin(), mateIdsToKeep_end) == 0){
                 abort = true;
+                abortReason = AbortReason::NoPairedCandidates;
                 break; //terminate while loop
             }
 
@@ -250,6 +340,24 @@ public:
                 ),
                 newCandidateReadIds[1].end()
             );
+
+            if(input.verbose){    
+                verboseStream << "new candidate read ids for anchor 0:\n";
+                std::copy(
+                    newCandidateReadIds[0].begin(),
+                    newCandidateReadIds[0].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
+
+                verboseStream << "new candidate read ids for anchor 1:\n";
+                std::copy(
+                    newCandidateReadIds[1].begin(),
+                    newCandidateReadIds[1].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
+            }
 
             /*
                 Load candidate sequences and compute reverse complements
@@ -331,6 +439,7 @@ public:
                     newCandidateSequenceLengths[i].data(),
                     numCandidates,
                     goodAlignmentProperties.min_overlap,
+                    //currentAnchorLength[i] - maxextension,
                     goodAlignmentProperties.maxErrorRate,
                     goodAlignmentProperties.min_overlap_ratio
                 );
@@ -345,6 +454,7 @@ public:
                     newCandidateSequenceLengths[i].data(),
                     numCandidates,
                     goodAlignmentProperties.min_overlap,
+                    //currentAnchorLength[i] - maxextension,
                     goodAlignmentProperties.maxErrorRate,
                     goodAlignmentProperties.min_overlap_ratio
                 );
@@ -465,6 +575,7 @@ public:
 
             if(numRemainingCandidates == 0){
                 abort = true;
+                abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
                 break; //terminate while loop
             }
 
@@ -544,6 +655,24 @@ public:
                 
             }
 
+            if(input.verbose){    
+                verboseStream << "new candidate read ids for anchor 0 after alignments:\n";
+                std::copy(
+                    newCandidateReadIds[0].begin(),
+                    newCandidateReadIds[0].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
+
+                verboseStream << "new candidate read ids for anchor 1 after alignments:\n";
+                std::copy(
+                    newCandidateReadIds[1].begin(),
+                    newCandidateReadIds[1].end(),
+                    std::ostream_iterator<read_number>(verboseStream, ",")
+                );
+                verboseStream << "\n";
+            }
+
             //update "total" arrays of candidates
             for(int i = 0; i < 2; i++){
                 totalCandidateReadIdsPerIteration[i].emplace_back(newCandidateReadIds[i]);
@@ -572,6 +701,10 @@ public:
             );
 
             mateHasBeenFound = (mateIdLocationIter != newCandidateReadIds[0].end() && *mateIdLocationIter == input.readId2);
+
+            if(input.verbose){    
+                verboseStream << "mate has been found ? " << (mateHasBeenFound ? "yes":"no") << "\n";
+            }
 
             for(int i = 0; i < 2; i++){
                 const std::string& decodedAnchor = totalDecodedAnchors[i].back();
@@ -623,6 +756,12 @@ public:
 
                 msa.build(msaInput);
 
+                if(input.verbose){    
+                    verboseStream << "msa for anchor " << i << "\n";
+                    msa.print(verboseStream);
+                    verboseStream << "\n";
+                }
+
 
                 if(!mateHasBeenFound){
                     //mate not found. prepare next while-loop iteration
@@ -633,12 +772,18 @@ public:
 
                     if(consensusLength == currentAnchorLength[i]){
                         abort = true;
-                        
+                        abortReason = AbortReason::MsaNotExtended;                        
                     }else{
                         assert(consensusLength > currentAnchorLength[i]);
-                        constexpr int maxextension = 10;
+                        
 
                         const int extendBy = std::min(consensusLength - currentAnchorLength[i], maxextension);
+                        accumExtensionLengths[i] += extendBy;
+
+                        if(input.verbose){
+                            verboseStream << "extended by " << extendBy << ", total extension length " << accumExtensionLengths[i] << "\n";
+                        }
+
                         //update data for next iteration of outer while loop
                         if(i == 0){
                             const std::string nextDecodedAnchor(msa.consensus.data() + extendBy, currentAnchorLength[i]);
@@ -651,6 +796,10 @@ public:
                                 nextDecodedAnchor.size()
                             );
                             currentAnchorLength[i] = nextDecodedAnchor.size();
+
+                            if(input.verbose){
+                                verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
+                            }
                         }else{
                             //i == 1
                             const char* const data = msa.consensus.data() 
@@ -665,6 +814,10 @@ public:
                                 nextDecodedAnchor.size()
                             );
                             currentAnchorLength[i] = nextDecodedAnchor.size();
+
+                            if(input.verbose){
+                                verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
+                            }
                         }
                     }
                 }else{
@@ -677,6 +830,10 @@ public:
                         const int endcolumn = shift + clength;
 
                         std::string decodedAnchor(msa.consensus.data(), endcolumn);
+
+                        if(input.verbose){
+                            verboseStream << "consensus until end of mate: " << decodedAnchor << "\n";
+                        }
 
                         totalDecodedAnchors[i].emplace_back(std::move(decodedAnchor));
                         totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
@@ -691,7 +848,9 @@ public:
         }
 
         ExtendResult extendResult;
-
+        extendResult.numIterations = iter;
+        extendResult.aborted = abort;
+        extendResult.abortReason = abortReason;
 
         if(abort){
             ; //no read extension possible
@@ -710,7 +869,7 @@ public:
                 }
                 const std::string& decodedAnchor = totalDecodedAnchors[0][0];
 
-                const auto& shifts = totalAnchorBeginInExtendedRead[0];
+                const std::vector<int> shifts(totalAnchorBeginInExtendedRead[0].begin() + 1, totalAnchorBeginInExtendedRead[0].end());
                 std::vector<float> initialWeights(numsteps-1, 1.0f);
 
 
@@ -742,11 +901,34 @@ public:
                 MultipleSequenceAlignment msa;
 
                 msa.build(msaInput);
-                
+
+                if(input.verbose){    
+                    verboseStream << "msa of partial results \n";
+                    msa.print(verboseStream);
+                    verboseStream << "\n";
+                }
+
                 extendResult.success = true;
 
                 std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+
+                if(input.verbose){    
+                    verboseStream << "extended read: " << extendedRead << "\n";
+                }
+
                 extendResult.extendedReads.emplace_back(input.readId1, std::move(extendedRead));
+
+                
+
+                if(input.verbose){
+                    if(input.verboseMutex != nullptr){
+                        std::lock_guard<std::mutex> lg(*input.verboseMutex);
+
+                        std::cerr << verboseStream.rdbuf();
+                    }else{
+                        std::cerr << verboseStream.rdbuf();
+                    }
+                }
             }else{
                 ; //no read extension possible
             }
@@ -887,7 +1069,7 @@ extend_cpu(
 
     BackgroundThread outputThread(true);
 
-    /*
+    
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -911,21 +1093,36 @@ extend_cpu(
 
     ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
-    */
+    
     const int insertSize = 300;
     const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
     const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
 
-    omp_set_num_threads(1);
+    std::mutex verboseMutex;
 
-    //#pragma omp parallel
+    std::int64_t totalNumSuccess0 = 0;
+    std::int64_t totalNumSuccess1 = 0;
+    std::int64_t totalNumSuccessRead = 0;
+
+    //omp_set_num_threads(8);
+
+    #pragma omp parallel
     {
+        GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
+        goodAlignmentProperties2.maxErrorRate = 0.02;
+
         ReadExtender readExtender{
             insertSize,
             maximumSequenceLength,
             readStorage, 
-            minhasher      
+            minhasher,
+            correctionOptions,
+            goodAlignmentProperties2
         };
+
+        std::int64_t numSuccess0 = 0;
+        std::int64_t numSuccess1 = 0;
+        std::int64_t numSuccessRead = 0;
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
@@ -961,7 +1158,7 @@ extend_cpu(
             );
 
             auto processReadOrder = [&](std::array<int, 2> order){
-                ReadExtender::ExtendInput input;
+                ReadExtender::ExtendInput input{};
 
                 input.readId1 = currentIds[order[0]];
                 input.readId2 = currentIds[order[1]];
@@ -971,6 +1168,8 @@ extend_cpu(
                 input.readLength2 = currentReadLengths[order[1]];
                 input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[order[0]]);
                 input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[order[1]]);
+                input.verbose = false;
+                input.verboseMutex = &verboseMutex;
 
                 auto extendResult = readExtender.extendPairedRead(input);
 
@@ -1001,7 +1200,27 @@ extend_cpu(
                     outputThread.enqueue(
                         std::move(func)
                     );
-                } 
+
+                    //replay to print some debug information
+                    // input.verbose = true;
+                    // readExtender.extendPairedRead(input);
+                }else{
+                    // if(extendResult.numIterations > 1){
+                    //     //replay to print some debug information
+                    //     input.verbose = true;
+                    //     input.verboseMutex = &verboseMutex;
+                    //     readExtender.extendPairedRead(input);
+                    // }else{
+                    //     if(extendResult.aborted){
+                    //         // switch(extendResult.abortReason){
+                    //         //     case ReadExtender::AbortReason::MsaNotExtended: std::cerr << "MsaNotExtended\n"; break;
+                    //         //     case ReadExtender::AbortReason::NoPairedCandidates: std::cerr << "NoPairedCandidates\n"; break;
+                    //         //     case ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment: std::cerr << "NoPairedCandidatesAfterAlignment\n"; break;
+                    //         //     default: std::cerr << "no abort reason\n"; break;
+                    //         // }
+                    //     }
+                    // }
+                }
 
                 return extendResult;  
             };
@@ -1011,22 +1230,47 @@ extend_cpu(
 
             auto extendResult1 = processReadOrder({1,0});
 
-            //std::cerr << "success0 " << success0 << ", success1 " << success1 << "\n";
-            if(extendResult0.success || extendResult1.success){
-                std::cerr << "success0 " << extendResult0.success 
-                    << ", success1 " << extendResult1.success << "\n";
+            if(extendResult0.success){
+                numSuccess0++;
             }
+
+            if(extendResult1.success){
+                numSuccess1++;
+            }
+
+            if(extendResult0.success || extendResult1.success){
+                numSuccessRead++;
+            }
+
+            //std::cerr << "success0 " << success0 << ", success1 " << success1 << "\n";
+            // if(extendResult0.success || extendResult1.success){
+            //     std::cerr << "success0 " << extendResult0.success 
+            //         << ", success1 " << extendResult1.success << "\n";
+            // }
+
+            progressThread.addProgress(2);
             
         }
-        
-    }
 
-    //progressThread.finished();
+        #pragma omp critical
+        {
+            totalNumSuccess0 += numSuccess0;
+            totalNumSuccess1 += numSuccess1;
+            totalNumSuccessRead += numSuccessRead;
+        }
+        
+    } //end omp parallel
+
+    progressThread.finished();
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
     //outputstream.flush();
     partialResults.flush();
+
+    std::cout << "totalNumSuccess0: " << totalNumSuccess0 << std::endl;
+    std::cout << "totalNumSuccess1: " << totalNumSuccess1 << std::endl;
+    std::cout << "totalNumSuccessRead: " << totalNumSuccessRead << std::endl;
 
 
 
