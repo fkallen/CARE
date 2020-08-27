@@ -45,6 +45,11 @@ public:
         None
     };
 
+    struct ReadPairIds{
+        read_number first;
+        read_number second;
+    };
+
     struct ExtendResult{
         bool success = false;
         bool aborted = false;
@@ -939,6 +944,23 @@ public:
 
 private:
 
+    bool isSameReadPair(read_number id1, read_number id2) const noexcept{
+        //read pairs have consecutive read ids. (0,1) (2,3) ...
+        //map to the smaller id within a pair, and compare those
+
+        const auto firstId1 = id1 - id1 % 2;
+        const auto firstId2 = id2 - id2 % 2;
+
+        return firstId1 == firstId2;
+    }
+
+    bool isSameReadPair(ReadPairIds ids1, ReadPairIds ids2) const noexcept{
+        assert(isSameReadPair(ids1.first, ids1.second));
+        assert(isSameReadPair(ids2.first, ids2.second));
+        
+        return isSameReadPair(ids1.first, ids2.first);
+    }
+
     void getCandidates(
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
@@ -990,6 +1012,151 @@ private:
         }else{
             ; // no candidates
         }
+    }
+
+    template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2,
+         class Compare>
+    std::pair<OutputIt1, OutputIt2> filterIdsByMate1(
+        InputIt1 first1, 
+        InputIt1 last1,
+        InputIt2 first2, 
+        InputIt2 last2,
+        OutputIt1 d_first1, 
+        OutputIt2 d_first2, 
+        Compare isSameReadPair
+    ) const noexcept {
+        while (first1 != last1 && first2 != last2) {
+            const auto nextfirst1 = std::next(first1);
+            const auto nextfirst2 = std::next(first2);
+
+            int elems1 = 1;
+            if(nextfirst1 != last1){
+                //if equal(*first1, *nextfirst1)
+                if(isSameReadPair(*first1, *nextfirst1)){
+                    elems1 = 2;
+                }
+            }
+
+            int elems2 = 1;
+            if(nextfirst2 != last2){
+                //if equal(*first2, *nextfirst2)
+                if(isSameReadPair(*first2, *nextfirst2)){
+                    elems2 = 2;
+                }
+            }
+
+            if(elems1 == 1 && elems2 == 1){
+                if(isSameReadPair(*first1, *first2)){
+                    if(*first1 != *first2){
+                        *d_first1++ = *first1++;
+                        *d_first2++ = *first2++;
+                    }else{
+                        ++first1;
+                        ++first2;
+                    }
+                }else{
+                    if(*first1 < *first2){
+                        ++first1;
+                    }else{
+                        ++first2;
+                    }
+                }
+            }else if (elems1 == 2 && elems2 == 2){
+                if(isSameReadPair(*first1, *first2)){
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{
+                    if(*first1 < *first2){
+                        ++first1;
+                        ++first1;
+                    }else{
+                        ++first2;
+                        ++first2;
+                    }
+                }
+
+            }else if (elems1 == 2 && elems2 == 1){
+                if(isSameReadPair(*first1, *first2)){
+                    if(*first1 == *first2){
+                        //discard first entry of first range, keep rest
+                        ++first1;
+                        *d_first1++ = *first1++;
+                        *d_first2++ = *first2++;
+                    }else{
+                        //keep first entry of first range, discard second entry
+                        *d_first1++ = *first1++;
+                        *d_first2++ = *first2++;
+                        ++first1;
+                    }
+                }else{
+                    if(*first1 < *first2){
+                        ++first1;
+                        ++first1;
+                    }else{
+                        ++first2;
+                    }
+                }
+                
+            }else {
+                //(elems1 == 1 && elems2 == 2)
+
+                if(isSameReadPair(*first1, *first2)){
+                    if(*first1 == *first2){
+                        //discard first entry of first range, keep rest
+                        ++first2;
+                        *d_first1++ = *first1++;
+                        *d_first2++ = *first2++;
+                    }else{
+                        //keep first entry of first range, discard second entry
+                        *d_first1++ = *first1++;
+                        *d_first2++ = *first2++;
+                        ++first2;
+                    }
+                }else{
+                    if(*first1 < *first2){
+                        ++first1;
+                    }else{
+                        ++first2;
+                        ++first2;
+                    }
+                }            
+            }
+        }
+        return std::make_pair(d_first1, d_first2);
+    }
+
+    /*
+        Given candidate read ids for read A and read B which are the read pair (A,B),
+        remove candidate read ids of list A which have no mate in list B, and vice-versa
+    */
+    void removeCandidateIdsWithoutMate(
+        const std::vector<read_number>& candidateIdsA,
+        const std::vector<read_number>& candidateIdsB,
+        std::vector<read_number>& outputCandidateIdsA,
+        std::vector<read_number>& outputCandidateIdsB
+    ) const {
+        outputCandidateIdsA.resize(candidateIdsA.size());
+        outputCandidateIdsB.resize(candidateIdsB.size());
+
+        auto isSame = [this](read_number id1, read_number id2){
+            return isSameReadPair(id1, id2);
+        };
+
+        auto endIterators = filterIdsByMate1(
+            candidateIdsA.begin(), 
+            candidateIdsA.end(),
+            candidateIdsB.begin(), 
+            candidateIdsB.end(),
+            outputCandidateIdsA.begin(), 
+            outputCandidateIdsB.begin(), 
+            isSame
+        );
+
+        outputCandidateIdsA.erase(endIterators.first, outputCandidateIdsA.end());
+        outputCandidateIdsB.erase(endIterators.second, outputCandidateIdsB.end());
     }
 
 
