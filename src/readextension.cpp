@@ -1132,7 +1132,7 @@ private:
         Given candidate read ids for read A and read B which are the read pair (A,B),
         remove candidate read ids of list A which have no mate in list B, and vice-versa
     */
-    void removeCandidateIdsWithoutMate(
+    std::vector<ReadPairIds> removeCandidateIdsWithoutMate(
         const std::vector<read_number>& candidateIdsA,
         const std::vector<read_number>& candidateIdsB,
         std::vector<read_number>& outputCandidateIdsA,
@@ -1157,6 +1157,36 @@ private:
 
         outputCandidateIdsA.erase(endIterators.first, outputCandidateIdsA.end());
         outputCandidateIdsB.erase(endIterators.second, outputCandidateIdsB.end());
+
+        assert(outputCandidateIdsA.size() == outputCandidateIdsB.size());
+
+        std::vector<ReadPairIds> returnValue;
+
+        const int numIds = outputCandidateIdsA.size();
+        returnValue.resize(numIds);
+
+        for(int i = 0; i < numIds; i++){
+            if(outputCandidateIdsA[i] != outputCandidateIdsB[i]){
+                returnValue[i].first = outputCandidateIdsA[i];
+                returnValue[i].second = outputCandidateIdsB[i];
+                
+                assert(isSameReadPair(returnValue[i].first, returnValue[i].second));
+            }else{
+                //if both ids are equal, it must be a pair in both A and B. reverse pair of B to avoid a readIdPair with two equal ids
+                returnValue[i].first = outputCandidateIdsA[i];
+                returnValue[i].second = outputCandidateIdsB[i+1];
+                returnValue[i+1].first = outputCandidateIdsA[i+1];
+                returnValue[i+1].second = outputCandidateIdsB[i];
+
+                assert(isSameReadPair(returnValue[i].first, returnValue[i].second));
+                assert(isSameReadPair(returnValue[i+1].first, returnValue[i+1].second));
+                assert(isSameReadPair(returnValue[i], returnValue[i+1]));
+
+                i++;
+            }
+        }
+
+        return returnValue;
     }
 
 
