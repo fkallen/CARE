@@ -1065,8 +1065,9 @@ namespace cpu{
 #endif            
         }
 
-
-
+        std::mutex mtx_ml_extraction;
+        std::ofstream ml_extraction("ml/samples");
+        
         void correctSubjectClassic(
                 BatchData& data,
                 BatchData::Task& task,
@@ -1086,6 +1087,28 @@ namespace cpu{
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage
             );
+
+            // DIRTY HACK FOR ML SAMPLE EXTRACTION
+            mtx_ml_extraction.lock();
+            for (int i = subjectColumnsBegin_incl; i<subjectColumnsEnd_excl; ++i) {
+                if (data.multipleSequenceAlignment.consensus[i]!=task.decodedSubjectSequence[i-subjectColumnsBegin_incl]) {
+                    ml_extraction
+                    << task.subjectReadId << ' '
+                    << i-subjectColumnsBegin_incl << ' '
+                    << data.multipleSequenceAlignment.consensus[i] << ' '
+                    << task.decodedSubjectSequence[i-subjectColumnsBegin_incl] << ' '
+                    << data.multipleSequenceAlignment.support[i]   << ' '
+                    << data.multipleSequenceAlignment.countsA[i]   << ' '
+                    << data.multipleSequenceAlignment.countsC[i]   << ' '
+                    << data.multipleSequenceAlignment.countsG[i]   << ' '
+                    << data.multipleSequenceAlignment.countsT[i]   << ' '
+                    << data.multipleSequenceAlignment.weightsA[i]  << ' '
+                    << data.multipleSequenceAlignment.weightsC[i]  << ' '
+                    << data.multipleSequenceAlignment.weightsG[i]  << ' '
+                    << data.multipleSequenceAlignment.weightsT[i]  << '\n';
+                }
+            }
+            mtx_ml_extraction.unlock();
 
             task.subjectCorrection = getCorrectedSubjectNew(
                 data.multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
@@ -1459,7 +1482,7 @@ correct_cpu(
 
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif

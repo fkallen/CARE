@@ -9,3 +9,6 @@ forests/*.so
 .CUDA_DIR
 .PREFIX
 .THRUST_INCDIR
+
+#editors
+.vscode
