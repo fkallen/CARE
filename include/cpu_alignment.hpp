@@ -13,6 +13,34 @@
 namespace care{
 namespace cpu{
 
+    template<class Iter1, class Iter2>
+    int hammingDistance(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2){
+        auto isEqual = [](const auto& l, const auto& r){
+            return l == r;
+        };
+
+        return hammingDistance(first1, last1, first2, last2, isEqual);
+    }
+
+    template<class Iter1, class Iter2, class Equal>
+    int hammingDistance(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2, Equal isEqual){
+        int result = 0;
+
+        while(first1 != last1 && first2 != last2){
+            result += isEqual(*first1, *first2) ? 0 : 1;
+
+            ++first1;
+            ++first2;
+        }
+
+        //positions which do not overlap count as mismatch.
+        //at least one of the remaining ranges is empty
+        result += std::distance(first1, last1);
+        result += std::distance(first2, last2);
+
+        return result;
+    }
+
 namespace shd{
 
     struct AlignmentResult{
