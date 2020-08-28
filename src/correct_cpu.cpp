@@ -1482,7 +1482,7 @@ correct_cpu(
 
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
