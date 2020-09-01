@@ -53,7 +53,7 @@ struct BackgroundThread{
 
     template<class Func>
     void enqueue(Func&& func){
-        auto wrapper = [f = std::move(func)]() -> void {
+        auto wrapper = [f = std::move(func)]() mutable -> void {
             f();
         };
 
