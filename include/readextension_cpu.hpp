@@ -8,9 +8,13 @@
 #include <minhasher.hpp>
 #include <readstorage.hpp>
 #include <correctionresultprocessing.hpp>
+#include <extensionresultprocessing.hpp>
+
+#include <vector>
 
 namespace care{
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+    MemoryFileFixedSize<ExtendedRead> 
+    //std::vector<ExtendedRead>
     extend_cpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,

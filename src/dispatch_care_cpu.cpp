@@ -309,6 +309,80 @@ namespace care{
 
         std::cout << "Running CARE EXTEND CPU" << std::endl;
 
+
+        // {
+        //     MemoryFileFixedSize<ExtendedRead> memfile{0, fileOptions.tempdirectory+"/tmpfile"};
+
+        //     ExtendedRead er1;
+        //     er1.readId1 = 0;
+        //     er1.readId2 = 1;
+
+        //     ExtendedRead er2;
+        //     er2.readId1 = 2;
+        //     er2.readId2 = 3;
+
+        //     ExtendedRead er3;
+        //     er3.readId1 = 4;
+        //     er3.readId2 = 5;
+
+        //     ExtendedRead er4;
+        //     er4.readId1 = 6;
+        //     er4.readId2 = 7;
+
+        //     ExtendedRead er5;
+        //     er5.readId1 = 8;
+        //     er5.readId2 = 9;
+
+        //     memfile.storeElement(std::move(er1));
+        //     memfile.storeElement(std::move(er2));
+        //     memfile.storeElement(std::move(er3));
+        //     memfile.storeElement(std::move(er4));
+        //     memfile.storeElement(std::move(er5));
+
+        //     memfile.flush();
+            
+        //     if(true){
+        //         auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
+        //             read_number lid1, lid2;
+        //             read_number rid1, rid2;
+        //             std::memcpy(&lid1, ptr1, sizeof(read_number));
+        //             std::memcpy(&lid2, ptr1, sizeof(read_number));
+        //             std::memcpy(&rid1, ptr2, sizeof(read_number));
+        //             std::memcpy(&rid2, ptr2, sizeof(read_number));
+
+        //             std::cerr << "ptrcomparator: (" << lid1 << "," << lid2 << ") - (" << rid1 << "," << rid2 << ")\n";
+                    
+        //             if(lid1 < rid1) return true;
+        //             if(lid1 > rid1) return false;
+        //             if(lid2 < rid2) return true;
+        //             return false;
+        //         };
+
+        //         auto elementcomparator = [](const auto& l, const auto& r){
+        //             std::cerr << "elementcomp: (" << l.readId1 << "," << l.readId2 << ") - (" << r.readId1 << "," << r.readId2 << ")\n";
+        //             if(l.readId1 < r.readId1) return true;
+        //             if(l.readId1 > r.readId1) return false;
+        //             if(l.readId2 < r.readId2) return true;
+        //             return false;
+        //         };
+
+        //         TIMERSTARTCPU(sort_results_by_read_id);
+        //         memfile.sort(fileOptions.tempdirectory, 10000000, ptrcomparator, elementcomparator);
+        //         TIMERSTOPCPU(sort_results_by_read_id);
+        //     }
+
+            
+
+        //     auto partialResultsReader = memfile.makeReader();
+
+        //     std::cerr << "in mem: " << memfile.getNumElementsInMemory() << ", in file: " << memfile.getNumElementsInFile() << "\n";
+
+        //     while(partialResultsReader.hasNext()){
+        //         ExtendedRead extendedRead = *(partialResultsReader.next());
+        //         std::cerr << extendedRead.readId1 << " " << extendedRead.readId2 << "\n";
+        //     }
+        // }
+
         std::uint64_t maximumNumberOfReads = fileOptions.nReads;
         int maximumSequenceLength = fileOptions.maximum_sequence_length;
         int minimumSequenceLength = fileOptions.minimum_sequence_length;
@@ -540,18 +614,52 @@ namespace care{
             outputfiles[0],
             outputFormat
         );
+#if 0
+        std::sort(partialResults.begin(), partialResults.end(), 
+            [](const auto& l, const auto& r){
+                return l.readId1 < r.readId1;
+            }
+        );
 
+        std::ofstream os(outputfiles[0]);
+
+        for(const auto& extendedRead : partialResults){
+            os << extendedRead.readId1 << ' ' << extendedRead.readId2 << ' ' 
+                << extendedRead.reachedMate1 << ' ' << extendedRead.reachedMate2 << '\n';
+            os << extendedRead.originalRead1 << '\n';
+            os << extendedRead.originalRead2 << '\n';
+            if(extendedRead.extendedRead1.length() > 0){
+                os << extendedRead.extendedRead1 << '\n';
+            }else{
+                os << "----------\n";
+            }
+            if(extendedRead.extendedRead2.length() > 0){
+                os << extendedRead.extendedRead2 << '\n';
+            }else{
+                os << "----------\n";
+            }
+        }
+#else
         if(true){
             auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-                read_number id1, id2;
-                std::memcpy(&id1, ptr1, sizeof(read_number));
-                std::memcpy(&id2, ptr2, sizeof(read_number));
+                read_number lid1, lid2;
+                read_number rid1, rid2;
+                std::memcpy(&lid1, ptr1, sizeof(read_number));
+                std::memcpy(&lid2, ptr1, sizeof(read_number));
+                std::memcpy(&rid1, ptr2, sizeof(read_number));
+                std::memcpy(&rid2, ptr2, sizeof(read_number));
                 
-                return id1 < id2;
+                if(lid1 < rid1) return true;
+                if(lid1 > rid1) return false;
+                if(lid2 < rid2) return true;
+                return false;
             };
 
             auto elementcomparator = [](const auto& l, const auto& r){
-                return l.readId < r.readId;
+                if(l.readId1 < r.readId1) return true;
+                if(l.readId1 > r.readId1) return false;
+                if(l.readId2 < r.readId2) return true;
+                return false;
             };
 
             TIMERSTARTCPU(sort_results_by_read_id);
@@ -559,24 +667,45 @@ namespace care{
             TIMERSTOPCPU(sort_results_by_read_id);
         }
 
+        std::ofstream os(outputfiles[0]);
+
         std::int64_t count = 0;
         auto partialResultsReader = partialResults.makeReader();
 
+        std::cerr << "in mem: " << partialResults.getNumElementsInMemory() << ", in file: " << partialResults.getNumElementsInFile() << "\n";
+
         while(partialResultsReader.hasNext()){
-            TempCorrectedSequence tcs = *(partialResultsReader.next());
+            // TempCorrectedSequence tcs = *(partialResultsReader.next());
 
-            Read read;
-            read.name = "" + std::to_string(count);
-            read.comment = "original read id " + std::to_string(tcs.readId);
-            read.sequence = std::move(tcs.sequence);
-            read.quality.resize(read.sequence.size());
-            std::fill(read.quality.begin(), read.quality.end(), 'F');
+            // Read read;
+            // read.name = "" + std::to_string(count);
+            // read.comment = "original read id " + std::to_string(tcs.readId);
+            // read.sequence = std::move(tcs.sequence);
+            // read.quality.resize(read.sequence.size());
+            // std::fill(read.quality.begin(), read.quality.end(), 'F');
 
-            writer->writeRead(read.name, read.comment, read.sequence, read.quality);
+            // writer->writeRead(read.name, read.comment, read.sequence, read.quality);
+
+            ExtendedRead extendedRead = *(partialResultsReader.next());
+
+            os << extendedRead.readId1 << ' ' << extendedRead.readId2 << ' ' 
+                << extendedRead.reachedMate1 << ' ' << extendedRead.reachedMate2 << '\n';
+            os << extendedRead.originalRead1 << '\n';
+            os << extendedRead.originalRead2 << '\n';
+            if(extendedRead.extendedRead1.length() > 0){
+                os << extendedRead.extendedRead1 << '\n';
+            }else{
+                os << "----------\n";
+            }
+            if(extendedRead.extendedRead2.length() > 0){
+                os << extendedRead.extendedRead2 << '\n';
+            }else{
+                os << "----------\n";
+            }
 
             count++;
         }
-
+#endif
         // constructOutputFileFromResults2(
         //     fileOptions.tempdirectory,
         //     fileOptions.inputfiles,            

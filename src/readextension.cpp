@@ -20,6 +20,7 @@
 
 
 #include <readextension_cpu.hpp>
+#include <extensionresultprocessing.hpp>
 #include <correctionresultprocessing.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
@@ -51,6 +52,7 @@ public:
     };
 
     struct ExtendResult{
+        bool mateHasBeenFound = false;
         bool success = false;
         bool aborted = false;
         int numIterations = 0;
@@ -949,7 +951,8 @@ public:
         }
 
         int iter = 0;
-        while(iter < insertSize && accumExtensionLengths < insertSize && !abort && !mateHasBeenFound){
+        while(iter < insertSize && accumExtensionLengths < insertSize - (input.readLength2 - 2*maxextension)
+                && !abort && !mateHasBeenFound){
 
             //update "total" arrays
             {
@@ -970,7 +973,7 @@ public:
             }
 
             if(input.verbose){    
-                verboseStream << "anchor0: " << totalDecodedAnchors[0].back() << ", anchor1: " << totalDecodedAnchors[1].back() << "\n";
+                verboseStream << "anchor0: " << totalDecodedAnchors[0].back() << "\n";
             }
 
             if(input.verbose){    
@@ -1473,10 +1476,12 @@ public:
         extendResult.abortReason = abortReason;
         extendResult.extensionLengths.emplace_back(totalAnchorBeginInExtendedRead.back());
 
-        if(abort){
-            ; //no read extension possible
-        }else{
-            if(mateHasBeenFound){
+        // if(abort){
+        //     ; //no read extension possible
+        // }else
+        {
+            //if(mateHasBeenFound){
+            {
                 //construct extended read
                 //build msa of all saved totalDecodedAnchors[0]
 
@@ -1539,6 +1544,10 @@ public:
 
                 extendResult.extendedReads.emplace_back(input.readId1, std::move(extendedRead));
 
+                if(mateHasBeenFound){
+                    extendResult.mateHasBeenFound = mateHasBeenFound;
+                }
+
                 
 
                 if(input.verbose){
@@ -1550,9 +1559,10 @@ public:
                         std::cerr << verboseStream.rdbuf();
                     }
                 }
-            }else{
-                ; //no read extension possible
             }
+            // else{
+            //     ; //no read extension possible
+            // }
         }
 
         return extendResult;
@@ -1828,7 +1838,8 @@ private:
 
 
 
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+MemoryFileFixedSize<ExtendedRead> 
+//std::vector<ExtendedRead>
 extend_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
@@ -1877,10 +1888,12 @@ extend_cpu(
     }
 
     const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
-    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+    MemoryFileFixedSize<ExtendedRead> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+
+    std::vector<ExtendedRead> resultExtendedReads;
 
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(10);
 
     BackgroundThread outputThread(true);
 
@@ -2000,7 +2013,7 @@ extend_cpu(
                 return extendResult;  
             };
 
-            // it is not known which of both reads is on the forward strand / reverse strand. try both combinations
+            // it is not known which of both reads is on the forward strand / reverse complement strand. try both combinations
             auto extendResult0 = processReadOrder({0,1});
 
             auto extendResult1 = processReadOrder({1,0});
@@ -2014,46 +2027,94 @@ extend_cpu(
             //     extensionLengthsMap[l]++;
             // }
 
-            auto handleSingleResult = [&](const auto& extendResult){
-                const int numResults = extendResult.extendedReads.size();
-                auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
+            auto handleMultiResult = [&](const ReadExtender::ExtendResult* result1, const ReadExtender::ExtendResult* result2){
+                ExtendedRead er{};
 
-                for(int i = 0; i < numResults; i++){
-                    auto& pair = extendResult.extendedReads[i];
-
-                    TempCorrectedSequence tcs;
-                    tcs.hq = false;
-                    tcs.useEdits = false;
-                    tcs.type = TempCorrectedSequence::Type::Anchor;
-                    tcs.shift = 0;
-                    tcs.readId = pair.first;
-                    tcs.sequence = std::move(pair.second);
-
-                    encodeddata[i] = tcs.encode();
+                if(result1 != nullptr){
+                    er.extendedRead1 = result1->extendedReads.front().second;
+                    er.reachedMate1 = result1->mateHasBeenFound;
+                }
+                if(result2 != nullptr){
+                    er.extendedRead2 = result2->extendedReads.front().second;
+                    er.reachedMate2 = result2->mateHasBeenFound;
                 }
 
-                auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
-                    for(int i = 0; i < size; i++){
-                        partialResults.storeElement(std::move(encodeddata[i]));
-                    }
+                er.readId1 = currentIds[0];
+                er.readId2 = currentIds[1];
+
+                er.originalRead1.resize(currentReadLengths[0], '\0');
+
+                decode2BitSequence(
+                    &er.originalRead1[0],
+                    currentEncodedReads.data() + 0 * encodedSequencePitchInInts,
+                    currentReadLengths[0]
+                );
+
+                er.originalRead2.resize(currentReadLengths[1], '\0');
+
+                decode2BitSequence(
+                    &er.originalRead2[0],
+                    currentEncodedReads.data() + 1 * encodedSequencePitchInInts,
+                    currentReadLengths[1]
+                );
+
+                auto func = [&, er = std::move(er)]() mutable{
+                    //resultExtendedReads.emplace_back(std::move(er));
+                    //std::cerr << er.readId1 << " " << er.readId2 << "\n";
+                    partialResults.storeElement(std::move(er));
                 };
 
                 outputThread.enqueue(
                     std::move(func)
                 );
+
+                
             };
 
+            // auto handleSingleResult = [&](const auto& extendResult){
+            //     const int numResults = extendResult.extendedReads.size();
+            //     auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
+
+            //     for(int i = 0; i < numResults; i++){
+            //         auto& pair = extendResult.extendedReads[i];
+
+            //         TempCorrectedSequence tcs;
+            //         tcs.hq = false;
+            //         tcs.useEdits = false;
+            //         tcs.type = TempCorrectedSequence::Type::Anchor;
+            //         tcs.shift = 0;
+            //         tcs.readId = pair.first;
+            //         tcs.sequence = std::move(pair.second);
+
+            //         encodeddata[i] = tcs.encode();
+            //     }
+
+            //     auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
+            //         for(int i = 0; i < size; i++){
+            //             partialResults.storeElement(std::move(encodeddata[i]));
+            //         }
+            //     };
+
+            //     outputThread.enqueue(
+            //         std::move(func)
+            //     );
+            // };
+
             if(extendResult0.success && !extendResult1.success){
-                handleSingleResult(extendResult0);
+                //handleSingleResult(extendResult0);
+                handleMultiResult(&extendResult0, nullptr);
                 numSuccess0++;
             }
 
             if(!extendResult0.success && extendResult1.success){
-                handleSingleResult(extendResult1);
+                //handleSingleResult(extendResult1);
+                handleMultiResult(nullptr, &extendResult1);
                 numSuccess1++;
             }
 
             if(extendResult0.success && extendResult1.success){
+                
+
                 const auto& extendedString0 = extendResult0.extendedReads.front().second;
                 const auto& extendedString1 = extendResult1.extendedReads.front().second;
 
@@ -2079,7 +2140,8 @@ extend_cpu(
                 //     std::cerr << extendedString1 << "\n";
                 // }
 
-                handleSingleResult(extendResult0);
+                //handleSingleResult(extendResult0);
+                handleMultiResult(&extendResult0, &extendResult1);
 
                 numSuccess01++;
             }
@@ -2125,15 +2187,16 @@ extend_cpu(
     //     std::cout << pair.first << ": " << pair.second << "\n";
     // }
 
-    std::cout << "mismatches between mate extensions:\n";
+    // std::cout << "mismatches between mate extensions:\n";
 
-    for(const auto& pair : totalMismatchesBetweenMateExtensions){
-        std::cout << pair.first << ": " << pair.second << "\n";
-    }
+    // for(const auto& pair : totalMismatchesBetweenMateExtensions){
+    //     std::cout << pair.first << ": " << pair.second << "\n";
+    // }
 
 
 
     return partialResults;
+    //return resultExtendedReads;
 }
 
 
