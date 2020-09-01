@@ -552,12 +552,18 @@ struct MemoryFileFixedSize{
         //insert all elements into that, then sort it in memory.
         try{
 
+            auto sdiv = [](auto x, auto y){
+                return ((x+y-1) / y);
+            };
+
             outputstream.flush();
             std::size_t filesizeBytes = filehelpers::getSizeOfFileBytes(filename);
 
             std::size_t requiredMemForAllElements = memoryStorage.getNumOccupiedRawElementBytes();
             requiredMemForAllElements += filesizeBytes;
             requiredMemForAllElements += sizeof(std::size_t) * getNumElements();
+            requiredMemForAllElements = sdiv(requiredMemForAllElements, sizeof(std::size_t)) * sizeof(std::size_t);
+
             std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
             
             if(requiredMemForAllElements < memoryForSortingInBytes){
