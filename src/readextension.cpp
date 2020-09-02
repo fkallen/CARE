@@ -89,12 +89,14 @@ public:
 
     ReadExtender(
         int insertSize,
+        int insertSizeStddev,
         int maximumSequenceLength,
         const cpu::ContiguousReadStorage& rs, 
         const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) : insertSize(insertSize), 
+        insertSizeStddev(insertSizeStddev),
             maximumSequenceLength(maximumSequenceLength),
             minhasher(&mh), readStorage(&rs), 
             correctionOptions(coropts),
@@ -160,7 +162,7 @@ public:
         }
 
         int iter = 0;
-        while(iter < insertSize && accumExtensionLengths[0] < insertSize - input.readLength2 && !abort && !mateHasBeenFound){
+        while(iter < insertSize && accumExtensionLengths[0] < insertSize - input.readLength2 + insertSizeStddev && !abort && !mateHasBeenFound){
 
             //update "total" arrays
             for(int i = 0; i < 2; i++){
@@ -951,7 +953,7 @@ public:
         }
 
         int iter = 0;
-        while(iter < insertSize && accumExtensionLengths < insertSize - (input.readLength2 - 2*maxextension)
+        while(iter < insertSize && accumExtensionLengths < insertSize - (input.readLength2) + insertSizeStddev
                 && !abort && !mateHasBeenFound){
 
             //update "total" arrays
@@ -1017,7 +1019,7 @@ public:
             }
 
             //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
-            if(input.readLength2 + accumExtensionLengths < insertSize){
+            if(input.readLength2 + accumExtensionLengths < insertSize - insertSizeStddev){
                 auto readIdPos = std::lower_bound(
                     newCandidateReadIds.begin(),                                            
                     newCandidateReadIds.end(),
@@ -1137,6 +1139,8 @@ public:
                 newAlignmentFlags.resize(numCandidates);
                 newAlignments.resize(numCandidates);
 
+                //TODO In the end, only alignments with shift >= 0 will be used. Might as well limit alignment calculation to this shift range
+
                 care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
                     alignmentHandle,
                     newForwardAlignments.data(),
@@ -1255,18 +1259,18 @@ public:
                         );
                     }
 
-                    //not sure if these 2 arrays will be required further on
-                    std::copy_n(
-                        newCandidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        newCandidateSequenceFwdData.data() + c * encodedSequencePitchInInts
-                    );
+                    // //not sure if these 2 arrays will be required further on
+                    // std::copy_n(
+                    //     newCandidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
+                    //     encodedSequencePitchInInts,
+                    //     newCandidateSequenceFwdData.data() + c * encodedSequencePitchInInts
+                    // );
 
-                    std::copy_n(
-                        newCandidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        newCandidateSequenceRevcData.data() + c * encodedSequencePitchInInts
-                    );
+                    // std::copy_n(
+                    //     newCandidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
+                    //     encodedSequencePitchInInts,
+                    //     newCandidateSequenceRevcData.data() + c * encodedSequencePitchInInts
+                    // );
                     
                 }
 
@@ -1287,15 +1291,15 @@ public:
                     newCandidateSequenceLengths.begin() + numRemainingCandidates, 
                     newCandidateSequenceLengths.end()
                 );
-                //not sure if these 2 arrays will be required further on
-                newCandidateSequenceFwdData.erase(
-                    newCandidateSequenceFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    newCandidateSequenceFwdData.end()
-                );
-                newCandidateSequenceRevcData.erase(
-                    newCandidateSequenceRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    newCandidateSequenceRevcData.end()
-                );
+                // //not sure if these 2 arrays will be required further on
+                // newCandidateSequenceFwdData.erase(
+                //     newCandidateSequenceFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                //     newCandidateSequenceFwdData.end()
+                // );
+                // newCandidateSequenceRevcData.erase(
+                //     newCandidateSequenceRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                //     newCandidateSequenceRevcData.end()
+                // );
                 
             }
 
@@ -1321,6 +1325,32 @@ public:
             if(input.verbose){    
                 verboseStream << "mate has been found ? " << (mateHasBeenFound ? "yes":"no") << "\n";
             }
+
+            //check that extending to mate does not leave fragment
+            if(mateHasBeenFound){
+                const int mateIndex = std::distance(newCandidateReadIds.begin(), mateIdLocationIter);
+                const auto& mateAlignment = newAlignments[mateIndex];
+
+                if(accumExtensionLengths + input.readLength2 + mateAlignment.shift > insertSize + insertSizeStddev){
+                    mateHasBeenFound = false;
+
+                    newAlignments.erase(newAlignments.begin() + mateIndex);
+                    newAlignmentFlags.erase(newAlignmentFlags.begin() + mateIndex);
+                    newCandidateReadIds.erase(newCandidateReadIds.begin() + mateIndex);
+                    newCandidateSequenceLengths.erase(newCandidateSequenceLengths.begin() + mateIndex);
+
+                    newCandidateSequenceData.erase(
+                        newCandidateSequenceData.begin() + mateIndex * encodedSequencePitchInInts,
+                        newCandidateSequenceData.begin() + (mateIndex + 1) * encodedSequencePitchInInts
+                    );
+
+                    if(input.verbose){    
+                        verboseStream << "mate has been removed again because it would reach beyond fragment\n";
+                    }
+                }
+            }
+
+            
 
             /*
                 Construct MSAs
@@ -1385,39 +1415,43 @@ public:
 
                 if(!mateHasBeenFound){
                     //mate not found. prepare next while-loop iteration
-                    int consensusLength = msa.consensus.size();
 
-                    //the first currentAnchorLength columns are occupied by anchor. try to extend read 
-                    //by at most maxextension bp. In case consensuslength == anchorlength, abort
+                    {
+                        int consensusLength = msa.consensus.size();
 
-                    if(consensusLength == currentAnchorLength){
-                        abort = true;
-                        abortReason = AbortReason::MsaNotExtended;                        
-                    }else{
-                        assert(consensusLength > currentAnchorLength);
-                        
+                        //the first currentAnchorLength columns are occupied by anchor. try to extend read 
+                        //by at most maxextension bp.
 
-                        const int extendBy = std::min(consensusLength - currentAnchorLength, maxextension);
-                        accumExtensionLengths += extendBy;
+                        //can extend by at most maxextension bps
+                        int extendBy = std::min(consensusLength - currentAnchorLength, maxextension);
+                        //cannot extend over fragment 
+                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - input.readLength2) - accumExtensionLengths);
 
-                        if(input.verbose){
-                            verboseStream << "extended by " << extendBy << ", total extension length " << accumExtensionLengths << "\n";
-                        }
+                        if(extendBy == 0){
+                            abort = true;
+                            abortReason = AbortReason::MsaNotExtended;
+                        }else{
+                            accumExtensionLengths += extendBy;
 
-                        //update data for next iteration of outer while loop
-                        const std::string nextDecodedAnchor(msa.consensus.data() + extendBy, currentAnchorLength);
-                        const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
+                            if(input.verbose){
+                                verboseStream << "extended by " << extendBy << ", total extension length " << accumExtensionLengths << "\n";
+                            }
 
-                        currentAnchor.resize(numInts);
-                        encodeSequence2Bit(
-                            currentAnchor.data(), 
-                            nextDecodedAnchor.c_str(), 
-                            nextDecodedAnchor.size()
-                        );
-                        currentAnchorLength = nextDecodedAnchor.size();
+                            //update data for next iteration of outer while loop
+                            const std::string nextDecodedAnchor(msa.consensus.data() + extendBy, currentAnchorLength);
+                            const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
 
-                        if(input.verbose){
-                            verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
+                            currentAnchor.resize(numInts);
+                            encodeSequence2Bit(
+                                currentAnchor.data(), 
+                                nextDecodedAnchor.c_str(), 
+                                nextDecodedAnchor.size()
+                            );
+                            currentAnchorLength = nextDecodedAnchor.size();
+
+                            if(input.verbose){
+                                verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
+                            }
                         }
                        
                     }
@@ -1818,6 +1852,7 @@ private:
 
 
     int insertSize;
+    int insertSizeStddev;
     int maximumSequenceLength;
     std::size_t encodedSequencePitchInInts;
     std::size_t decodedSequencePitchInBytes;
@@ -1892,8 +1927,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(10);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
@@ -1923,6 +1958,7 @@ extend_cpu(
 
     
     const int insertSize = 300;
+    const int insertSizeStddev = 5;
     const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
     const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
 
@@ -1946,6 +1982,7 @@ extend_cpu(
 
         ReadExtender readExtender{
             insertSize,
+            insertSizeStddev,
             maximumSequenceLength,
             readStorage, 
             minhasher,
