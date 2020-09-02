@@ -1139,9 +1139,7 @@ public:
                 newAlignmentFlags.resize(numCandidates);
                 newAlignments.resize(numCandidates);
 
-                //TODO In the end, only alignments with shift >= 0 will be used. Might as well limit alignment calculation to this shift range
-
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::Right>(
                     alignmentHandle,
                     newForwardAlignments.data(),
                     currentAnchor.data(),
@@ -1156,7 +1154,7 @@ public:
                     goodAlignmentProperties.min_overlap_ratio
                 );
 
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::Right>(
                     alignmentHandle,
                     newRevcAlignments.data(),
                     currentAnchor.data(),
