@@ -608,7 +608,7 @@ namespace cpu{
                                     const GoodAlignmentProperties& alignmentProps,
                                     const CorrectionOptions& correctionOptions){
 
-            shd::cpuShiftedHammingDistancePopcount2Bit(
+            shd::cpuShiftedHammingDistancePopcount2Bit<shd::ShiftDirection::LeftRight>(
                 data.alignmentHandle,
                 data.forwardAlignments.begin(),
                 task.subjectSequenceData,
@@ -622,7 +622,7 @@ namespace cpu{
                 alignmentProps.min_overlap_ratio
             );
 
-            shd::cpuShiftedHammingDistancePopcount2Bit(
+            shd::cpuShiftedHammingDistancePopcount2Bit<shd::ShiftDirection::LeftRight>(
                 data.alignmentHandle,
                 data.revcAlignments.begin(),
                 task.subjectSequenceData,

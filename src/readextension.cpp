@@ -415,7 +415,7 @@ public:
                 newAlignmentFlags[i].resize(numCandidates);
                 newAlignments[i].resize(numCandidates);
 
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
                     alignmentHandle,
                     newForwardAlignments.data(),
                     currentAnchor[i].data(),
@@ -430,7 +430,7 @@ public:
                     goodAlignmentProperties.min_overlap_ratio
                 );
 
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
                     alignmentHandle,
                     newRevcAlignments.data(),
                     currentAnchor[i].data(),
@@ -975,7 +975,7 @@ public:
             }
 
             if(input.verbose){    
-                verboseStream << "anchor0: " << totalDecodedAnchors[0].back() << "\n";
+                verboseStream << "anchor0: " << totalDecodedAnchors.back() << "\n";
             }
 
             if(input.verbose){    
@@ -1141,7 +1141,7 @@ public:
 
                 //TODO In the end, only alignments with shift >= 0 will be used. Might as well limit alignment calculation to this shift range
 
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
                     alignmentHandle,
                     newForwardAlignments.data(),
                     currentAnchor.data(),
@@ -1156,7 +1156,7 @@ public:
                     goodAlignmentProperties.min_overlap_ratio
                 );
 
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
+                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
                     alignmentHandle,
                     newRevcAlignments.data(),
                     currentAnchor.data(),
@@ -1223,6 +1223,10 @@ public:
             if(numRemainingCandidates == 0){
                 abort = true;
                 abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+
+                if(input.verbose){    
+                    verboseStream << "no candidates left after alignment\n";
+                }
                 break; //terminate while loop
             }
 
@@ -1918,8 +1922,8 @@ extend_cpu(
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
-    if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
-        memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
+    if(availableMemoryInBytes > 3*(std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - 3*(std::size_t(1) << 30);
     }
 
     const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
@@ -1928,7 +1932,7 @@ extend_cpu(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cpu::RangeGenerator<read_number> readIdGenerator(10000);
 
     BackgroundThread outputThread(true);
 
@@ -1973,12 +1977,12 @@ extend_cpu(
 
     std::map<int, int> totalMismatchesBetweenMateExtensions;
 
-    //omp_set_num_threads(8);
+    omp_set_num_threads(1);
 
     #pragma omp parallel
     {
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
-        goodAlignmentProperties2.maxErrorRate = 0.02;
+        //goodAlignmentProperties2.maxErrorRate = 0.05;
 
         ReadExtender readExtender{
             insertSize,
@@ -2042,7 +2046,7 @@ extend_cpu(
                 input.readLength2 = currentReadLengths[order[1]];
                 input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[order[0]]);
                 input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[order[1]]);
-                input.verbose = false;
+                input.verbose = true;
                 input.verboseMutex = &verboseMutex;
 
                 auto extendResult = readExtender.extendPairedRead2(input);
