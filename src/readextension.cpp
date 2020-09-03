@@ -1929,8 +1929,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(10000);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 
     BackgroundThread outputThread(true);
 
@@ -1975,7 +1975,7 @@ extend_cpu(
 
     std::map<int, int> totalMismatchesBetweenMateExtensions;
 
-    omp_set_num_threads(1);
+    //omp_set_num_threads(1);
 
     #pragma omp parallel
     {
@@ -2044,7 +2044,7 @@ extend_cpu(
                 input.readLength2 = currentReadLengths[order[1]];
                 input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[order[0]]);
                 input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[order[1]]);
-                input.verbose = true;
+                input.verbose = false;
                 input.verboseMutex = &verboseMutex;
 
                 auto extendResult = readExtender.extendPairedRead2(input);
