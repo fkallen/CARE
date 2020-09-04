@@ -611,14 +611,16 @@ namespace care{
             outputFormat = FileFormat::FASTA;
 
 
+
+
+//#define OUTPUTDEBUG
+#ifdef OUTPUTDEBUG
+
         std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
             //fileOptions.outputdirectory + "/extensionresult.txt", 
             outputfiles[0],
             outputFormat
         );
-
-//#define OUTPUTDEBUG
-#ifdef OUTPUTDEBUG
 
 #if 0
         std::sort(partialResults.begin(), partialResults.end(), 
@@ -728,7 +730,7 @@ namespace care{
             fileOptions.inputfiles,            
             partialResults, 
             memoryForSorting,
-            formats[0], 
+            outputFormat, 
             outputfiles, 
             false
         );
