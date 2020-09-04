@@ -1960,8 +1960,8 @@ extend_cpu(
     ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
     
-    const int insertSize = 300;
-    const int insertSizeStddev = 5;
+    const int insertSize = extensionOptions.insertSize;
+    const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
     const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
 

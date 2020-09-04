@@ -33,7 +33,8 @@ void printCommandlineArguments(std::ostream& out, const cxxopts::ParseResult& pa
 bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
-		"inputfiles", "outdir", "outputfilenames", "coverage"
+		"inputfiles", "outdir", "outputfilenames", "coverage",
+		"insertsize", "insertsizedev"
 	};
 
 	bool success = true;
