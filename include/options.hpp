@@ -33,6 +33,11 @@ namespace care{
         int numHashFunctions = 48;
     };
 
+    struct ExtensionOptions{
+        int insertSize;
+        int insertSizeStddev;
+    };
+
 	struct RuntimeOptions{
 		int threads = 1;
         bool showProgress = false;

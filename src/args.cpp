@@ -103,6 +103,21 @@ namespace args{
         return result;
 	}
 
+    template<>
+	ExtensionOptions to<ExtensionOptions>(const cxxopts::ParseResult& pr){
+        ExtensionOptions result{};
+
+        if(pr.count("insertsize")){
+            result.insertSize = pr["insertsize"].as<int>();
+        }
+
+        if(pr.count("insertsizedev")){
+            result.insertSizeStddev = pr["insertsizedev"].as<int>();
+        }
+
+        return result;
+	}
+
 	template<>
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr){
         RuntimeOptions result{};
@@ -303,6 +318,25 @@ namespace args{
             valid = false;
             std::cout << "Error: kmer length must be in range [0, " << max_k<kmer_type>::value 
                 << "], is " + std::to_string(opt.kmerlength) << std::endl;
+        }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<ExtensionOptions>(const ExtensionOptions& opt){
+        bool valid = true;
+
+        if(opt.insertSize < 0){
+            valid = false;
+            std::cout << "Error: insert size must be >= 0, is " 
+                << opt.insertSize << std::endl;
+        }
+
+        if(opt.insertSizeStddev < 0){
+            valid = false;
+            std::cout << "Error: insert size deviation must be >= 0, is " 
+                << opt.insertSizeStddev << std::endl;
         }
 
         return valid;

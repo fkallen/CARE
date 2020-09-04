@@ -82,7 +82,13 @@ int main(int argc, char** argv){
 			"If multiple output files are specified, the number of output files must be equal to the number of input files. "
 			"In this case, output file i will contain the results of input file i. "
 			"Output files are uncompressed.", 
-			cxxopts::value<std::vector<std::string>>());
+			cxxopts::value<std::vector<std::string>>())
+		("insertsize", 
+			"Insert size for paired reads. -- explanation how insert size is interpreted ---", 
+			cxxopts::value<int>())
+		("insertsizedev", 
+			"Insert size deviation for paired reads.", 
+			cxxopts::value<int>());
 
 
 	options.add_options("Additional")
@@ -178,12 +184,14 @@ int main(int argc, char** argv){
 
 	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
 	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
+	ExtensionOptions extensionOptions = args::to<ExtensionOptions>(parseresults);
 	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
 	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
 	FileOptions fileOptions = args::to<FileOptions>(parseresults);
 
 	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
 	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
+	if(!args::isValid(extensionOptions)) throw std::runtime_error("Invalid extensionOptions!");
 	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
 	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
 	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
@@ -242,6 +250,9 @@ int main(int argc, char** argv){
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
+
+	std::cout << "Insert size: " << extensionOptions.insertSize << "\n";
+	std::cout << "Insert size deviation: " << extensionOptions.insertSizeStddev << "\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
