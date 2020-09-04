@@ -1929,8 +1929,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
     BackgroundThread outputThread(true);
 
@@ -2067,7 +2067,7 @@ extend_cpu(
             // }
 
             auto handleMultiResult = [&](const ReadExtender::ExtendResult* result1, const ReadExtender::ExtendResult* result2){
-                ExtendedRead er{};
+                ExtendedReadDebug er{};
 
                 if(result1 != nullptr){
                     er.extendedRead1 = result1->extendedReads.front().second;
