@@ -306,6 +306,7 @@ int main(int argc, char** argv){
 #else
 	care::performExtension(
 		correctionOptions,
+		extensionOptions,
 		runtimeOptions,
 		memoryOptions,
 		fileOptions,

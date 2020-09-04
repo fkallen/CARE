@@ -302,6 +302,7 @@ namespace care{
 
     void performExtension(
                             CorrectionOptions correctionOptions,
+                            ExtensionOptions extensionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
                             FileOptions fileOptions,
@@ -566,6 +567,7 @@ namespace care{
         auto partialResults = extend_cpu(
             goodAlignmentProperties, 
             correctionOptions,
+            extensionOptions,
             runtimeOptions, 
             fileOptions, 
             memoryOptions, 

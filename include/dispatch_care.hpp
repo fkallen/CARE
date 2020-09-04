@@ -19,6 +19,7 @@ namespace care{
 
     void performExtension(
                             CorrectionOptions correctionOptions,
+                            ExtensionOptions extensionOptions,
                             RuntimeOptions runtimeOptions,
                             MemoryOptions memoryOptions,
                             FileOptions fileOptions,

@@ -1880,6 +1880,7 @@ MemoryFileFixedSize<ExtendedRead>
 extend_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
+    const ExtensionOptions& extensionOptions,
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
