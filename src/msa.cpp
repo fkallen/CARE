@@ -487,13 +487,36 @@ MSAProperties getMSAProperties2(const float* support,
         return fgeq(mincoverage, min_coverage_threshold);
     };
 
-    // msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-    //                     && isGoodMinSupport(msaProperties.min_support)
-    //                     && isGoodMinCoverage(msaProperties.min_coverage);
-
     msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
     msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
     msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
+
+
+    const float avg_support = msaProperties.avg_support;
+    const float min_support = msaProperties.min_support;
+    const int min_coverage = msaProperties.min_coverage;
+
+    msaProperties.isHQ = false;
+
+    const bool allGood = isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    if(allGood){
+        int smallestErrorrateThatWouldMakeHQ = 100;
+
+        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+            const float factor = percent / 100.0f;
+            const float avg_threshold = 1.0f - 1.0f * factor;
+            const float min_threshold = 1.0f - 3.0f * factor;
+            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                smallestErrorrateThatWouldMakeHQ = percent;
+            }
+        }
+
+        msaProperties.isHQ = isGoodMinCoverage(min_coverage)
+                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+    }
 
     return msaProperties;
 }
@@ -737,6 +760,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
 
 
 #else 
+
 
 CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     const float* support,
