@@ -1,5 +1,9 @@
 #!/usr/bin/python3
 
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+
 import sys
 
 from collections import defaultdict
@@ -10,7 +14,9 @@ from sklearn import metrics
 from sklearn import tree
 
 import numpy as np
-from matplotlib import pyplot as plt
+
+import struct
+
 
 def onehot(base):
     if base == "A":
@@ -30,7 +36,7 @@ def onehot_(enc):
 
 def retrieve_data(xpath, ypath, outpath):
     ### get X
-    row_t = np.dtype([("readId", "u4"), ("col", "u4"), ('atts', '(17,)f4'), ('class', bool)], align=False)
+    row_t = np.dtype([("readId", "u4"), ("col", "u4"), ('atts', '(32,)f4'), ('class', bool)], align=False)
 
     linecount = sum(1 for line in open(xpath, "r"))
     # linecount = 1000000
@@ -43,7 +49,7 @@ def retrieve_data(xpath, ypath, outpath):
         splt = line.split()
         samples[i]['readId'] = splt[0]
         samples[i]['col'] = splt[1]
-        samples[i]['atts'] = onehot(splt[2]) + onehot(splt[3]) + tuple(splt[4:])
+        samples[i]['atts'] = tuple(splt[2:])
 
     print(samples[0:10])
     print(samples.shape)
@@ -66,7 +72,7 @@ def retrieve_data(xpath, ypath, outpath):
                     filepos += 1
                 trueseq = truthfile.readline()
                 filepos += 1
-            s['class'] = onehot_(s['atts'][:4])==trueseq[s['col']]
+            s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
 
     print(samples[0:10])
     np.save(outpath, samples)
@@ -89,25 +95,53 @@ def train(train_data, test_data):
     print(np.sum(y_test), "/", y_test.shape[0], "=" , 100*np.sum(y_test)/y_test.shape[0], "%\n")
 
     print("training...")
-    # clf = LogisticRegression(n_jobs=88).fit(X_train, y_train)
+    # clf = LogisticRegression(solver='saga', penalty='l1').fit(X_train, y_train)
 
-    clf = RandomForestClassifier(n_jobs=32).fit(X_train, y_train)
+    clf = RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
     # clf = tree.DecisionTreeClassifier(max_depth=3).fit(X_train, y_train) 
-    # tree.export_graphviz(clf, out_file='tree.dot')
+    extract_forest(clf, out_file='tree.bin')
+    tree.export_graphviz(clf.estimators_[0], out_file='tree.dot')
 
     print("predicting...")
 
     probs = clf.predict_proba(X_test)
     
     fpr, tpr, thresholds = metrics.roc_curve(y_test, probs[:,1], pos_label=True)
-    plt.plot(fpr, tpr, label="0ROC curve (area = %.2f)" % metrics.roc_auc_score(y_test, probs[:,1]))
+    plt.plot(fpr, tpr, label="ROC curve (area = %.2f)" % metrics.roc_auc_score(y_test, probs[:,1]))
 
     plt.plot([0, 1], [0, 1], linestyle="dashed", color='gray')
     plt.title("Receiver Operating Characteristic")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.legend()
-    plt.show()
+    plt.savefig("1sep_roc.png")
+
+def extract_node(tree_, i, out_file):
+    if tree_.children_left[i] == tree._tree.TREE_LEAF:
+        out_file.write(struct.pack("f", (tree_.value[i][0][1]/(tree_.value[i][0][0]+tree_.value[i][0][1]))))
+    else:
+        out_file.write(struct.pack("B", tree_.feature[i]))
+        out_file.write(struct.pack("f", tree_.threshold[i]))
+        
+        lhs, rhs = tree_.children_left[i], tree_.children_right[i]
+        
+        flag = 0
+        if tree_.children_left[lhs] == tree._tree.TREE_LEAF:
+            flag += 2
+        if tree_.children_left[rhs] == tree._tree.TREE_LEAF:
+            flag += 1
+
+        out_file.write(struct.pack("B", flag))
+
+        extract_node(tree_, lhs, out_file)
+        extract_node(tree_, rhs, out_file)
+
+def extract_forest(clf, out_file):
+    with open(out_file, "wb") as out_file:
+        out_file.write(struct.pack("I", len(clf.estimators_)))
+        for tree in clf.estimators_:
+            out_file.write(struct.pack("I", tree.get_n_leaves()-1))
+            extract_node(tree.tree_, 0, out_file)
 
 
 ### main ###
