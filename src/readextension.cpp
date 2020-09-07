@@ -1228,6 +1228,77 @@ public:
                 break; //terminate while loop
             }
 
+            //perform binning of candidates. keep candidates in best bins 
+            //such that total number of kept candidates passes a threshold
+
+            {
+                constexpr int numBins = 5;
+                std::array<int, numBins> bins{}; //relative overlap
+                std::array<float, numBins> boundaries{1.0f, 0.7f, 0.6f, 0.5f, 0.0f};
+
+                /*
+                    100%,
+                    70% - 100%
+                    60% - 70%
+                    50% - 60%
+                    < 50%
+                */
+                for(int i = 0; i < numRemainingCandidates; i++){
+                    const int candidateIndex = positionsOfCandidatesToKeep[i];
+                    const auto& alignment = newAlignments[candidateIndex];
+
+                    const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
+                    if(fgeq(relativeOverlap, boundaries[0])){
+                        bins[0]++;
+                    }else if(fgeq(relativeOverlap, boundaries[1])){
+                        bins[1]++;
+                    }else if(fgeq(relativeOverlap, boundaries[2])){
+                        bins[2]++;
+                    }else if(fgeq(relativeOverlap, boundaries[3])){
+                        bins[3]++;
+                    }else{
+                        bins[4]++;
+                    }
+                }
+
+                const int threshold = 5;
+
+                //select bins. bin[0] does not count towards threshold, because reads with overlap 100% cannot be used for extension,
+                //but only for calculating consensus in MSA
+                int selectedBin = 1;
+                int numSelectedInBins = 0;
+                for(int i = 1; i < numBins; i++){
+                    numSelectedInBins += bins[i];
+                    selectedBin = i;
+                    if(numSelectedInBins >= threshold){
+                        break;
+                    }
+                }
+
+                // for(int i = 0; i <numBins; i++){
+                //     std::cerr << bins[i] << " ";
+                // }
+                // std::cerr << "\n";
+
+                int numRemainingCandidatesTmp = 0;
+
+                for(int i = 0; i < numRemainingCandidates; i++){
+                    const int candidateIndex = positionsOfCandidatesToKeep[i];
+                    const auto& alignment = newAlignments[candidateIndex];
+
+                    const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
+
+                    if(fgeq(relativeOverlap, boundaries[selectedBin])){
+                        tmpPositionsOfCandidatesToKeep[numRemainingCandidatesTmp++] = candidateIndex;
+                    }
+                }
+
+                std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
+                std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
+            }
+
+
+
             //compact selected candidates inplace
 
             std::vector<unsigned int> newCandidateSequenceData;
@@ -1930,8 +2001,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(10000);
 
     BackgroundThread outputThread(true);
 
