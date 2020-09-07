@@ -19,6 +19,7 @@
 #include <util.hpp>
 #include <filehelpers.hpp>
 #include <forestclassifier.hpp>
+#include <forest.hpp>
 #include <hostdevicefunctions.cuh>
 
 #include <array>
@@ -34,6 +35,7 @@
 
 #include <omp.h>
 
+
 #define USE_MSA_MINIMIZATION
 
 
@@ -47,6 +49,8 @@ constexpr std::int64_t num_reads_to_profile = 100000;
 
 
 //#define PRINT_MSA
+
+constexpr bool FOREST_MODE = 0; // 1 = use forest, 0 = print samples for scikit-learn
 
 namespace care{
 namespace cpu{
@@ -216,7 +220,7 @@ namespace cpu{
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
 
-            std::shared_ptr<ForestClassifier> forestClassifier1;
+            std::shared_ptr<const Forest> forestClassifier1;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1067,6 +1071,36 @@ namespace cpu{
 
         std::mutex mtx_ml_extraction;
         std::ofstream ml_extraction("ml/samples");
+
+        void one_hot_enc(std::ostream& os, char c) {
+            if (c=='A') {
+                os << "1 0 0 0";
+            } else if (c=='C') {
+                os << "0 1 0 0";
+            } else if (c=='G') {
+                os << "0 0 1 0";
+            } else if (c=='T') {
+                os << "0 0 0 1";
+            } else {
+                os << "0 0 0 0";
+            }
+        }
+        
+        void one_hot_conv(std::ostream& os, char c, std::array<float,4>& v) {
+            if (c=='A') {
+                os << v[0]<< " 0 0 0"; 
+            } else if (c=='C') {
+                os << "0 " << v[1]<< " 0 0";
+            } else if (c=='G') {
+                os << "0 0 " << v[2] << " 0";
+            } else if (c=='T') {
+                os << "0 0 0 " << v[3];
+            } else if (c=='+') {
+                os << v[0] << " " << v[1] << " " << v[2] << " " << v[3];
+            } else {
+                os << "0 0 0 0";
+            }
+        }
         
         void correctSubjectClassic(
                 BatchData& data,
@@ -1087,28 +1121,6 @@ namespace cpu{
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage
             );
-
-            // DIRTY HACK FOR ML SAMPLE EXTRACTION
-            mtx_ml_extraction.lock();
-            for (int i = subjectColumnsBegin_incl; i<subjectColumnsEnd_excl; ++i) {
-                if (data.multipleSequenceAlignment.consensus[i]!=task.decodedSubjectSequence[i-subjectColumnsBegin_incl]) {
-                    ml_extraction
-                    << task.subjectReadId << ' '
-                    << i-subjectColumnsBegin_incl << ' '
-                    << data.multipleSequenceAlignment.consensus[i] << ' '
-                    << task.decodedSubjectSequence[i-subjectColumnsBegin_incl] << ' '
-                    << data.multipleSequenceAlignment.support[i]   << ' '
-                    << data.multipleSequenceAlignment.countsA[i]   << ' '
-                    << data.multipleSequenceAlignment.countsC[i]   << ' '
-                    << data.multipleSequenceAlignment.countsG[i]   << ' '
-                    << data.multipleSequenceAlignment.countsT[i]   << ' '
-                    << data.multipleSequenceAlignment.weightsA[i]  << ' '
-                    << data.multipleSequenceAlignment.weightsC[i]  << ' '
-                    << data.multipleSequenceAlignment.weightsG[i]  << ' '
-                    << data.multipleSequenceAlignment.weightsT[i]  << '\n';
-                }
-            }
-            mtx_ml_extraction.unlock();
 
             task.subjectCorrection = getCorrectedSubjectNew(
                 data.multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
@@ -1156,6 +1168,82 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
+            // ML SAMPLE EXTRACTION
+            if (FOREST_MODE == 0) {
+
+                mtx_ml_extraction.lock();
+                for (int i = subjectColumnsBegin_incl; i<subjectColumnsEnd_excl; ++i) {
+                    if (data.multipleSequenceAlignment.consensus[i]!=task.decodedSubjectSequence[i-subjectColumnsBegin_incl]) {
+
+                        std::array<float, 4> ncountsACGT =
+                        {data.multipleSequenceAlignment.countsA[i],
+                        data.multipleSequenceAlignment.countsC[i],
+                        data.multipleSequenceAlignment.countsG[i],
+                        data.multipleSequenceAlignment.countsT[i]};
+                        
+                        int countsTotal = std::accumulate(ncountsACGT.begin(), ncountsACGT.end(), 0);
+                        for (float& v: ncountsACGT) v/=countsTotal;
+
+                        std::array<float, 4> weightsACGT =
+                        {float(data.multipleSequenceAlignment.weightsA[i]),
+                        float(data.multipleSequenceAlignment.weightsC[i]),
+                        float(data.multipleSequenceAlignment.weightsG[i]),
+                        float(data.multipleSequenceAlignment.weightsT[i])};
+
+                        // coordinates
+                        ml_extraction << task.subjectReadId << ' '
+                        << i-subjectColumnsBegin_incl << ' ';
+
+                        // features:
+
+                        // original
+                        one_hot_enc(ml_extraction, task.decodedSubjectSequence[i-subjectColumnsBegin_incl]);
+                        ml_extraction << " ";
+                        
+                        // consensus
+                        one_hot_enc(ml_extraction, data.multipleSequenceAlignment.consensus[i]);
+                        ml_extraction << " ";
+                        
+                        // normalized counts
+                        one_hot_conv(ml_extraction, '+', ncountsACGT);
+                        ml_extraction << " ";
+
+                        // weights (normalized quality-weighted counts)
+                        one_hot_conv(ml_extraction, '+', weightsACGT);
+                        ml_extraction << " ";
+
+                        // original X norm. counts
+                        one_hot_conv(ml_extraction, task.decodedSubjectSequence[i-subjectColumnsBegin_incl], ncountsACGT);
+                        ml_extraction << " ";
+                        
+                        // original X weights
+                        one_hot_conv(ml_extraction, task.decodedSubjectSequence[i-subjectColumnsBegin_incl], weightsACGT);
+                        ml_extraction << " ";
+
+                        // consensus X norm. counts
+                        one_hot_conv(ml_extraction, data.multipleSequenceAlignment.consensus[i], ncountsACGT);
+                        ml_extraction << " ";
+
+                        // consensus X weights (== Support)
+                        one_hot_conv(ml_extraction, data.multipleSequenceAlignment.consensus[i], weightsACGT);
+                        ml_extraction << " ";
+
+                        ml_extraction << task.msaProperties.avg_support  << " "
+                                    << task.msaProperties.max_coverage << " "
+                                    << task.msaProperties.min_coverage << " "
+                                    << task.msaProperties.min_support  << " ";
+                        
+                        ml_extraction << "\n";
+
+                    }
+                }
+                mtx_ml_extraction.unlock();
+            }
+
+            else { // FORREST_MODE == 1
+                double result = decide(std::vector<float>(100,0), *data.forestClassifier1);
+            }
+
             //data.multipleSequenceAlignment.print(std::cout);
             //data.multipleSequenceAlignment.printWithDiffToConsensus(std::cout);
 
@@ -1172,6 +1260,7 @@ namespace cpu{
                     std::string correctedSequence;
                 };
             */
+
             task.subjectCorrection = CorrectionResult{};
 
 
@@ -1515,10 +1604,15 @@ correct_cpu(
     BackgroundThread outputThread(true);
 
     TimeMeasurements timingsOfAllThreads;
-
-    std::shared_ptr<ForestClassifier> forestClassifier1;
-    if(correctionOptions.correctionType == CorrectionType::Forest){
-        forestClassifier1 = std::make_shared<ForestClassifier>(fileOptions.mlForestfile);
+    
+    std::shared_ptr<const Forest> forestClassifier1;
+    if(correctionOptions.correctionType == CorrectionType::Forest) {
+        if (FOREST_MODE) {
+            forestClassifier1 = std::make_shared<const Forest>(read_forest(fileOptions.mlForestfile));
+        }
+        else {
+            // prepare printing samples
+        }
     }
 
 
