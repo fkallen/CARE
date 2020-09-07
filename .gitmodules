@@ -1,3 +1,3 @@
 [submodule "include/hpc_helpers"]
 	path = include/hpc_helpers
-	url = https://gitlab.rlp.net/pararch/hpc_helpers
+	url = https://gitlab.rlp.net/pararch/hpc_helpers.git
