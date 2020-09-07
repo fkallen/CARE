@@ -14,6 +14,13 @@
 
 namespace care{
 
+    enum class ExtendedReadStatus : unsigned char{
+        FoundMate,
+        MSANoExtension,
+        LengthAbort,
+        CandidateAbort
+    };
+
     // struct EncodedExtendedRead{
     //     std::uint32_t encodedflags{}; //contains size of data in bytes, and boolean flags
     //     read_number readId{};
@@ -73,8 +80,8 @@ namespace care{
 
 
     struct ExtendedReadDebug{
-        bool reachedMate1;
-        bool reachedMate2;
+        ExtendedReadStatus status1;
+        ExtendedReadStatus status2;
         read_number readId1;
         read_number readId2;
         std::string originalRead1;
@@ -99,10 +106,10 @@ namespace care{
                 ptr += sizeof(read_number);
                 std::memcpy(ptr, &readId2, sizeof(read_number));
                 ptr += sizeof(read_number);
-                std::memcpy(ptr, &reachedMate1, sizeof(bool));
-                ptr += sizeof(bool);
-                std::memcpy(ptr, &reachedMate2, sizeof(bool));
-                ptr += sizeof(bool);
+                std::memcpy(ptr, &status1, sizeof(ExtendedReadStatus));
+                ptr += sizeof(ExtendedReadStatus);
+                std::memcpy(ptr, &status2, sizeof(ExtendedReadStatus));
+                ptr += sizeof(ExtendedReadStatus);
 
                 int l = 0;
                 l = originalRead1.length();
@@ -140,10 +147,10 @@ namespace care{
             ptr += sizeof(read_number);
             std::memcpy(&readId2, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
-            std::memcpy(&reachedMate1, ptr, sizeof(bool));
-            ptr += sizeof(bool);
-            std::memcpy(&reachedMate2, ptr, sizeof(bool));
-            ptr += sizeof(bool);            
+            std::memcpy(&status1, ptr, sizeof(ExtendedReadStatus));
+            ptr += sizeof(ExtendedReadStatus);
+            std::memcpy(&status2, ptr, sizeof(ExtendedReadStatus));
+            ptr += sizeof(ExtendedReadStatus);            
 
             int l = 0;
             std::memcpy(&l, ptr, sizeof(int));
@@ -174,8 +181,8 @@ namespace care{
         bool writeToBinaryStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&readId1), sizeof(read_number));
             os.write(reinterpret_cast<const char*>(&readId2), sizeof(read_number));
-            os.write(reinterpret_cast<const char*>(&reachedMate1), sizeof(bool));
-            os.write(reinterpret_cast<const char*>(&reachedMate2), sizeof(bool));
+            os.write(reinterpret_cast<const char*>(&status1), sizeof(ExtendedReadStatus));
+            os.write(reinterpret_cast<const char*>(&status2), sizeof(ExtendedReadStatus));
 
             int l = 0;
             l = originalRead1.length();
@@ -200,8 +207,8 @@ namespace care{
         bool readFromBinaryStream(std::istream& is){
             is.read(reinterpret_cast<char*>(&readId1), sizeof(read_number));
             is.read(reinterpret_cast<char*>(&readId2), sizeof(read_number));
-            is.read(reinterpret_cast<char*>(&reachedMate1), sizeof(bool));
-            is.read(reinterpret_cast<char*>(&reachedMate2), sizeof(bool));
+            is.read(reinterpret_cast<char*>(&status1), sizeof(ExtendedReadStatus));
+            is.read(reinterpret_cast<char*>(&status2), sizeof(ExtendedReadStatus));
 
             int l = 0;
             is.read(reinterpret_cast<char*>(&l), sizeof(int));
@@ -226,7 +233,8 @@ namespace care{
 
 
     struct ExtendedRead{
-        bool reachedMate;
+
+        ExtendedReadStatus status;
         read_number readId;
         std::string extendedSequence;
 
@@ -242,32 +250,32 @@ namespace care{
                 const int len2 = rhs.extendedRead2.length();
 
                 if(len1 > len2){
-                    reachedMate = rhs.reachedMate1;
+                    status = rhs.status1;
                     readId = rhs.readId1;
                     extendedSequence = rhs.extendedRead1;
                 }else if(len1 < len2){
-                    reachedMate = rhs.reachedMate2;
+                    status = rhs.status2;
                     readId = rhs.readId2;
                     extendedSequence = rhs.extendedRead2;
                 }else{
-                    reachedMate = rhs.reachedMate1;
+                    status = rhs.status1;
                     readId = rhs.readId1;
                     extendedSequence = rhs.extendedRead1;
                 }
             };
 
-            if(rhs.reachedMate1 && !rhs.reachedMate2){
-                reachedMate = true;
+            if(rhs.status1 == ExtendedReadStatus::FoundMate && rhs.status2 != ExtendedReadStatus::FoundMate){
+                status = ExtendedReadStatus::FoundMate;
                 readId = rhs.readId1;
                 extendedSequence = rhs.extendedRead1;
-            }else if(!rhs.reachedMate1 && rhs.reachedMate2){
-                reachedMate = true;
+            }else if(rhs.status1 != ExtendedReadStatus::FoundMate && rhs.status2 == ExtendedReadStatus::FoundMate){
+                status = ExtendedReadStatus::FoundMate;
                 readId = rhs.readId2;
                 extendedSequence = rhs.extendedRead2;
-            }else if(rhs.reachedMate1 && rhs.reachedMate2){
+            }else if(rhs.status1 == ExtendedReadStatus::FoundMate && rhs.status2 == ExtendedReadStatus::FoundMate){
                 select_longest();
             }else{
-                //!reachedMate1 && !reachedMate2
+                //!FoundMate 1 && !FoundMate 2
                 select_longest();
             }
 
@@ -285,8 +293,8 @@ namespace care{
             if(requiredBytes <= availableBytes){                
                 std::memcpy(ptr, &readId, sizeof(read_number));
                 ptr += sizeof(read_number);
-                std::memcpy(ptr, &reachedMate, sizeof(bool));
-                ptr += sizeof(bool);
+                std::memcpy(ptr, &status, sizeof(ExtendedReadStatus));
+                ptr += sizeof(ExtendedReadStatus);
 
                 int l = 0;
                 l = extendedSequence.length();
@@ -304,8 +312,8 @@ namespace care{
         void copyFromContiguousMemory(const std::uint8_t* ptr){
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
-            std::memcpy(&reachedMate, ptr, sizeof(bool));
-            ptr += sizeof(bool);    
+            std::memcpy(&status, ptr, sizeof(ExtendedReadStatus));
+            ptr += sizeof(ExtendedReadStatus);    
 
             int l = 0;
             std::memcpy(&l, ptr, sizeof(int));
@@ -317,7 +325,7 @@ namespace care{
 
         bool writeToBinaryStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
-            os.write(reinterpret_cast<const char*>(&reachedMate), sizeof(bool));
+            os.write(reinterpret_cast<const char*>(&status), sizeof(ExtendedReadStatus));
 
             int l = 0;
             l = extendedSequence.length();
@@ -329,7 +337,7 @@ namespace care{
 
         bool readFromBinaryStream(std::istream& is){
             is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
-            is.read(reinterpret_cast<char*>(&reachedMate), sizeof(bool));
+            is.read(reinterpret_cast<char*>(&status), sizeof(ExtendedReadStatus));
 
             int l = 0;
             is.read(reinterpret_cast<char*>(&l), sizeof(int));

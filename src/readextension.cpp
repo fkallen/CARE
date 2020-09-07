@@ -2072,11 +2072,39 @@ extend_cpu(
 
                 if(result1 != nullptr){
                     er.extendedRead1 = result1->extendedReads.front().second;
-                    er.reachedMate1 = result1->mateHasBeenFound;
+                    if(result1->mateHasBeenFound){
+                        er.status1 = ExtendedReadStatus::FoundMate;
+                    }else{
+                        if(result1->aborted){
+                            if(result1->abortReason == ReadExtender::AbortReason::NoPairedCandidates
+                                    || result1->abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+
+                                er.status1 = ExtendedReadStatus::CandidateAbort;
+                            }else if(result1->abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                                er.status1 = ExtendedReadStatus::MSANoExtension;
+                            }
+                        }else{
+                            er.status1 = ExtendedReadStatus::LengthAbort;
+                        }
+                    }
                 }
                 if(result2 != nullptr){
                     er.extendedRead2 = result2->extendedReads.front().second;
-                    er.reachedMate2 = result2->mateHasBeenFound;
+                    if(result2->mateHasBeenFound){
+                        er.status2 = ExtendedReadStatus::FoundMate;
+                    }else{
+                        if(result2->aborted){
+                            if(result2->abortReason == ReadExtender::AbortReason::NoPairedCandidates
+                                    || result2->abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+
+                                er.status2 = ExtendedReadStatus::CandidateAbort;
+                            }else if(result2->abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                                er.status2 = ExtendedReadStatus::MSANoExtension;
+                            }
+                        }else{
+                            er.status2 = ExtendedReadStatus::LengthAbort;
+                        }
+                    }
                 }
 
                 er.readId1 = currentIds[0];
