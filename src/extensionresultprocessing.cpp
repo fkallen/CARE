@@ -40,7 +40,6 @@ void constructOutputFileFromExtensionResults_impl(
         TIMERSTOPCPU(sort_results_by_read_id);
     }
 
-    std::int64_t count = 0;
     auto partialResultsReader = partialResults.makeReader();
 
     std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
