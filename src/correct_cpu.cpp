@@ -220,7 +220,7 @@ namespace cpu{
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
 
-            std::shared_ptr<const Forest> forestClassifier1;
+            std::shared_ptr<ForestClf> forestClassifier1;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1241,7 +1241,8 @@ namespace cpu{
             }
 
             else { // FORREST_MODE == 1
-                double result = decide(std::vector<float>(100,0), *data.forestClassifier1);
+                std::vector<float> some_features(100,0);
+                double result = data.forestClassifier1->decide(some_features);
             }
 
             //data.multipleSequenceAlignment.print(std::cout);
@@ -1605,10 +1606,10 @@ correct_cpu(
 
     TimeMeasurements timingsOfAllThreads;
     
-    std::shared_ptr<const Forest> forestClassifier1;
+    std::shared_ptr<ForestClf> forestClassifier1;
     if(correctionOptions.correctionType == CorrectionType::Forest) {
         if (FOREST_MODE) {
-            forestClassifier1 = std::make_shared<const Forest>(read_forest(fileOptions.mlForestfile));
+            forestClassifier1 = std::make_shared<ForestClf>(fileOptions.mlForestfile);
         }
         else {
             // prepare printing samples
