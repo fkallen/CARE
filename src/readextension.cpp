@@ -8,6 +8,8 @@
 #include <bestalignment.hpp>
 #include <msa.hpp>
 
+#include <hpc_helpers.cuh>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -100,11 +102,17 @@ public:
             maximumSequenceLength(maximumSequenceLength),
             minhasher(&mh), readStorage(&rs), 
             correctionOptions(coropts),
-            goodAlignmentProperties(gap){
+            goodAlignmentProperties(gap),
+            hashTimer{"Hash timer"},
+            collectTimer{"Collect timer"},
+            alignmentTimer{"Alignment timer"},
+            alignmentFilterTimer{"Alignment filter timer"},
+            msaTimer{"MSA timer"}{
 
         encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
         decodedSequencePitchInBytes = maximumSequenceLength;
         qualityPitchInBytes = maximumSequenceLength;
+
     }
 
     /*
@@ -991,7 +999,7 @@ public:
             }
             
 
-            
+            hashTimer.start();
 
             std::vector<read_number> newCandidateReadIds;
 
@@ -1040,6 +1048,10 @@ public:
                 );
                 verboseStream << "\n";
             }
+
+            hashTimer.stop();
+
+            collectTimer.start();
 
             /*
                 Remove candidate pairs which have already been used for extension
@@ -1117,6 +1129,8 @@ public:
                 }
             }
 
+            collectTimer.stop();
+
 
             /*
                 Compute alignments
@@ -1126,6 +1140,8 @@ public:
 
             std::vector<care::cpu::SHDResult> newAlignments;
             std::vector<BestAlignment_t> newAlignmentFlags;
+
+            alignmentTimer.start();
 
             {
 
@@ -1194,6 +1210,10 @@ public:
                 }
 
             }
+
+            alignmentTimer.stop();
+
+            alignmentFilterTimer.start();
 
             /*
                 Remove bad alignments and the corresponding alignments of their mate
@@ -1376,6 +1396,8 @@ public:
                 
             }
 
+            
+
             if(input.verbose){    
                 verboseStream << "new candidate read ids for anchor 0 after alignments:\n";
                 std::copy(
@@ -1422,6 +1444,10 @@ public:
                     }
                 }
             }
+
+            alignmentFilterTimer.stop();
+
+            msaTimer.start();
 
             
 
@@ -1554,6 +1580,8 @@ public:
 
             }
 
+            msaTimer.stop();
+
             /*
                 update book-keeping of used candidates
             */                        
@@ -1673,6 +1701,14 @@ public:
         }
 
         return extendResult;
+    }
+
+    void printTimers(){
+        hashTimer.print();
+        collectTimer.print();
+        alignmentTimer.print();
+        alignmentFilterTimer.print();
+        msaTimer.print();
     }
 
 private:
@@ -1924,6 +1960,7 @@ private:
     }
 
 
+
     int insertSize;
     int insertSizeStddev;
     int maximumSequenceLength;
@@ -1938,6 +1975,12 @@ private:
     CorrectionOptions correctionOptions;
     GoodAlignmentProperties goodAlignmentProperties;
     WorkingSet ws;
+
+    helpers::CpuTimer hashTimer;
+    helpers::CpuTimer collectTimer;
+    helpers::CpuTimer alignmentTimer;
+    helpers::CpuTimer alignmentFilterTimer;
+    helpers::CpuTimer msaTimer;
 };
 
 
@@ -2001,8 +2044,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(10000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
@@ -2303,8 +2346,15 @@ extend_cpu(
             for(const auto& pair : mismatchesBetweenMateExtensions){
                 totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
             }
-            
+
+            const int tid = omp_get_thread_num();
+
+            if(0 == tid){
+                readExtender.printTimers();
+            }      
         }
+
+        
         
     } //end omp parallel
 
