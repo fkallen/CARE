@@ -10,6 +10,8 @@ namespace care {
 template<typename T>
 T& read_one(std::ifstream& is, T& v) {
     char tmp[sizeof(v)];
+    // this is only to be absolutely 100% standard-compliant no matter how read() is implemented
+    // probably absolutely unnecessary but it will be optimized out
     is.read(tmp, sizeof(v));
     std::memcpy(&v, tmp, sizeof(v));
     return v;
@@ -42,7 +44,7 @@ class ForestClf {
         read_one(is, node.thresh);
         read_one(is, node.flag);
         if (node.flag / 2)
-            new(&node.lhs.prob)  float(read_one<float>(is));
+            new(&node.lhs.prob) float(read_one<float>(is));
         else {
             new(&node.lhs.idx) uint32_t(tree.size());
             populate(is, tree);
