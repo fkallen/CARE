@@ -510,7 +510,7 @@ namespace care{
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
         Minhasher minhasher(
             correctionOptions.kmerlength, 
-            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage) * 10
+            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );
 
         if(fileOptions.load_hashtables_from != ""){
