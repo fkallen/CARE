@@ -936,6 +936,8 @@ public:
         std::vector<std::string> totalDecodedAnchors;
         std::vector<int> totalAnchorBeginInExtendedRead;
         std::vector<std::vector<read_number>> usedCandidateReadIdsPerIteration;
+        std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
+        std::vector<std::vector<BestAlignment_t>> usedAlignmentFlagsPerIteration;
 
         std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
 
@@ -1251,6 +1253,11 @@ public:
                 }
             }
 
+            positionsOfCandidatesToKeep.erase(
+                positionsOfCandidatesToKeep.begin() + numRemainingCandidates, 
+                positionsOfCandidatesToKeep.end()
+            );
+
             if(numRemainingCandidates == 0){
                 abort = true;
                 abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
@@ -1261,6 +1268,55 @@ public:
                 break; //terminate while loop
             }
 
+            // //stable_partition is required to make sure candidate read ids remaing sorted
+            // auto partitionPointIter = std::stable_partition(
+            //     positionsOfCandidatesToKeep.begin(), 
+            //     positionsOfCandidatesToKeep.end(),
+            //     [&](const auto& position){
+            //         const auto& alignment = alignments[positions];
+            //         const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
+            //         return fgeq(relativeOverlap, 0.7f) && fleq();
+            //     }
+            // );
+
+
+
+            const bool goodAlignmentExists = std::any_of(
+                positionsOfCandidatesToKeep.begin(), 
+                positionsOfCandidatesToKeep.end(),
+                [&](const auto& position){
+                    const auto& alignment = alignments[position];
+                    const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
+                    return fgeq(relativeOverlap, 0.7f) && fleq(relativeOverlap, 1.0f);
+                }
+            );
+
+            if(goodAlignmentExists){
+                tmpPositionsOfCandidatesToKeep.resize(positionsOfCandidatesToKeep.size());
+
+                auto end = std::copy_if(
+                    positionsOfCandidatesToKeep.begin(), 
+                    positionsOfCandidatesToKeep.end(),
+                    tmpPositionsOfCandidatesToKeep.begin(),
+                    [&](const auto& position){
+                        const auto& alignment = alignments[position];
+                        const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
+                        return fgeq(relativeOverlap, 0.7f);
+                    }
+                );
+
+                tmpPositionsOfCandidatesToKeep.erase(
+                    end,
+                    tmpPositionsOfCandidatesToKeep.end()
+                );
+
+                int numRemainingCandidatesTmp = tmpPositionsOfCandidatesToKeep.size();
+
+                std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
+                std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
+            }
+
+#if 0
             //perform binning of candidates. keep candidates in best bins 
             //such that total number of kept candidates passes a threshold
 
@@ -1329,7 +1385,7 @@ public:
                 std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
                 std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
             }
-
+#endif
 
 
             //compact selected candidates inplace
@@ -1614,6 +1670,8 @@ public:
             }
 
             usedCandidateReadIdsPerIteration.emplace_back(std::move(candidateReadIds));
+            usedAlignmentsPerIteration.emplace_back(std::move(alignments));
+            usedAlignmentFlagsPerIteration.emplace_back(std::move(alignmentFlags));
 
             iter++; //control outer while-loop
         }
