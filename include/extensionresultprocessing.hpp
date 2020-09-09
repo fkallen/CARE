@@ -283,9 +283,8 @@ namespace care{
         }
 
         std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
-            const std::size_t requiredBytes = sizeof(bool)
-                + sizeof(bool)
-                + sizeof(read_number)
+            const std::size_t requiredBytes = sizeof(read_number)
+                + sizeof(ExtendedReadStatus)
                 + sizeof(int) + extendedSequence.length();
 
             const std::size_t availableBytes = std::distance(ptr, endPtr);

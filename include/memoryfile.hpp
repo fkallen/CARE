@@ -580,7 +580,8 @@ struct MemoryFileFixedSize{
 
                 while(r.hasNext()){
                     const T* element = r.next();
-                    newMemoryStorage.insert(*element, serialize);
+                    const bool inserted = newMemoryStorage.insert(*element, serialize);
+                    assert(inserted);
                 }
 
                 newMemoryStorage.sort(ptrcomparator);
