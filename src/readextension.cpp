@@ -1003,27 +1003,37 @@ public:
 
             std::vector<read_number> newCandidateReadIds;
 
-            getCandidates(
-                newCandidateReadIds, 
-                currentAnchor.data(), 
-                currentAnchorLength,
-                currentAnchorReadId
-            );
-
             if(iter == 0){
-                // remove self from candidate list
-                {
-                    auto readIdPos = std::lower_bound(
-                        newCandidateReadIds.begin(),                                            
-                        newCandidateReadIds.end(),
-                        currentAnchorReadId
-                    );
 
-                    if(readIdPos != newCandidateReadIds.end() && *readIdPos == currentAnchorReadId){
-                        newCandidateReadIds.erase(readIdPos);
-                    }
+                getCandidates(
+                    newCandidateReadIds, 
+                    currentAnchor.data(), 
+                    currentAnchorLength,
+                    currentAnchorReadId
+                );
+
+            }else{
+                //only hash the right end of current anchor
+                getCandidates(
+                    newCandidateReadIds, 
+                    currentAnchor.data(), 
+                    currentAnchorLength,
+                    currentAnchorReadId,
+                    std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
+                );
+            }
+
+            // remove self from candidate list
+            if(iter == 0){
+                auto readIdPos = std::lower_bound(
+                    newCandidateReadIds.begin(),                                            
+                    newCandidateReadIds.end(),
+                    currentAnchorReadId
+                );
+
+                if(readIdPos != newCandidateReadIds.end() && *readIdPos == currentAnchorReadId){
+                    newCandidateReadIds.erase(readIdPos);
                 }
-                
             }
 
             //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
@@ -1051,32 +1061,12 @@ public:
 
             hashTimer.stop();
 
-            // {
-            //     std::vector<read_number> candidateReadIdsFromShortString;
-            //     getCandidates(
-            //         candidateReadIdsFromShortString, 
-            //         currentAnchor.data(), 
-            //         currentAnchorLength,
-            //         currentAnchorReadId,
-            //         std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
-            //     );
-            // }
-
             collectTimer.start();
 
             /*
                 Remove candidate pairs which have already been used for extension
             */
-
             {
-                std::vector<read_number> candidateReadIdsFromShortString;
-                getCandidates(
-                    candidateReadIdsFromShortString, 
-                    currentAnchor.data(), 
-                    currentAnchorLength,
-                    currentAnchorReadId,
-                    std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
-                );
 
                 std::vector<read_number> tmp(newCandidateReadIds.size());
 
@@ -1091,6 +1081,7 @@ public:
                 tmp.erase(end, tmp.end());
 
                 std::swap(newCandidateReadIds, tmp);
+
             }
 
 
