@@ -551,12 +551,12 @@ void constructOutputFileFromCorrectionResults_impl(
             return l.readId < r.readId;
         };
 
-        TIMERSTARTCPU(sort_results_by_read_id);
+        helpers::CpuTimer timer("sort_results_by_read_id");
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_results_by_read_id);
+        timer.print();
     }
 
-    TIMERSTARTCPU(merging);
+    helpers::CpuTimer mergetimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -739,7 +739,7 @@ void constructOutputFileFromCorrectionResults_impl(
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    TIMERSTOPCPU(merging);
+    mergetimer.print();
 }
 
 
@@ -773,12 +773,12 @@ void constructOutputFileFromCorrectionResults2_impl(
             return l.readId < r.readId;
         };
 
-        TIMERSTARTCPU(sort_results_by_read_id);
+        helpers::CpuTimer timer("sort_results_by_read_id");
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_results_by_read_id);
+        timer.print();
     }
 
-    TIMERSTARTCPU(merging);
+    helpers::CpuTimer mergetimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -876,7 +876,7 @@ void constructOutputFileFromCorrectionResults2_impl(
         }
     }
 
-    TIMERSTOPCPU(merging);
+    mergetimer.print();
 }
 
 
@@ -909,12 +909,12 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
             return l.readId < r.readId;
         };
 
-        TIMERSTARTCPU(sort_results_by_read_id);
+        helpers::CpuTimer timer("sort_results_by_read_id");
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_results_by_read_id);
+        timer.print();
     }
 
-    TIMERSTARTCPU(merging);
+    helpers::CpuTimer mergetimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -1260,7 +1260,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     outputWriterFuture.wait();
 
 
-    TIMERSTOPCPU(merging);
+    mergetimer.print();
 }
 
 void constructOutputFileFromCorrectionResults(

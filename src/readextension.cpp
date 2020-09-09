@@ -1051,6 +1051,17 @@ public:
 
             hashTimer.stop();
 
+            // {
+            //     std::vector<read_number> candidateReadIdsFromShortString;
+            //     getCandidates(
+            //         candidateReadIdsFromShortString, 
+            //         currentAnchor.data(), 
+            //         currentAnchorLength,
+            //         currentAnchorReadId,
+            //         std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
+            //     );
+            // }
+
             collectTimer.start();
 
             /*
@@ -1058,6 +1069,15 @@ public:
             */
 
             {
+                std::vector<read_number> candidateReadIdsFromShortString;
+                getCandidates(
+                    candidateReadIdsFromShortString, 
+                    currentAnchor.data(), 
+                    currentAnchorLength,
+                    currentAnchorReadId,
+                    std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
+                );
+
                 std::vector<read_number> tmp(newCandidateReadIds.size());
 
                 auto end = std::set_difference(
@@ -1072,6 +1092,8 @@ public:
 
                 std::swap(newCandidateReadIds, tmp);
             }
+
+
 
             if(input.verbose){    
                 verboseStream << "new candidate read ids for anchor 0:\n";
@@ -1734,7 +1756,8 @@ private:
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
         int readLength, 
-        read_number readId
+        read_number readId,
+        int beginPos = 0 // only positions [beginPos, readLength] are hashed
     ){
         Minhasher::Handle minhashHandle;
 
@@ -1756,7 +1779,8 @@ private:
 
             minhasher->getCandidates_any_map(
                 minhashHandle,
-                sequence,
+                sequence.c_str() + beginPos,
+                std::max(0, readLength - beginPos),
                 0
             );
 

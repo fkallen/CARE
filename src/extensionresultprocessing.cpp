@@ -1,5 +1,5 @@
 #include <extensionresultprocessing.hpp>
-
+#include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
 
@@ -35,9 +35,9 @@ void constructOutputFileFromExtensionResults_impl(
             return l.readId < r.readId;
         };
 
-        TIMERSTARTCPU(sort_results_by_read_id);
+        helpers::CpuTimer timer("sort_results_by_read_id");
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
-        TIMERSTOPCPU(sort_results_by_read_id);
+        timer.print();
     }
 
     auto partialResultsReader = partialResults.makeReader();

@@ -1,5 +1,5 @@
 #include <dispatch_care.hpp>
-
+#include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <options.hpp>
 
@@ -107,9 +107,10 @@ namespace care{
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
-        TIMERSTARTCPU(STEP1);
+        helpers::CpuTimer step1Timer("STEP1");
 
-        TIMERSTARTCPU(build_readstorage);
+        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
+
 
         care::cpu::ContiguousReadStorage readStorage(
             maximumNumberOfReads, 
@@ -120,9 +121,7 @@ namespace care{
 
         if(fileOptions.load_binary_reads_from != ""){
 
-            TIMERSTARTCPU(load_from_file);
             readStorage.loadFromFile(fileOptions.load_binary_reads_from);
-            TIMERSTOPCPU(load_from_file);
 
             if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
@@ -144,13 +143,13 @@ namespace care{
             );
         }
 
-        TIMERSTOPCPU(build_readstorage);
+        buildReadStorageTimer.print();
 
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
-            TIMERSTARTCPU(save_to_file);
+            helpers::CpuTimer timer("save_to_file");
             readStorage.saveToFile(fileOptions.save_binary_reads_to);
-            TIMERSTOPCPU(save_to_file);
+            timer.print();
     		std::cout << "Saved reads" << std::endl;
         }
 
@@ -192,7 +191,7 @@ namespace care{
         printDataStructureMemoryUsage(readStorage, "reads");
 
 
-        TIMERSTARTCPU(build_minhasher);
+        helpers::CpuTimer buildMinhasherTimer("build_minhasher");
         Minhasher minhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
@@ -225,15 +224,15 @@ namespace care{
             }
         }
 
-        TIMERSTOPCPU(build_minhasher);
+        buildMinhasherTimer.print();
 
         if(fileOptions.save_hashtables_to != "") {
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
             std::ofstream os(fileOptions.save_hashtables_to);
             assert((bool)os);
-
+            helpers::CpuTimer timer("save_to_file");
             minhasher.writeToStream(os);
-
+            timer.print();
     		std::cout << "Saved minhasher" << std::endl;
         }
 
@@ -241,11 +240,11 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, "hash tables");
 
-        TIMERSTOPCPU(STEP1);
+        step1Timer.print();
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
-        TIMERSTARTCPU(STEP2);
+        helpers::CpuTimer step2Timer("STEP2");
 
         auto partialResults = cpu::correct_cpu(
             goodAlignmentProperties, 
@@ -259,7 +258,7 @@ namespace care{
             readStorage
         );
 
-        TIMERSTOPCPU(STEP2);
+        step2Timer.print();
 
         minhasher.destroy();
         readStorage.destroy();
@@ -273,7 +272,7 @@ namespace care{
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
-        TIMERSTARTCPU(STEP3);
+        helpers::CpuTimer step3Timer("STEP3");
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -293,7 +292,7 @@ namespace care{
             false
         );
 
-        TIMERSTOPCPU(STEP3);
+        step3Timer.print();
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
@@ -424,9 +423,10 @@ namespace care{
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
-        TIMERSTARTCPU(STEP1);
+        helpers::CpuTimer step1Timer("STEP1");
 
-        TIMERSTARTCPU(build_readstorage);
+        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
+
 
         care::cpu::ContiguousReadStorage readStorage(
             maximumNumberOfReads, 
@@ -437,9 +437,7 @@ namespace care{
 
         if(fileOptions.load_binary_reads_from != ""){
 
-            TIMERSTARTCPU(load_from_file);
             readStorage.loadFromFile(fileOptions.load_binary_reads_from);
-            TIMERSTOPCPU(load_from_file);
 
             if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
@@ -461,13 +459,13 @@ namespace care{
             );
         }
 
-        TIMERSTOPCPU(build_readstorage);
+        buildReadStorageTimer.print();
 
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
-            TIMERSTARTCPU(save_to_file);
+            helpers::CpuTimer timer("save_to_file");
             readStorage.saveToFile(fileOptions.save_binary_reads_to);
-            TIMERSTOPCPU(save_to_file);
+            timer.print();
     		std::cout << "Saved reads" << std::endl;
         }
 
@@ -509,7 +507,7 @@ namespace care{
         printDataStructureMemoryUsage(readStorage, "reads");
 
 
-        TIMERSTARTCPU(build_minhasher);
+        helpers::CpuTimer buildMinhasherTimer("build_minhasher");
         Minhasher minhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage) * 10
@@ -542,15 +540,15 @@ namespace care{
             }
         }
 
-        TIMERSTOPCPU(build_minhasher);
+        buildMinhasherTimer.print();
 
         if(fileOptions.save_hashtables_to != "") {
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
             std::ofstream os(fileOptions.save_hashtables_to);
             assert((bool)os);
-
+            helpers::CpuTimer timer("save_to_file");
             minhasher.writeToStream(os);
-
+            timer.print();
     		std::cout << "Saved minhasher" << std::endl;
         }
 
@@ -558,11 +556,11 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, "hash tables");
 
-        TIMERSTOPCPU(STEP1);
+        step1Timer.print();
 
         std::cout << "STEP 2: Read extension" << std::endl;
 
-        TIMERSTARTCPU(STEP2);
+        helpers::CpuTimer step2Timer("STEP2");
 
         auto partialResults = extend_cpu(
             goodAlignmentProperties, 
@@ -576,7 +574,7 @@ namespace care{
             readStorage
         );
 
-        TIMERSTOPCPU(STEP2);
+        step2Timer.print();
 
         minhasher.destroy();
         readStorage.destroy();
@@ -592,7 +590,7 @@ namespace care{
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
-        TIMERSTARTCPU(STEP3);
+        helpers::CpuTimer step3Timer("STEP3");
 
         std::vector<FileFormat> formats;
         for(const auto& inputfile : fileOptions.inputfiles){
@@ -740,7 +738,7 @@ namespace care{
 
 
 
-        TIMERSTOPCPU(STEP3);
+        step3Timer.print();
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
