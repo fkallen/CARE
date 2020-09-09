@@ -104,6 +104,7 @@ namespace args{
 
             switch(val){
                 case 1: result.correctionType = CorrectionType::Forest; break;
+                case 2: result.correctionType = CorrectionType::Print; break;
                 default: result.correctionType = CorrectionType::Classic; break;
             }
         }
@@ -399,13 +400,13 @@ namespace args{
         }
 
         {
-            if(opt.mlForestfile != ""){
-                std::ifstream is(opt.mlForestfile);
-                if(!(bool)is){
-                    valid = false;
-                    std::cout << "Error: cannot find mlForestfile " << opt.mlForestfile << std::endl;
-                }
-            }
+            // if(opt.opt.mlForestfile != ""){
+            //     std::ifstream is(opt.mlForestfile);
+            //     if(!(bool)is){
+            //         valid = false;
+            //         std::cout << "Error: cannot find mlForestfile " << opt.mlForestfile << std::endl;
+            //     }
+            // }
         }
 
         {

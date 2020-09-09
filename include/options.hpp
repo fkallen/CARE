@@ -10,13 +10,14 @@
 
 namespace care{
 
-    enum class CorrectionType : int {Classic, Forest};
+    enum class CorrectionType : int {Classic, Forest, Print};
 
     __inline__
     std::string nameOfCorrectionType(CorrectionType t){
         switch(t){
             case CorrectionType::Classic: return "Classic"; break;
             case CorrectionType::Forest: return "Forest"; break;
+            case CorrectionType::Print: return "Print"; break;
             default: return "Forgot to name correction type"; break;
         }
     }
