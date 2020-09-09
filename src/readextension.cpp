@@ -1003,7 +1003,7 @@ public:
 
             std::vector<read_number> newCandidateReadIds;
 
-            if(iter == 0){
+//            if(iter == 0){
 
                 getCandidates(
                     newCandidateReadIds, 
@@ -1012,16 +1012,16 @@ public:
                     currentAnchorReadId
                 );
 
-            }else{
-                //only hash the right end of current anchor
-                getCandidates(
-                    newCandidateReadIds, 
-                    currentAnchor.data(), 
-                    currentAnchorLength,
-                    currentAnchorReadId,
-                    std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
-                );
-            }
+            // }else{
+            //     //only hash the right end of current anchor
+            //     getCandidates(
+            //         newCandidateReadIds, 
+            //         currentAnchor.data(), 
+            //         currentAnchorLength,
+            //         currentAnchorReadId,
+            //         std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
+            //     );
+            // }
 
             // remove self from candidate list
             if(iter == 0){
@@ -2059,8 +2059,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
