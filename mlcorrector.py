@@ -36,7 +36,7 @@ def onehot_(enc):
 
 def retrieve_data(xpath, ypath, outpath):
     ### get X
-    row_t = np.dtype([("readId", "u4"), ("col", "u4"), ('atts', '(32,)f4'), ('class', bool)], align=False)
+    row_t = np.dtype([("readId", "u4"), ("col", "u4"), ('atts', '(36,)f4'), ('class', bool)], align=False)
 
     linecount = sum(1 for line in open(xpath, "r"))
     # linecount = 1000000
@@ -99,8 +99,8 @@ def train(train_data, test_data):
 
     clf = RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
     # clf = tree.DecisionTreeClassifier(max_depth=3).fit(X_train, y_train) 
-    extract_forest(clf, out_file='tree.bin')
-    tree.export_graphviz(clf.estimators_[0], out_file='tree.dot')
+    extract_forest(clf, out_file='forest.bin')
+    # tree.export_graphviz(clf.estimators_[0], out_file='tree.dot')
 
     print("predicting...")
 
@@ -114,7 +114,7 @@ def train(train_data, test_data):
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.legend()
-    plt.savefig("1sep_roc.png")
+    plt.savefig("roc.png")
 
 def extract_node(tree_, i, out_file):
     if tree_.children_left[i] == tree._tree.TREE_LEAF:

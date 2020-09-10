@@ -158,7 +158,7 @@ Available program parameters:
                                 is not a hard limit. Default: All free
                                 memory.
 
-      --correctionType arg      0: Classic, 1: Forest
+      --correctionType arg      0: Classic, 1: Forest, 2: Print
       --ml-forestfile arg       The shared object file to load which contains 
                                 ML error correction logic
 

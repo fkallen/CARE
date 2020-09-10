@@ -1115,7 +1115,7 @@ namespace cpu{
             
         }
 
-        ml_sample_t make_sample(const BatchData& data, BatchData::Task& task, size_t pos)
+        ml_sample_t make_sample(const BatchData& data, const BatchData::Task& task, size_t pos)
         {   
             const int b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
             auto& msa = data.multipleSequenceAlignment;
