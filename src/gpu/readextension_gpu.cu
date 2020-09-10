@@ -1809,6 +1809,8 @@ public:
         std::vector<int> candidateSequenceLengths;
         std::vector<unsigned int> candidateSequenceFwdData;
         std::vector<unsigned int> candidateSequenceRevcData;
+        std::vector<care::cpu::SHDResult> alignments;
+        std::vector<BestAlignment_t> alignmentFlags;
         std::vector<std::string> totalDecodedAnchors;
         std::vector<int> totalAnchorBeginInExtendedRead;
         std::vector<std::vector<read_number>> usedCandidateReadIdsPerIteration;
@@ -1856,7 +1858,7 @@ public:
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-
+        cpu::shd::CpuAlignmentHandle alignmentHandle;
                 
 
 
@@ -1997,17 +1999,16 @@ public:
 
                 collectTimer.stop();
 
+            }
 
-                /*
-                    Compute alignments
-                */
+            /*
+                Compute alignments
+            */
 
-                cpu::shd::CpuAlignmentHandle alignmentHandle;
+            alignmentTimer.start();
 
-                std::vector<care::cpu::SHDResult> alignments;
-                std::vector<BestAlignment_t> alignmentFlags;
-
-                alignmentTimer.start();
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 {
 
@@ -2018,8 +2019,8 @@ public:
 
                     forwardAlignments.resize(numCandidates);
                     revcAlignments.resize(numCandidates);
-                    alignmentFlags.resize(numCandidates);
-                    alignments.resize(numCandidates);
+                    task.alignmentFlags.resize(numCandidates);
+                    task.alignments.resize(numCandidates);
 
                     care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::Right>(
                         alignmentHandle,
@@ -2058,7 +2059,7 @@ public:
                         const auto& revcAlignment = revcAlignments[c];
                         const int candidateLength = task.candidateSequenceLengths[c];
 
-                        alignmentFlags[c] = care::choose_best_alignment(
+                        task.alignmentFlags[c] = care::choose_best_alignment(
                             forwardAlignment,
                             revcAlignment,
                             task.currentAnchorLength,
@@ -2068,16 +2069,21 @@ public:
                             correctionOptions.estimatedErrorrate
                         );
 
-                        if(alignmentFlags[c] == BestAlignment_t::Forward){
-                            alignments[c] = forwardAlignment;
+                        if(task.alignmentFlags[c] == BestAlignment_t::Forward){
+                            task.alignments[c] = forwardAlignment;
                         }else{
-                            alignments[c] = revcAlignment;
+                            task.alignments[c] = revcAlignment;
                         }
                     }
 
                 }
 
-                alignmentTimer.stop();
+            }
+
+            alignmentTimer.stop();
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 alignmentFilterTimer.start();
 
@@ -2085,7 +2091,7 @@ public:
                     Remove bad alignments and the corresponding alignments of their mate
                 */        
 
-                const int size = alignments.size();
+                const int size = task.alignments.size();
 
                 std::vector<int> positionsOfCandidatesToKeep(size);
                 std::vector<int> tmpPositionsOfCandidatesToKeep(size);
@@ -2094,9 +2100,9 @@ public:
 
                 //select candidates with good alignment and positive shift
                 for(int c = 0; c < size; c++){
-                    const BestAlignment_t alignmentFlag0 = alignmentFlags[c];
+                    const BestAlignment_t alignmentFlag0 = task.alignmentFlags[c];
                     
-                    if(alignmentFlag0 != BestAlignment_t::None && alignments[c].shift >= 0){
+                    if(alignmentFlag0 != BestAlignment_t::None && task.alignments[c].shift >= 0){
                         positionsOfCandidatesToKeep[numRemainingCandidates] = c;
                         numRemainingCandidates++;
                     }else{
@@ -2133,7 +2139,7 @@ public:
                     positionsOfCandidatesToKeep.begin(), 
                     positionsOfCandidatesToKeep.end(),
                     [&](const auto& position){
-                        const auto& alignment = alignments[position];
+                        const auto& alignment = task.alignments[position];
                         const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
                         return fgeq(relativeOverlap, 0.7f) && relativeOverlap < 1.0f; //fleq(relativeOverlap, 1.0f);
                     }
@@ -2147,7 +2153,7 @@ public:
                         positionsOfCandidatesToKeep.end(),
                         tmpPositionsOfCandidatesToKeep.begin(),
                         [&](const auto& position){
-                            const auto& alignment = alignments[position];
+                            const auto& alignment = task.alignments[position];
                             const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
                             return fgeq(relativeOverlap, 0.7f);
                         }
@@ -2246,14 +2252,14 @@ public:
                     for(int c = 0; c < numRemainingCandidates; c++){
                         const int index = positionsOfCandidatesToKeep[c];
 
-                        alignments[c] = alignments[index];
-                        alignmentFlags[c] = alignmentFlags[index];
+                        task.alignments[c] = task.alignments[index];
+                        task.alignmentFlags[c] = task.alignmentFlags[index];
                         task.candidateReadIds[c] = task.candidateReadIds[index];
                         task.candidateSequenceLengths[c] = task.candidateSequenceLengths[index];
                         
-                        assert(alignmentFlags[index] != BestAlignment_t::None);
+                        assert(task.alignmentFlags[index] != BestAlignment_t::None);
 
-                        if(alignmentFlags[index] == BestAlignment_t::Forward){
+                        if(task.alignmentFlags[index] == BestAlignment_t::Forward){
                             std::copy_n(
                                 task.candidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
@@ -2285,13 +2291,13 @@ public:
                     }
 
                     //erase past-end elements
-                    alignments.erase(
-                        alignments.begin() + numRemainingCandidates, 
-                        alignments.end()
+                    task.alignments.erase(
+                        task.alignments.begin() + numRemainingCandidates, 
+                        task.alignments.end()
                     );
-                    alignmentFlags.erase(
-                        alignmentFlags.begin() + numRemainingCandidates, 
-                        alignmentFlags.end()
+                    task.alignmentFlags.erase(
+                        task.alignmentFlags.begin() + numRemainingCandidates, 
+                        task.alignmentFlags.end()
                     );
                     task.candidateReadIds.erase(
                         task.candidateReadIds.begin() + numRemainingCandidates, 
@@ -2326,13 +2332,13 @@ public:
                 //check that extending to mate does not leave fragment
                 if(task.mateHasBeenFound){
                     const int mateIndex = std::distance(task.candidateReadIds.begin(), task.mateIdLocationIter);
-                    const auto& mateAlignment = alignments[mateIndex];
+                    const auto& mateAlignment = task.alignments[mateIndex];
 
                     if(task.accumExtensionLengths + task.mateLength + mateAlignment.shift > insertSize + insertSizeStddev){
                         task.mateHasBeenFound = false;
 
-                        alignments.erase(alignments.begin() + mateIndex);
-                        alignmentFlags.erase(alignmentFlags.begin() + mateIndex);
+                        task.alignments.erase(task.alignments.begin() + mateIndex);
+                        task.alignmentFlags.erase(task.alignmentFlags.begin() + mateIndex);
                         task.candidateReadIds.erase(task.candidateReadIds.begin() + mateIndex);
                         task.candidateSequenceLengths.erase(task.candidateSequenceLengths.begin() + mateIndex);
 
@@ -2366,12 +2372,12 @@ public:
                     std::vector<float> candidateOverlapWeights(numRemainingCandidates);
 
                     for(int c = 0; c < numRemainingCandidates; c++){
-                        candidateShifts[c] = alignments[c].shift;
+                        candidateShifts[c] = task.alignments[c].shift;
 
                         candidateOverlapWeights[c] = calculateOverlapWeight(
                             task.currentAnchorLength, 
-                            alignments[c].nOps,
-                            alignments[c].overlap
+                            task.alignments[c].nOps,
+                            task.alignments[c].overlap
                         );
                     }
 
@@ -2459,7 +2465,7 @@ public:
                         {
                             //find end of mate in msa
                             const int index = std::distance(task.candidateReadIds.begin(), task.mateIdLocationIter);
-                            const int shift = alignments[index].shift;
+                            const int shift = task.alignments[index].shift;
                             const int clength = task.candidateSequenceLengths[index];
                             assert(shift >= 0);
                             const int endcolumn = shift + clength;
@@ -2498,8 +2504,8 @@ public:
                 }
 
                 task.usedCandidateReadIdsPerIteration.emplace_back(std::move(task.candidateReadIds));
-                task.usedAlignmentsPerIteration.emplace_back(std::move(alignments));
-                task.usedAlignmentFlagsPerIteration.emplace_back(std::move(alignmentFlags));
+                task.usedAlignmentsPerIteration.emplace_back(std::move(task.alignments));
+                task.usedAlignmentFlagsPerIteration.emplace_back(std::move(task.alignmentFlags));
 
                 task.iteration++;
             }
@@ -2985,6 +2991,7 @@ extend_gpu(
     const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
+    std::mutex ompCriticalMutex;
 
     std::int64_t totalNumSuccess0 = 0;
     std::int64_t totalNumSuccess1 = 0;
@@ -3212,6 +3219,8 @@ extend_gpu(
 
         //#pragma omp critical
         {
+            std::lock_guard<std::mutex> lg(ompCriticalMutex);
+
             totalNumSuccess0 += numSuccess0;
             totalNumSuccess1 += numSuccess1;
             totalNumSuccess01 += numSuccess01;
@@ -3265,7 +3274,6 @@ extend_gpu(
     return partialResults;
     //return resultExtendedReads;
 }
-
 
 
 
