@@ -1800,6 +1800,7 @@ public:
         int accumExtensionLengths = 0;
         int iteration = 0;
         int mateLength = 0;
+        read_number myReadId = 0;
         read_number mateReadId = 0;
         read_number currentAnchorReadId;
         std::vector<read_number> candidateReadIds;
@@ -1834,6 +1835,8 @@ public:
         task.accumExtensionLengths = 0;
         task.iteration = 0;
 
+        task.myReadId = input.readId1;
+        
         task.mateLength = input.readLength2;
         task.mateReadId = input.readId2;
 
@@ -1844,13 +1847,12 @@ public:
         const std::vector<ExtendInput>& inputs
     ){
 
-        std::vector<ExtendResult> extendResults;
-
         std::vector<Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), [this](const auto& i){return makeTask(i);});
 
         std::vector<int> indicesOfActiveTasks(tasks.size());
+        std::vector<int> indicesOfActiveTasksTmp(tasks.size());
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
@@ -1858,17 +1860,11 @@ public:
                 
 
 
-        // while(indicesOfActiveTasks.size() > 0){
-        //     //perform one extension iteration for active tasks
+        while(indicesOfActiveTasks.size() > 0){
+            //perform one extension iteration for active tasks
 
-
-        // }
-
-        for(int indexOfActiveTask : indicesOfActiveTasks){
-            auto task = tasks[indexOfActiveTask];
-
-
-            while(task.isActive(insertSize, insertSizeStddev)){
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 //update "total" arrays
                 {
@@ -2507,6 +2503,27 @@ public:
 
                 task.iteration++;
             }
+            
+            //update list of active task indices
+            indicesOfActiveTasksTmp.erase(
+                std::copy_if(
+                    indicesOfActiveTasks.begin(), 
+                    indicesOfActiveTasks.end(), 
+                    indicesOfActiveTasksTmp.begin(),
+                    [&](int index){
+                        return tasks[index].isActive(insertSize, insertSizeStddev);
+                    }
+                ),
+                indicesOfActiveTasksTmp.end()
+            );
+
+            std::swap(indicesOfActiveTasks, indicesOfActiveTasksTmp);
+        }
+
+        //construct results
+        std::vector<ExtendResult> extendResults;
+
+        for(const auto& task : tasks){
 
             ExtendResult extendResult;
             extendResult.numIterations = task.iteration;
@@ -2572,7 +2589,7 @@ public:
 
                     std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
 
-                    extendResult.extendedReads.emplace_back(inputs[indexOfActiveTask].readId1, std::move(extendedRead));
+                    extendResult.extendedReads.emplace_back(task.myReadId, std::move(extendedRead));
 
                     extendResult.mateHasBeenFound = task.mateHasBeenFound;
                 }
