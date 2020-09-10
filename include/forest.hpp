@@ -24,6 +24,8 @@ T read_one(std::ifstream& is) {
     return ret;
 }
 
+using ml_sample_t = std::array<float, 32>;
+
 class ForestClf {
 
     struct Node {
@@ -57,7 +59,7 @@ class ForestClf {
         }
     }
 
-    float decide(const std::vector<float>& features, const Tree& tree, size_t i = 0) const {
+    float decide(const ml_sample_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
@@ -85,7 +87,7 @@ public:
         is.close();
     }
 
-    float decide(const std::vector<float>& features) const {
+    float decide(const ml_sample_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
             prob += decide(features, tree);

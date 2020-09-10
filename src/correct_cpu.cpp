@@ -1068,36 +1068,6 @@ namespace cpu{
             }
 #endif            
         }
-
-        void one_hot_enc(std::ostream& os, char c) {
-            if (c=='A') {
-                os << "1 0 0 0";
-            } else if (c=='C') {
-                os << "0 1 0 0";
-            } else if (c=='G') {
-                os << "0 0 1 0";
-            } else if (c=='T') {
-                os << "0 0 0 1";
-            } else {
-                os << "0 0 0 0";
-            }
-        }
-        
-        void one_hot_conv(std::ostream& os, char c, std::array<float,4>& v) {
-            if (c=='A') {
-                os << v[0]<< " 0 0 0"; 
-            } else if (c=='C') {
-                os << "0 " << v[1]<< " 0 0";
-            } else if (c=='G') {
-                os << "0 0 " << v[2] << " 0";
-            } else if (c=='T') {
-                os << "0 0 0 " << v[3];
-            } else if (c=='+') {
-                os << v[0] << " " << v[1] << " " << v[2] << " " << v[3];
-            } else {
-                os << "0 0 0 0";
-            }
-        }
         
         void correctSubjectClassic(
                 BatchData& data,
@@ -1145,143 +1115,122 @@ namespace cpu{
             
         }
 
+        ml_sample_t make_sample(const BatchData& data, BatchData::Task& task, size_t pos)
+        {
+            ml_sample_t sample;
+            constexpr const char* ACGT = "ACGT";
+            for (size_t i = 0; i < 4; ++i)
+                sample[i] = task.decodedSubjectSequence[i] == ACGT[i];
+            for (size_t i = 0; i < 4; ++i)
+                sample[4+i] = data.multipleSequenceAlignment.consensus[data.multipleSequenceAlignment.subjectColumnsBegin_incl+i] == ACGT[i];
+            return sample;
+        }
+
+
         void correctSubjectForest(
                 BatchData& data,
                 BatchData::Task& task,
-                const CorrectionOptions& correctionOptions){
-
-            assert(correctionOptions.correctionType == CorrectionType::Forest || 
-                   correctionOptions.correctionType == CorrectionType::Print);
-
-            const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+                const CorrectionOptions& correctionOptions)
+        {
+            const int subject_b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+            auto& cons = data.multipleSequenceAlignment.consensus;
+            auto& orig = task.decodedSubjectSequence;
+            auto& corr = task.subjectCorrection.correctedSequence;
+            
+            // DEBUG
+            assert(subject_e - subject_b == task.subjectSequenceLength);
 
             task.msaProperties = getMSAProperties2(
                 data.multipleSequenceAlignment.support.data(),
                 data.multipleSequenceAlignment.coverage.data(),
-                subjectColumnsBegin_incl,
-                subjectColumnsEnd_excl,
+                subject_b,
+                subject_e,
                 correctionOptions.estimatedErrorrate,
                 correctionOptions.estimatedCoverage,
                 correctionOptions.m_coverage
             );
 
-            // ML SAMPLE EXTRACTION
-            if (correctionOptions.correctionType == CorrectionType::Print) {
+            // ---------------------------------------------------
 
-                data.mtx_ml_stream->lock();
-                for (int i = subjectColumnsBegin_incl; i<subjectColumnsEnd_excl; ++i) {
-                    if (data.multipleSequenceAlignment.consensus[i]!=task.decodedSubjectSequence[i-subjectColumnsBegin_incl] && !task.msaProperties.isHQ) {
+            if (task.numFilteredCandidates == 0) {
+                task.subjectCorrection.isCorrected = false;
+                // set task.subjectCorrection.isHQ ? classic doesn't set, does it use uninitialized?
+                return;
+            }
 
-                        std::array<float, 4> ncountsACGT =
-                        {data.multipleSequenceAlignment.countsA[i],
-                         data.multipleSequenceAlignment.countsC[i],
-                         data.multipleSequenceAlignment.countsG[i],
-                         data.multipleSequenceAlignment.countsT[i]};
-                        
-                        int countsTotal = std::accumulate(ncountsACGT.begin(), ncountsACGT.end(), 0);
-                        for (float& v: ncountsACGT) v/=countsTotal;
+            task.subjectCorrection.isCorrected = true;
+            task.subjectCorrection.isHQ = true; // ???
 
-                        std::array<float, 4> weightsACGT =
-                        {float(data.multipleSequenceAlignment.weightsA[i]),
-                         float(data.multipleSequenceAlignment.weightsC[i]),
-                         float(data.multipleSequenceAlignment.weightsG[i]),
-                         float(data.multipleSequenceAlignment.weightsT[i])};
-
-                        // coordinates
-                        *data.ml_stream << task.subjectReadId << ' '
-                        << i-subjectColumnsBegin_incl << ' ';
-
-                        // features:
-
-                        // original
-                        one_hot_enc(*data.ml_stream, task.decodedSubjectSequence[i-subjectColumnsBegin_incl]);
-                        *data.ml_stream << " ";
-                        
-                        // consensus
-                        one_hot_enc(*data.ml_stream, data.multipleSequenceAlignment.consensus[i]);
-                        *data.ml_stream << " ";
-                        
-                        // normalized counts
-                        one_hot_conv(*data.ml_stream, '+', ncountsACGT);
-                        *data.ml_stream << " ";
-
-                        // weights (normalized quality-weighted counts)
-                        one_hot_conv(*data.ml_stream, '+', weightsACGT);
-                        *data.ml_stream << " ";
-
-                        // original X norm. counts
-                        one_hot_conv(*data.ml_stream, task.decodedSubjectSequence[i-subjectColumnsBegin_incl], ncountsACGT);
-                        *data.ml_stream << " ";
-                        
-                        // original X weights
-                        one_hot_conv(*data.ml_stream, task.decodedSubjectSequence[i-subjectColumnsBegin_incl], weightsACGT);
-                        *data.ml_stream << " ";
-
-                        // consensus X norm. counts
-                        one_hot_conv(*data.ml_stream, data.multipleSequenceAlignment.consensus[i], ncountsACGT);
-                        *data.ml_stream << " ";
-
-                        // consensus X weights (== Support)
-                        one_hot_conv(*data.ml_stream, data.multipleSequenceAlignment.consensus[i], weightsACGT);
-                        *data.ml_stream << " ";
-
-                        *data.ml_stream << task.msaProperties.avg_support  << " "
-                                        << task.msaProperties.max_coverage << " "
-                                        << task.msaProperties.min_coverage << " "
-                                        << task.msaProperties.min_support  << " ";
-                        
-                        *data.ml_stream << "\n";
-
-                    }
+            corr.reserve(task.subjectSequenceLength);
+            constexpr float thresh = 0.5f;
+            for (size_t i = 0; i < task.subjectSequenceLength; ++i) {
+                if (orig[i] != cons[subject_b+i] &&
+                    data.forestClassifier1->decide(make_sample(data, task, i)) >= thresh)
+                {
+                    corr.push_back(cons[subject_b + i]);
+                } else {
+                    corr.push_back(orig[i]);
                 }
-                data.mtx_ml_stream->unlock();
             }
+            // TODO: consider performance of repeated pushback vs copy orig and replace few
+            // I guess -O3 will fix it :)
+        }
 
-            else if (correctionOptions.correctionType == CorrectionType::Forest) {
-                // just filler function for now
-                std::vector<float> some_features(100,0);
-                double result = data.forestClassifier1->decide(some_features);
-            }
-
-            //data.multipleSequenceAlignment.print(std::cout);
-            //data.multipleSequenceAlignment.printWithDiffToConsensus(std::cout);
-
+        void correctSubjectPrint (
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions)
+        {
+            const int subject_b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+            auto& cons = data.multipleSequenceAlignment.consensus;
+            auto& orig = task.decodedSubjectSequence;
+            auto& corr = task.subjectCorrection.correctedSequence;
             
-            /*
-                auto asdf = data.forestClassifier1->shouldCorrect_forest(...)
-            */
+            // DEBUG
+            assert(subject_e - subject_b == task.subjectSequenceLength);
 
-            //this must be computed using the results of forest classifier
-            /*            
-                struct CorrectionResult{
-                    bool isCorrected;
-                    bool isHQ;
-                    std::string correctedSequence;
-                };
-            */
+            task.msaProperties = getMSAProperties2(
+                data.multipleSequenceAlignment.support.data(),
+                data.multipleSequenceAlignment.coverage.data(),
+                subject_b,
+                subject_e,
+                correctionOptions.estimatedErrorrate,
+                correctionOptions.estimatedCoverage,
+                correctionOptions.m_coverage
+            );
 
-            task.subjectCorrection = CorrectionResult{};
+            // ---------------------------------------------------
 
+            if (task.numFilteredCandidates == 0) {
+                return;
+            }
 
-            task.msaProperties.isHQ = task.subjectCorrection.isHQ;
-
+            corr.reserve(task.subjectSequenceLength);
+            constexpr float thresh = 0.5f;
+            for (size_t i = 0; i < task.subjectSequenceLength; ++i) {
+                if (orig[i] != cons[subject_b+i]) {
+                    ml_sample_t sample = make_sample(data, task, i);
+                    std::lock_guard<std::mutex>(*mtx_ml_stream);
+                    *data.ml_stream << task.subjectReadId << ' ' << i << ' ';
+                    for (float j: sample) *data.ml_stream << j << ' ';
+                    *data.ml_stream << '\n';
+                }
+            }
         }
 
         void correctSubject(
                 BatchData& data,
                 BatchData::Task& task,
-                const CorrectionOptions& correctionOptions){
-
-            if(correctionOptions.correctionType == CorrectionType::Classic){
+                const CorrectionOptions& correctionOptions)
+        {
+            if(correctionOptions.correctionType == CorrectionType::Classic)
                 correctSubjectClassic(data, task, correctionOptions);
-            }else if(correctionOptions.correctionType == CorrectionType::Forest ||
-                     correctionOptions.correctionType == CorrectionType::Print){
+            else if(correctionOptions.correctionType == CorrectionType::Forest)
                 correctSubjectForest(data, task, correctionOptions);
-            }else{
-                assert(false);
-            }
-            
+            else if (correctionOptions.correctionType == CorrectionType::Print)
+                correctSubjectPrint(data, task, correctionOptions);
         }
 
         void correctCandidates(
