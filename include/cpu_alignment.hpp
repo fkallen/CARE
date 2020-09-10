@@ -14,15 +14,6 @@
 namespace care{
 namespace cpu{
 
-    template<class Iter1, class Iter2>
-    int hammingDistance(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2){
-        auto isEqual = [](const auto& l, const auto& r){
-            return l == r;
-        };
-
-        return hammingDistance(first1, last1, first2, last2, isEqual);
-    }
-
     template<class Iter1, class Iter2, class Equal>
     int hammingDistance(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2, Equal isEqual){
         int result = 0;
@@ -41,6 +32,17 @@ namespace cpu{
 
         return result;
     }
+
+    template<class Iter1, class Iter2>
+    int hammingDistance(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2){
+        auto isEqual = [](const auto& l, const auto& r){
+            return l == r;
+        };
+
+        return hammingDistance(first1, last1, first2, last2, isEqual);
+    }
+
+
 
 namespace shd{
 
