@@ -1836,7 +1836,7 @@ public:
         task.iteration = 0;
 
         task.myReadId = input.readId1;
-        
+
         task.mateLength = input.readLength2;
         task.mateReadId = input.readId2;
 
@@ -3022,20 +3022,28 @@ extend_cpu(
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-        std::vector<read_number> currentIds(2);
-        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts);
-        std::array<int, 2> currentReadLengths;
+        const int batchsize = 32;
+
+        std::vector<read_number> currentIds(2 * batchsize);
+        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsize);
+        std::vector<int> currentReadLengths(2 * batchsize);
+        
 
         while(!(readIdGenerator.empty())){
-            std::array<read_number, 2> currentIds;
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
                 2, 
                 currentIds.begin()
             );
+
+            const int numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
+
+            if(numReadsInBatch % 2 == 1){
+                throw std::runtime_error("Input files not properly paired. Aborting read extension.");
+            }
             
-            if(std::distance(currentIds.begin(), readIdsEnd) != 2){
-                continue; //this should only happen if all reads have been processed or input file is not properly paired
+            if(numReadsInBatch == 0){
+                continue; //this should only happen if all reads have been processed
             }
 
             readStorage.gatherSequenceLengths(
@@ -3053,41 +3061,31 @@ extend_cpu(
                 encodedSequencePitchInInts
             );
 
-            auto processReadOrder = [&](std::array<int, 2> order){
-                ReadExtender::ExtendInput input{};
+            const int numReadPairsInBatch = numReadsInBatch / 2;
 
-                input.readId1 = currentIds[order[0]];
-                input.readId2 = currentIds[order[1]];
-                input.encodedRead1 = currentEncodedReads.data() + order[0] * encodedSequencePitchInInts;
-                input.encodedRead2 = currentEncodedReads.data() + order[1] * encodedSequencePitchInInts;
-                input.readLength1 = currentReadLengths[order[0]];
-                input.readLength2 = currentReadLengths[order[1]];
-                input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[order[0]]);
-                input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[order[1]]);
-                input.verbose = false;
-                input.verboseMutex = &verboseMutex;
+            auto processReadOrder = [&](std::array<int, 2> order){                
 
-                std::vector<ReadExtender::ExtendInput> inputs{input};
+                std::vector<ReadExtender::ExtendInput> inputs(numReadPairsInBatch);
 
-                //auto extendResult = readExtender.extendPairedRead2(input);
-                auto extendResult = readExtender.extendPairedReadBatch(inputs).back();
+                for(int i = 0; i < numReadPairsInBatch; i++){
+                    auto& input = inputs[i];
+
+                    input.readId1 = currentIds[2*i + order[0]];
+                    input.readId2 = currentIds[2*i + order[1]];
+                    input.encodedRead1 = currentEncodedReads.data() + (2*i + order[0]) * encodedSequencePitchInInts;
+                    input.encodedRead2 = currentEncodedReads.data() + (2*i + order[1]) * encodedSequencePitchInInts;
+                    input.readLength1 = currentReadLengths[2*i + order[0]];
+                    input.readLength2 = currentReadLengths[2*i + order[1]];
+                    input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[2*i + order[0]]);
+                    input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[2*i + order[1]]);
+                    input.verbose = false;
+                    input.verboseMutex = &verboseMutex;
+                }
+
+                auto extendResult = readExtender.extendPairedReadBatch(inputs);
 
                 return extendResult;  
             };
-
-            // it is not known which of both reads is on the forward strand / reverse complement strand. try both combinations
-            auto extendResult0 = processReadOrder({0,1});
-
-            auto extendResult1 = processReadOrder({1,0});
-
-            if(extendResult0.success || extendResult1.success){
-                numSuccessRead++;
-            }
-
-            // if(extendResult.extensionLengths.size() > 0){
-            //     const int l = extendResult.extensionLengths.front();
-            //     extensionLengthsMap[l]++;
-            // }
 
             auto handleMultiResult = [&](const ReadExtender::ExtendResult* result1, const ReadExtender::ExtendResult* result2){
                 ExtendedReadDebug er{};
@@ -3161,82 +3159,54 @@ extend_cpu(
                 
             };
 
-            // auto handleSingleResult = [&](const auto& extendResult){
-            //     const int numResults = extendResult.extendedReads.size();
-            //     auto encodeddata = std::make_unique<EncodedTempCorrectedSequence[]>(numResults);
+            // it is not known which of both reads is on the forward strand / reverse complement strand. try both combinations
+            auto extendResult0 = processReadOrder({0,1});
 
-            //     for(int i = 0; i < numResults; i++){
-            //         auto& pair = extendResult.extendedReads[i];
+            auto extendResult1 = processReadOrder({1,0});
 
-            //         TempCorrectedSequence tcs;
-            //         tcs.hq = false;
-            //         tcs.useEdits = false;
-            //         tcs.type = TempCorrectedSequence::Type::Anchor;
-            //         tcs.shift = 0;
-            //         tcs.readId = pair.first;
-            //         tcs.sequence = std::move(pair.second);
+            for(int i = 0; i < numReadPairsInBatch; i++){
+                const auto& result0 = extendResult0[i];
+                const auto& result1 = extendResult1[i];
 
-            //         encodeddata[i] = tcs.encode();
-            //     }
+                if(result0.success || result1.success){
+                    numSuccessRead++;
+                }
 
-            //     auto func = [&, size = numResults, encodeddata = encodeddata.release()](){
-            //         for(int i = 0; i < size; i++){
-            //             partialResults.storeElement(std::move(encodeddata[i]));
-            //         }
-            //     };
+                if(result0.success && !result1.success){
+                    handleMultiResult(&result0, nullptr);
+                    numSuccess0++;
+                }
 
-            //     outputThread.enqueue(
-            //         std::move(func)
-            //     );
-            // };
+                if(!result0.success && result1.success){
+                    handleMultiResult(nullptr, &result1);
+                    numSuccess1++;
+                }
 
-            if(extendResult0.success && !extendResult1.success){
-                //handleSingleResult(extendResult0);
-                handleMultiResult(&extendResult0, nullptr);
-                numSuccess0++;
+                if(result0.success && result1.success){
+
+                    const auto& extendedString0 = result0.extendedReads.front().second;
+                    const auto& extendedString1 = result1.extendedReads.front().second;
+
+                    std::string mateExtendedReverseComplement = reverseComplementString(
+                        extendedString1.c_str(), 
+                        extendedString1.length()
+                    );
+                    const int mismatches = cpu::hammingDistance(
+                        extendedString0.begin(),
+                        extendedString0.end(),
+                        mateExtendedReverseComplement.begin(),
+                        mateExtendedReverseComplement.end()
+                    );
+
+                    mismatchesBetweenMateExtensions[mismatches]++;
+
+                    handleMultiResult(&result0, &result1);
+
+                    numSuccess01++;
+                }
             }
 
-            if(!extendResult0.success && extendResult1.success){
-                //handleSingleResult(extendResult1);
-                handleMultiResult(nullptr, &extendResult1);
-                numSuccess1++;
-            }
-
-            if(extendResult0.success && extendResult1.success){
-                
-
-                const auto& extendedString0 = extendResult0.extendedReads.front().second;
-                const auto& extendedString1 = extendResult1.extendedReads.front().second;
-
-                std::string mateExtendedReverseComplement = reverseComplementString(
-                    extendedString1.c_str(), 
-                    extendedString1.length()
-                );
-                const int mismatches = cpu::hammingDistance(
-                    extendedString0.begin(),
-                    extendedString0.end(),
-                    mateExtendedReverseComplement.begin(),
-                    mateExtendedReverseComplement.end()
-                );
-
-                mismatchesBetweenMateExtensions[mismatches]++;
-
-                // if(extendedString0.length() != extendedString1.length()){
-                //     std::cerr << "0:\n";
-                //     std::cerr << extendedString0 << "\n";
-                //     std::cerr << "1 rev compl:\n";
-                //     std::cerr << mateExtendedReverseComplement << "\n";
-                //     std::cerr << "1:\n";
-                //     std::cerr << extendedString1 << "\n";
-                // }
-
-                //handleSingleResult(extendResult0);
-                handleMultiResult(&extendResult0, &extendResult1);
-
-                numSuccess01++;
-            }
-
-            progressThread.addProgress(2);
+            progressThread.addProgress(numReadsInBatch);
             
         }
 
