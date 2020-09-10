@@ -24,7 +24,7 @@ T read_one(std::ifstream& is) {
     return ret;
 }
 
-using ml_sample_t = std::array<float, 32>;
+using ml_sample_t = std::array<float, 36>;
 
 class ForestClf {
 

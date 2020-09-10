@@ -1116,14 +1116,49 @@ namespace cpu{
         }
 
         ml_sample_t make_sample(const BatchData& data, BatchData::Task& task, size_t pos)
-        {
-            ml_sample_t sample;
-            constexpr const char* ACGT = "ACGT";
-            for (size_t i = 0; i < 4; ++i)
-                sample[i] = task.decodedSubjectSequence[i] == ACGT[i];
-            for (size_t i = 0; i < 4; ++i)
-                sample[4+i] = data.multipleSequenceAlignment.consensus[data.multipleSequenceAlignment.subjectColumnsBegin_incl+i] == ACGT[i];
-            return sample;
+        {   
+            const int b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            auto& msa = data.multipleSequenceAlignment;
+            auto& orig = task.decodedSubjectSequence;
+            float countsACGT = msa.weightsA[b+pos] + msa.weightsC[b+pos] + msa.weightsG[b+pos] + msa.weightsT[b+pos];
+            return {
+                float(orig[pos] == 'A'),
+                float(orig[pos] == 'C'),
+                float(orig[pos] == 'G'),
+                float(orig[pos] == 'T'),
+                float(msa.consensus[b+pos] == 'A'),
+                float(msa.consensus[b+pos] == 'C'),
+                float(msa.consensus[b+pos] == 'G'),
+                float(msa.consensus[b+pos] == 'T'),
+                orig[pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
+                orig[pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
+                orig[pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
+                orig[pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
+                orig[pos] == 'A'?msa.weightsA[b+pos]:0,
+                orig[pos] == 'C'?msa.weightsC[b+pos]:0,
+                orig[pos] == 'G'?msa.weightsG[b+pos]:0,
+                orig[pos] == 'T'?msa.weightsT[b+pos]:0,
+                msa.consensus[b+pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'A'?msa.weightsA[b+pos]:0,
+                msa.consensus[b+pos] == 'C'?msa.weightsC[b+pos]:0,
+                msa.consensus[b+pos] == 'G'?msa.weightsG[b+pos]:0,
+                msa.consensus[b+pos] == 'T'?msa.weightsT[b+pos]:0,
+                msa.weightsA[b+pos],
+                msa.weightsC[b+pos],
+                msa.weightsG[b+pos],
+                msa.weightsT[b+pos],
+                msa.countsA[b+pos]/countsACGT,
+                msa.countsC[b+pos]/countsACGT,
+                msa.countsG[b+pos]/countsACGT,
+                msa.countsT[b+pos]/countsACGT,
+                task.msaProperties.avg_support,
+                task.msaProperties.min_support,
+                float(task.msaProperties.max_coverage),
+                float(task.msaProperties.min_coverage)
+            };
         }
 
 
@@ -1138,9 +1173,6 @@ namespace cpu{
             auto& orig = task.decodedSubjectSequence;
             auto& corr = task.subjectCorrection.correctedSequence;
             
-            // DEBUG
-            assert(subject_e - subject_b == task.subjectSequenceLength);
-
             task.msaProperties = getMSAProperties2(
                 data.multipleSequenceAlignment.support.data(),
                 data.multipleSequenceAlignment.coverage.data(),
@@ -1151,30 +1183,21 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
-            // ---------------------------------------------------
-
-            if (task.numFilteredCandidates == 0) {
-                task.subjectCorrection.isCorrected = false;
-                // set task.subjectCorrection.isHQ ? classic doesn't set, does it use uninitialized?
-                return;
-            }
-
-            task.subjectCorrection.isCorrected = true;
-            task.subjectCorrection.isHQ = true; // ???
-
             corr.reserve(task.subjectSequenceLength);
-            constexpr float thresh = 0.5f;
-            for (size_t i = 0; i < task.subjectSequenceLength; ++i) {
+            constexpr float THRESHOLD = 0.5f;
+            for (int i = 0; i < task.subjectSequenceLength; ++i) {
                 if (orig[i] != cons[subject_b+i] &&
-                    data.forestClassifier1->decide(make_sample(data, task, i)) >= thresh)
+                    data.forestClassifier1->decide(make_sample(data, task, i)) >= THRESHOLD)
                 {
                     corr.push_back(cons[subject_b + i]);
                 } else {
                     corr.push_back(orig[i]);
                 }
             }
-            // TODO: consider performance of repeated pushback vs copy orig and replace few
+            // TODO: consider performance of repeated pushback vs copying orig and replacing few
             // I guess -O3 will fix it :)
+
+            task.subjectCorrection.isCorrected = true;
         }
 
         void correctSubjectPrint (
@@ -1186,10 +1209,6 @@ namespace cpu{
             const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
             auto& cons = data.multipleSequenceAlignment.consensus;
             auto& orig = task.decodedSubjectSequence;
-            auto& corr = task.subjectCorrection.correctedSequence;
-            
-            // DEBUG
-            assert(subject_e - subject_b == task.subjectSequenceLength);
 
             task.msaProperties = getMSAProperties2(
                 data.multipleSequenceAlignment.support.data(),
@@ -1201,23 +1220,17 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
-            // ---------------------------------------------------
-
-            if (task.numFilteredCandidates == 0) {
-                return;
-            }
-
-            corr.reserve(task.subjectSequenceLength);
-            constexpr float thresh = 0.5f;
-            for (size_t i = 0; i < task.subjectSequenceLength; ++i) {
+            for (int i = 0; i < task.subjectSequenceLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
                     ml_sample_t sample = make_sample(data, task, i);
-                    std::lock_guard<std::mutex>(*mtx_ml_stream);
+                    std::lock_guard<std::mutex> lg(*data.mtx_ml_stream);
                     *data.ml_stream << task.subjectReadId << ' ' << i << ' ';
                     for (float j: sample) *data.ml_stream << j << ' ';
                     *data.ml_stream << '\n';
                 }
             }
+
+            task.subjectCorrection.isCorrected = false;
         }
 
         void correctSubject(
