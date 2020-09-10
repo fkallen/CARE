@@ -1287,7 +1287,7 @@ public:
                 [&](const auto& position){
                     const auto& alignment = alignments[position];
                     const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
-                    return fgeq(relativeOverlap, 0.7f) && fleq(relativeOverlap, 1.0f);
+                    return fgeq(relativeOverlap, 0.7f) && relativeOverlap < 1.0f; //fleq(relativeOverlap, 1.0f);
                 }
             );
 
@@ -1587,11 +1587,29 @@ public:
                     {
                         int consensusLength = msa.consensus.size();
 
+                        //scanning from right to left, find first column with coverage >= 3
+                        // int lastGoodColumn = 0;
+                        // for(int col = consensusLength - 1; col >= 0; col--){
+                        //     if(msa.coverage[col] >= 3){
+                        //         lastGoodColumn = col;
+                        //         break;
+                        //     }
+                        // }
+
+                        // const int maxExtensionByGoodColumn = std::max(0, (lastGoodColumn+1) - currentAnchorLength);
+
                         //the first currentAnchorLength columns are occupied by anchor. try to extend read 
                         //by at most maxextension bp.
 
                         //can extend by at most maxextension bps
-                        int extendBy = std::min(consensusLength - currentAnchorLength, maxextension);
+                        int extendBy = std::min(
+                            consensusLength - currentAnchorLength, 
+                            maxextension
+                            // std::min(
+                            //     maxExtensionByGoodColumn, 
+                            //     maxextension
+                            // )
+                        );
                         //cannot extend over fragment 
                         extendBy = std::min(extendBy, (insertSize + insertSizeStddev - input.readLength2) - accumExtensionLengths);
 
@@ -2117,8 +2135,8 @@ extend_cpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
