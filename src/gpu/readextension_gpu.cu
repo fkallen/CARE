@@ -2033,6 +2033,7 @@ public:
             alignmentTimer.start();
 
 #if 1
+            nvtx::push_range("gpu_alignment", 2);
 
             {
                 h_numCandidatesPerAnchor.resize(inputs.size());
@@ -2074,12 +2075,19 @@ public:
 
                     const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
 
-                    for(int c = 0; c < numCandidates; c++){
-                        h_anchorIndicesOfCandidates[offset + c] = t;
-                        h_candidateSequencesLength[offset + c] = task.candidateSequenceLengths[c];
-                    }
-
                     h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+                    std::fill_n(
+                        h_anchorIndicesOfCandidates.get() + offset, 
+                        numCandidates, 
+                        t
+                    );
+
+                    std::copy_n(
+                        task.candidateSequenceLengths.begin(),
+                        numCandidates,
+                        h_candidateSequencesLength.get() + offset
+                    );
 
                     anchorcpyptr = std::copy(
                         task.currentAnchor.begin(), 
@@ -2110,15 +2118,6 @@ public:
                 const float min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
                 const float estimatedNucleotideErrorRate = correctionOptions.estimatedErrorrate;
                 cudaStream_t stream = streams[primary_stream_index];
-
-                for(int t = 0; t < numTasks; t++){
-                    const auto& task = tasks[indicesOfActiveTasks[t]];
-
-                    const int numCandidates = task.candidateReadIds.size();
-
-                    h_numCandidatesPerAnchor[t] = numCandidates;
-                    h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
-                }
 
                 auto callAlignmentKernel = [&](void* d_tempstorage, size_t& tempstoragebytes){
 
@@ -2165,7 +2164,7 @@ public:
 
                 for(int t = 0; t < numTasks; t++){
                     auto& task = tasks[indicesOfActiveTasks[t]];
-                    
+
                     const auto numCandidates = task.candidateReadIds.size();
 
                     task.alignmentFlags.resize(numCandidates);
@@ -2190,6 +2189,8 @@ public:
                 }
 
             }
+
+            nvtx::pop_range();
 #else
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -3191,8 +3192,8 @@ extend_gpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
@@ -3268,7 +3269,7 @@ extend_gpu(
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-        const int batchsizePairs = 32;
+        const int batchsizePairs = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(2 * batchsizePairs);
         std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);

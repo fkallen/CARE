@@ -3022,7 +3022,7 @@ extend_cpu(
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-        const int batchsizePairs = 32;
+        const int batchsizePairs = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(2 * batchsizePairs);
         std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
