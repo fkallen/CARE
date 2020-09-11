@@ -1309,6 +1309,8 @@ namespace gpu{
         unsigned int subjectBackupLo[maxValidIntsPerSequence / 2];
         unsigned int queryBackupHi[maxValidIntsPerSequence / 2];
         unsigned int queryBackupLo[maxValidIntsPerSequence / 2];
+        unsigned int mySequenceHi[maxValidIntsPerSequence / 2];
+        unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
 
         auto reverseComplementQuery = [&](int querylength, int validInts){
             auto reverse_complement_int = [](auto n) {
@@ -1466,12 +1468,18 @@ namespace gpu{
                             }
                         };
 
+                        #pragma unroll 
+                        for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                            mySequenceHi[i] = subjectBackupHi[i];
+                            mySequenceLo[i] = subjectBackupLo[i];
+                        }
+
                         for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
                             const int overlapsize = min(subjectbases - shift, querybases);
 
                             bool b = handle_shift(
                                 shift, overlapsize,
-                                subjectBackupHi, subjectBackupLo,
+                                mySequenceHi, mySequenceLo,
                                 queryBackupHi, queryBackupLo
                             );
                             if(!b){
@@ -1484,6 +1492,12 @@ namespace gpu{
                         overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
                         opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                     }
+
+                    // if(candidateIndex == 8){
+                    //     printf("(%d, %d, %d, %d) (%d, %d, %d, %d)", 
+                    //         overlapsize[0], bestShift[0], opnr[0], bestShift[0] != -querybases,
+                    //         overlapsize[1], bestShift[1], opnr[1], bestShift[1] != -querybases);
+                    // }
 
                     const BestAlignment_t flag = alignmentComparator(
                         overlapsize[0],
