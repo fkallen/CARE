@@ -3197,20 +3197,20 @@ extend_gpu(
 
     BackgroundThread outputThread(true);
 
-    
+    const std::uint64_t totalNumReadPairs = sequenceFileProperties.nReads / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
 
-            printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+            printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, totalNumReadPairs,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
         }
 
-        if(totalCount == sequenceFileProperties.nReads){
+        if(totalCount == totalNumReadPairs){
             std::cerr << '\n';
         }
     };
@@ -3219,7 +3219,7 @@ extend_gpu(
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(totalNumReadPairs, showProgress, updateShowProgressInterval);
 
     
     const int insertSize = extensionOptions.insertSize;
@@ -3490,7 +3490,7 @@ extend_gpu(
                 }
             }
 
-            progressThread.addProgress(numReadsInBatch);
+            progressThread.addProgress(numReadPairsInBatch);
             
         }
 
