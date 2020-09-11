@@ -2024,7 +2024,7 @@ public:
 
             alignmentTimer.start();
 
-#if 0
+#if 1
             {
                 PinnedBuffer<int> h_numCandidatesPerAnchor(inputs.size());
                 PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum(inputs.size()+1);
@@ -3233,17 +3233,17 @@ extend_gpu(
 
         cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-        const int batchsize = 32;
+        const int batchsizePairs = 32;
 
-        std::vector<read_number> currentIds(2 * batchsize);
-        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsize);
-        std::vector<int> currentReadLengths(2 * batchsize);
+        std::vector<read_number> currentIds(2 * batchsizePairs);
+        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        std::vector<int> currentReadLengths(2 * batchsizePairs);
         
 
         while(!(readIdGenerator.empty())){
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                batchsize, 
+                batchsizePairs * 2, 
                 currentIds.begin()
             );
 
