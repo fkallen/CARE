@@ -219,8 +219,7 @@ namespace cpu{
             int qualityPitchInBytes = 0;
 
             std::shared_ptr<ForestClf> forestClassifier1;
-            std::shared_ptr<std::ofstream> ml_stream;
-            std::shared_ptr<std::mutex> mtx_ml_stream;
+            std::ostringstream ml_stream;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1183,14 +1182,14 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
-            corr.insert(0, orig, task.subjectSequenceLength);
+            corr.insert(0, cons.data()+subject_b, task.subjectSequenceLength);
             if (!task.msaProperties.isHQ) {
                 constexpr float THRESHOLD = 0.5f;
                 for (int i = 0; i < task.subjectSequenceLength; ++i) {
                     if (orig[i] != cons[subject_b+i] &&
-                        data.forestClassifier1->decide(make_sample(data, task, i)) >= THRESHOLD)
+                        data.forestClassifier1->decide(make_sample(data, task, i)) < THRESHOLD)
                     {
-                        corr[i] = cons[subject_b + i];
+                        corr[i] = orig[i];
                     }
                 }
             }
@@ -1222,10 +1221,9 @@ namespace cpu{
                 for (int i = 0; i < task.subjectSequenceLength; ++i) {
                     if (orig[i] != cons[subject_b+i]) {
                         ml_sample_t sample = make_sample(data, task, i);
-                        std::lock_guard<std::mutex> lg(*data.mtx_ml_stream);
-                        *data.ml_stream << task.subjectReadId << ' ' << i << ' ';
-                        for (float j: sample) *data.ml_stream << j << ' ';
-                        *data.ml_stream << '\n';
+                        data.ml_stream << task.subjectReadId << ' ' << i << ' ';
+                        for (float j: sample) data.ml_stream << j << ' ';
+                        data.ml_stream << '\n';
                     }
                 }
             }
@@ -1568,8 +1566,7 @@ correct_cpu(
     TimeMeasurements timingsOfAllThreads;
     
     std::shared_ptr<ForestClf> forestClassifier1;
-    std::shared_ptr<std::ofstream> ml_stream;
-    std::shared_ptr<std::mutex> mtx_ml_stream;
+    std::ofstream global_ml_stream;
     // good idea ? :/
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
@@ -1578,8 +1575,7 @@ correct_cpu(
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
-            ml_stream = std::make_shared<std::ofstream>(fileOptions.mlForestfile);
-            mtx_ml_stream = std::make_shared<std::mutex>();
+            global_ml_stream.open(fileOptions.mlForestfile);
     }
 
 
@@ -1637,8 +1633,6 @@ correct_cpu(
         
         // forest stuff
         batchData.forestClassifier1 = forestClassifier1;
-        batchData.ml_stream = ml_stream;
-        batchData.mtx_ml_stream = mtx_ml_stream;
 
 
         while(!(readIdGenerator.empty())){
@@ -1838,13 +1832,24 @@ correct_cpu(
 
             outputThread.enqueue(std::move(outputfunction));
 
+            #pragma omp critical
+            {
+                global_ml_stream << batchData.ml_stream.str();
+                batchData.ml_stream.clear();
+                global_ml_stream.flush();
+            }
+
             progressThread.addProgress(batchData.subjectReadIds.size()); 
+            
         } //while unprocessed reads exist loop end   
 
         #pragma omp critical
         {
             timingsOfAllThreads += batchData.timings;
+            
         }
+
+
 
 
     } // parallel end
