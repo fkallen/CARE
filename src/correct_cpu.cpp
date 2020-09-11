@@ -219,7 +219,7 @@ namespace cpu{
             int qualityPitchInBytes = 0;
 
             std::shared_ptr<ForestClf> forestClassifier1;
-            std::ostringstream ml_stream;
+            std::stringstream ml_stream;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1184,7 +1184,7 @@ namespace cpu{
 
             corr.insert(0, cons.data()+subject_b, task.subjectSequenceLength);
             if (!task.msaProperties.isHQ) {
-                constexpr float THRESHOLD = 0.5f;
+                constexpr float THRESHOLD = 0.73f;
                 for (int i = 0; i < task.subjectSequenceLength; ++i) {
                     if (orig[i] != cons[subject_b+i] &&
                         data.forestClassifier1->decide(make_sample(data, task, i)) < THRESHOLD)
@@ -1834,9 +1834,8 @@ correct_cpu(
 
             #pragma omp critical
             {
-                global_ml_stream << batchData.ml_stream.str();
-                batchData.ml_stream.clear();
-                global_ml_stream.flush();
+                global_ml_stream << batchData.ml_stream.rdbuf();
+                batchData.ml_stream = std::stringstream{};
             }
 
             progressThread.addProgress(batchData.subjectReadIds.size()); 

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
-import matplotlib
-matplotlib.use('Agg')
+# import matplotlib
+# matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 import sys
@@ -108,13 +108,16 @@ def train(train_data, test_data):
     
     fpr, tpr, thresholds = metrics.roc_curve(y_test, probs[:,1], pos_label=True)
     plt.plot(fpr, tpr, label="ROC curve (area = %.2f)" % metrics.roc_auc_score(y_test, probs[:,1]))
+    print(thresholds)
+    for i, txt in enumerate(thresholds):
+        plt.annotate("{:4.3f}".format(txt), (fpr[i], tpr[i]))
 
     plt.plot([0, 1], [0, 1], linestyle="dashed", color='gray')
     plt.title("Receiver Operating Characteristic")
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.legend()
-    plt.savefig("roc.png")
+    plt.show()
 
 def extract_node(tree_, i, out_file):
     if tree_.children_left[i] == tree._tree.TREE_LEAF:
