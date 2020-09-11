@@ -125,7 +125,7 @@ struct Minhasher {
 
     void writeToStream(std::ostream& os) const;
 
-    void loadFromStream(std::ifstream& is);
+    int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
 
 	void clear();
 

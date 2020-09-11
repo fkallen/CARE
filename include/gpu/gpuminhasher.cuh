@@ -1242,7 +1242,7 @@ namespace gpu{
 
         void writeToStream(std::ostream& os) const;
     
-        void loadFromStream(std::ifstream& is);
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
 
         int calculateResultsPerMapThreshold(int coverage);
 

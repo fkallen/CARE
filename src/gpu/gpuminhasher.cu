@@ -113,21 +113,25 @@ void GpuMinhasher::writeToStream(std::ostream& os) const{
     }
 }
 
-void GpuMinhasher::loadFromStream(std::ifstream& is){
+int GpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
     destroy();
 
     is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
     is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
 
-    int numTables = 0;
+    int numMaps = 0;
 
-    is.read(reinterpret_cast<char*>(&numTables), sizeof(int));
+    is.read(reinterpret_cast<char*>(&numMaps), sizeof(int));
 
-    for(int i = 0; i < numTables; i++){
+    const int mapsToLoad = std::min(numMapsUpperLimit, numMaps);
+
+    for(int i = 0; i < mapsToLoad; i++){
         HashTable table;
         table.loadFromStream(is);
         addHashTable(std::move(table));
     }
+
+    return mapsToLoad;
 }
 
 int GpuMinhasher::calculateResultsPerMapThreshold(int coverage){
