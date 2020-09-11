@@ -2113,7 +2113,7 @@ public:
                     task.abort = true;
                     task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
 
-                    break; //terminate while loop
+                    continue; //stop processing task
                 }
 
                 // //stable_partition is required to make sure candidate read ids remaing sorted
@@ -3032,7 +3032,7 @@ extend_cpu(
         while(!(readIdGenerator.empty())){
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                2, 
+                batchsize, 
                 currentIds.begin()
             );
 
@@ -3087,7 +3087,16 @@ extend_cpu(
                 return extendResult;  
             };
 
-            auto handleMultiResult = [&](const ReadExtender::ExtendResult* result1, const ReadExtender::ExtendResult* result2){
+            auto handleMultiResult = [&](
+                const ReadExtender::ExtendResult* result1, 
+                const ReadExtender::ExtendResult* result2,
+                read_number readId1,
+                read_number readId2,
+                int readLength1,
+                int readLength2,
+                const unsigned int* encodedRead1,
+                const unsigned int* encodedRead2
+            ){
                 ExtendedReadDebug er{};
 
                 if(result1 != nullptr){
@@ -3127,24 +3136,31 @@ extend_cpu(
                     }
                 }
 
-                er.readId1 = currentIds[0];
-                er.readId2 = currentIds[1];
+                er.readId1 = readId1;
+                er.readId2 = readId2;
 
-                er.originalRead1.resize(currentReadLengths[0], '\0');
+                er.originalRead1.resize(readLength1, '\0');
 
                 decode2BitSequence(
                     &er.originalRead1[0],
-                    currentEncodedReads.data() + 0 * encodedSequencePitchInInts,
-                    currentReadLengths[0]
+                    encodedRead1,
+                    readLength1
                 );
 
-                er.originalRead2.resize(currentReadLengths[1], '\0');
+                er.originalRead2.resize(readLength2, '\0');
 
                 decode2BitSequence(
                     &er.originalRead2[0],
-                    currentEncodedReads.data() + 1 * encodedSequencePitchInInts,
-                    currentReadLengths[1]
+                    encodedRead2,
+                    readLength2
                 );
+
+                // if(readId1 == 90 || readId2 == 90){
+                //     std::cerr << result1 << " " << result2 << "\n";
+                //     std::cerr << er.extendedRead1 << " " << er.extendedRead2 << "\n";
+                //     std::cerr << int(er.status1) << " " << int(er.status2) << "\n";
+                //     std::cerr << er.originalRead1 << " " << er.originalRead2 << "\n";
+                // }
 
                 auto func = [&, er = std::move(er)]() mutable{
                     //resultExtendedReads.emplace_back(std::move(er));
@@ -3173,12 +3189,26 @@ extend_cpu(
                 }
 
                 if(result0.success && !result1.success){
-                    handleMultiResult(&result0, nullptr);
+                    handleMultiResult(&result0, nullptr, 
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
                     numSuccess0++;
                 }
 
                 if(!result0.success && result1.success){
-                    handleMultiResult(nullptr, &result1);
+                    handleMultiResult(nullptr, &result1,
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
                     numSuccess1++;
                 }
 
@@ -3191,16 +3221,23 @@ extend_cpu(
                         extendedString1.c_str(), 
                         extendedString1.length()
                     );
-                    const int mismatches = cpu::hammingDistance(
-                        extendedString0.begin(),
-                        extendedString0.end(),
-                        mateExtendedReverseComplement.begin(),
-                        mateExtendedReverseComplement.end()
+                    const int mismatches = care::cpu::hammingDistance(
+                        extendedString0.cbegin(),
+                        extendedString0.cend(),
+                        mateExtendedReverseComplement.cbegin(),
+                        mateExtendedReverseComplement.cend()
                     );
 
                     mismatchesBetweenMateExtensions[mismatches]++;
 
-                    handleMultiResult(&result0, &result1);
+                    handleMultiResult(&result0, &result1,
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
 
                     numSuccess01++;
                 }

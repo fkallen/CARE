@@ -30,6 +30,10 @@
 #include <util.hpp>
 #include <filehelpers.hpp>
 
+#include <gpu/kernels.hpp>
+#include <gpu/kernellaunch.hpp>
+#include <gpu/simpleallocation.cuh>
+
 #include <omp.h>
 
 
@@ -38,6 +42,11 @@ namespace gpu{
 
 constexpr int maxextension = 20;
 
+template<class T>
+using DeviceBuffer = SimpleAllocationDevice<T>;
+
+template<class T>
+using PinnedBuffer = SimpleAllocationPinnedHost<T>;
 
 struct ReadExtenderGpu{
 public:
@@ -112,6 +121,9 @@ public:
         encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
         decodedSequencePitchInBytes = maximumSequenceLength;
         qualityPitchInBytes = maximumSequenceLength;
+
+
+        cudaGetDevice(&deviceId); CUERR;
 
     }
 
@@ -360,15 +372,15 @@ public:
             cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::array<std::vector<int>, 2> candidateSequenceLengths;
-            std::array<std::vector<unsigned int>, 2> candidateSequenceFwdData;
-            std::array<std::vector<unsigned int>, 2> candidateSequenceRevcData;
+            std::array<std::vector<unsigned int>, 2> candidateSequencesFwdData;
+            std::array<std::vector<unsigned int>, 2> candidateSequencesRevcData;
 
             for(int i = 0; i < 2; i++){
                 const int numCandidates = candidateReadIds[i].size();
 
                 candidateSequenceLengths[i].resize(numCandidates);
-                candidateSequenceFwdData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                candidateSequenceRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                candidateSequencesFwdData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                candidateSequencesRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
                 readStorage->gatherSequenceLengths(
                     readStorageGatherHandle,
@@ -381,14 +393,14 @@ public:
                     readStorageGatherHandle,
                     candidateReadIds[i].data(),
                     candidateReadIds[i].size(),
-                    candidateSequenceFwdData[i].data(),
+                    candidateSequencesFwdData[i].data(),
                     encodedSequencePitchInInts
                 );
 
                 for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = candidateSequenceFwdData[i].data() 
+                    const unsigned int* const seqPtr = candidateSequencesFwdData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
-                    unsigned int* const seqrevcPtr = candidateSequenceRevcData[i].data() 
+                    unsigned int* const seqrevcPtr = candidateSequencesRevcData[i].data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
 
                     reverseComplement2Bit(
@@ -428,7 +440,7 @@ public:
                     forwardAlignments.data(),
                     currentAnchor[i].data(),
                     currentAnchorLength[i],
-                    candidateSequenceFwdData[i].data(),
+                    candidateSequencesFwdData[i].data(),
                     encodedSequencePitchInInts,
                     candidateSequenceLengths[i].data(),
                     numCandidates,
@@ -443,7 +455,7 @@ public:
                     revcAlignments.data(),
                     currentAnchor[i].data(),
                     currentAnchorLength[i],
-                    candidateSequenceRevcData[i].data(),
+                    candidateSequencesRevcData[i].data(),
                     encodedSequencePitchInInts,
                     candidateSequenceLengths[i].data(),
                     numCandidates,
@@ -570,7 +582,7 @@ public:
 
                     if(alignmentFlags[i][index] == BestAlignment_t::Forward){
                         std::copy_n(
-                            candidateSequenceFwdData[i].data() + index * encodedSequencePitchInInts,
+                            candidateSequencesFwdData[i].data() + index * encodedSequencePitchInInts,
                             encodedSequencePitchInInts,
                             candidateSequenceData[i].data() + c * encodedSequencePitchInInts
                         );
@@ -578,7 +590,7 @@ public:
                         //BestAlignment_t::ReverseComplement
 
                         std::copy_n(
-                            candidateSequenceRevcData[i].data() + index * encodedSequencePitchInInts,
+                            candidateSequencesRevcData[i].data() + index * encodedSequencePitchInInts,
                             encodedSequencePitchInInts,
                             candidateSequenceData[i].data() + c * encodedSequencePitchInInts
                         );
@@ -586,15 +598,15 @@ public:
 
                     //not sure if these 2 arrays will be required further on
                     std::copy_n(
-                        candidateSequenceFwdData[i].data() + index * encodedSequencePitchInInts,
+                        candidateSequencesFwdData[i].data() + index * encodedSequencePitchInInts,
                         encodedSequencePitchInInts,
-                        candidateSequenceFwdData[i].data() + c * encodedSequencePitchInInts
+                        candidateSequencesFwdData[i].data() + c * encodedSequencePitchInInts
                     );
 
                     std::copy_n(
-                        candidateSequenceRevcData[i].data() + index * encodedSequencePitchInInts,
+                        candidateSequencesRevcData[i].data() + index * encodedSequencePitchInInts,
                         encodedSequencePitchInInts,
-                        candidateSequenceRevcData[i].data() + c * encodedSequencePitchInInts
+                        candidateSequencesRevcData[i].data() + c * encodedSequencePitchInInts
                     );
                     
                 }
@@ -617,13 +629,13 @@ public:
                     candidateSequenceLengths[i].end()
                 );
                 //not sure if these 2 arrays will be required further on
-                candidateSequenceFwdData[i].erase(
-                    candidateSequenceFwdData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    candidateSequenceFwdData[i].end()
+                candidateSequencesFwdData[i].erase(
+                    candidateSequencesFwdData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    candidateSequencesFwdData[i].end()
                 );
-                candidateSequenceRevcData[i].erase(
-                    candidateSequenceRevcData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    candidateSequenceRevcData[i].end()
+                candidateSequencesRevcData[i].erase(
+                    candidateSequencesRevcData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    candidateSequencesRevcData[i].end()
                 );
                 
             }
@@ -1105,15 +1117,15 @@ public:
             cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::vector<int> candidateSequenceLengths;
-            std::vector<unsigned int> candidateSequenceFwdData;
-            std::vector<unsigned int> candidateSequenceRevcData;
+            std::vector<unsigned int> candidateSequencesFwdData;
+            std::vector<unsigned int> candidateSequencesRevcData;
 
             {
                 const int numCandidates = candidateReadIds.size();
 
                 candidateSequenceLengths.resize(numCandidates);
-                candidateSequenceFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                candidateSequenceRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
                 readStorage->gatherSequenceLengths(
                     readStorageGatherHandle,
@@ -1126,14 +1138,14 @@ public:
                     readStorageGatherHandle,
                     candidateReadIds.data(),
                     candidateReadIds.size(),
-                    candidateSequenceFwdData.data(),
+                    candidateSequencesFwdData.data(),
                     encodedSequencePitchInInts
                 );
 
                 for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = candidateSequenceFwdData.data() 
+                    const unsigned int* const seqPtr = candidateSequencesFwdData.data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
-                    unsigned int* const seqrevcPtr = candidateSequenceRevcData.data() 
+                    unsigned int* const seqrevcPtr = candidateSequencesRevcData.data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
 
                     reverseComplement2Bit(
@@ -1175,7 +1187,7 @@ public:
                     forwardAlignments.data(),
                     currentAnchor.data(),
                     currentAnchorLength,
-                    candidateSequenceFwdData.data(),
+                    candidateSequencesFwdData.data(),
                     encodedSequencePitchInInts,
                     candidateSequenceLengths.data(),
                     numCandidates,
@@ -1190,7 +1202,7 @@ public:
                     revcAlignments.data(),
                     currentAnchor.data(),
                     currentAnchorLength,
-                    candidateSequenceRevcData.data(),
+                    candidateSequencesRevcData.data(),
                     encodedSequencePitchInInts,
                     candidateSequenceLengths.data(),
                     numCandidates,
@@ -1407,7 +1419,7 @@ public:
 
                     if(alignmentFlags[index] == BestAlignment_t::Forward){
                         std::copy_n(
-                            candidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
+                            candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                             encodedSequencePitchInInts,
                             candidateSequenceData.data() + c * encodedSequencePitchInInts
                         );
@@ -1415,7 +1427,7 @@ public:
                         //BestAlignment_t::ReverseComplement
 
                         std::copy_n(
-                            candidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
+                            candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
                             encodedSequencePitchInInts,
                             candidateSequenceData.data() + c * encodedSequencePitchInInts
                         );
@@ -1423,15 +1435,15 @@ public:
 
                     // //not sure if these 2 arrays will be required further on
                     // std::copy_n(
-                    //     candidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
+                    //     candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                     //     encodedSequencePitchInInts,
-                    //     candidateSequenceFwdData.data() + c * encodedSequencePitchInInts
+                    //     candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
                     // );
 
                     // std::copy_n(
-                    //     candidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
+                    //     candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
                     //     encodedSequencePitchInInts,
-                    //     candidateSequenceRevcData.data() + c * encodedSequencePitchInInts
+                    //     candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
                     // );
                     
                 }
@@ -1454,13 +1466,13 @@ public:
                     candidateSequenceLengths.end()
                 );
                 // //not sure if these 2 arrays will be required further on
-                // candidateSequenceFwdData.erase(
-                //     candidateSequenceFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                //     candidateSequenceFwdData.end()
+                // candidateSequencesFwdData.erase(
+                //     candidateSequencesFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                //     candidateSequencesFwdData.end()
                 // );
-                // candidateSequenceRevcData.erase(
-                //     candidateSequenceRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                //     candidateSequenceRevcData.end()
+                // candidateSequencesRevcData.erase(
+                //     candidateSequencesRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                //     candidateSequencesRevcData.end()
                 // );
                 
             }
@@ -1807,8 +1819,8 @@ public:
         std::vector<read_number>::iterator mateIdLocationIter;
         std::vector<unsigned int> currentAnchor;
         std::vector<int> candidateSequenceLengths;
-        std::vector<unsigned int> candidateSequenceFwdData;
-        std::vector<unsigned int> candidateSequenceRevcData;
+        std::vector<unsigned int> candidateSequencesFwdData;
+        std::vector<unsigned int> candidateSequencesRevcData;
         std::vector<care::cpu::SHDResult> alignments;
         std::vector<BestAlignment_t> alignmentFlags;
         std::vector<std::string> totalDecodedAnchors;
@@ -1877,6 +1889,11 @@ public:
                         task.currentAnchor.data(),
                         task.currentAnchorLength
                     );
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << "Id " << task.myReadId << ", Iteration: " << task.iteration << "\n";
+                    //     std::cerr << "task.totalDecodedAnchors.emplace_back " << decodedAnchor << "\n";
+                    // }
 
                     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
@@ -1965,8 +1982,8 @@ public:
                     const int numCandidates = task.candidateReadIds.size();
 
                     task.candidateSequenceLengths.resize(numCandidates);
-                    task.candidateSequenceFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                    task.candidateSequenceRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                    task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                    task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
                     readStorage->gatherSequenceLengths(
                         readStorageGatherHandle,
@@ -1979,14 +1996,14 @@ public:
                         readStorageGatherHandle,
                         task.candidateReadIds.data(),
                         task.candidateReadIds.size(),
-                        task.candidateSequenceFwdData.data(),
+                        task.candidateSequencesFwdData.data(),
                         encodedSequencePitchInInts
                     );
 
                     for(int c = 0; c < numCandidates; c++){
-                        const unsigned int* const seqPtr = task.candidateSequenceFwdData.data() 
+                        const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
                                                             + std::size_t(encodedSequencePitchInInts) * c;
-                        unsigned int* const seqrevcPtr = task.candidateSequenceRevcData.data() 
+                        unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
                                                             + std::size_t(encodedSequencePitchInInts) * c;
 
                         reverseComplement2Bit(
@@ -2006,6 +2023,164 @@ public:
             */
 
             alignmentTimer.start();
+
+#if 0
+            {
+                PinnedBuffer<int> h_numCandidatesPerAnchor(inputs.size());
+                PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum(inputs.size()+1);
+
+                h_numCandidatesPerAnchorPrefixSum[0] = 0;
+
+                const int numTasks = indicesOfActiveTasks.size();
+                for(int t = 0; t < numTasks; t++){
+                    const auto& task = tasks[indicesOfActiveTasks[t]];
+
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    h_numCandidatesPerAnchor[t] = numCandidates;
+                    h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
+                }
+
+                const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numTasks];
+
+                PinnedBuffer<int> h_alignment_overlaps(totalNumCandidates);
+                PinnedBuffer<int> h_alignment_shifts(totalNumCandidates);
+                PinnedBuffer<int> h_alignment_nOps(totalNumCandidates);
+                PinnedBuffer<bool> h_alignment_isValid(totalNumCandidates);
+                PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags(totalNumCandidates);
+
+                PinnedBuffer<int> h_numAnchors(1);
+                PinnedBuffer<int> h_numCandidates(1);
+
+                PinnedBuffer<int> h_anchorIndicesOfCandidates(totalNumCandidates);
+                PinnedBuffer<int> h_anchorSequencesLength(inputs.size());
+                PinnedBuffer<int> h_candidateSequencesLength(totalNumCandidates);
+                PinnedBuffer<unsigned int> h_subjectSequencesData(inputs.size() * encodedSequencePitchInInts);
+                PinnedBuffer<unsigned int> h_candidateSequencesData(totalNumCandidates * encodedSequencePitchInInts);
+    
+                auto* anchorcpyptr = h_subjectSequencesData.get();
+                auto* candcpyptr = h_candidateSequencesData.get();
+
+                for(int t = 0; t < numTasks; t++){
+                    const auto& task = tasks[indicesOfActiveTasks[t]];
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+                    for(int c = 0; c < numCandidates; c++){
+                        h_anchorIndicesOfCandidates[offset + c] = t;
+                        h_candidateSequencesLength[offset + c] = task.candidateSequenceLengths[c];
+                    }
+
+                    h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+                    anchorcpyptr = std::copy(
+                        task.currentAnchor.begin(), 
+                        task.currentAnchor.end(),
+                        anchorcpyptr
+                    );
+
+                    candcpyptr = std::copy(
+                        task.candidateSequencesFwdData.begin(), 
+                        task.candidateSequencesFwdData.end(),
+                        candcpyptr
+                    );
+                }
+
+                h_numAnchors[0] = numTasks;
+                h_numCandidates[0] = totalNumCandidates;
+
+                const bool* const d_anchorContainsN = nullptr;
+                const bool* const d_candidateContainsN = nullptr;
+                const bool removeAmbiguousAnchors = false;
+                const bool removeAmbiguousCandidates = false;
+                const int maxNumAnchors = numTasks;
+                const int maxNumCandidates = totalNumCandidates;
+                const int maximumSequenceLength = 100;
+                const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
+                const int min_overlap = goodAlignmentProperties.min_overlap;
+                const float maxErrorRate = goodAlignmentProperties.maxErrorRate;
+                const float min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
+                const float estimatedNucleotideErrorRate = correctionOptions.estimatedErrorrate;
+                cudaStream_t stream = nullptr;
+                cudaStreamCreate(&stream); CUERR;
+                KernelLaunchHandle handle = make_kernel_launch_handle(deviceId);
+
+                for(int t = 0; t < numTasks; t++){
+                    const auto& task = tasks[indicesOfActiveTasks[t]];
+
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    h_numCandidatesPerAnchor[t] = numCandidates;
+                    h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
+                }
+
+                auto callAlignmentKernel = [&](void* d_tempstorage, size_t& tempstoragebytes){
+
+                    call_popcount_rightshifted_hamming_distance_kernel_async(
+                        d_tempstorage,
+                        tempstoragebytes,
+                        h_alignment_overlaps.get(),
+                        h_alignment_shifts.get(),
+                        h_alignment_nOps.get(),
+                        h_alignment_isValid.get(),
+                        h_alignment_best_alignment_flags.get(),
+                        h_subjectSequencesData.get(),
+                        h_candidateSequencesData.get(),
+                        h_anchorSequencesLength.get(),
+                        h_candidateSequencesLength.get(),
+                        h_numCandidatesPerAnchorPrefixSum.get(),
+                        h_numCandidatesPerAnchor.get(),
+                        h_anchorIndicesOfCandidates.get(),
+                        h_numAnchors.get(),
+                        h_numCandidates.get(),
+                        d_anchorContainsN,
+                        removeAmbiguousAnchors,
+                        d_candidateContainsN,
+                        removeAmbiguousCandidates,
+                        maxNumAnchors,
+                        maxNumCandidates,
+                        maximumSequenceLength,
+                        encodedSequencePitchInInts2Bit,
+                        min_overlap,
+                        maxErrorRate,
+                        min_overlap_ratio,
+                        estimatedNucleotideErrorRate,
+                        stream,
+                        handle
+                    );
+                };
+
+                size_t tempstoragebytes = 0;
+                callAlignmentKernel(nullptr, tempstoragebytes);
+
+                DeviceBuffer<char> d_tempstorage(tempstoragebytes);
+
+                callAlignmentKernel(d_tempstorage.get(), tempstoragebytes);
+
+                cudaStreamSynchronize(stream); CUERR;
+                cudaStreamDestroy(stream); CUERR;
+
+                for(int t = 0; t < numTasks; t++){
+                    auto& task = tasks[indicesOfActiveTasks[t]];
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    task.alignmentFlags.resize(numCandidates);
+                    task.alignments.resize(numCandidates);
+
+                    const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+                    for(int c = 0; c < numCandidates; c++){
+                        task.alignments[c].shift = h_alignment_shifts[offset + c];
+                        task.alignments[c].overlap = h_alignment_overlaps[offset + c];
+                        task.alignments[c].nOps = h_alignment_nOps[offset + c];
+                        task.alignments[c].isValid = h_alignment_isValid[offset + c];
+                        task.alignmentFlags[c] = h_alignment_best_alignment_flags[offset + c];
+                    }
+                }
+
+            }
+#else
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = tasks[indexOfActiveTask];
@@ -2027,7 +2202,7 @@ public:
                         forwardAlignments.data(),
                         task.currentAnchor.data(),
                         task.currentAnchorLength,
-                        task.candidateSequenceFwdData.data(),
+                        task.candidateSequencesFwdData.data(),
                         encodedSequencePitchInInts,
                         task.candidateSequenceLengths.data(),
                         numCandidates,
@@ -2042,7 +2217,7 @@ public:
                         revcAlignments.data(),
                         task.currentAnchor.data(),
                         task.currentAnchorLength,
-                        task.candidateSequenceRevcData.data(),
+                        task.candidateSequencesRevcData.data(),
                         encodedSequencePitchInInts,
                         task.candidateSequenceLengths.data(),
                         numCandidates,
@@ -2079,6 +2254,8 @@ public:
                 }
 
             }
+
+#endif
 
             alignmentTimer.stop();
 
@@ -2119,7 +2296,7 @@ public:
                     task.abort = true;
                     task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
 
-                    break; //terminate while loop
+                    continue; //stop processing task
                 }
 
                 // //stable_partition is required to make sure candidate read ids remaing sorted
@@ -2261,7 +2438,7 @@ public:
 
                         if(task.alignmentFlags[index] == BestAlignment_t::Forward){
                             std::copy_n(
-                                task.candidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
+                                task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
                                 candidateSequenceData.data() + c * encodedSequencePitchInInts
                             );
@@ -2269,7 +2446,7 @@ public:
                             //BestAlignment_t::ReverseComplement
 
                             std::copy_n(
-                                task.candidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
+                                task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
                                 candidateSequenceData.data() + c * encodedSequencePitchInInts
                             );
@@ -2277,15 +2454,15 @@ public:
 
                         // //not sure if these 2 arrays will be required further on
                         // std::copy_n(
-                        //     candidateSequenceFwdData.data() + index * encodedSequencePitchInInts,
+                        //     candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                         //     encodedSequencePitchInInts,
-                        //     candidateSequenceFwdData.data() + c * encodedSequencePitchInInts
+                        //     candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
                         // );
 
                         // std::copy_n(
-                        //     candidateSequenceRevcData.data() + index * encodedSequencePitchInInts,
+                        //     candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
                         //     encodedSequencePitchInInts,
-                        //     candidateSequenceRevcData.data() + c * encodedSequencePitchInInts
+                        //     candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
                         // );
                         
                     }
@@ -2308,13 +2485,13 @@ public:
                         task.candidateSequenceLengths.end()
                     );
                     // //not sure if these 2 arrays will be required further on
-                    // candidateSequenceFwdData.erase(
-                    //     candidateSequenceFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    //     candidateSequenceFwdData.end()
+                    // candidateSequencesFwdData.erase(
+                    //     candidateSequencesFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    //     candidateSequencesFwdData.end()
                     // );
-                    // candidateSequenceRevcData.erase(
-                    //     candidateSequenceRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    //     candidateSequenceRevcData.end()
+                    // candidateSequencesRevcData.erase(
+                    //     candidateSequencesRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    //     candidateSequencesRevcData.end()
                     // );
                     
                 }
@@ -2408,6 +2585,12 @@ public:
                     MultipleSequenceAlignment msa;
 
                     msa.build(msaInput);
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << "Id " << task.myReadId << ", Iteration: " << task.iteration << "\n";
+                    //     msa.print(std::cerr);
+                    //     std::cerr << "\n";
+                    // }
 
                     if(!task.mateHasBeenFound){
                         //mate not found. prepare next while-loop iteration
@@ -2547,13 +2730,27 @@ public:
                     //build msa of all saved totalDecodedAnchors[0]
 
                     const int numsteps = task.totalDecodedAnchors.size();
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << "task.totalDecodedAnchors\n";
+                    // }
+
                     int maxlen = 0;
                     for(const auto& s: task.totalDecodedAnchors){
                         const int len = s.length();
                         if(len > maxlen){
                             maxlen = len;
                         }
+
+                        // if(task.myReadId == 90 || task.mateReadId == 90){
+                        //     std::cerr << s << "\n";
+                        // }
                     }
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << "\n";
+                    // }
+
                     const std::string& decodedAnchor = task.totalDecodedAnchors[0];
 
                     const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
@@ -2589,7 +2786,11 @@ public:
 
                     msa.build(msaInput);
 
-                    
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << "Id " << task.myReadId << ", Final\n";
+                    //     msa.print(std::cerr);
+                    //     std::cerr << "\n";
+                    // }
 
                     extendResult.success = true;
 
@@ -2870,7 +3071,7 @@ private:
         return returnValue;
     }
 
-
+    int deviceId;
 
     int insertSize;
     int insertSizeStddev;
@@ -3006,10 +3207,13 @@ extend_gpu(
 
     #pragma omp parallel
     {
+        const int deviceId = runtimeOptions.deviceIds.at(0);
+        cudaSetDevice(deviceId); CUERR;
+
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
         //goodAlignmentProperties2.maxErrorRate = 0.05;
 
-        ReadExtenderGpu ReadExtenderGpu{
+        ReadExtenderGpu readExtenderGpu{
             insertSize,
             insertSizeStddev,
             maximumSequenceLength,
@@ -3039,7 +3243,7 @@ extend_gpu(
         while(!(readIdGenerator.empty())){
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                2, 
+                batchsize, 
                 currentIds.begin()
             );
 
@@ -3089,12 +3293,21 @@ extend_gpu(
                     input.verboseMutex = &verboseMutex;
                 }
 
-                auto extendResult = ReadExtenderGpu.extendPairedReadBatch(inputs);
+                auto extendResult = readExtenderGpu.extendPairedReadBatch(inputs);
 
                 return extendResult;  
             };
 
-            auto handleMultiResult = [&](const ReadExtenderGpu::ExtendResult* result1, const ReadExtenderGpu::ExtendResult* result2){
+            auto handleMultiResult = [&](
+                const ReadExtenderGpu::ExtendResult* result1, 
+                const ReadExtenderGpu::ExtendResult* result2,
+                read_number readId1,
+                read_number readId2,
+                int readLength1,
+                int readLength2,
+                const unsigned int* encodedRead1,
+                const unsigned int* encodedRead2
+            ){
                 ExtendedReadDebug er{};
 
                 if(result1 != nullptr){
@@ -3134,24 +3347,31 @@ extend_gpu(
                     }
                 }
 
-                er.readId1 = currentIds[0];
-                er.readId2 = currentIds[1];
+                er.readId1 = readId1;
+                er.readId2 = readId2;
 
-                er.originalRead1.resize(currentReadLengths[0], '\0');
+                er.originalRead1.resize(readLength1, '\0');
 
                 decode2BitSequence(
                     &er.originalRead1[0],
-                    currentEncodedReads.data() + 0 * encodedSequencePitchInInts,
-                    currentReadLengths[0]
+                    encodedRead1,
+                    readLength1
                 );
 
-                er.originalRead2.resize(currentReadLengths[1], '\0');
+                er.originalRead2.resize(readLength2, '\0');
 
                 decode2BitSequence(
                     &er.originalRead2[0],
-                    currentEncodedReads.data() + 1 * encodedSequencePitchInInts,
-                    currentReadLengths[1]
+                    encodedRead2,
+                    readLength2
                 );
+
+                // if(readId1 == 90 || readId2 == 90){
+                //     std::cerr << result1 << " " << result2 << "\n";
+                //     std::cerr << er.extendedRead1 << " " << er.extendedRead2 << "\n";
+                //     std::cerr << int(er.status1) << " " << int(er.status2) << "\n";
+                //     std::cerr << er.originalRead1 << " " << er.originalRead2 << "\n";
+                // }
 
                 auto func = [&, er = std::move(er)]() mutable{
                     //resultExtendedReads.emplace_back(std::move(er));
@@ -3180,12 +3400,26 @@ extend_gpu(
                 }
 
                 if(result0.success && !result1.success){
-                    handleMultiResult(&result0, nullptr);
+                    handleMultiResult(&result0, nullptr, 
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
                     numSuccess0++;
                 }
 
                 if(!result0.success && result1.success){
-                    handleMultiResult(nullptr, &result1);
+                    handleMultiResult(nullptr, &result1,
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
                     numSuccess1++;
                 }
 
@@ -3207,7 +3441,14 @@ extend_gpu(
 
                     mismatchesBetweenMateExtensions[mismatches]++;
 
-                    handleMultiResult(&result0, &result1);
+                    handleMultiResult(&result0, &result1,
+                        currentIds[2*i],
+                        currentIds[2*i+1],
+                        currentReadLengths[2*i],
+                        currentReadLengths[2*i+1],
+                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                    );
 
                     numSuccess01++;
                 }
@@ -3237,7 +3478,7 @@ extend_gpu(
             const int tid = omp_get_thread_num();
 
             if(0 == tid){
-                ReadExtenderGpu.printTimers();
+                readExtenderGpu.printTimers();
             }      
         }
 
