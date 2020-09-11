@@ -1877,8 +1877,7 @@ public:
         std::vector<int> indicesOfActiveTasksTmp(tasks.size());
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
-        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-        cpu::shd::CpuAlignmentHandle alignmentHandle;
+
                 
 
 
@@ -2065,6 +2064,9 @@ public:
                 h_candidateSequencesLength.resize(totalNumCandidates);
                 h_subjectSequencesData.resize(inputs.size() * encodedSequencePitchInInts);
                 h_candidateSequencesData.resize(totalNumCandidates * encodedSequencePitchInInts);
+
+                d_subjectSequencesData.resize(inputs.size() * encodedSequencePitchInInts);
+                d_candidateSequencesData.resize(totalNumCandidates * encodedSequencePitchInInts);
     
                 auto* anchorcpyptr = h_subjectSequencesData.get();
                 auto* candcpyptr = h_candidateSequencesData.get();
@@ -2129,8 +2131,8 @@ public:
                         h_alignment_nOps.get(),
                         h_alignment_isValid.get(),
                         h_alignment_best_alignment_flags.get(),
-                        h_subjectSequencesData.get(),
-                        h_candidateSequencesData.get(),
+                        d_subjectSequencesData.get(),
+                        d_candidateSequencesData.get(),
                         h_anchorSequencesLength.get(),
                         h_candidateSequencesLength.get(),
                         h_numCandidatesPerAnchorPrefixSum.get(),
@@ -2154,6 +2156,22 @@ public:
                         kernelLaunchHandle
                     );
                 };
+
+                cudaMemcpyAsync(
+                    d_subjectSequencesData.get(),
+                    h_subjectSequencesData.get(),
+                    sizeof(unsigned int) * inputs.size() * encodedSequencePitchInInts,
+                    H2D,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    d_candidateSequencesData.get(),
+                    h_candidateSequencesData.get(),
+                    sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                    H2D,
+                    stream
+                ); CUERR;
 
                 size_t tempstoragebytes = 0;
                 callAlignmentKernel(nullptr, tempstoragebytes);
@@ -2858,7 +2876,6 @@ private:
         read_number readId,
         int beginPos = 0 // only positions [beginPos, readLength] are hashed
     ){
-        Minhasher::Handle minhashHandle;
 
         result.clear();
 
@@ -3109,12 +3126,17 @@ private:
     PinnedBuffer<unsigned int> h_subjectSequencesData;
     PinnedBuffer<unsigned int> h_candidateSequencesData;
 
+    DeviceBuffer<unsigned int> d_subjectSequencesData;
+    DeviceBuffer<unsigned int> d_candidateSequencesData;
+
     DeviceBuffer<char> d_tempstorage;
 
     std::array<CudaStream, 2> streams{};
 
     KernelLaunchHandle kernelLaunchHandle;
-
+    Minhasher::Handle minhashHandle;
+    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+    cpu::shd::CpuAlignmentHandle alignmentHandle;
 
 
     const Minhasher* minhasher;
@@ -3193,7 +3215,7 @@ extend_gpu(
     std::vector<ExtendedRead> resultExtendedReads;
 
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 
     BackgroundThread outputThread(true);
 
