@@ -14,7 +14,11 @@
 #include "hpc_helpers/include/type_helpers.h"
 //#include "hpc_helpers/include/utility_kernels.cuh"
 
+#ifdef __NVCC__
 
+#include "hpc_helpers/include/cuda_raiiwrappers.cuh"
+
+#endif
 
 
 

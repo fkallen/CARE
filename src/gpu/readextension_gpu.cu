@@ -23,7 +23,6 @@
 
 #include <readextension_cpu.hpp>
 #include <extensionresultprocessing.hpp>
-#include <correctionresultprocessing.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
 #include <memoryfile.hpp>
@@ -50,6 +49,8 @@ using PinnedBuffer = SimpleAllocationPinnedHost<T>;
 
 struct ReadExtenderGpu{
 public:
+    static constexpr int primary_stream_index = 0;
+
     enum class AbortReason{
         MsaNotExtended, 
         NoPairedCandidates, 
@@ -124,6 +125,13 @@ public:
 
 
         cudaGetDevice(&deviceId); CUERR;
+
+        h_numAnchors.resize(1);
+        h_numCandidates.resize(1);
+
+        kernelLaunchHandle = make_kernel_launch_handle(deviceId);
+
+
 
     }
 
@@ -2025,9 +2033,10 @@ public:
             alignmentTimer.start();
 
 #if 1
+
             {
-                PinnedBuffer<int> h_numCandidatesPerAnchor(inputs.size());
-                PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum(inputs.size()+1);
+                h_numCandidatesPerAnchor.resize(inputs.size());
+                h_numCandidatesPerAnchorPrefixSum.resize(inputs.size()+1);                
 
                 h_numCandidatesPerAnchorPrefixSum[0] = 0;
 
@@ -2043,20 +2052,18 @@ public:
 
                 const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numTasks];
 
-                PinnedBuffer<int> h_alignment_overlaps(totalNumCandidates);
-                PinnedBuffer<int> h_alignment_shifts(totalNumCandidates);
-                PinnedBuffer<int> h_alignment_nOps(totalNumCandidates);
-                PinnedBuffer<bool> h_alignment_isValid(totalNumCandidates);
-                PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags(totalNumCandidates);
+                h_alignment_overlaps.resize(totalNumCandidates);
+                h_alignment_shifts.resize(totalNumCandidates);
+                h_alignment_nOps.resize(totalNumCandidates);
+                h_alignment_isValid.resize(totalNumCandidates);
+                h_alignment_best_alignment_flags.resize(totalNumCandidates);
 
-                PinnedBuffer<int> h_numAnchors(1);
-                PinnedBuffer<int> h_numCandidates(1);
 
-                PinnedBuffer<int> h_anchorIndicesOfCandidates(totalNumCandidates);
-                PinnedBuffer<int> h_anchorSequencesLength(inputs.size());
-                PinnedBuffer<int> h_candidateSequencesLength(totalNumCandidates);
-                PinnedBuffer<unsigned int> h_subjectSequencesData(inputs.size() * encodedSequencePitchInInts);
-                PinnedBuffer<unsigned int> h_candidateSequencesData(totalNumCandidates * encodedSequencePitchInInts);
+                h_anchorIndicesOfCandidates.resize(totalNumCandidates);
+                h_anchorSequencesLength.resize(inputs.size());
+                h_candidateSequencesLength.resize(totalNumCandidates);
+                h_subjectSequencesData.resize(inputs.size() * encodedSequencePitchInInts);
+                h_candidateSequencesData.resize(totalNumCandidates * encodedSequencePitchInInts);
     
                 auto* anchorcpyptr = h_subjectSequencesData.get();
                 auto* candcpyptr = h_candidateSequencesData.get();
@@ -2102,9 +2109,7 @@ public:
                 const float maxErrorRate = goodAlignmentProperties.maxErrorRate;
                 const float min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
                 const float estimatedNucleotideErrorRate = correctionOptions.estimatedErrorrate;
-                cudaStream_t stream = nullptr;
-                cudaStreamCreate(&stream); CUERR;
-                KernelLaunchHandle handle = make_kernel_launch_handle(deviceId);
+                cudaStream_t stream = streams[primary_stream_index];
 
                 for(int t = 0; t < numTasks; t++){
                     const auto& task = tasks[indicesOfActiveTasks[t]];
@@ -2147,26 +2152,31 @@ public:
                         min_overlap_ratio,
                         estimatedNucleotideErrorRate,
                         stream,
-                        handle
+                        kernelLaunchHandle
                     );
                 };
 
                 size_t tempstoragebytes = 0;
                 callAlignmentKernel(nullptr, tempstoragebytes);
 
-                DeviceBuffer<char> d_tempstorage(tempstoragebytes);
+                d_tempstorage.resize(tempstoragebytes);
 
                 callAlignmentKernel(d_tempstorage.get(), tempstoragebytes);
 
+                for(int t = 0; t < numTasks; t++){
+                    auto& task = tasks[indicesOfActiveTasks[t]];
+                    
+                    const auto numCandidates = task.candidateReadIds.size();
+
+                    task.alignmentFlags.resize(numCandidates);
+                    task.alignments.resize(numCandidates);
+                }
+
                 cudaStreamSynchronize(stream); CUERR;
-                cudaStreamDestroy(stream); CUERR;
 
                 for(int t = 0; t < numTasks; t++){
                     auto& task = tasks[indicesOfActiveTasks[t]];
                     const int numCandidates = task.candidateReadIds.size();
-
-                    task.alignmentFlags.resize(numCandidates);
-                    task.alignments.resize(numCandidates);
 
                     const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
 
@@ -3079,6 +3089,31 @@ private:
     std::size_t encodedSequencePitchInInts;
     std::size_t decodedSequencePitchInBytes;
     std::size_t qualityPitchInBytes;
+
+
+    PinnedBuffer<int> h_numCandidatesPerAnchor;
+    PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
+    PinnedBuffer<int> h_alignment_overlaps;
+    PinnedBuffer<int> h_alignment_shifts;
+    PinnedBuffer<int> h_alignment_nOps;
+    PinnedBuffer<bool> h_alignment_isValid;
+    PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;
+
+    PinnedBuffer<int> h_numAnchors;
+    PinnedBuffer<int> h_numCandidates;
+
+    PinnedBuffer<int> h_anchorIndicesOfCandidates;
+    PinnedBuffer<int> h_anchorSequencesLength;
+    PinnedBuffer<int> h_candidateSequencesLength;
+    PinnedBuffer<unsigned int> h_subjectSequencesData;
+    PinnedBuffer<unsigned int> h_candidateSequencesData;
+
+    DeviceBuffer<char> d_tempstorage;
+
+    std::array<CudaStream, 2> streams{};
+
+    KernelLaunchHandle kernelLaunchHandle;
+
 
 
     const Minhasher* minhasher;
