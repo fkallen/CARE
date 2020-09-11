@@ -1120,7 +1120,7 @@ namespace cpu{
             const int b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
             auto& msa = data.multipleSequenceAlignment;
             auto& orig = task.decodedSubjectSequence;
-            float countsACGT = msa.weightsA[b+pos] + msa.weightsC[b+pos] + msa.weightsG[b+pos] + msa.weightsT[b+pos];
+            float countsACGT = msa.countsA[b+pos] + msa.countsC[b+pos] + msa.countsG[b+pos] + msa.countsT[b+pos];
             return {
                 float(orig[pos] == 'A'),
                 float(orig[pos] == 'C'),
@@ -1183,19 +1183,17 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
-            corr.reserve(task.subjectSequenceLength);
-            constexpr float THRESHOLD = 0.5f;
-            for (int i = 0; i < task.subjectSequenceLength; ++i) {
-                if (orig[i] != cons[subject_b+i] &&
-                    data.forestClassifier1->decide(make_sample(data, task, i)) >= THRESHOLD)
-                {
-                    corr.push_back(cons[subject_b + i]);
-                } else {
-                    corr.push_back(orig[i]);
+            corr.insert(0, orig, task.subjectSequenceLength);
+            if (!task.msaProperties.isHQ) {
+                constexpr float THRESHOLD = 0.5f;
+                for (int i = 0; i < task.subjectSequenceLength; ++i) {
+                    if (orig[i] != cons[subject_b+i] &&
+                        data.forestClassifier1->decide(make_sample(data, task, i)) >= THRESHOLD)
+                    {
+                        corr[i] = cons[subject_b + i];
+                    }
                 }
             }
-            // TODO: consider performance of repeated pushback vs copying orig and replacing few
-            // I guess -O3 will fix it :)
 
             task.subjectCorrection.isCorrected = true;
         }
@@ -1220,16 +1218,17 @@ namespace cpu{
                 correctionOptions.m_coverage
             );
 
-            for (int i = 0; i < task.subjectSequenceLength; ++i) {
-                if (orig[i] != cons[subject_b+i]) {
-                    ml_sample_t sample = make_sample(data, task, i);
-                    std::lock_guard<std::mutex> lg(*data.mtx_ml_stream);
-                    *data.ml_stream << task.subjectReadId << ' ' << i << ' ';
-                    for (float j: sample) *data.ml_stream << j << ' ';
-                    *data.ml_stream << '\n';
+            if (!task.msaProperties.isHQ) {
+                for (int i = 0; i < task.subjectSequenceLength; ++i) {
+                    if (orig[i] != cons[subject_b+i]) {
+                        ml_sample_t sample = make_sample(data, task, i);
+                        std::lock_guard<std::mutex> lg(*data.mtx_ml_stream);
+                        *data.ml_stream << task.subjectReadId << ' ' << i << ' ';
+                        for (float j: sample) *data.ml_stream << j << ' ';
+                        *data.ml_stream << '\n';
+                    }
                 }
             }
-
             task.subjectCorrection.isCorrected = false;
         }
 
