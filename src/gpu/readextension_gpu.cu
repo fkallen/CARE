@@ -3409,23 +3409,17 @@ extend_gpu(
                 //     std::cerr << er.originalRead1 << " " << er.originalRead2 << "\n";
                 // }
 
-                auto func = [&, er = std::move(er)]() mutable{
-                    //resultExtendedReads.emplace_back(std::move(er));
-                    //std::cerr << er.readId1 << " " << er.readId2 << "\n";
-                    partialResults.storeElement(std::move(er));
-                };
+                ExtendedRead result(er);
 
-                outputThread.enqueue(
-                    std::move(func)
-                );
-
-                
+                return result;                
             };
 
             // it is not known which of both reads is on the forward strand / reverse complement strand. try both combinations
             auto extendResult0 = processReadOrder({0,1});
 
             auto extendResult1 = processReadOrder({1,0});
+
+            std::vector<ExtendedRead> resultvector;
 
             for(int i = 0; i < numReadPairsInBatch; i++){
                 const auto& result0 = extendResult0[i];
@@ -3436,7 +3430,7 @@ extend_gpu(
                 }
 
                 if(result0.success && !result1.success){
-                    handleMultiResult(&result0, nullptr, 
+                    auto r = handleMultiResult(&result0, nullptr, 
                         currentIds[2*i],
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
@@ -3444,11 +3438,12 @@ extend_gpu(
                         currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
                         currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
                     );
+                    resultvector.emplace_back(std::move(r));
                     numSuccess0++;
                 }
 
                 if(!result0.success && result1.success){
-                    handleMultiResult(nullptr, &result1,
+                    auto r = handleMultiResult(nullptr, &result1,
                         currentIds[2*i],
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
@@ -3456,6 +3451,7 @@ extend_gpu(
                         currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
                         currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
                     );
+                    resultvector.emplace_back(std::move(r));
                     numSuccess1++;
                 }
 
@@ -3477,7 +3473,7 @@ extend_gpu(
 
                     mismatchesBetweenMateExtensions[mismatches]++;
 
-                    handleMultiResult(&result0, &result1,
+                    auto r = handleMultiResult(&result0, &result1,
                         currentIds[2*i],
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
@@ -3485,13 +3481,23 @@ extend_gpu(
                         currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
                         currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
                     );
+                    resultvector.emplace_back(std::move(r));
 
                     numSuccess01++;
                 }
             }
 
-            progressThread.addProgress(numReadPairsInBatch);
-            
+            auto outputfunc = [&, vec = std::move(resultvector)](){
+                for(const auto& er : vec){
+                    partialResults.storeElement(&er);
+                }
+            };
+
+            outputThread.enqueue(
+                std::move(outputfunc)
+            );
+
+            progressThread.addProgress(numReadPairsInBatch);            
         }
 
         //#pragma omp critical
