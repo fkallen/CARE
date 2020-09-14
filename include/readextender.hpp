@@ -95,13 +95,12 @@ public:
         int insertSizeStddev,
         int maximumSequenceLength,
         const cpu::ContiguousReadStorage& rs, 
-        const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) : insertSize(insertSize), 
         insertSizeStddev(insertSizeStddev),
             maximumSequenceLength(maximumSequenceLength),
-            minhasher(&mh), readStorage(&rs), 
+            readStorage(&rs), 
             correctionOptions(coropts),
             goodAlignmentProperties(gap),
             hashTimer{"Hash timer"},
@@ -119,6 +118,7 @@ public:
 
     virtual ~ReadExtenderBase() = default;
 
+#if 0
     /*
         Assumes read1 is on the forward strand, read2 is on the reverse strand
     */
@@ -921,7 +921,7 @@ public:
 
         return extendResult;
     }
-
+#endif
 
     struct Task{
         bool abort = false;
@@ -1010,59 +1010,6 @@ protected:
 
     virtual void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
 
-    void getCandidatesSingle(
-        std::vector<read_number>& result, 
-        const unsigned int* encodedRead, 
-        int readLength, 
-        read_number readId,
-        int beginPos = 0 // only positions [beginPos, readLength] are hashed
-    ){
-
-        result.clear();
-
-        const bool containsN = readStorage->readContainsN(readId);
-
-        //exclude anchors with ambiguous bases
-        if(!(correctionOptions.excludeAmbiguousReads && containsN)){
-
-            const int length = readLength;
-            std::string sequence(length, '0');
-
-            decode2BitSequence(
-                &sequence[0],
-                encodedRead,
-                length
-            );
-
-            minhasher->getCandidates_any_map(
-                minhashHandle,
-                sequence.c_str() + beginPos,
-                std::max(0, readLength - beginPos),
-                0
-            );
-
-            auto minhashResultsEnd = minhashHandle.result().end();
-            //exclude candidates with ambiguous bases
-
-            if(correctionOptions.excludeAmbiguousReads){
-                minhashResultsEnd = std::remove_if(
-                    minhashHandle.result().begin(),
-                    minhashHandle.result().end(),
-                    [&](read_number readId){
-                        return readStorage->readContainsN(readId);
-                    }
-                );
-            }            
-
-            result.insert(
-                result.begin(),
-                minhashHandle.result().begin(),
-                minhashResultsEnd
-            );
-        }else{
-            ; // no candidates
-        }
-    }
 
     template<class InputIt1, class InputIt2,
          class OutputIt1, class OutputIt2,
@@ -1249,10 +1196,8 @@ protected:
     std::size_t decodedSequencePitchInBytes;
     std::size_t qualityPitchInBytes;
 
-    Minhasher::Handle minhashHandle;
-    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-    const Minhasher* minhasher;
+    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
     const cpu::ContiguousReadStorage* readStorage;
 
     CorrectionOptions correctionOptions;
@@ -1288,11 +1233,66 @@ public:
         const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
-    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, mh, coropts, gap){
+    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, coropts, gap),
+        minhasher(&mh){
 
     }
      
 private:
+
+    void getCandidatesSingle(
+        std::vector<read_number>& result, 
+        const unsigned int* encodedRead, 
+        int readLength, 
+        read_number readId,
+        int beginPos = 0 // only positions [beginPos, readLength] are hashed
+    ){
+
+        result.clear();
+
+        const bool containsN = readStorage->readContainsN(readId);
+
+        //exclude anchors with ambiguous bases
+        if(!(correctionOptions.excludeAmbiguousReads && containsN)){
+
+            const int length = readLength;
+            std::string sequence(length, '0');
+
+            decode2BitSequence(
+                &sequence[0],
+                encodedRead,
+                length
+            );
+
+            minhasher->getCandidates_any_map(
+                minhashHandle,
+                sequence.c_str() + beginPos,
+                std::max(0, readLength - beginPos),
+                0
+            );
+
+            auto minhashResultsEnd = minhashHandle.result().end();
+            //exclude candidates with ambiguous bases
+
+            if(correctionOptions.excludeAmbiguousReads){
+                minhashResultsEnd = std::remove_if(
+                    minhashHandle.result().begin(),
+                    minhashHandle.result().end(),
+                    [&](read_number readId){
+                        return readStorage->readContainsN(readId);
+                    }
+                );
+            }            
+
+            result.insert(
+                result.begin(),
+                minhashHandle.result().begin(),
+                minhashResultsEnd
+            );
+        }else{
+            ; // no candidates
+        }
+    }
 
     void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
         for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -1378,6 +1378,8 @@ private:
         }
     }
 
+    const Minhasher* minhasher;
+    Minhasher::Handle minhashHandle;
     cpu::shd::CpuAlignmentHandle alignmentHandle;
 
 };

@@ -47,34 +47,12 @@ namespace care{
 
 
 
-                hashTimer.start();
+            hashTimer.start();
 
-                getCandidates(tasks, indicesOfActiveTasks);
+            getCandidates(tasks, indicesOfActiveTasks);
 
-                for(int indexOfActiveTask : indicesOfActiveTasks){
-                    auto& task = tasks[indexOfActiveTask];
-
-                
-
-    //            if(iter == 0){
-
-                    // getCandidates(
-                    //     task.candidateReadIds, 
-                    //     task.currentAnchor.data(), 
-                    //     task.currentAnchorLength,
-                    //     task.currentAnchorReadId
-                    // );
-
-                // }else{
-                //     //only hash the right end of current anchor
-                //     getCandidates(
-                //         candidateReadIds, 
-                //         currentAnchor.data(), 
-                //         currentAnchorLength,
-                //         currentAnchorReadId,
-                //         std::max(0, currentAnchorLength - maxextension - minhasher->getKmerSize() + 1)
-                //     );
-                // }
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 // remove self from candidate list
                 if(task.iteration == 0){
@@ -101,10 +79,15 @@ namespace care{
                         task.candidateReadIds.erase(readIdPos);
                     }
                 }
+            }
 
-                hashTimer.stop();
+            hashTimer.stop();
+                
 
-                collectTimer.start();
+            collectTimer.start();
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 /*
                     Remove candidate pairs which have already been used for extension

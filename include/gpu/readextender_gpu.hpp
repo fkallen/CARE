@@ -34,7 +34,8 @@ public:
         const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
-    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, mh, coropts, gap){
+    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, coropts, gap),
+        minhasher(&mh){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -46,6 +47,60 @@ public:
     }
      
 private:
+
+    void getCandidatesSingle(
+        std::vector<read_number>& result, 
+        const unsigned int* encodedRead, 
+        int readLength, 
+        read_number readId,
+        int beginPos = 0 // only positions [beginPos, readLength] are hashed
+    ){
+
+        result.clear();
+
+        const bool containsN = readStorage->readContainsN(readId);
+
+        //exclude anchors with ambiguous bases
+        if(!(correctionOptions.excludeAmbiguousReads && containsN)){
+
+            const int length = readLength;
+            std::string sequence(length, '0');
+
+            decode2BitSequence(
+                &sequence[0],
+                encodedRead,
+                length
+            );
+
+            minhasher->getCandidates_any_map(
+                minhashHandle,
+                sequence.c_str() + beginPos,
+                std::max(0, readLength - beginPos),
+                0
+            );
+
+            auto minhashResultsEnd = minhashHandle.result().end();
+            //exclude candidates with ambiguous bases
+
+            if(correctionOptions.excludeAmbiguousReads){
+                minhashResultsEnd = std::remove_if(
+                    minhashHandle.result().begin(),
+                    minhashHandle.result().end(),
+                    [&](read_number readId){
+                        return readStorage->readContainsN(readId);
+                    }
+                );
+            }            
+
+            result.insert(
+                result.begin(),
+                minhashHandle.result().begin(),
+                minhashResultsEnd
+            );
+        }else{
+            ; // no candidates
+        }
+    }
 
     void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
         for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -266,6 +321,9 @@ private:
     std::array<CudaStream, 2> streams{};
 
     gpu::KernelLaunchHandle kernelLaunchHandle;
+
+    const Minhasher* minhasher;
+    Minhasher::Handle minhashHandle;
 
 };
 
