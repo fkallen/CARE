@@ -215,14 +215,14 @@ public:
 
             std::array<std::vector<read_number>, 2> candidateReadIds;
 
-            getCandidates(
+            getCandidatesSingle(
                 candidateReadIds[0], 
                 currentAnchor[0].data(), 
                 currentAnchorLength[0],
                 currentAnchorReadId[0]
             );
 
-            getCandidates(
+            getCandidatesSingle(
                 candidateReadIds[1], 
                 currentAnchor[1].data(), 
                 currentAnchorLength[1],
@@ -1008,7 +1008,9 @@ protected:
         return isSameReadPair(ids1.first, ids2.first);
     }
 
-    void getCandidates(
+    virtual void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
+
+    void getCandidatesSingle(
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
         int readLength, 
@@ -1291,6 +1293,20 @@ public:
     }
      
 private:
+
+    void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            getCandidatesSingle(
+                task.candidateReadIds, 
+                task.currentAnchor.data(), 
+                task.currentAnchorLength,
+                task.currentAnchorReadId
+            );
+
+        }
+    }
 
     void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
         for(int indexOfActiveTask : indicesOfActiveTasks){

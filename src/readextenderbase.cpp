@@ -42,20 +42,28 @@ namespace care{
 
                     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-                }               
+                } 
+            }
+
+
 
                 hashTimer.start();
+
+                getCandidates(tasks, indicesOfActiveTasks);
+
+                for(int indexOfActiveTask : indicesOfActiveTasks){
+                    auto& task = tasks[indexOfActiveTask];
 
                 
 
     //            if(iter == 0){
 
-                    getCandidates(
-                        task.candidateReadIds, 
-                        task.currentAnchor.data(), 
-                        task.currentAnchorLength,
-                        task.currentAnchorReadId
-                    );
+                    // getCandidates(
+                    //     task.candidateReadIds, 
+                    //     task.currentAnchor.data(), 
+                    //     task.currentAnchorLength,
+                    //     task.currentAnchorReadId
+                    // );
 
                 // }else{
                 //     //only hash the right end of current anchor

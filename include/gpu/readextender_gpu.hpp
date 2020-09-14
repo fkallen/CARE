@@ -47,6 +47,20 @@ public:
      
 private:
 
+    void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            getCandidatesSingle(
+                task.candidateReadIds, 
+                task.currentAnchor.data(), 
+                task.currentAnchorLength,
+                task.currentAnchorReadId
+            );
+
+        }
+    }
+
     void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
         nvtx::push_range("gpu_alignment", 2);
 
