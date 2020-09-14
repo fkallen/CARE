@@ -48,7 +48,7 @@
 
 #include <thrust/binary_search.h>
 
-
+#include <gpu/forest_gpu.cuh>
 
 #define USE_MSA_MINIMIZATION
 

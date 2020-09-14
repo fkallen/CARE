@@ -26,7 +26,10 @@ T read_one(std::ifstream& is) {
 
 using ml_sample_t = std::array<float, 36>;
 
+
+
 class ForestClf {
+    friend class GpuForest;
 
     struct Node {
         uint8_t att;
