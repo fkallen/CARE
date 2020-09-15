@@ -31,15 +31,14 @@ struct SequenceFileProperties{
 
 
 struct Read {
-	std::string name = "";
-    std::string comment = "";
+	std::string header = "";
 	std::string sequence = "";
 	std::string quality = "";
 
 	bool operator==(const Read& other) const
 	{
-		return (name == other.name 
-                && comment == other.comment && sequence == other.sequence 
+		return (header == other.header 
+                 && sequence == other.sequence 
                 && quality == other.quality);
 	}
 	bool operator!=(const Read& other) const
@@ -49,8 +48,7 @@ struct Read {
 
 	void reset()
 	{
-		name.clear();
-        comment.clear();
+		header.clear();
 		sequence.clear();
 		quality.clear();
 	}
@@ -92,8 +90,7 @@ struct MultiInputReader{
             const int status = readerVector[inputFileId].next();
 
             if(status >= 0){
-                std::swap(current.read.name, readerVector[inputFileId].getCurrentName());
-                std::swap(current.read.comment, readerVector[inputFileId].getCurrentComment());
+                std::swap(current.read.header, readerVector[inputFileId].getCurrentHeader());
                 std::swap(current.read.sequence, readerVector[inputFileId].getCurrentSequence());
                 std::swap(current.read.quality, readerVector[inputFileId].getCurrentQuality());
                 current.fileId = inputFileId;
@@ -136,7 +133,11 @@ struct SequenceFileWriter{
 
     void writeRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality);
 
+    void writeRead(const std::string& header, const std::string& sequence, const std::string& quality);
+
     virtual void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) = 0;
+
+    virtual void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) = 0;
 
     virtual void writeImpl(const std::string& data) = 0;
 
@@ -151,6 +152,7 @@ struct UncompressedWriter : public SequenceFileWriter{
     UncompressedWriter(const std::string& filename, FileFormat format);
 
     void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) override;
+    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) override;
     void writeImpl(const std::string& data) override;
 
     bool isFastq;
@@ -166,6 +168,7 @@ struct GZipWriter : public SequenceFileWriter{
     ~GZipWriter();
 
     void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) override;
+    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) override;
     void writeImpl(const std::string& data) override;
 
 private:
@@ -229,8 +232,7 @@ void forEachReadInFile(const std::string& filename, Func f){
                 read.sequence = reader.getCurrentSequence();
                 read.quality = reader.getCurrentQuality();
             #else
-                std::swap(read.name, reader.getCurrentName());
-                std::swap(read.comment, reader.getCurrentComment());
+                std::swap(read.header, reader.getCurrentHeader());
                 std::swap(read.sequence, reader.getCurrentSequence());
                 std::swap(read.quality, reader.getCurrentQuality());
             #endif
