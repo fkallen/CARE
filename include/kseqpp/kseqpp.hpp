@@ -14,9 +14,23 @@
 #include <memory>
 #include <iostream>
 #include <functional>
+#include <cstring>
 
 
 namespace kseqpp{
+
+#ifdef KSEQPP_ASYNC_READER
+    using RawReader_t = AsyncRawReader;
+#else 
+    using RawReader_t = RawReader;
+#endif    
+
+
+#ifdef KSEQPP_ASYNC_READER
+    using CompressedReader_t = AsyncGzReader;
+#else 
+    using CompressedReader_t = GzReader;
+#endif   
 
 /*
     The following code for parsing sequence files is adapted from klib/kseq.h which is available under MIT license
@@ -32,8 +46,7 @@ public:
     KseqPP(const std::string& filename)
             : f(std::make_unique<Stream>(filename)){
         // std::cerr << "KseqPP(" << filename << ")\n";
-        name.reserve(256);
-        comment.reserve(256);
+        header.reserve(256);
         seq.reserve(256);
         qual.reserve(256);
     }
@@ -56,24 +69,17 @@ public:
         seq.clear();
         qual.clear();
         
-        if ((r=f->ks_getuntil(Stream::KS_SEP_SPACE, name, &c)) < 0){
+        if ((r=f->ks_getline(header, &c, 0)) < 0){
             f->cancel();
             return r;  /* normal exit: EOF or error */
         }
-        if (c != '\n'){
-            f->ks_getuntil(Stream::KS_SEP_LINE, comment, 0); /* read FASTA/Q comment */
-        }
-
-        // if(seq.capacity() == 0){
-        //     seq.reserve(256);
-        // }
 
         while ((c = f->ks_getc()) >= 0 && c != '>' && c != '+' && c != '@') {
             if (c == '\n'){
                 continue; /* skip empty lines */
             }
             seq.push_back(c);
-            f->ks_getuntil2(Stream::KS_SEP_LINE, seq, 0, 1); /* read the rest of the line */
+            f->ks_getline(seq, 0, 1); /* read the rest of the line */
         }
 
         if (c == '>' || c == '@'){
@@ -95,7 +101,7 @@ public:
             return -2; /* error: no quality string */
         }
 
-        while ((c = f->ks_getuntil2(Stream::KS_SEP_LINE, qual, 0, 1) >= 0 && qual.length() < seq.length())){
+        while ((c = f->ks_getline(qual, 0, 1) >= 0 && qual.length() < seq.length())){
             ;
         }
         if (c == -3){
@@ -119,12 +125,8 @@ public:
         f->end = 0;
     }
 
-    const std::string& getCurrentName() const{
-        return name;
-    }
-
-    const std::string& getCurrentComment() const{
-        return comment;
+    const std::string& getCurrentHeader() const{
+        return header;
     }
 
     const std::string& getCurrentSequence() const{
@@ -135,12 +137,8 @@ public:
         return qual;
     }
 
-    std::string& getCurrentName(){
-        return name;
-    }
-
-    std::string& getCurrentComment(){
-        return comment;
+    std::string& getCurrentHeader(){
+        return header;
     }
 
     std::string& getCurrentSequence(){
@@ -175,10 +173,10 @@ private:
 
             if(hasGzipHeader(filename)){
                 //std::cerr << "assume gz file\n";
-                filereader.reset(new GzReader(filename));      
+                filereader.reset(new CompressedReader_t(filename));
             }else{
                 //std::cerr << "assume raw file\n";
-                filereader.reset(new RawReader(filename));
+                filereader.reset(new RawReader_t(filename));
             }
 
             buf.resize(bufsize);
@@ -237,20 +235,11 @@ private:
             return (int)buf[begin++];
         }
 
-        int ks_getuntil2(int delimiter, std::string& str, int* dret, int append){
-            auto kroundup32 = [](unsigned int x){
-                --x;
-                x |= x >> 1;
-                x |= x >> 2;
-                x |= x >> 4;
-                x |= x >> 8;
-                x |= x >> 16;
-                ++x;
-                return x;
-            } ;
+        int ks_getline(std::string& str, int* dret, int append){
 
             int gotany = 0;													
             if (dret) *dret = 0;
+
             if(!append){
                 str.clear();
             }																			
@@ -273,45 +262,15 @@ private:
                         break;
                     }
                 }
-                int i = 0;																
-                if (delimiter == KS_SEP_LINE) { 
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] == '\n'){
-                            break;
-                        }
-                    }                        
-                } else if (delimiter > KS_SEP_MAX) {						
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] == delimiter){
-                            break;
-                        }
-                    }								
-                } else if (delimiter == KS_SEP_SPACE) {		
-                    for (i = begin; i < end; ++i){
-                        if(std::isspace(buf[i])){
-                            break;
-                        }
-                    }									
-                } else if (delimiter == KS_SEP_TAB) {
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] != ' ' && std::isspace(buf[i])){
-                            break;
-                        }
-                    }
-                }
 
-                const int oldSize = str.length();
-                const int oldCapacity = str.capacity();
-                if(oldCapacity - oldSize < i - begin){
-                    int newCapacity = oldSize + i - begin;
-                    newCapacity = kroundup32(newCapacity);
-                    str.reserve(newCapacity);                    
-                }
-                str.resize(oldSize + i - begin);
+                const unsigned char* const sep = (unsigned char*)memchr(buf.data() + begin, '\n', end - begin);
+                // if seperator was not found, set lineEnd to buffer end
+                const int i = (sep != 0) ? (sep - (unsigned char*)buf.data()) : end;
 
                 gotany = 1;	
 
-                std::copy_n(buf.data() + begin,	i - begin, &str[oldSize]);	
+                str.append(buf.data() + begin, i - begin);
+
                 begin = i + 1;											
                 if (i < end) {											
                     if (dret){
@@ -323,16 +282,13 @@ private:
             if (!gotany && ks_eof()){
                 return -1;
             }
-            if(delimiter == KS_SEP_LINE && str.length() > 1 && str.back() == '\r'){
+            if(str.length() > 1 && str.back() == '\r'){
                 str.pop_back();
             }
                                         
             return str.length();													
         }
 
-        int ks_getuntil(int delimiter, std::string& str, int* dret){
-            return ks_getuntil2(delimiter, str, dret, 0);
-        }
     };
 
     struct asynckstream_t {
@@ -367,11 +323,11 @@ private:
         asynckstream_t(const std::string& filename) : begin(0), end(0), is_eof(0){
 
             if(hasGzipHeader(filename)){
-                //std::cerr << filename << " : assume gz file\n";
-                filereader.reset(new ZlibReader(filename));      
+                //std::cerr << "assume gz file\n";
+                filereader.reset(new CompressedReader_t(filename));
             }else{
-                //std::cerr << filename << " : assume raw file\n";
-                filereader.reset(new ZlibReader(filename));
+                //std::cerr << "assume raw file\n";
+                filereader.reset(new RawReader_t(filename));
             }
 
             buf.resize(bufsize);
@@ -468,38 +424,11 @@ private:
             return numRead;
         }
 
-        int ks_getc(){
-            if (ks_err()) return -3;
-            if (ks_eof()) return -1;
-            if (begin >= end) {
-                begin = 0;
-                end = fillBuffer();
-                if (end == 0){
-                    is_eof = 1; 
-                    return -1;
-                }
-                if (end == -1){
-                    is_eof = 1; 
-                    return -3;
-                }
-            }
-            return (int)buf[begin++];
-        }
-
-        int ks_getuntil2(int delimiter, std::string& str, int* dret, int append){
-            auto kroundup32 = [](unsigned int x){
-                --x;
-                x |= x >> 1;
-                x |= x >> 2;
-                x |= x >> 4;
-                x |= x >> 8;
-                x |= x >> 16;
-                ++x;
-                return x;
-            } ;
+        int ks_getline(std::string& str, int* dret, int append){
 
             int gotany = 0;													
             if (dret) *dret = 0;
+
             if(!append){
                 str.clear();
             }																			
@@ -522,45 +451,15 @@ private:
                         break;
                     }
                 }
-                int i = 0;																
-                if (delimiter == KS_SEP_LINE) { 
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] == '\n'){
-                            break;
-                        }
-                    }                        
-                } else if (delimiter > KS_SEP_MAX) {						
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] == delimiter){
-                            break;
-                        }
-                    }								
-                } else if (delimiter == KS_SEP_SPACE) {		
-                    for (i = begin; i < end; ++i){
-                        if(std::isspace(buf[i])){
-                            break;
-                        }
-                    }									
-                } else if (delimiter == KS_SEP_TAB) {
-                    for (i = begin; i < end; ++i){
-                        if(buf[i] != ' ' && std::isspace(buf[i])){
-                            break;
-                        }
-                    }
-                }
-
-                const int oldSize = str.length();
-                const int oldCapacity = str.capacity();
-                if(oldCapacity - oldSize < i - begin){
-                    int newCapacity = oldSize + i - begin;
-                    newCapacity = kroundup32(newCapacity);
-                    str.reserve(newCapacity);                    
-                }
-                str.resize(oldSize + i - begin);
+ 
+                const unsigned char* const sep = (unsigned char*)memchr(buf.data() + begin, '\n', end - begin);
+                // if seperator was not found, set lineEnd to buffer end
+                const int i = (sep != 0) ? (sep - (unsigned char*)buf.data()) : end;
 
                 gotany = 1;	
 
-                std::copy_n(buf.data() + begin,	i - begin, &str[oldSize]);	
+                str.append(buf.data() + begin, i - begin);
+
                 begin = i + 1;											
                 if (i < end) {											
                     if (dret){
@@ -572,23 +471,40 @@ private:
             if (!gotany && ks_eof()){
                 return -1;
             }
-            if(delimiter == KS_SEP_LINE && str.length() > 1 && str.back() == '\r'){
+            if(str.length() > 1 && str.back() == '\r'){
                 str.pop_back();
             }
                                         
             return str.length();													
         }
 
-        int ks_getuntil(int delimiter, std::string& str, int* dret){
-            return ks_getuntil2(delimiter, str, dret, 0);
+        int ks_getc(){
+            if (ks_err()) return -3;
+            if (ks_eof()) return -1;
+            if (begin >= end) {
+                begin = 0;
+                end = fillBuffer();
+                if (end == 0){
+                    is_eof = 1; 
+                    return -1;
+                }
+                if (end == -1){
+                    is_eof = 1; 
+                    return -3;
+                }
+            }
+            return (int)buf[begin++];
         }
+
     };
 
-    //using Stream = kstream_t;
+#ifdef KSEQPP_ASYNC_PARSER
     using Stream = asynckstream_t;
+#else    
+    using Stream = kstream_t;
+#endif    
 
-    std::string name{};
-    std::string comment{};
+    std::string header{};
     std::string seq{};
     std::string qual{};	
 

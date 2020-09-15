@@ -702,7 +702,7 @@ void constructOutputFileFromCorrectionResults_impl(
         if(combinedresult.corrected){
             if(!isValidSequence(combinedresult.correctedSequence)){
                 std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                        << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                        << " with header " << readWithId.read.header
                         << "does contain an invalid DNA base!\n"
                         << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
             }
@@ -711,7 +711,7 @@ void constructOutputFileFromCorrectionResults_impl(
 
         std::swap(readWithId.read.sequence, combinedresult.correctedSequence);        
 
-        writerVector[readWithId.fileId]->writeRead(readWithId.read.name, readWithId.read.comment, readWithId.read.sequence, readWithId.read.quality);
+        writerVector[readWithId.fileId]->writeRead(readWithId.read.header, readWithId.read.sequence, readWithId.read.quality);
 
         timeend = std::chrono::system_clock::now();
         durationConstruction += timeend - timebegin;
@@ -865,7 +865,7 @@ void constructOutputFileFromCorrectionResults2_impl(
             if(combinedresult.corrected){
                 if(!isValidSequence(combinedresult.correctedSequence)){
                     std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                            << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                            << " with header " << readWithId.read.header
                             << "does contain an invalid DNA base!\n"
                             << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
                 }
@@ -1214,7 +1214,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     if(combinedresult.corrected){
                         if(!isValidSequence(readWithId.read.sequence)){
                             std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                                    << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                                    << " with header " << readWithId.read.header
                                     << "does contain an invalid DNA base!\n"
                                     << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                         }

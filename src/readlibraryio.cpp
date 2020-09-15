@@ -29,15 +29,16 @@ namespace care{
 //###### BEGIN WRITER IMPLEMENTATION
 
 void SequenceFileWriter::writeRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
-    //std::cerr << "Write " << header << "\n" << sequence << " " << "\n" << quality << "\n";
     writeReadImpl(name, comment, sequence, quality);
+}
 
-
+void SequenceFileWriter::writeRead(const std::string& header, const std::string& sequence, const std::string& quality){
+    writeReadImpl(header, sequence, quality);
 }
 
 void SequenceFileWriter::writeRead(const Read& read){
     //std::cerr << "Write " << header << "\n" << sequence << " " << "\n" << quality << "\n";
-    writeRead(read.name, read.comment, read.sequence, read. quality);
+    writeRead(read.header, read.sequence, read. quality);
 }
 
 UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat format)
@@ -63,6 +64,15 @@ void UncompressedWriter::writeReadImpl(const std::string& name, const std::strin
     if(comment.length() > 0){
         ofs << ' ' << comment;
     }
+    ofs << '\n' << sequence << '\n';
+    if(format == FileFormat::FASTQ){
+        ofs << '+' << '\n'
+            << quality << '\n';
+    }
+}
+
+void UncompressedWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
+    ofs << delimHeader << header;
     ofs << '\n' << sequence << '\n';
     if(format == FileFormat::FASTQ){
         ofs << '+' << '\n'
@@ -97,6 +107,10 @@ GZipWriter::~GZipWriter(){
     }
     numBufferedReads = 0;
     gzclose(fp);
+}
+
+void GZipWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
+    writeReadImpl(header, "", sequence, quality);
 }
 
 void GZipWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
