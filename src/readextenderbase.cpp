@@ -204,28 +204,36 @@ namespace care{
                     continue; //stop processing task
                 }
 
-                // //stable_partition is required to make sure candidate read ids remaing sorted
-                // auto partitionPointIter = std::stable_partition(
+                float relativeOverlapThreshold = 0.9f;
+                bool goodAlignmentExists = false;
+
+                while(!goodAlignmentExists && fgeq(relativeOverlapThreshold, goodAlignmentProperties.min_overlap_ratio)){                    
+
+                    goodAlignmentExists = std::any_of(
+                        positionsOfCandidatesToKeep.begin(), 
+                        positionsOfCandidatesToKeep.end(),
+                        [&](const auto& position){
+                            const auto& alignment = task.alignments[position];
+                            const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
+                            return fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f;
+                        }
+                    );
+
+                    if(!goodAlignmentExists){
+                        relativeOverlapThreshold -= 0.1f;
+                    }
+                }
+                
+
+                // const bool goodAlignmentExists = std::any_of(
                 //     positionsOfCandidatesToKeep.begin(), 
                 //     positionsOfCandidatesToKeep.end(),
                 //     [&](const auto& position){
-                //         const auto& alignment = alignments[positions];
-                //         const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
-                //         return fgeq(relativeOverlap, 0.7f) && fleq();
+                //         const auto& alignment = task.alignments[position];
+                //         const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
+                //         return fgeq(relativeOverlap, 0.7f) && relativeOverlap < 1.0f; //fleq(relativeOverlap, 1.0f);
                 //     }
                 // );
-
-
-
-                const bool goodAlignmentExists = std::any_of(
-                    positionsOfCandidatesToKeep.begin(), 
-                    positionsOfCandidatesToKeep.end(),
-                    [&](const auto& position){
-                        const auto& alignment = task.alignments[position];
-                        const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                        return fgeq(relativeOverlap, 0.7f) && relativeOverlap < 1.0f; //fleq(relativeOverlap, 1.0f);
-                    }
-                );
 
                 if(goodAlignmentExists){
                     tmpPositionsOfCandidatesToKeep.resize(positionsOfCandidatesToKeep.size());
@@ -237,7 +245,7 @@ namespace care{
                         [&](const auto& position){
                             const auto& alignment = task.alignments[position];
                             const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                            return fgeq(relativeOverlap, 0.7f);
+                            return fgeq(relativeOverlap, relativeOverlapThreshold);
                         }
                     );
 
@@ -251,77 +259,6 @@ namespace care{
                     std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
                     std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
                 }
-
-    #if 0
-                //perform binning of candidates. keep candidates in best bins 
-                //such that total number of kept candidates passes a threshold
-
-                {
-                    constexpr int numBins = 5;
-                    std::array<int, numBins> bins{}; //relative overlap
-                    std::array<float, numBins> boundaries{1.0f, 0.7f, 0.6f, 0.5f, 0.0f};
-
-                    /*
-                        100%,
-                        70% - 100%
-                        60% - 70%
-                        50% - 60%
-                        < 50%
-                    */
-                    for(int i = 0; i < numRemainingCandidates; i++){
-                        const int candidateIndex = positionsOfCandidatesToKeep[i];
-                        const auto& alignment = alignments[candidateIndex];
-
-                        const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
-                        if(fgeq(relativeOverlap, boundaries[0])){
-                            bins[0]++;
-                        }else if(fgeq(relativeOverlap, boundaries[1])){
-                            bins[1]++;
-                        }else if(fgeq(relativeOverlap, boundaries[2])){
-                            bins[2]++;
-                        }else if(fgeq(relativeOverlap, boundaries[3])){
-                            bins[3]++;
-                        }else{
-                            bins[4]++;
-                        }
-                    }
-
-                    const int threshold = 5;
-
-                    //select bins. bin[0] does not count towards threshold, because reads with overlap 100% cannot be used for extension,
-                    //but only for calculating consensus in MSA
-                    int selectedBin = 1;
-                    int numSelectedInBins = 0;
-                    for(int i = 1; i < numBins; i++){
-                        numSelectedInBins += bins[i];
-                        selectedBin = i;
-                        if(numSelectedInBins >= threshold){
-                            break;
-                        }
-                    }
-
-                    // for(int i = 0; i <numBins; i++){
-                    //     std::cerr << bins[i] << " ";
-                    // }
-                    // std::cerr << "\n";
-
-                    int numRemainingCandidatesTmp = 0;
-
-                    for(int i = 0; i < numRemainingCandidates; i++){
-                        const int candidateIndex = positionsOfCandidatesToKeep[i];
-                        const auto& alignment = alignments[candidateIndex];
-
-                        const float relativeOverlap = float(alignment.overlap) / float(input.readLength1);
-
-                        if(fgeq(relativeOverlap, boundaries[selectedBin])){
-                            tmpPositionsOfCandidatesToKeep[numRemainingCandidatesTmp++] = candidateIndex;
-                        }
-                    }
-
-                    std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
-                    std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
-                }
-    #endif
 
 
                 //compact selected candidates inplace
@@ -512,7 +449,7 @@ namespace care{
                             //     }
                             // }
 
-                            // const int maxExtensionByGoodColumn = std::max(0, (lastGoodColumn+1) - currentAnchorLength);
+                            // const int maxExtensionByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
 
                             //the first currentAnchorLength columns are occupied by anchor. try to extend read 
                             //by at most maxextension bp.
@@ -540,6 +477,7 @@ namespace care{
                                 const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
 
                                 task.currentAnchor.resize(numInts);
+                                //TODO use consensus buffer directly instead of creating string nextDecodedAnchor
                                 encodeSequence2Bit(
                                     task.currentAnchor.data(), 
                                     nextDecodedAnchor.c_str(), 
