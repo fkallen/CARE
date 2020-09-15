@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <cassert>
+#include <sstream>
 
 namespace care{
 
@@ -56,21 +57,25 @@ void constructOutputFileFromExtensionResults_impl(
 
         ExtendedRead extendedRead = *(partialResultsReader.next());
 
-        Read res;
-        res.name = std::to_string(extendedRead.readId);
-        res.comment = extendedRead.status == ExtendedReadStatus::FoundMate ? "reachedmate:1" : "reachedmate:0";
+        std::stringstream sstream;
+        sstream << extendedRead.readId;
+        sstream << ' ' << (extendedRead.status == ExtendedReadStatus::FoundMate ? "reachedmate:1" : "reachedmate:0");
+        sstream << ' ';
         if(extendedRead.status == ExtendedReadStatus::LengthAbort){
-            res.comment += " exceeded_length";
+            sstream << "exceeded_length";
         }else if(extendedRead.status == ExtendedReadStatus::CandidateAbort){
-            res.comment += " 0_candidates";
+            sstream << "0_candidates";
         }else if(extendedRead.status == ExtendedReadStatus::MSANoExtension){
-            res.comment += " msa_stop";
+            sstream << "msa_stop";
         }
+
+        Read res;
+        res.header = sstream.str();
         res.sequence = std::move(extendedRead.extendedSequence);
         res.quality.resize(res.sequence.length());
         std::fill(res.quality.begin(), res.quality.end(), 'F');
 
-        writer->writeRead(res.name, res.comment, res.sequence, res.quality);
+        writer->writeRead(res.header, res.sequence, res.quality);
 
         statusHistogram[extendedRead.status]++;
     }
