@@ -25,6 +25,8 @@ using PinnedBuffer = SimpleAllocationPinnedHost<T>;
 struct ReadExtenderGpu final : public ReadExtenderBase{
 public:
 
+    static constexpr int primary_stream_index = 0;
+
 
     ReadExtenderGpu(
         int insertSize,

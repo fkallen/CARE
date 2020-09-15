@@ -39,7 +39,6 @@ namespace care{
 
 struct ReadExtenderBase{
 public:
-    static constexpr int primary_stream_index = 0;
     static constexpr int maxextension = 20;
 
     enum class AbortReason{
