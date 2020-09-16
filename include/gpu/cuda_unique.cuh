@@ -4,6 +4,7 @@
 #include <gpu/simpleallocation.cuh>
 #include <hpc_helpers.cuh>
 #include <memorymanagement.hpp>
+#include <cub/cub.cuh>
 
 #include <memory>
 #include <cassert>
