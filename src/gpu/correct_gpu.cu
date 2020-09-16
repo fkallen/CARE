@@ -851,7 +851,7 @@ namespace gpu{
     
             ParallelForLoopExecutor parallelFor(nextData.threadPool, &nextData.pforHandle);
     
-            nextData.minhasher->getIdsOfSimilarReads(
+            nextData.minhasher->getIdsOfSimilarReadsExcludingSelf(
                 nextData.minhasherQueryHandle,
                 nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
