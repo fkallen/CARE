@@ -57,16 +57,14 @@ namespace care{
                 auto& task = tasks[indexOfActiveTask];
 
                 // remove self from candidate list
-                if(task.iteration == 0){
-                    auto readIdPos = std::lower_bound(
-                        task.candidateReadIds.begin(),                                            
-                        task.candidateReadIds.end(),
-                        task.currentAnchorReadId
-                    );
+                auto readIdPos = std::lower_bound(
+                    task.candidateReadIds.begin(),                                            
+                    task.candidateReadIds.end(),
+                    task.myReadId
+                );
 
-                    if(readIdPos != task.candidateReadIds.end() && *readIdPos == task.currentAnchorReadId){
-                        task.candidateReadIds.erase(readIdPos);
-                    }
+                if(readIdPos != task.candidateReadIds.end() && *readIdPos == task.myReadId){
+                    task.candidateReadIds.erase(readIdPos);
                 }
 
                 //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
