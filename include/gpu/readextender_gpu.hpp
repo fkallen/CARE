@@ -144,7 +144,6 @@ private:
         cudaStream_t stream = streams[primary_stream_index];
 
         //input buffers
-        h_readIds.resize(numIndices);
         h_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
         d_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
         h_anchorSequencesLength.resize(numIndices);
@@ -159,7 +158,6 @@ private:
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
 
-            h_readIds[t] = task.currentAnchorReadId;
             h_anchorSequencesLength[t] = task.currentAnchorLength;
 
             std::copy(
@@ -187,8 +185,6 @@ private:
         
         gpuMinhasher->getIdsOfSimilarReads(
             gpuMinhashHandle,
-            h_readIds.get(), //device accessible
-            h_readIds.get(),
             d_subjectSequencesData.get(), //device accessible
             encodedSequencePitchInInts2Bit,
             d_anchorSequencesLength.get(), //device accessible
