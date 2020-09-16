@@ -309,6 +309,38 @@ void DistributedReadStorage::construct(
         makeReadContainsNFunc
     );
 
+    constructionIsComplete();
+}
+
+void DistributedReadStorage::constructPaired(
+    std::vector<std::string> inputfiles,
+    bool useQualityScores,
+    read_number expectedNumberOfReads,
+    int expectedMinimumReadLength,
+    int expectedMaximumReadLength,
+    int threads,
+    bool showProgress
+){
+
+    auto makeInserterFunc = [&](){return makeReadInserter();};
+    auto makeReadContainsNFunc = [this](){
+        return [&](read_number readId, bool contains){
+            this->setReadContainsN(readId, contains);
+        };
+    };
+
+    constructReadStorageFromPairedEndFiles(
+        inputfiles,
+        useQualityScores,
+        expectedNumberOfReads,
+        expectedMinimumReadLength,
+        expectedMaximumReadLength,
+        threads,
+        showProgress,
+        makeInserterFunc,
+        makeReadContainsNFunc
+    );
+
     constructionIsComplete();        
 }
 
@@ -890,17 +922,33 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream) const{
 
-    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+    if(threadPool != nullptr){
 
-    distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
-                                                        handle,
-                                                        h_readIds,
-                                                        d_readIds,
-                                                        nReadIds,
-                                                        deviceId,
-                                                        d_sequence_data,
-                                                        outSequencePitchInInts * sizeof(unsigned int),
-                                                        stream);
+        ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+        distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_sequence_data,
+            outSequencePitchInInts * sizeof(unsigned int),
+            stream);
+    }else{
+        SequentialForLoopExecutor forLoop;
+
+        distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_sequence_data,
+            outSequencePitchInInts * sizeof(unsigned int),
+            stream);
+    }
+    
 
 }
 
@@ -916,17 +964,32 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream) const{
 
-    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+    if(threadPool != nullptr){
 
-    distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
-                                                        handle,
-                                                        h_readIds,
-                                                        d_readIds,
-                                                        nReadIds,
-                                                        deviceId,
-                                                        d_quality_data,
-                                                        out_quality_pitch,
-                                                        stream);
+        ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+        distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
+                                                            handle,
+                                                            h_readIds,
+                                                            d_readIds,
+                                                            nReadIds,
+                                                            deviceId,
+                                                            d_quality_data,
+                                                            out_quality_pitch,
+                                                            stream);
+    }else{
+        SequentialForLoopExecutor forLoop;
+
+        distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_quality_data,
+            out_quality_pitch,
+            stream);
+    }
 
 }
 

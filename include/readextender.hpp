@@ -39,7 +39,6 @@ namespace care{
 
 struct ReadExtenderBase{
 public:
-    static constexpr int maxextension = 20;
 
     enum class AbortReason{
         MsaNotExtended, 
@@ -93,13 +92,11 @@ public:
         int insertSize,
         int insertSizeStddev,
         int maximumSequenceLength,
-        const cpu::ContiguousReadStorage& rs, 
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) : insertSize(insertSize), 
         insertSizeStddev(insertSizeStddev),
             maximumSequenceLength(maximumSequenceLength),
-            readStorage(&rs), 
             correctionOptions(coropts),
             goodAlignmentProperties(gap),
             hashTimer{"Hash timer"},
@@ -214,14 +211,14 @@ public:
 
             std::array<std::vector<read_number>, 2> candidateReadIds;
 
-            getCandidatesSingle(
+            getCandidateReadIdsSingle(
                 candidateReadIds[0], 
                 currentAnchor[0].data(), 
                 currentAnchorLength[0],
                 currentAnchorReadId[0]
             );
 
-            getCandidatesSingle(
+            getCandidateReadIdsSingle(
                 candidateReadIds[1], 
                 currentAnchor[1].data(), 
                 currentAnchorLength[1],
@@ -1007,9 +1004,6 @@ protected:
         return isSameReadPair(ids1.first, ids2.first);
     }
 
-    virtual void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
-
-
     template<class InputIt1, class InputIt2,
          class OutputIt1, class OutputIt2,
          class Compare>
@@ -1186,6 +1180,8 @@ protected:
         return returnValue;
     }
 
+    virtual void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
+    virtual void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
     virtual void calculateAlignments(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
 
     int insertSize;
@@ -1194,10 +1190,6 @@ protected:
     std::size_t encodedSequencePitchInInts;
     std::size_t decodedSequencePitchInBytes;
     std::size_t qualityPitchInBytes;
-
-
-    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-    const cpu::ContiguousReadStorage* readStorage;
 
     CorrectionOptions correctionOptions;
     GoodAlignmentProperties goodAlignmentProperties;
@@ -1232,14 +1224,14 @@ public:
         const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
-    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, coropts, gap),
-        minhasher(&mh){
+    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, coropts, gap),
+        readStorage(&rs), minhasher(&mh){
 
     }
      
 private:
 
-    void getCandidatesSingle(
+    void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
         int readLength, 
@@ -1293,17 +1285,44 @@ private:
         }
     }
 
-    void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+    void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
-            getCandidatesSingle(
+            getCandidateReadIdsSingle(
                 task.candidateReadIds, 
                 task.currentAnchor.data(), 
                 task.currentAnchorLength,
                 task.currentAnchorReadId
             );
 
+        }
+    }
+
+
+    void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            const int numCandidates = task.candidateReadIds.size();
+
+            task.candidateSequenceLengths.resize(numCandidates);
+            task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+
+            readStorage->gatherSequenceLengths(
+                readStorageGatherHandle,
+                task.candidateReadIds.data(),
+                task.candidateReadIds.size(),
+                task.candidateSequenceLengths.data()
+            );
+
+            readStorage->gatherSequenceData(
+                readStorageGatherHandle,
+                task.candidateReadIds.data(),
+                task.candidateReadIds.size(),
+                task.candidateSequencesFwdData.data(),
+                encodedSequencePitchInInts
+            );
         }
     }
 
@@ -1376,6 +1395,9 @@ private:
             }
         }
     }
+
+    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+    const cpu::ContiguousReadStorage* readStorage;
 
     const Minhasher* minhasher;
     Minhasher::Handle minhashHandle;

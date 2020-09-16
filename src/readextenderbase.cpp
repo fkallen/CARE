@@ -11,6 +11,8 @@ namespace care{
         const std::vector<ExtendInput>& inputs
     ){
 
+        constexpr int maxextension = 30;
+
         std::vector<Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), [this](const auto& i){return makeTask(i);});
@@ -49,7 +51,7 @@ namespace care{
 
             hashTimer.start();
 
-            getCandidates(tasks, indicesOfActiveTasks);
+            getCandidateReadIds(tasks, indicesOfActiveTasks);
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = tasks[indexOfActiveTask];
@@ -109,50 +111,36 @@ namespace care{
                     std::swap(task.candidateReadIds, tmp);
 
                 }
+            }
+
+            loadCandidateSequenceData(tasks, indicesOfActiveTasks);
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
 
                 /*
-                    Load candidate sequences and compute reverse complements
+                    Compute reverse complements
                 */
 
-                {
-                    const int numCandidates = task.candidateReadIds.size();
+                const int numCandidates = task.candidateReadIds.size();
 
-                    task.candidateSequenceLengths.resize(numCandidates);
-                    task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                    task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
-                    readStorage->gatherSequenceLengths(
-                        readStorageGatherHandle,
-                        task.candidateReadIds.data(),
-                        task.candidateReadIds.size(),
-                        task.candidateSequenceLengths.data()
+                for(int c = 0; c < numCandidates; c++){
+                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                        + std::size_t(encodedSequencePitchInInts) * c;
+                    unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
+                                                        + std::size_t(encodedSequencePitchInInts) * c;
+
+                    reverseComplement2Bit(
+                        seqrevcPtr,  
+                        seqPtr,
+                        task.candidateSequenceLengths[c]
                     );
-
-                    readStorage->gatherSequenceData(
-                        readStorageGatherHandle,
-                        task.candidateReadIds.data(),
-                        task.candidateReadIds.size(),
-                        task.candidateSequencesFwdData.data(),
-                        encodedSequencePitchInInts
-                    );
-
-                    for(int c = 0; c < numCandidates; c++){
-                        const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
-                                                            + std::size_t(encodedSequencePitchInInts) * c;
-                        unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
-                                                            + std::size_t(encodedSequencePitchInInts) * c;
-
-                        reverseComplement2Bit(
-                            seqrevcPtr,  
-                            seqPtr,
-                            task.candidateSequenceLengths[c]
-                        );
-                    }
                 }
-
-                collectTimer.stop();
-
             }
+
+            collectTimer.stop();
 
             /*
                 Compute alignments

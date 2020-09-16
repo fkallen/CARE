@@ -8,6 +8,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/simpleallocation.cuh>
+#include <gpu/gpuminhasher.cuh>
 
 #include <algorithm>
 #include <vector>
@@ -16,28 +17,33 @@
 
 namespace care{
 
-template<class T>
-using DeviceBuffer = SimpleAllocationDevice<T>;
-
-template<class T>
-using PinnedBuffer = SimpleAllocationPinnedHost<T>;
 
 struct ReadExtenderGpu final : public ReadExtenderBase{
 public:
 
     static constexpr int primary_stream_index = 0;
 
+    template<class T>
+    using DeviceBuffer = SimpleAllocationDevice<T>;
+
+    template<class T>
+    using PinnedBuffer = SimpleAllocationPinnedHost<T>;
+
 
     ReadExtenderGpu(
         int insertSize,
         int insertSizeStddev,
         int maximumSequenceLength,
-        const cpu::ContiguousReadStorage& rs, 
-        const Minhasher& mh,
+        const gpu::DistributedReadStorage& rs, 
+        const Minhasher* mh,
+        const gpu::GpuMinhasher* gmh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
-    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, rs, coropts, gap),
-        minhasher(&mh){
+    ) 
+    : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, coropts, gap),
+        gpuReadStorage(&rs),
+        minhasher(mh), 
+        gpuMinhasher(gmh){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -46,75 +52,247 @@ public:
         h_numCandidates.resize(1);
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
+
+        gatherHandleSequences = gpuReadStorage->makeGatherHandleSequences();
+
+        gpuMinhashHandle = gpu::GpuMinhasher::makeQueryHandle();
     }
      
 private:
 
-    void getCandidatesSingle(
+    void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
         int readLength, 
         read_number readId,
         int beginPos = 0 // only positions [beginPos, readLength] are hashed
     ){
+        assert(false);
 
-        result.clear();
+        // result.clear();
 
-        const bool containsN = readStorage->readContainsN(readId);
+        // const bool containsN = readStorage->readContainsN(readId);
 
-        //exclude anchors with ambiguous bases
-        if(!(correctionOptions.excludeAmbiguousReads && containsN)){
+        // //exclude anchors with ambiguous bases
+        // if(!(correctionOptions.excludeAmbiguousReads && containsN)){
 
-            const int length = readLength;
-            std::string sequence(length, '0');
+        //     const int length = readLength;
+        //     std::string sequence(length, '0');
 
-            decode2BitSequence(
-                &sequence[0],
-                encodedRead,
-                length
-            );
+        //     decode2BitSequence(
+        //         &sequence[0],
+        //         encodedRead,
+        //         length
+        //     );
 
-            minhasher->getCandidates_any_map(
-                minhashHandle,
-                sequence.c_str() + beginPos,
-                std::max(0, readLength - beginPos),
-                0
-            );
+        //     minhasher->getCandidates_any_map(
+        //         minhashHandle,
+        //         sequence.c_str() + beginPos,
+        //         std::max(0, readLength - beginPos),
+        //         0
+        //     );
 
-            auto minhashResultsEnd = minhashHandle.result().end();
-            //exclude candidates with ambiguous bases
+        //     auto minhashResultsEnd = minhashHandle.result().end();
+        //     //exclude candidates with ambiguous bases
 
-            if(correctionOptions.excludeAmbiguousReads){
-                minhashResultsEnd = std::remove_if(
-                    minhashHandle.result().begin(),
-                    minhashHandle.result().end(),
-                    [&](read_number readId){
-                        return readStorage->readContainsN(readId);
-                    }
-                );
-            }            
+        //     if(correctionOptions.excludeAmbiguousReads){
+        //         minhashResultsEnd = std::remove_if(
+        //             minhashHandle.result().begin(),
+        //             minhashHandle.result().end(),
+        //             [&](read_number readId){
+        //                 return readStorage->readContainsN(readId);
+        //             }
+        //         );
+        //     }            
 
-            result.insert(
-                result.begin(),
-                minhashHandle.result().begin(),
-                minhashResultsEnd
-            );
-        }else{
-            ; // no candidates
-        }
+        //     result.insert(
+        //         result.begin(),
+        //         minhashHandle.result().begin(),
+        //         minhashResultsEnd
+        //     );
+        // }else{
+        //     ; // no candidates
+        // }
     }
 
-    void getCandidates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
-        for(int indexOfActiveTask : indicesOfActiveTasks){
-            auto& task = tasks[indexOfActiveTask];
+    void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        // for(int indexOfActiveTask : indicesOfActiveTasks){
+        //     auto& task = tasks[indexOfActiveTask];
 
-            getCandidatesSingle(
-                task.candidateReadIds, 
-                task.currentAnchor.data(), 
-                task.currentAnchorLength,
-                task.currentAnchorReadId
+        //     getCandidateReadIdsSingle(
+        //         task.candidateReadIds, 
+        //         task.currentAnchor.data(), 
+        //         task.currentAnchorLength,
+        //         task.currentAnchorReadId
+        //     );
+
+        // }
+
+        getCandidateReadIdsGpu(tasks, indicesOfActiveTasks);
+    }
+
+#if 1
+    void getCandidateReadIdsGpu(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+        nvtx::push_range("gpu_hashing", 2);
+
+        const int numIndices = indicesOfActiveTasks.size();
+        const std::size_t encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
+
+        const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
+        const int maxNumCandidateIds = (resultsPerMap * gpuMinhasher->getNumberOfMaps()) * numIndices;
+
+        cudaStream_t stream = streams[primary_stream_index];
+
+        //input buffers
+        d_readIds.resize(numIndices);
+        h_readIds.resize(numIndices);
+        h_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
+        h_anchorSequencesLength.resize(numIndices);
+
+        //output buffers
+        h_candidateReadIds.resize(maxNumCandidateIds);
+        h_numCandidatesPerAnchor.resize(numIndices);
+        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
+
+        for(int t = 0; t < numIndices; t++){
+            const auto& task = tasks[indicesOfActiveTasks[t]];
+
+            h_readIds[t] = task.currentAnchorReadId;
+            h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+            std::copy(
+                task.currentAnchor.begin(),
+                task.currentAnchor.end(),
+                h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
+            );
+        }
+
+        // cudaMemcpyAsync(
+        //     d_readIds.get(),
+        //     h_readIds.get(),
+        //     sizeof(read_number) * numIndices,
+        //     H2D,
+        //     stream
+        // ); CUERR;
+        
+        gpuMinhasher->getIdsOfSimilarReads(
+            gpuMinhashHandle,
+            h_readIds.get(), //device accessible
+            h_readIds.get(),
+            h_subjectSequencesData.get(), //device accessible
+            encodedSequencePitchInInts2Bit,
+            h_anchorSequencesLength.get(), //device accessible
+            numIndices,
+            deviceId, 
+            stream,
+            SequentialForLoopExecutor{},
+            h_candidateReadIds.get(), //device accessible
+            h_numCandidatesPerAnchor.get(), //device accessible
+            h_numCandidatesPerAnchorPrefixSum.get() //device accessible
+        ); CUERR;
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        for(int t = 0; t < numIndices; t++){
+            auto& task = tasks[indicesOfActiveTasks[t]];
+
+            const int offsetBegin = h_numCandidatesPerAnchorPrefixSum[t];
+            const int offsetEnd = h_numCandidatesPerAnchorPrefixSum[t+1];
+
+            task.candidateReadIds.clear();
+            
+            task.candidateReadIds.insert(
+                task.candidateReadIds.begin(),
+                h_candidateReadIds.get() + offsetBegin,
+                h_candidateReadIds.get() + offsetEnd
+            );
+        }
+
+        nvtx::pop_range();
+    }
+#endif
+
+    void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+
+        const int numIndices = indicesOfActiveTasks.size();
+
+        h_numCandidatesPerAnchor.resize(numIndices);
+        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);                
+
+        h_numCandidatesPerAnchorPrefixSum[0] = 0;        
+
+        for(int t = 0; t < numIndices; t++){
+            const auto& task = tasks[indicesOfActiveTasks[t]];
+
+            const int numCandidates = task.candidateReadIds.size();
+
+            h_numCandidatesPerAnchor[t] = numCandidates;
+            h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
+        }
+
+        const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numIndices];
+
+        h_candidateReadIds.resize(totalNumCandidates);
+        h_candidateSequencesLength.resize(totalNumCandidates);
+        h_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
+
+        for(int t = 0; t < numIndices; t++){
+            const auto& task = tasks[indicesOfActiveTasks[t]];
+
+            const int numCandidates = task.candidateReadIds.size();
+
+            const int offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+            std::copy(task.candidateReadIds.begin(), task.candidateReadIds.end(), h_candidateReadIds.get() + offset);
+        }
+
+        cudaStream_t stream = streams[primary_stream_index];
+
+        gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
+            nullptr,
+            gatherHandleSequences,
+            h_candidateSequencesData.get(), //device acccessible
+            encodedSequencePitchInInts,
+            h_candidateReadIds.get(),
+            h_candidateReadIds.get(), //device accessible
+            totalNumCandidates,
+            deviceId,
+            stream
+        ); CUERR;
+
+        gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
+            h_candidateSequencesLength.get(), //device accessible
+            deviceId,
+            h_candidateReadIds.get(), //device accessible
+            totalNumCandidates,    
+            stream
+        ); CUERR;
+
+        cudaStreamSynchronize(stream); CUERR;
+
+
+
+        for(int t = 0; t < numIndices; t++){
+            auto& task = tasks[indicesOfActiveTasks[t]];
+
+            const int numCandidates = task.candidateReadIds.size();
+
+            task.candidateSequenceLengths.resize(numCandidates);
+            task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+
+            const int offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+            std::copy_n(
+                h_candidateSequencesLength.get() + offset,
+                numCandidates,
+                task.candidateSequenceLengths.begin()
             );
 
+            std::copy_n(
+                h_candidateSequencesData.get() + (offset * encodedSequencePitchInInts),
+                (numCandidates * encodedSequencePitchInInts),
+                task.candidateSequencesFwdData.begin()
+            );
         }
     }
 
@@ -298,6 +476,10 @@ private:
 
     int deviceId;
 
+    DeviceBuffer<read_number> d_readIds;
+    PinnedBuffer<read_number> h_readIds;
+    PinnedBuffer<read_number> h_candidateReadIds;
+
     PinnedBuffer<int> h_numCandidatesPerAnchor;
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
     PinnedBuffer<int> h_alignment_overlaps;
@@ -324,8 +506,14 @@ private:
 
     gpu::KernelLaunchHandle kernelLaunchHandle;
 
+    const gpu::DistributedReadStorage* gpuReadStorage;
+    gpu::DistributedReadStorage::GatherHandleSequences gatherHandleSequences;
+
     const Minhasher* minhasher;
     Minhasher::Handle minhashHandle;
+
+    const gpu::GpuMinhasher* gpuMinhasher;
+    gpu::GpuMinhasher::QueryHandle gpuMinhashHandle;
 
 };
 

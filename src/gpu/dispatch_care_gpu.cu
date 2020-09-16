@@ -755,7 +755,15 @@ namespace care{
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
 
-        care::cpu::ContiguousReadStorage readStorage(
+        // care::cpu::ContiguousReadStorage readStorage(
+        //     maximumNumberOfReads, 
+        //     correctionOptions.useQualityScores, 
+        //     minimumSequenceLength, 
+        //     maximumSequenceLength
+        // );
+
+        gpu::DistributedReadStorage readStorage(
+            runtimeOptions.deviceIds, 
             maximumNumberOfReads, 
             correctionOptions.useQualityScores, 
             minimumSequenceLength, 
@@ -773,7 +781,7 @@ namespace care{
 
             std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
 
-            //readStorage.constructionIsComplete();
+            readStorage.constructionIsComplete();
         }else{
             readStorage.constructPaired(
                 fileOptions.inputfiles,
@@ -835,7 +843,7 @@ namespace care{
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
-        Minhasher minhasher(
+        gpu::GpuMinhasher minhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );

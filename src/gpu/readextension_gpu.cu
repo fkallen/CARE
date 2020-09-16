@@ -49,10 +49,10 @@ extend_gpu(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const SequenceFileProperties& sequenceFileProperties,
-    Minhasher& minhasher,
-    cpu::ContiguousReadStorage& readStorage
+    GpuMinhasher& minhasher,
+    gpu::DistributedReadStorage& gpuReadStorage
 ){
-    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
 
     std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
@@ -155,8 +155,9 @@ extend_gpu(
             insertSize,
             insertSizeStddev,
             maximumSequenceLength,
-            readStorage, 
-            minhasher,
+            gpuReadStorage, 
+            nullptr,
+            &minhasher,
             correctionOptions,
             goodAlignmentProperties2
         };
@@ -169,23 +170,26 @@ extend_gpu(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+        auto gatherHandleSequences = gpuReadStorage.makeGatherHandleSequences();
 
         const int batchsizePairs = correctionOptions.batchsize;
 
-        std::vector<read_number> currentIds(2 * batchsizePairs);
-        std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
-        std::vector<int> currentReadLengths(2 * batchsizePairs);
+        SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
+        SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
         
 
         while(!(readIdGenerator.empty())){
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
                 batchsizePairs * 2, 
-                currentIds.begin()
+                currentIds.get()
             );
 
-            const int numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
+            const int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
 
             if(numReadsInBatch % 2 == 1){
                 throw std::runtime_error("Input files not properly paired. Aborting read extension.");
@@ -195,34 +199,41 @@ extend_gpu(
                 continue; //this should only happen if all reads have been processed
             }
 
-            readStorage.gatherSequenceLengths(
-                readStorageGatherHandle,
-                currentIds.data(),
-                currentIds.size(),
-                currentReadLengths.data()
-            );
+            gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
+                nullptr,
+                gatherHandleSequences,
+                currentEncodedReads.get(), //device acccessible
+                encodedSequencePitchInInts,
+                currentIds.get(),
+                currentIds.get(), //device accessible
+                numReadsInBatch,
+                deviceId,
+                stream
+            ); CUERR;
+    
+            gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+                currentReadLengths.get(), //device accessible
+                deviceId,
+                currentIds.get(), //device accessible
+                numReadsInBatch,    
+                stream
+            ); CUERR;
 
-            readStorage.gatherSequenceData(
-                readStorageGatherHandle,
-                currentIds.data(),
-                currentIds.size(),
-                currentEncodedReads.data(),
-                encodedSequencePitchInInts
-            );
+            cudaStreamSynchronize(stream);
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
             auto processReadOrder = [&](std::array<int, 2> order){                
 
-                std::vector<ReadExtenderGpu::ExtendInput> inputs(numReadPairsInBatch);
+                std::vector<ReadExtenderGpu::ExtendInput> inputs(numReadPairsInBatch); 
 
                 for(int i = 0; i < numReadPairsInBatch; i++){
                     auto& input = inputs[i];
 
                     input.readId1 = currentIds[2*i + order[0]];
                     input.readId2 = currentIds[2*i + order[1]];
-                    input.encodedRead1 = currentEncodedReads.data() + (2*i + order[0]) * encodedSequencePitchInInts;
-                    input.encodedRead2 = currentEncodedReads.data() + (2*i + order[1]) * encodedSequencePitchInInts;
+                    input.encodedRead1 = currentEncodedReads.get() + (2*i + order[0]) * encodedSequencePitchInInts;
+                    input.encodedRead2 = currentEncodedReads.get() + (2*i + order[1]) * encodedSequencePitchInInts;
                     input.readLength1 = currentReadLengths[2*i + order[0]];
                     input.readLength2 = currentReadLengths[2*i + order[1]];
                     input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[2*i + order[0]]);
@@ -337,8 +348,8 @@ extend_gpu(
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
                         currentReadLengths[2*i+1],
-                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
                     );
                     resultvector.emplace_back(std::move(r));
                     numSuccess0++;
@@ -350,8 +361,8 @@ extend_gpu(
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
                         currentReadLengths[2*i+1],
-                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
                     );
                     resultvector.emplace_back(std::move(r));
                     numSuccess1++;
@@ -380,8 +391,8 @@ extend_gpu(
                         currentIds[2*i+1],
                         currentReadLengths[2*i],
                         currentReadLengths[2*i+1],
-                        currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts
+                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
+                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
                     );
                     resultvector.emplace_back(std::move(r));
 
@@ -401,6 +412,9 @@ extend_gpu(
 
             progressThread.addProgress(numReadPairsInBatch);            
         }
+
+
+        cudaStreamDestroy(stream); CUERR;
 
         //#pragma omp critical
         {
