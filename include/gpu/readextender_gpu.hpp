@@ -144,13 +144,15 @@ private:
         cudaStream_t stream = streams[primary_stream_index];
 
         //input buffers
-        d_readIds.resize(numIndices);
         h_readIds.resize(numIndices);
         h_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
+        d_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
         h_anchorSequencesLength.resize(numIndices);
+        d_anchorSequencesLength.resize(numIndices);
 
         //output buffers
         h_candidateReadIds.resize(maxNumCandidateIds);
+        d_candidateReadIds.resize(maxNumCandidateIds);
         h_numCandidatesPerAnchor.resize(numIndices);
         h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
 
@@ -167,28 +169,46 @@ private:
             );
         }
 
-        // cudaMemcpyAsync(
-        //     d_readIds.get(),
-        //     h_readIds.get(),
-        //     sizeof(read_number) * numIndices,
-        //     H2D,
-        //     stream
-        // ); CUERR;
+        cudaMemcpyAsync(
+            d_subjectSequencesData.get(),
+            h_subjectSequencesData.get(),
+            sizeof(unsigned int) * numIndices * encodedSequencePitchInInts2Bit,
+            H2D,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_anchorSequencesLength.get(),
+            h_anchorSequencesLength.get(),
+            sizeof(int) * numIndices,
+            H2D,
+            stream
+        ); CUERR;
         
         gpuMinhasher->getIdsOfSimilarReads(
             gpuMinhashHandle,
             h_readIds.get(), //device accessible
             h_readIds.get(),
-            h_subjectSequencesData.get(), //device accessible
+            d_subjectSequencesData.get(), //device accessible
             encodedSequencePitchInInts2Bit,
-            h_anchorSequencesLength.get(), //device accessible
+            d_anchorSequencesLength.get(), //device accessible
             numIndices,
             deviceId, 
             stream,
             SequentialForLoopExecutor{},
-            h_candidateReadIds.get(), //device accessible
+            d_candidateReadIds.get(), //device accessible
             h_numCandidatesPerAnchor.get(), //device accessible
             h_numCandidatesPerAnchorPrefixSum.get() //device accessible
+        ); CUERR;
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        cudaMemcpyAsync(
+            h_candidateReadIds.get(),
+            d_candidateReadIds.get(),
+            sizeof(read_number) * h_numCandidatesPerAnchorPrefixSum[numIndices],
+            D2H,
+            stream
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
@@ -214,11 +234,11 @@ private:
 
     void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
 
+        nvtx::push_range("gpu_loadCandidates", 2);
+
         const int numIndices = indicesOfActiveTasks.size();
 
-        h_numCandidatesPerAnchor.resize(numIndices);
-        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);                
-
+        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
         h_numCandidatesPerAnchorPrefixSum[0] = 0;        
 
         for(int t = 0; t < numIndices; t++){
@@ -226,13 +246,16 @@ private:
 
             const int numCandidates = task.candidateReadIds.size();
 
-            h_numCandidatesPerAnchor[t] = numCandidates;
             h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
         }
 
         const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numIndices];
 
+        //input buffers
         h_candidateReadIds.resize(totalNumCandidates);
+        d_candidateReadIds.resize(totalNumCandidates);
+
+        //output buffers
         h_candidateSequencesLength.resize(totalNumCandidates);
         h_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
 
@@ -248,13 +271,21 @@ private:
 
         cudaStream_t stream = streams[primary_stream_index];
 
+        cudaMemcpyAsync(
+            d_candidateReadIds.get(),
+            h_candidateReadIds.get(),
+            sizeof(read_number) * totalNumCandidates,
+            H2D,
+            stream
+        ); CUERR;
+
         gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
             nullptr,
             gatherHandleSequences,
             h_candidateSequencesData.get(), //device acccessible
             encodedSequencePitchInInts,
             h_candidateReadIds.get(),
-            h_candidateReadIds.get(), //device accessible
+            d_candidateReadIds.get(), //device accessible
             totalNumCandidates,
             deviceId,
             stream
@@ -263,7 +294,7 @@ private:
         gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
             h_candidateSequencesLength.get(), //device accessible
             deviceId,
-            h_candidateReadIds.get(), //device accessible
+            d_candidateReadIds.get(), //device accessible
             totalNumCandidates,    
             stream
         ); CUERR;
@@ -294,6 +325,8 @@ private:
                 task.candidateSequencesFwdData.begin()
             );
         }
+
+        nvtx::pop_range();
     }
 
     void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
@@ -476,9 +509,10 @@ private:
 
     int deviceId;
 
-    DeviceBuffer<read_number> d_readIds;
     PinnedBuffer<read_number> h_readIds;
+    DeviceBuffer<read_number> d_readIds;
     PinnedBuffer<read_number> h_candidateReadIds;
+    DeviceBuffer<read_number> d_candidateReadIds;
 
     PinnedBuffer<int> h_numCandidatesPerAnchor;
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
@@ -493,6 +527,7 @@ private:
 
     PinnedBuffer<int> h_anchorIndicesOfCandidates;
     PinnedBuffer<int> h_anchorSequencesLength;
+    DeviceBuffer<int> d_anchorSequencesLength;
     PinnedBuffer<int> h_candidateSequencesLength;
     PinnedBuffer<unsigned int> h_subjectSequencesData;
     PinnedBuffer<unsigned int> h_candidateSequencesData;
