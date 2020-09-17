@@ -334,12 +334,25 @@ namespace care{
 
                 task.mateHasBeenFound = (task.mateIdLocationIter != task.candidateReadIds.end() && *task.mateIdLocationIter == task.mateReadId);
 
-                //check that extending to mate does not leave fragment
                 if(task.mateHasBeenFound){
+
+
+
                     const int mateIndex = std::distance(task.candidateReadIds.begin(), task.mateIdLocationIter);
                     const auto& mateAlignment = task.alignments[mateIndex];
 
+                    bool discardMateId = false;
+                    //check that mate alignes as reverse complement (to be on the same strand is current read)
+                    if(task.alignmentFlags[mateIndex] != BestAlignment_t::ReverseComplement){
+                        discardMateId = true;                    
+                    }
+                    
+                    //check that extending to mate does not leave fragment. If it does, remove mate from candidate list
                     if(task.accumExtensionLengths + task.mateLength + mateAlignment.shift > insertSize + insertSizeStddev){
+                        discardMateId = true;
+                    }
+
+                    if(discardMateId){
                         task.mateHasBeenFound = false;
 
                         task.alignments.erase(task.alignments.begin() + mateIndex);
@@ -413,6 +426,7 @@ namespace care{
                     MultipleSequenceAlignment msa;
 
                     msa.build(msaInput);
+
 
                     // if(task.myReadId == 90 || task.mateReadId == 90){
                     //     std::cerr << "Id " << task.myReadId << ", Iteration: " << task.iteration << "\n";
