@@ -26,7 +26,6 @@ namespace care{
 
     Minhasher& Minhasher::operator=(Minhasher&& rhs){
         minhashTables = std::move(rhs.minhashTables);
-        nReads = std::move(rhs.nReads);
         kmerSize = std::move(rhs.kmerSize);
         resultsPerMapThreshold = std::move(rhs.resultsPerMapThreshold);
 
@@ -37,8 +36,6 @@ namespace care{
         if(kmerSize != rhs.kmerSize)
             return false;
         if(resultsPerMapThreshold != rhs.resultsPerMapThreshold)
-            return false;
-        if(nReads != rhs.nReads)
             return false;
         if(minhashTables.size() != rhs.minhashTables.size())
             return false;
@@ -66,20 +63,9 @@ namespace care{
 
 
     void Minhasher::writeToStream(std::ostream& outstream) const{
-        int bits_key_tosave = bits_key;
-        std::uint64_t key_mask_tosave = key_mask;
-        int maximum_number_of_maps_tosave = maximum_number_of_maps;
-        int maximum_kmer_length_tosave = maximum_kmer_length;
-
-        outstream.write(reinterpret_cast<const char*>(&bits_key_tosave), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&key_mask_tosave), sizeof(std::uint64_t));
-        outstream.write(reinterpret_cast<const char*>(&maximum_number_of_maps_tosave), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
-
 
         outstream.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(read_number));
 
         const int numTables = getNumberOfMaps();
         outstream.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
@@ -92,24 +78,8 @@ namespace care{
 
         destroy();
 
-        int bits_key_loaded;
-    	std::uint64_t key_mask_loaded;
-        int maximum_number_of_maps_loaded;
-        int maximum_kmer_length_loaded;
-
-        instream.read(reinterpret_cast<char*>(&bits_key_loaded), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&key_mask_loaded), sizeof(std::uint64_t));
-        instream.read(reinterpret_cast<char*>(&maximum_number_of_maps_loaded), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&maximum_kmer_length_loaded), sizeof(int));
-
-        assert(bits_key == bits_key_loaded);
-        assert(key_mask == key_mask_loaded);
-        assert(maximum_number_of_maps == maximum_number_of_maps_loaded);
-        assert(maximum_kmer_length == maximum_kmer_length_loaded);
-
         instream.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
         instream.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&nReads), sizeof(read_number));
 
         int numTables = 0;
         instream.read(reinterpret_cast<char*>(&numTables), sizeof(int));
@@ -139,7 +109,6 @@ namespace care{
 
         const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
 
-        this->nReads = nReads;
         minhashTables.clear();
 
         ThreadPool threadPool(runtimeOptions.threads);
@@ -356,7 +325,6 @@ namespace care{
 
 	void Minhasher::clear(){
 		minhashTables.clear();
-		nReads = 0;
 	}
 
 	void Minhasher::destroy(){
