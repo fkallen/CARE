@@ -486,7 +486,7 @@ namespace gpu{
                     const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
 
                     //const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    const auto devicedatabegin = d_similarReadIds + idsPerChunkPrefixSum[chunkId];
 
                     
                     const size_t elementsInChunk = idsPerChunk[chunkId];
@@ -570,9 +570,9 @@ namespace gpu{
 
             GpuSegmentedUnique::unique(
                 handle.segmentedUniqueHandle,
-                handle.d_candidate_read_ids_tmp.get(), //input
+                d_similarReadIds, //input
                 totalNumIds,
-                d_similarReadIds, //output
+                handle.d_candidate_read_ids_tmp.get(), //output
                 d_similarReadsPerSequence,
                 numSequences,
                 handle.d_begin_offsets.get(),
@@ -608,6 +608,27 @@ namespace gpu{
                 d_similarReadsPerSequencePrefixSum + 1, 
                 numSequences,
                 stream
+            );
+
+            //compact copy elements of each segment into output buffer
+            generic_kernel<<<numSequences, 128, 0, stream>>>(
+                [=,
+                    d_begin_offsets = handle.d_begin_offsets.get(),
+                    input = handle.d_candidate_read_ids_tmp.get(),
+                    output = d_similarReadIds
+                ] __device__ (){
+
+                    for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+                       
+                        const read_number* const blockinput = input + d_begin_offsets[sequenceIndex];
+                        read_number* const blockoutput = output + d_similarReadsPerSequencePrefixSum[sequenceIndex];
+                        const int numElements = d_similarReadsPerSequence[sequenceIndex];
+
+                        for(int pos = threadIdx.x; pos < numElements; pos += blockDim.x){
+                            blockoutput[pos] = blockinput[pos];
+                        }
+                    }
+                }
             );
 
             nvtx::pop_range();
