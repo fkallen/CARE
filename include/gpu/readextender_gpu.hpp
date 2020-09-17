@@ -153,7 +153,9 @@ private:
         h_candidateReadIds.resize(maxNumCandidateIds);
         d_candidateReadIds.resize(maxNumCandidateIds);
         h_numCandidatesPerAnchor.resize(numIndices);
+        d_numCandidatesPerAnchor.resize(numIndices);
         h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
+        d_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
 
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
@@ -193,8 +195,18 @@ private:
             stream,
             SequentialForLoopExecutor{},
             d_candidateReadIds.get(), //device accessible
-            h_numCandidatesPerAnchor.get(), //device accessible
-            h_numCandidatesPerAnchorPrefixSum.get() //device accessible
+            d_numCandidatesPerAnchor.get(), //device accessible
+            d_numCandidatesPerAnchorPrefixSum.get() //device accessible
+        ); CUERR;
+
+        //d_numCandidatesPerAnchor not copied to host because unused
+
+        cudaMemcpyAsync(
+            h_numCandidatesPerAnchorPrefixSum.get(),
+            d_numCandidatesPerAnchorPrefixSum.get(),
+            sizeof(int) * (numIndices+1),
+            D2H,
+            stream
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
@@ -511,7 +523,9 @@ private:
     DeviceBuffer<read_number> d_candidateReadIds;
 
     PinnedBuffer<int> h_numCandidatesPerAnchor;
+    DeviceBuffer<int> d_numCandidatesPerAnchor;
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
+    DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum;
     PinnedBuffer<int> h_alignment_overlaps;
     PinnedBuffer<int> h_alignment_shifts;
     PinnedBuffer<int> h_alignment_nOps;
