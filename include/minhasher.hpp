@@ -70,12 +70,11 @@ struct Minhasher {
         //     assert(i < int(numResultsPerSequence.size()));
         //     return numResultsPerSequence[i];
         // }
-	};
+    };
 
     int kmerSize;
     int resultsPerMapThreshold;
-    read_number nReads;
-	std::vector<std::unique_ptr<Map_t>> minhashTables;
+    std::vector<std::unique_ptr<Map_t>> minhashTables;
 
     // Minhasher();
 
