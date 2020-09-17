@@ -182,11 +182,11 @@ namespace care{
         Data emptySlot 
             = std::pair<Key,Value>{std::numeric_limits<Key>::max(), std::numeric_limits<Value>::max()};
 
-        float load;
-        std::size_t maxProbes;
-        std::size_t size;
-        std::size_t capacity;
-        std::vector<Data> storage;        
+        float load{};
+        std::size_t maxProbes{};
+        std::size_t size{};
+        std::size_t capacity{};
+        std::vector<Data> storage{};        
     };
 
 
