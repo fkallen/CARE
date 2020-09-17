@@ -366,7 +366,10 @@ MemoryUsage DistributedReadStorage::getMemoryInfo() const{
     };
 
     handlearray(distributedSequenceData);
-    handlearray(distributedQualities);
+
+    if(canUseQualityScores()){
+        handlearray(distributedQualities);
+    }
 
     auto lengthstorageMem = gpulengthStorage.getMemoryInfo();
 
