@@ -18,21 +18,25 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
-#include <hostdevicefunctions.cuh>
 
 #include <concurrencyhelpers.hpp>
+#include <forestclassifier.hpp>
+#include <forest.hpp>
+#include <hostdevicefunctions.cuh>
 
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <thread>
 
 #include <vector>
 
 #include <omp.h>
+
 
 #define USE_MSA_MINIMIZATION
 
@@ -115,6 +119,9 @@ namespace cpu{
             }
         };        
 
+
+        //BatchData = Working set of a thread
+
         struct BatchData{
             // struct OutputData{
             //     std::vector<TempCorrectedSequence> anchorCorrections;
@@ -165,6 +172,7 @@ namespace cpu{
                 // }
             };
 
+            //Task = Working set to correct a single read.
             struct Task{
                 bool active;
                 int numCandidates;
@@ -203,7 +211,7 @@ namespace cpu{
                 }            
             };
 
-            // data for all batch tasks within batch
+            // data for all tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
@@ -224,7 +232,7 @@ namespace cpu{
             std::vector<int> candidatesPerSubject;
             std::vector<int> candidatesPerSubjectPrefixSum;
             std::vector<read_number> filteredReadIds;
-            // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
+            // data used by a single task. is shared by all tasks within batch -> no interleaved access
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
             std::vector<BestAlignment_t> alignmentFlags;
@@ -254,6 +262,9 @@ namespace cpu{
             int encodedSequencePitchInInts = 0;
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
+
+            std::shared_ptr<ForestClf> forestClassifier1;
+            std::stringstream ml_stream;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -293,14 +304,6 @@ namespace cpu{
             }
         }
 
-        // struct InterestingStruct{
-        //     read_number readId;
-        //     std::vector<int> positions;
-        // };
-
-        // std::vector<read_number> interestingReadIds;
-        // std::mutex interestingMutex;
-
         template<class Iter>
         Iter findBestAlignmentDirection(
                 Iter result,
@@ -336,7 +339,7 @@ namespace cpu{
         /*
             Filters alignments by good mismatch ratio.
 
-            Returns an sorted index list to alignments which pass the filter.
+            Returns a sorted index list to alignments which pass the filter.
         */
 
         template<class Iter, class Func>
@@ -907,18 +910,21 @@ namespace cpu{
                                                     task.bestCandidateQualities
                                                     : nullptr;
 
-            data.multipleSequenceAlignment.build(task.decodedSubjectSequence,
-                                            task.subjectSequenceLength,
-                                            data.decodedCandidateSequences.data(),
-                                            task.bestCandidateLengths,
-                                            task.numFilteredCandidates,
-                                            task.bestAlignmentShifts,
-                                            task.bestAlignmentWeights,
-                                            task.subjectQualities,
-                                            candidateQualityPtr,
-                                            data.decodedSequencePitchInBytes,
-                                            data.qualityPitchInBytes,
-                                            correctionOptions.useQualityScores);
+            MultipleSequenceAlignment::InputData buildArgs;
+            buildArgs.useQualityScores = correctionOptions.useQualityScores;
+            buildArgs.subjectLength = task.subjectSequenceLength;
+            buildArgs.nCandidates = task.numFilteredCandidates;
+            buildArgs.candidatesPitch = data.decodedSequencePitchInBytes;
+            buildArgs.candidateQualitiesPitch = data.qualityPitchInBytes;
+            buildArgs.subject = task.decodedSubjectSequence;
+            buildArgs.candidates = data.decodedCandidateSequences.data();
+            buildArgs.subjectQualities = task.subjectQualities;
+            buildArgs.candidateQualities = candidateQualityPtr;
+            buildArgs.candidateLengths = task.bestCandidateLengths;
+            buildArgs.candidateShifts = task.bestAlignmentShifts;
+            buildArgs.candidateDefaultWeightFactors = task.bestAlignmentWeights;
+        
+            data.multipleSequenceAlignment.build(buildArgs);
         }
 
 
@@ -1102,11 +1108,13 @@ namespace cpu{
             }
 #endif            
         }
-
-        void correctSubject(
+        
+        void correctSubjectClassic(
                 BatchData& data,
                 BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
+
+            assert(correctionOptions.correctionType == CorrectionType::Classic);
 
             const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
@@ -1143,33 +1151,137 @@ namespace cpu{
                 task.subjectReadId
             );
 
-            //auto it = std::lower_bound(interestingReadIds.begin(), interestingReadIds.end(), task.readId);
-            // if(it != interestingReadIds.end() && *it == task.readId){
-            //     std::lock_guard<std::mutex> lg(interestingMutex);
-
-            //     std::cerr << "read id " << task.readId << " HQ: " << data.msaProperties.isHQ << "\n";
-            //     if(!data.msaProperties.isHQ){
-            //         for(int i = 0; i < int(correctionResult.bestAlignmentWeightOfConsensusBase.size()); i++){
-            //             if(correctionResult.bestAlignmentWeightOfConsensusBase[i] != 0 || correctionResult.bestAlignmentWeightOfAnchorBase[i]){
-            //                 std::cerr << "position " << i
-            //                             << " " << correctionResult.bestAlignmentWeightOfConsensusBase[i]
-            //                             << " " << correctionResult.bestAlignmentWeightOfAnchorBase[i] << "\n";
-            //             }
-            //         }
-            //     }
-            // }
-
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
             
-            if(0) /*if(task.subjectReadId == 1)*/{
-                std::cerr << "corrected ? " << task.subjectCorrection.isCorrected << ", " << task.subjectCorrection.correctedSequence << "\n";
+        }
+
+        ml_sample_t make_sample(const BatchData& data, const BatchData::Task& task, size_t pos)
+        {   
+            const int b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            auto& msa = data.multipleSequenceAlignment;
+            auto& orig = task.decodedSubjectSequence;
+            float countsACGT = msa.countsA[b+pos] + msa.countsC[b+pos] + msa.countsG[b+pos] + msa.countsT[b+pos];
+            return {
+                float(orig[pos] == 'A'),
+                float(orig[pos] == 'C'),
+                float(orig[pos] == 'G'),
+                float(orig[pos] == 'T'),
+                float(msa.consensus[b+pos] == 'A'),
+                float(msa.consensus[b+pos] == 'C'),
+                float(msa.consensus[b+pos] == 'G'),
+                float(msa.consensus[b+pos] == 'T'),
+                orig[pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
+                orig[pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
+                orig[pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
+                orig[pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
+                orig[pos] == 'A'?msa.weightsA[b+pos]:0,
+                orig[pos] == 'C'?msa.weightsC[b+pos]:0,
+                orig[pos] == 'G'?msa.weightsG[b+pos]:0,
+                orig[pos] == 'T'?msa.weightsT[b+pos]:0,
+                msa.consensus[b+pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
+                msa.consensus[b+pos] == 'A'?msa.weightsA[b+pos]:0,
+                msa.consensus[b+pos] == 'C'?msa.weightsC[b+pos]:0,
+                msa.consensus[b+pos] == 'G'?msa.weightsG[b+pos]:0,
+                msa.consensus[b+pos] == 'T'?msa.weightsT[b+pos]:0,
+                msa.weightsA[b+pos],
+                msa.weightsC[b+pos],
+                msa.weightsG[b+pos],
+                msa.weightsT[b+pos],
+                msa.countsA[b+pos]/countsACGT,
+                msa.countsC[b+pos]/countsACGT,
+                msa.countsG[b+pos]/countsACGT,
+                msa.countsT[b+pos]/countsACGT,
+                task.msaProperties.avg_support,
+                task.msaProperties.min_support,
+                float(task.msaProperties.max_coverage),
+                float(task.msaProperties.min_coverage)
+            };
+        }
+
+
+        void correctSubjectForest(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions)
+        {
+            const int subject_b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+            auto& cons = data.multipleSequenceAlignment.consensus;
+            auto& orig = task.decodedSubjectSequence;
+            auto& corr = task.subjectCorrection.correctedSequence;
+            
+            task.msaProperties = getMSAProperties2(
+                data.multipleSequenceAlignment.support.data(),
+                data.multipleSequenceAlignment.coverage.data(),
+                subject_b,
+                subject_e,
+                correctionOptions.estimatedErrorrate,
+                correctionOptions.estimatedCoverage,
+                correctionOptions.m_coverage
+            );
+
+            corr.insert(0, cons.data()+subject_b, task.subjectSequenceLength);
+            if (!task.msaProperties.isHQ) {
+                constexpr float THRESHOLD = 0.73f;
+                for (int i = 0; i < task.subjectSequenceLength; ++i) {
+                    if (orig[i] != cons[subject_b+i] &&
+                        data.forestClassifier1->decide(make_sample(data, task, i)) < THRESHOLD)
+                    {
+                        corr[i] = orig[i];
+                    }
+                }
             }
 
-            // if(correctionResult.isCorrected){
-            //     task.corrected_subject = std::move(correctionResult.correctedSequence);
-            //     task.uncorrectedPositionsNoConsensus = std::move(correctionResult.uncorrectedPositionsNoConsensus);
-            //     task.corrected = true;                
-            // }
+            task.subjectCorrection.isCorrected = true;
+        }
+
+        void correctSubjectPrint (
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions)
+        {
+            const int subject_b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+            auto& cons = data.multipleSequenceAlignment.consensus;
+            auto& orig = task.decodedSubjectSequence;
+
+            task.msaProperties = getMSAProperties2(
+                data.multipleSequenceAlignment.support.data(),
+                data.multipleSequenceAlignment.coverage.data(),
+                subject_b,
+                subject_e,
+                correctionOptions.estimatedErrorrate,
+                correctionOptions.estimatedCoverage,
+                correctionOptions.m_coverage
+            );
+
+            if (!task.msaProperties.isHQ) {
+                for (int i = 0; i < task.subjectSequenceLength; ++i) {
+                    if (orig[i] != cons[subject_b+i]) {
+                        ml_sample_t sample = make_sample(data, task, i);
+                        data.ml_stream << task.subjectReadId << ' ' << i << ' ';
+                        for (float j: sample) data.ml_stream << j << ' ';
+                        data.ml_stream << '\n';
+                    }
+                }
+            }
+            task.subjectCorrection.isCorrected = false;
+        }
+
+        void correctSubject(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& correctionOptions)
+        {
+            if(correctionOptions.correctionType == CorrectionType::Classic)
+                correctSubjectClassic(data, task, correctionOptions);
+            else if(correctionOptions.correctionType == CorrectionType::Forest)
+                correctSubjectForest(data, task, correctionOptions);
+            else if (correctionOptions.correctionType == CorrectionType::Print)
+                correctSubjectPrint(data, task, correctionOptions);
         }
 
         void correctCandidates(
@@ -1537,6 +1649,19 @@ correct_cpu(
     BackgroundThread outputThread(true);
 
     TimeMeasurements timingsOfAllThreads;
+    
+    std::shared_ptr<ForestClf> forestClassifier1;
+    std::ofstream global_ml_stream;
+    // good idea ? :/
+
+    if (correctionOptions.correctionType == CorrectionType::Forest)
+    {
+            forestClassifier1 = std::make_shared<ForestClf>(fileOptions.mlForestfile);
+    }
+    else if (correctionOptions.correctionType == CorrectionType::Print)
+    {
+            global_ml_stream.open(fileOptions.mlForestfile);
+    }
 
 
     // std::ifstream interestingstream("interestingIds.txt");
@@ -1590,6 +1715,10 @@ correct_cpu(
         batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
         batchData.decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         batchData.qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+        
+        // forest stuff
+        batchData.forestClassifier1 = forestClassifier1;
+
 
         while(!(readIdGenerator.empty())){
 
@@ -1812,13 +1941,23 @@ correct_cpu(
 
             batchData.outputdataindex = (batchData.outputdataindex + 1) % batchData.waitableOutputData.size();
 
+            #pragma omp critical
+            {
+                global_ml_stream << batchData.ml_stream.rdbuf();
+                batchData.ml_stream = std::stringstream{};
+            }
+
             progressThread.addProgress(batchData.subjectReadIds.size()); 
+            
         } //while unprocessed reads exist loop end   
 
         #pragma omp critical
         {
             timingsOfAllThreads += batchData.timings;
+            
         }
+
+
 
 
     } // parallel end
@@ -1867,7 +2006,7 @@ correct_cpu(
     return;
 
 #endif
-
+    
     return partialResults;
 
 }

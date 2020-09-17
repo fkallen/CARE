@@ -805,7 +805,6 @@ namespace gpu{
 
 
 
-
     //####################   KERNEL DISPATCH   ####################
     
     void callMsaCandidateRefinementKernel_multiiter_async(

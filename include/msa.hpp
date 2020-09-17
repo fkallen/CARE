@@ -24,6 +24,21 @@ struct MultipleSequenceAlignment{
 
 public:
 
+    struct InputData{
+        bool useQualityScores;
+        int subjectLength;
+        int nCandidates;
+        size_t candidatesPitch;
+        size_t candidateQualitiesPitch;
+        const char* subject;
+        const char* candidates;
+        const char* subjectQualities;
+        const char* candidateQualities;
+        const int* candidateLengths;
+        const int* candidateShifts;
+        const float* candidateDefaultWeightFactors;
+    };
+
     std::vector<char> consensus;
     std::vector<float> support;
     std::vector<int> coverage;
@@ -46,18 +61,11 @@ public:
     int subjectColumnsBegin_incl;
     int subjectColumnsEnd_excl;
 
-    void build(const char* subject,
-                int subjectLength,
-                const char* candidates,
-                const int* candidateLengths,
-                int nCandidates_,
-                const int* candidateShifts,
-                const float* candidateDefaultWeightFactors,
-                const char* subjectQualities,
-                const char* candidateQualities,
-                size_t candidatesPitch,
-                size_t candidateQualitiesPitch,
-                bool useQualityScores);
+
+    InputData inputData;
+
+
+    void build(const InputData& args);
 
     void resize(int cols);
 
@@ -71,6 +79,8 @@ public:
 
     //void removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
+    void print(std::ostream& os) const;
+    void printWithDiffToConsensus(std::ostream& os) const;
 };
 
 struct MSAProperties{

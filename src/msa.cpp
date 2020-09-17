@@ -136,31 +136,22 @@ std::pair<int,int> find_good_consensus_region_of_subject2(const View<char>& subj
 
 
 
-void MultipleSequenceAlignment::build(const char* subject,
-            int subjectLength,
-            const char* candidates,
-            const int* candidateLengths,
-            int nCandidates_,
-            const int* candidateShifts,
-            const float* candidateDefaultWeightFactors,
-            const char* subjectQualities,
-            const char* candidateQualities,
-            size_t candidatesPitch,
-            size_t candidateQualitiesPitch,
-            bool useQualityScores){
+void MultipleSequenceAlignment::build(const InputData& args){
 
-    assert(subjectLength > 0);
-    assert(subject != nullptr);
+    assert(args.subjectLength > 0);
+    assert(args.subject != nullptr);
 
-    nCandidates = nCandidates_;
+    inputData = args;
+
+    nCandidates = args.nCandidates;
 
     //determine number of columns in pileup image
     int startindex = 0;
-    int endindex = subjectLength;
+    int endindex = args.subjectLength;
 
     for(int i = 0; i < nCandidates; ++i){
-        const int shift = candidateShifts[i];
-        const int candidateEndsAt = candidateLengths[i] + shift;
+        const int shift = args.candidateShifts[i];
+        const int candidateEndsAt = args.candidateLengths[i] + shift;
         startindex = std::min(shift, startindex);
         endindex = std::max(candidateEndsAt, endindex);
     }
@@ -168,27 +159,27 @@ void MultipleSequenceAlignment::build(const char* subject,
     nColumns = endindex - startindex;
 
     subjectColumnsBegin_incl = std::max(-startindex,0);
-    subjectColumnsEnd_excl = subjectColumnsBegin_incl + subjectLength;
+    subjectColumnsEnd_excl = subjectColumnsBegin_incl + args.subjectLength;
 
     resize(nColumns);
 
     fillzero();
 
-    addSequence(useQualityScores, subject, subjectQualities, subjectLength, 0, 1.0f);
+    addSequence(args.useQualityScores, args.subject, args.subjectQualities, args.subjectLength, 0, 1.0f);
 
     for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
-        const char* ptr = candidates + candidateIndex * candidatesPitch;
-        const char* qptr = candidateQualities + candidateIndex * candidateQualitiesPitch;
-        const int candidateLength = candidateLengths[candidateIndex];
-        const int shift = candidateShifts[candidateIndex];
-        const float defaultWeightFactor = candidateDefaultWeightFactors[candidateIndex];
+        const char* ptr = args.candidates + candidateIndex * args.candidatesPitch;
+        const char* qptr = args.candidateQualities + candidateIndex * args.candidateQualitiesPitch;
+        const int candidateLength = args.candidateLengths[candidateIndex];
+        const int shift = args.candidateShifts[candidateIndex];
+        const float defaultWeightFactor = args.candidateDefaultWeightFactors[candidateIndex];
 
-        addSequence(useQualityScores, ptr, qptr, candidateLength, shift, defaultWeightFactor);
+        addSequence(args.useQualityScores, ptr, qptr, candidateLength, shift, defaultWeightFactor);
     }
 
     findConsensus();
 
-    findOrigWeightAndCoverage(subject);
+    findOrigWeightAndCoverage(args.subject);
 }
 
 void MultipleSequenceAlignment::resize(int cols){
@@ -309,6 +300,136 @@ void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
 }
 
 
+void MultipleSequenceAlignment::print(std::ostream& os) const{
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return inputData.candidateShifts[k-1];
+    };
+
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+
+        if(sortedrow == 0){
+            os << ">> ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                os << "0";
+            }
+
+            for(int i = 0; i < inputData.subjectLength; i++){
+                os << inputData.subject[i];
+            }
+
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                os << "0";
+            }
+
+            os << " <<";
+        }else{
+            os << "   ";
+            int written = 0;
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                os << "0";
+                written++;
+            }
+
+            for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
+                os << inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
+                written++;
+            }
+
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+                        + inputData.candidateLengths[sortedrow-1]; 
+                    i < nColumns; i++){
+                os << "0";
+                written++;
+            }
+
+            assert(written == nColumns);
+
+            os << "   " << inputData.candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
+        }
+
+        os << '\n';
+    }
+}
+
+
+void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const{
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return inputData.candidateShifts[k-1];
+    };
+
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+
+        if(sortedrow == 0){
+            os << ">> ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                os << "0";
+            }
+
+            for(int i = 0; i < inputData.subjectLength; i++){
+                const int globalIndex = subjectColumnsBegin_incl + i;
+                const char c = consensus[globalIndex] == inputData.subject[i] ? '=' : inputData.subject[i];
+                os << c;
+            }
+
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                os << "0";
+            }
+
+            os << " <<";
+        }else{
+            os << "   ";
+            int written = 0;
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                os << "0";
+                written++;
+            }
+
+            for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
+                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
+                const char base = inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
+                const char c = consensus[globalIndex] == base ? '=' : base;
+
+                os << c;
+                written++;
+            }
+
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+                        + inputData.candidateLengths[sortedrow-1]; 
+                    i < nColumns; i++){
+                os << "0";
+                written++;
+            }
+
+            assert(written == nColumns);
+
+            os << "   " << inputData.candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
+        }
+
+        os << '\n';
+    }
+}
+
+
+
+
 
 MSAProperties getMSAProperties(const float* support,
                             const int* coverage,
@@ -366,13 +487,36 @@ MSAProperties getMSAProperties2(const float* support,
         return fgeq(mincoverage, min_coverage_threshold);
     };
 
-    // msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-    //                     && isGoodMinSupport(msaProperties.min_support)
-    //                     && isGoodMinCoverage(msaProperties.min_coverage);
-
     msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
     msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
     msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
+
+
+    const float avg_support = msaProperties.avg_support;
+    const float min_support = msaProperties.min_support;
+    const int min_coverage = msaProperties.min_coverage;
+
+    msaProperties.isHQ = false;
+
+    const bool allGood = isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    if(allGood){
+        int smallestErrorrateThatWouldMakeHQ = 100;
+
+        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+            const float factor = percent / 100.0f;
+            const float avg_threshold = 1.0f - 1.0f * factor;
+            const float min_threshold = 1.0f - 3.0f * factor;
+            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                smallestErrorrateThatWouldMakeHQ = percent;
+            }
+        }
+
+        msaProperties.isHQ = isGoodMinCoverage(min_coverage)
+                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+    }
 
     return msaProperties;
 }
@@ -616,6 +760,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
 
 
 #else 
+
 
 CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     const float* support,

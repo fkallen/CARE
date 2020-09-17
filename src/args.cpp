@@ -99,6 +99,15 @@ namespace args{
         if(pr.count("candidateCorrectionNewColumns")){
             result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
         }
+        if(pr.count("correctionType")){
+            const int val = pr["correctionType"].as<int>();
+
+            switch(val){
+                case 1: result.correctionType = CorrectionType::Forest; break;
+                case 2: result.correctionType = CorrectionType::Print; break;
+                default: result.correctionType = CorrectionType::Classic; break;
+            }
+        }
 
         return result;
 	}
@@ -242,6 +251,10 @@ namespace args{
             result.tempdirectory = pr["tempdir"].as<std::string>();
         }else{
             result.tempdirectory = result.outputdirectory;
+        }
+
+        if(pr.count("ml-forestfile")){
+            result.mlForestfile = pr["ml-forestfile"].as<std::string>();
         }
 
         if(pr.count("inputfiles")){
@@ -388,6 +401,16 @@ namespace args{
                     std::cout << "Error: cannot open output file " << outputfile << std::endl;
                 }
             }            
+        }
+
+        {
+            // if(opt.opt.mlForestfile != ""){
+            //     std::ifstream is(opt.mlForestfile);
+            //     if(!(bool)is){
+            //         valid = false;
+            //         std::cout << "Error: cannot find mlForestfile " << opt.mlForestfile << std::endl;
+            //     }
+            // }
         }
 
         {

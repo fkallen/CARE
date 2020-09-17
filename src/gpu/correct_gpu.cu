@@ -51,7 +51,7 @@
 
 namespace cg = cooperative_groups;
 
-
+#include <gpu/forest_gpu.cuh>
 
 #define USE_MSA_MINIMIZATION
 

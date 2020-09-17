@@ -156,6 +156,10 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
+		("correctionType", "0: Classic, 1: Forest",
+			cxxopts::value<int>()->default_value("0"))
+		("ml-forestfile", "The shared object file to load which contains ML error correction logic",
+			cxxopts::value<std::string>())
 		
 	;
 
@@ -216,6 +220,19 @@ int main(int argc, char** argv){
 
 	}
 
+	if(correctionOptions.correctionType != CorrectionType::Classic){
+		if(fileOptions.mlForestfile == ""){
+			std::cerr << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
+			return 0;
+		}
+
+		if(correctionOptions.correctCandidates){
+			std::cerr << "Candidate correction can only be used with classic correction type and will be disabled.";
+			correctionOptions.correctCandidates = false;
+		}
+
+	}
+
 	//print all options that will be used
 	std::cout << std::boolalpha;
 	std::cout << "CARE will be started with the following parameters:\n";
@@ -242,6 +259,8 @@ int main(int argc, char** argv){
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
+	std::cout << "Correction type: " << int(correctionOptions.correctionType) 
+		<< " (" << nameOfCorrectionType(correctionOptions.correctionType) << ")\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
@@ -276,6 +295,7 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
+	std::cout << "ml-forestfile: " << fileOptions.mlForestfile << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

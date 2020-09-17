@@ -24,8 +24,8 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
 			-gencode=arch=compute_70,code=sm_70 \
   			-gencode=arch=compute_70,code=compute_70
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz 
-LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz 
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz -ldl
+LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz -ldl
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
@@ -37,6 +37,9 @@ SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 # sources which are used by cpu version exclusively
 SOURCES_ONLY_CPU = src/correct_cpu.cpp src/dispatch_care_cpu.cpp
 
+# sources of ML forests
+SOURCES_FORESTS = $(wildcard forests/*.cpp)
+
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))
 OBJECTS_CPU_AND_GPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU_AND_GPU))
@@ -46,6 +49,9 @@ OBJECTS_ONLY_GPU_DEBUG = $(patsubst src/gpu/%.cu, buildgpu/%.dbg.o, $(SOURCES_ON
 
 OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_ONLY_CPU))
 OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_ONLY_CPU))
+
+OBJECTS_FORESTS = $(patsubst forests/%.cpp, forests/%.so, $(SOURCES_FORESTS))
+OBJECTS_FORESTS_DEBUG = $(patsubst forests/%.cpp, forests/%.dbg.so, $(SOURCES_FORESTS))
 
 
 GPU_VERSION = care-gpu
@@ -60,6 +66,9 @@ cpu:	$(CPU_VERSION)
 gpu:	$(GPU_VERSION)
 cpud:	$(CPU_VERSION_DEBUG)
 gpud:	$(GPU_VERSION_DEBUG)
+
+forests:	$(OBJECTS_FORESTS) 
+#$(OBJECTS_FORESTS_DEBUG)
 
 
 $(GPU_VERSION) : $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
@@ -99,6 +108,16 @@ buildgpu/%.dbg.o : src/gpu/%.cu | makedir
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG_BASIC)" -c $< -o $@
 
 
+forests/%.so : forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS) -shared -fPIC $< -o $@
+
+forests/%.dbg.so : forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -shared -fPIC $< -o $@
+
+
+
 install: 
 	mkdir -p $(PREFIX)/bin
 ifneq ("$(wildcard $(CPU_VERSION))","")
@@ -111,7 +130,8 @@ endif
 clean:
 	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) $(CPU_VERSION_DEBUG)\
 			$(OBJECTS_CPU_AND_GPU) $(OBJECTS_ONLY_GPU) $(OBJECTS_ONLY_CPU) \
-			$(OBJECTS_CPU_AND_GPU_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG)
+			$(OBJECTS_CPU_AND_GPU_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG) \
+			$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 cleancpu:
 	@rm -f $(CPU_VERSION) $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU)
 cleangpu:
@@ -120,9 +140,12 @@ cleancpud:
 	@rm -f $(CPU_VERSION_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 cleangpud:
 	@rm -f $(GPU_VERSION_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
+cleanforests:
+	@rm -f $(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 
 makedir:
 	@mkdir -p buildcpu
 	@mkdir -p buildgpu
+	@mkdir -p forests
 
 .PHONY: makedir
