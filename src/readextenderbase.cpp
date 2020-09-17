@@ -11,7 +11,7 @@ namespace care{
         const std::vector<ExtendInput>& inputs
     ){
 
-        constexpr int maxextension = 30;
+        constexpr int maxextension = 20;
 
         std::vector<Task> tasks(inputs.size());
 
