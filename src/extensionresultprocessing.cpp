@@ -1,4 +1,6 @@
 #include <extensionresultprocessing.hpp>
+#include <programoutputprocessing.hpp>
+
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
@@ -91,6 +93,19 @@ void constructOutputFileFromExtensionResults_impl(
 }
 
 
+void combineExtendedReadWithOriginalRead(
+    std::vector<ExtendedRead>& tmpresults, 
+    ReadWithId& readWithId
+){
+    if(tmpresults.size() == 0){
+        std::cerr << "read id " << readWithId.globalReadId << " no tmpresults!\n";
+    }
+    assert(tmpresults.size() > 0);
+
+    readWithId.read.sequence = std::move(tmpresults[0].extendedSequence);
+}
+
+
 void constructOutputFileFromExtensionResults(
     const std::string& tempdir,
     const std::vector<std::string>& originalReadFiles,
@@ -101,14 +116,32 @@ void constructOutputFileFromExtensionResults(
     bool isSorted
 ){
                         
-    constructOutputFileFromExtensionResults_impl(
-        tempdir, 
-        originalReadFiles, 
+    // constructOutputFileFromExtensionResults_impl(
+    //     tempdir, 
+    //     originalReadFiles, 
+    //     partialResults, 
+    //     memoryForSorting, 
+    //     outputFormat,
+    //     outputfiles, 
+    //     isSorted
+    // );
+
+    std::vector<std::string> firstOriginalReadFile{originalReadFiles.front()};
+
+    auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
+        return origId < (resultId / 2);
+    };
+
+    mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
+        tempdir,
+        firstOriginalReadFile,
         partialResults, 
-        memoryForSorting, 
+        memoryForSorting,
         outputFormat,
-        outputfiles, 
-        isSorted
+        outputfiles,
+        isSorted,
+        combineExtendedReadWithOriginalRead,
+        origIdResultIdLessThan
     );
 }
 
