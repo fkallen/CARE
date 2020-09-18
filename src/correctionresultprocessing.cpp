@@ -1,4 +1,5 @@
 #include <correctionresultprocessing.hpp>
+#include <programoutputprocessing.hpp>
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
@@ -321,6 +322,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     constexpr bool outputLQOnlyAnchor = true;
     // constexpr bool outputOnlyCand = false;
 
+    auto isValidSequence = [](const std::string& s){
+        return std::all_of(s.begin(), s.end(), [](char c){
+            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+        });
+    };
+
     auto isAnchor = [](const auto& tcs){
         return tcs.type == TempCorrectedSequence::Type::Anchor;
     };
@@ -337,6 +344,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                     }
                 }else{
                     std::swap(readWithId.read.sequence, anchorIter->sequence);
+                }
+
+                if(!isValidSequence(readWithId.read.sequence)){
+                    std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                            << " with header " << readWithId.read.header
+                            << "does contain an invalid DNA base!\n"
+                            << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                 }
 
                 //assert(anchorIter->sequence.size() == originalSequence.size());
@@ -454,6 +468,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                             std::swap(readWithId.read.sequence, tmpresults[0].sequence);
                         }
 
+                        if(!isValidSequence(readWithId.read.sequence)){
+                            std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                                    << " with header " << readWithId.read.header
+                                    << "does contain an invalid DNA base!\n"
+                                    << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
+                        }
+
                         
                         return result;
                     }else{
@@ -474,6 +495,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                         }
                     }else{
                         std::swap(readWithId.read.sequence, anchorIter->sequence);
+                    }
+
+                    if(!isValidSequence(readWithId.read.sequence)){
+                        std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                                << " with header " << readWithId.read.header
+                                << "does contain an invalid DNA base!\n"
+                                << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                     }
                     
                     CombinedCorrectionResult result;
@@ -1276,14 +1304,25 @@ void constructOutputFileFromCorrectionResults(
 ){
                         
     //constructOutputFileFromCorrectionResults2_impl(
-    constructOutputFileFromCorrectionResults_multithreading_impl(
-        tempdir, 
-        originalReadFiles, 
+    // constructOutputFileFromCorrectionResults_multithreading_impl(
+    //     tempdir, 
+    //     originalReadFiles, 
+    //     partialResults, 
+    //     memoryForSorting, 
+    //     outputFormat,
+    //     outputfiles, 
+    //     isSorted
+    // );
+
+    mergeResultsWithOriginalReads_multithreaded<TempCorrectedSequence>(
+        tempdir,
+        originalReadFiles,
         partialResults, 
-        memoryForSorting, 
+        memoryForSorting,
         outputFormat,
-        outputfiles, 
-        isSorted
+        outputfiles,
+        isSorted,
+        combineMultipleCorrectionResults1_rawtcs2
     );
 }
 
