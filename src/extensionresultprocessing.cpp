@@ -132,6 +132,14 @@ void constructOutputFileFromExtensionResults(
         return origId < (resultId / 2);
     };
 
+    std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
+
+    auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId){
+        statusHistogram[tmpresults[0].status]++;
+
+        combineExtendedReadWithOriginalRead(tmpresults, readWithId);
+    };
+
     mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
         tempdir,
         firstOriginalReadFile,
@@ -140,9 +148,18 @@ void constructOutputFileFromExtensionResults(
         outputFormat,
         outputfiles,
         isSorted,
-        combineExtendedReadWithOriginalRead,
+        combine,
         origIdResultIdLessThan
     );
+
+    for(const auto& pair : statusHistogram){
+        switch(pair.first){
+            case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+            case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+            case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+            case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+        }
+    }
 }
 
 
