@@ -55,11 +55,17 @@ public:
     std::vector<float> weightsG;
     std::vector<float> weightsT;
 
-    int nCandidates;
-    int nColumns;
+    std::vector<int> countsMatrixA;
+    std::vector<int> countsMatrixC;
+    std::vector<int> countsMatrixG;
+    std::vector<int> countsMatrixT;
 
-    int subjectColumnsBegin_incl;
-    int subjectColumnsEnd_excl;
+    int nCandidates{};
+    int nColumns{};
+    int addedSequences{};
+
+    int subjectColumnsBegin_incl{};
+    int subjectColumnsEnd_excl{};
 
 
     InputData inputData;
@@ -81,6 +87,11 @@ public:
 
     void print(std::ostream& os) const;
     void printWithDiffToConsensus(std::ostream& os) const;
+
+    void printCountMatrix(int which, std::ostream& os) const;
+
+    void inspectColumnsRegionSplit(int firstColumn);
+    void inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl);
 };
 
 struct MSAProperties{

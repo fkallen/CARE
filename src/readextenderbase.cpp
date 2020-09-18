@@ -427,6 +427,16 @@ namespace care{
 
                     msa.build(msaInput);
 
+                    //msa.inspectColumnsRegionSplit(task.currentAnchorLength);
+
+                    // std::cerr << "A matrix\n";
+                    // msa.printCountMatrix(0, std::cerr);
+                    // std::cerr << "C matrix\n";
+                    // msa.printCountMatrix(1, std::cerr);
+                    // std::cerr << "G matrix\n";
+                    // msa.printCountMatrix(2, std::cerr);
+                    // std::cerr << "T matrix\n";
+                    // msa.printCountMatrix(3, std::cerr);
 
                     // if(task.myReadId == 90 || task.mateReadId == 90){
                     //     std::cerr << "Id " << task.myReadId << ", Iteration: " << task.iteration << "\n";
