@@ -322,6 +322,8 @@ private:
 template<class T>
 struct MemoryFileFixedSize{
 
+    using ValueType = T;
+
     struct Twrapper{
 
         Twrapper() = default;
