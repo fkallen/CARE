@@ -118,6 +118,71 @@ struct MultiInputReader{
     }
 };
 
+
+struct PairedInputReader{
+    std::int64_t readIdInFile{};
+    std::int64_t globalReadId{};
+    ReadWithId current1{};
+    ReadWithId current2{};
+    std::vector<kseqpp::KseqPP> readerVector{};
+    std::vector<std::string> filenames{};
+
+    PairedInputReader() = default;
+
+    PairedInputReader(std::vector<std::string> inputfilenames)
+        : filenames(std::move(inputfilenames))
+    {
+        assert(filenames.size() > 0);
+        assert(filenames.size() <= 2);
+
+        for(const auto& inputfile : filenames){
+            readerVector.emplace_back(std::move(kseqpp::KseqPP{inputfile}));
+        }
+    }
+
+    int next(){
+
+        const int status1 = readerVector[0].next();
+        const int status2 = readerVector[1].next();
+
+        if(status1 < 0 || status2 < 0) return -1;
+
+        if(status1 >= 0){
+            std::swap(current1.read.header, readerVector[0].getCurrentHeader());
+            std::swap(current1.read.sequence, readerVector[0].getCurrentSequence());
+            std::swap(current1.read.quality, readerVector[0].getCurrentQuality());
+            current1.fileId = 0;
+            current1.readIdInFile = readIdInFile;
+            current1.globalReadId = globalReadId;
+
+            globalReadId++;
+        }
+
+        if(status2 >= 0){
+            std::swap(current2.read.header, readerVector[1].getCurrentHeader());
+            std::swap(current2.read.sequence, readerVector[1].getCurrentSequence());
+            std::swap(current2.read.quality, readerVector[1].getCurrentQuality());
+            current2.fileId = 1;
+            current2.readIdInFile = readIdInFile;
+            current2.globalReadId = globalReadId;
+
+            globalReadId++;
+        }
+
+        readIdInFile++;
+
+        return 0;
+    }
+
+    ReadWithId& getCurrent1(){
+        return current1;
+    }
+
+    ReadWithId& getCurrent2(){
+        return current2;
+    }
+};
+
 struct SequenceFileWriter{
 
     SequenceFileWriter(const std::string& filename_, FileFormat format_) : filename(filename_), format(format_)
