@@ -7,6 +7,7 @@
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
+#include <options.hpp>
 
 #include <cstring>
 #include <string>
@@ -368,7 +369,9 @@ namespace care{
         MemoryFileFixedSize<ExtendedRead>& partialResults, 
         std::size_t memoryForSorting,
         FileFormat outputFormat,
-        const std::vector<std::string>& outputfiles,
+        const std::string& extendedOutputfile,
+        const std::vector<std::string>& outputfiles, //one output file per original file
+        SequencePairType pairmode,
         bool isSorted
     );
 

@@ -13,16 +13,14 @@
 namespace care{
 
 
-void constructOutputFileFromExtensionResults_impl(
+void writeExtensionResultsToFile(
     const std::string& tempdir,
-    const std::vector<std::string>& originalReadFiles,
     MemoryFileFixedSize<ExtendedRead>& partialResults, 
     std::size_t memoryForSorting,
     FileFormat outputFormat,
-    const std::vector<std::string>& outputfiles,
+    const std::string& outputfile,
     bool isSorted
 ){
-    assert(outputfiles.size() > 0);
 
     if(!isSorted){
         auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
@@ -47,7 +45,7 @@ void constructOutputFileFromExtensionResults_impl(
 
     std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
         //fileOptions.outputdirectory + "/extensionresult.txt", 
-        outputfiles[0],
+        outputfile,
         outputFormat
     );
 
@@ -93,7 +91,7 @@ void constructOutputFileFromExtensionResults_impl(
 }
 
 
-void combineExtendedReadWithOriginalRead(
+bool combineExtendedReadWithOriginalRead(
     std::vector<ExtendedRead>& tmpresults, 
     ReadWithId& readWithId
 ){
@@ -102,7 +100,10 @@ void combineExtendedReadWithOriginalRead(
     }
     assert(tmpresults.size() > 0);
 
+    bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
     readWithId.read.sequence = std::move(tmpresults[0].extendedSequence);
+
+    return extended;
 }
 
 
@@ -112,41 +113,70 @@ void constructOutputFileFromExtensionResults(
     MemoryFileFixedSize<ExtendedRead>& partialResults, 
     std::size_t memoryForSorting,
     FileFormat outputFormat,
+    const std::string& extendedOutputfile,
     const std::vector<std::string>& outputfiles,
+    SequencePairType pairmode,
     bool isSorted
 ){
-                        
-    // constructOutputFileFromExtensionResults_impl(
-    //     tempdir, 
-    //     originalReadFiles, 
-    //     partialResults, 
-    //     memoryForSorting, 
-    //     outputFormat,
-    //     outputfiles, 
-    //     isSorted
-    // );
 
-    std::vector<std::string> firstOriginalReadFile{originalReadFiles.front()};
+#if 0                        
+    writeExtensionResultsToFile(
+        tempdir, 
+        partialResults, 
+        memoryForSorting, 
+        outputFormat,
+        extendedOutputfile, 
+        isSorted
+    );
+#else 
+
+    // {
+    //     std::map<ExtendedReadStatus, std::int64_t> statusHistogram2;
+    //     auto partialResultsReader = partialResults.makeReader();
+
+    //     while(partialResultsReader.hasNext()){
+    //         ExtendedRead er = *(partialResultsReader.next());
+    //         statusHistogram2[er.status]++;
+
+    //         if(er.status == ExtendedReadStatus::MSANoExtension){
+    //             //std::cerr << er.readId << "\n";
+    //         }
+    //     }
+
+    //     std::cerr << "should be:\n";
+    //     for(const auto& pair : statusHistogram2){
+    //         switch(pair.first){
+    //             case ExtendedReadStatus::FoundMate: std::cerr << "Found Mate: " << pair.second << "\n"; break;
+    //             case ExtendedReadStatus::LengthAbort: std::cerr << "Too long: " << pair.second << "\n"; break;
+    //             case ExtendedReadStatus::CandidateAbort: std::cerr << "Empty candidate list: " << pair.second << "\n"; break;
+    //             case ExtendedReadStatus::MSANoExtension: std::cerr << "Did not grow: " << pair.second << "\n"; break;
+    //         }
+    //     }
+    // }
 
     auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
-        return origId < (resultId / 2);
+        //return origId < (resultId / 2);
+        //return origId < resultId;
+        return (origId / 2) < (resultId / 2);
     };
 
     std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-    auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId){
+    auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId, ReadWithId* mate){
         statusHistogram[tmpresults[0].status]++;
 
-        combineExtendedReadWithOriginalRead(tmpresults, readWithId);
+        return combineExtendedReadWithOriginalRead(tmpresults, readWithId);
     };
 
-    mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
+    mergeExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
         tempdir,
-        firstOriginalReadFile,
+        originalReadFiles,
         partialResults, 
         memoryForSorting,
         outputFormat,
+        extendedOutputfile,
         outputfiles,
+        pairmode,
         isSorted,
         combine,
         origIdResultIdLessThan
@@ -160,6 +190,43 @@ void constructOutputFileFromExtensionResults(
             case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
         }
     }
+
+    // std::vector<std::string> firstOriginalReadFile{originalReadFiles.front()};
+
+    // auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
+    //     return origId < (resultId / 2);
+    // };
+
+    // std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
+
+    // auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId){
+    //     statusHistogram[tmpresults[0].status]++;
+
+    //     combineExtendedReadWithOriginalRead(tmpresults, readWithId);
+    // };
+
+    // mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
+    //     tempdir,
+    //     firstOriginalReadFile,
+    //     partialResults, 
+    //     memoryForSorting,
+    //     outputFormat,
+    //     outputfiles,
+    //     isSorted,
+    //     combine,
+    //     origIdResultIdLessThan
+    // );
+
+    // for(const auto& pair : statusHistogram){
+    //     switch(pair.first){
+    //         case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+    //         case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+    //         case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+    //         case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+    //     }
+    // }
+#endif
+
 }
 
 

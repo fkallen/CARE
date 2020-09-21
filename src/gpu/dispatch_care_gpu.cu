@@ -956,119 +956,7 @@ namespace care{
             outputFormat = FileFormat::FASTA;
 
 
-
-
-//#define OUTPUTDEBUG
-#ifdef OUTPUTDEBUG
-
-        std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(
-            //fileOptions.outputdirectory + "/extensionresult.txt", 
-            outputfiles[0],
-            outputFormat
-        );
-
-#if 0
-        std::sort(partialResults.begin(), partialResults.end(), 
-            [](const auto& l, const auto& r){
-                return l.readId1 < r.readId1;
-            }
-        );
-
-        std::ofstream os(outputfiles[0]);
-
-        for(const auto& extendedRead : partialResults){
-            os << extendedRead.readId1 << ' ' << extendedRead.readId2 << ' ' 
-                << extendedRead.reachedMate1 << ' ' << extendedRead.reachedMate2 << '\n';
-            os << extendedRead.originalRead1 << '\n';
-            os << extendedRead.originalRead2 << '\n';
-            if(extendedRead.extendedRead1.length() > 0){
-                os << extendedRead.extendedRead1 << '\n';
-            }else{
-                os << "----------\n";
-            }
-            if(extendedRead.extendedRead2.length() > 0){
-                os << extendedRead.extendedRead2 << '\n';
-            }else{
-                os << "----------\n";
-            }
-        }
-#else
-        if(true){
-            auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-                read_number lid1, lid2;
-                read_number rid1, rid2;
-                std::memcpy(&lid1, ptr1, sizeof(read_number));
-                std::memcpy(&lid2, ptr1 + sizeof(read_number), sizeof(read_number));
-                std::memcpy(&rid1, ptr2, sizeof(read_number));
-                std::memcpy(&rid2, ptr2 + sizeof(read_number), sizeof(read_number));
-                
-                if(lid1 < rid1) return true;
-                if(lid1 > rid1) return false;
-                if(lid2 < rid2) return true;
-                return false;
-            };
-
-            auto elementcomparator = [](const auto& l, const auto& r){
-                if(l.readId1 < r.readId1) return true;
-                if(l.readId1 > r.readId1) return false;
-                if(l.readId2 < r.readId2) return true;
-                return false;
-            };
-
-            TIMERSTARTCPU(sort_results_by_read_id);
-            partialResults.sort(fileOptions.tempdirectory, memoryForSorting, ptrcomparator, elementcomparator);
-            TIMERSTOPCPU(sort_results_by_read_id);
-        }
-
-        std::ofstream os(outputfiles[0]);
-
-        std::int64_t count = 0;
-        auto partialResultsReader = partialResults.makeReader();
-
-        std::cerr << "in mem: " << partialResults.getNumElementsInMemory() << ", in file: " << partialResults.getNumElementsInFile() << "\n";
-
-        while(partialResultsReader.hasNext()){
-            // TempCorrectedSequence tcs = *(partialResultsReader.next());
-
-            // Read read;
-            // read.name = "" + std::to_string(count);
-            // read.comment = "original read id " + std::to_string(tcs.readId);
-            // read.sequence = std::move(tcs.sequence);
-            // read.quality.resize(read.sequence.size());
-            // std::fill(read.quality.begin(), read.quality.end(), 'F');
-
-            // writer->writeRead(read.name, read.comment, read.sequence, read.quality);
-
-            ExtendedRead extendedRead = *(partialResultsReader.next());
-
-            os << extendedRead.readId1 << ' ' << extendedRead.readId2 << ' ' 
-                << extendedRead.reachedMate1 << ' ' << extendedRead.reachedMate2 << '\n';
-            os << extendedRead.originalRead1 << '\n';
-            os << extendedRead.originalRead2 << '\n';
-            if(extendedRead.extendedRead1.length() > 0){
-                os << extendedRead.extendedRead1 << '\n';
-            }else{
-                os << "----------\n";
-            }
-            if(extendedRead.extendedRead2.length() > 0){
-                os << extendedRead.extendedRead2 << '\n';
-            }else{
-                os << "----------\n";
-            }
-
-            count++;
-        }
-#endif
-        // constructOutputFileFromResults2(
-        //     fileOptions.tempdirectory,
-        //     fileOptions.inputfiles,            
-        //     partialResults, 
-        //     memoryForSorting,
-        //     formats[0], 
-        //     outputfiles, 
-        //     false
-        // );
-#else 
+        const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
 
         constructOutputFileFromExtensionResults(
             fileOptions.tempdirectory,
@@ -1076,13 +964,11 @@ namespace care{
             partialResults, 
             memoryForSorting,
             outputFormat, 
-            outputfiles, 
+            extendedOutputfile,
+            outputfiles,
+            fileOptions.pairType, 
             false
         );
-
-
-#endif 
-
 
 
         step3Timer.print();
