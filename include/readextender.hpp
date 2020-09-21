@@ -65,16 +65,6 @@ public:
 
     };
 
-    struct WorkingSet{
-        std::array<std::string, 2> decodedPairedRead;
-        std::array<std::vector<unsigned int>, 2> candidates;
-        std::array<std::vector<int>, 2> candidateLengths;
-        std::array<std::vector<unsigned int>, 2> reverseComplementCandidates;
-
-        std::array<std::vector<read_number>, 2> candidateReadIds;
-        std::array<int, 2> numCandidates;
-    };
-
     struct ExtendInput{
         read_number readId1{};
         const unsigned int* encodedRead1{};
@@ -1193,7 +1183,6 @@ protected:
 
     CorrectionOptions correctionOptions;
     GoodAlignmentProperties goodAlignmentProperties;
-    WorkingSet ws;
 
     helpers::CpuTimer hashTimer;
     helpers::CpuTimer collectTimer;
