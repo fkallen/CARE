@@ -143,10 +143,6 @@ struct PairedInputReader{
     int next(){
 
         const int status1 = readerVector[0].next();
-        const int status2 = readerVector[1].next();
-
-        if(status1 < 0 || status2 < 0) return -1;
-
         if(status1 >= 0){
             std::swap(current1.read.header, readerVector[0].getCurrentHeader());
             std::swap(current1.read.sequence, readerVector[0].getCurrentSequence());
@@ -156,17 +152,28 @@ struct PairedInputReader{
             current1.globalReadId = globalReadId;
 
             globalReadId++;
+        }else{
+            return -1;
         }
 
+        const int fileIdForMate = readerVector.size() > 1 ? 1 : 0;
+
+        if(fileIdForMate == 0){
+            readIdInFile++;
+        }
+
+        const int status2 = readerVector[fileIdForMate].next();
         if(status2 >= 0){
-            std::swap(current2.read.header, readerVector[1].getCurrentHeader());
-            std::swap(current2.read.sequence, readerVector[1].getCurrentSequence());
-            std::swap(current2.read.quality, readerVector[1].getCurrentQuality());
-            current2.fileId = 1;
+            std::swap(current2.read.header, readerVector[fileIdForMate].getCurrentHeader());
+            std::swap(current2.read.sequence, readerVector[fileIdForMate].getCurrentSequence());
+            std::swap(current2.read.quality, readerVector[fileIdForMate].getCurrentQuality());
+            current2.fileId = fileIdForMate;
             current2.readIdInFile = readIdInFile;
             current2.globalReadId = globalReadId;
 
             globalReadId++;
+        }else{
+            return -1;
         }
 
         readIdInFile++;
