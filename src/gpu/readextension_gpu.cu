@@ -94,8 +94,8 @@ extend_gpu(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 
     BackgroundThread outputThread(true);
 
@@ -223,181 +223,54 @@ extend_gpu(
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
-            auto processReadOrder = [&](std::array<int, 2> order){                
-
-                std::vector<ReadExtenderGpu::ExtendInput> inputs(numReadPairsInBatch); 
-
-                for(int i = 0; i < numReadPairsInBatch; i++){
-                    auto& input = inputs[i];
-
-                    input.readId1 = currentIds[2*i + order[0]];
-                    input.readId2 = currentIds[2*i + order[1]];
-                    input.encodedRead1 = currentEncodedReads.get() + (2*i + order[0]) * encodedSequencePitchInInts;
-                    input.encodedRead2 = currentEncodedReads.get() + (2*i + order[1]) * encodedSequencePitchInInts;
-                    input.readLength1 = currentReadLengths[2*i + order[0]];
-                    input.readLength2 = currentReadLengths[2*i + order[1]];
-                    input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[2*i + order[0]]);
-                    input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[2*i + order[1]]);
-                    input.verbose = false;
-                    input.verboseMutex = &verboseMutex;
-                }
-
-                auto extendResult = readExtenderGpu.extendPairedReadBatch(inputs);
-
-                return extendResult;  
-            };
-
-            auto handleMultiResult = [&](
-                const ReadExtenderGpu::ExtendResult* result1, 
-                const ReadExtenderGpu::ExtendResult* result2,
-                read_number readId1,
-                read_number readId2,
-                int readLength1,
-                int readLength2,
-                const unsigned int* encodedRead1,
-                const unsigned int* encodedRead2
-            ){
-                ExtendedReadDebug er{};
-
-                if(result1 != nullptr){
-                    er.extendedRead1 = result1->extendedReads.front().second;
-                    if(result1->mateHasBeenFound){
-                        er.status1 = ExtendedReadStatus::FoundMate;
-                    }else{
-                        if(result1->aborted){
-                            if(result1->abortReason == ReadExtenderGpu::AbortReason::NoPairedCandidates
-                                    || result1->abortReason == ReadExtenderGpu::AbortReason::NoPairedCandidatesAfterAlignment){
-
-                                er.status1 = ExtendedReadStatus::CandidateAbort;
-                            }else if(result1->abortReason == ReadExtenderGpu::AbortReason::MsaNotExtended){
-                                er.status1 = ExtendedReadStatus::MSANoExtension;
-                            }
-                        }else{
-                            er.status1 = ExtendedReadStatus::LengthAbort;
-                        }
-                    }
-                }
-                if(result2 != nullptr){
-                    er.extendedRead2 = result2->extendedReads.front().second;
-                    if(result2->mateHasBeenFound){
-                        er.status2 = ExtendedReadStatus::FoundMate;
-                    }else{
-                        if(result2->aborted){
-                            if(result2->abortReason == ReadExtenderGpu::AbortReason::NoPairedCandidates
-                                    || result2->abortReason == ReadExtenderGpu::AbortReason::NoPairedCandidatesAfterAlignment){
-
-                                er.status2 = ExtendedReadStatus::CandidateAbort;
-                            }else if(result2->abortReason == ReadExtenderGpu::AbortReason::MsaNotExtended){
-                                er.status2 = ExtendedReadStatus::MSANoExtension;
-                            }
-                        }else{
-                            er.status2 = ExtendedReadStatus::LengthAbort;
-                        }
-                    }
-                }
-
-                er.readId1 = readId1;
-                er.readId2 = readId2;
-
-                er.originalRead1.resize(readLength1, '\0');
-
-                decode2BitSequence(
-                    &er.originalRead1[0],
-                    encodedRead1,
-                    readLength1
-                );
-
-                er.originalRead2.resize(readLength2, '\0');
-
-                decode2BitSequence(
-                    &er.originalRead2[0],
-                    encodedRead2,
-                    readLength2
-                );
-
-                // if(readId1 == 90 || readId2 == 90){
-                //     std::cerr << result1 << " " << result2 << "\n";
-                //     std::cerr << er.extendedRead1 << " " << er.extendedRead2 << "\n";
-                //     std::cerr << int(er.status1) << " " << int(er.status2) << "\n";
-                //     std::cerr << er.originalRead1 << " " << er.originalRead2 << "\n";
-                // }
-
-                ExtendedRead result(er);
-
-                return result;                
-            };
-
-            // it is not known which of both reads is on the forward strand / reverse complement strand. try both combinations
-            auto extendResult0 = processReadOrder({0,1});
-
-            auto extendResult1 = processReadOrder({1,0});
-
-            std::vector<ExtendedRead> resultvector;
+            std::vector<ReadExtenderGpu::ExtendInput> inputs(numReadPairsInBatch); 
 
             for(int i = 0; i < numReadPairsInBatch; i++){
-                const auto& result0 = extendResult0[i];
-                const auto& result1 = extendResult1[i];
+                auto& input = inputs[i];
 
-                if(result0.success || result1.success){
+                input.readId1 = currentIds[2*i];
+                input.readId2 = currentIds[2*i+1];
+                input.encodedRead1 = currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts;
+                input.encodedRead2 = currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts;
+                input.readLength1 = currentReadLengths[2*i];
+                input.readLength2 = currentReadLengths[2*i+1];
+                input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[2*i]);
+                input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[2*i+1]);
+                input.verbose = false;
+                input.verboseMutex = &verboseMutex;
+            }
+
+            auto extensionResultsBatch = readExtenderGpu.extendPairedReadBatch(inputs);
+
+            //convert results of ReadExtender
+            std::vector<ExtendedRead> resultvector(extensionResultsBatch.size());
+
+            for(int i = 0; i < numReadPairsInBatch; i++){
+                auto& extensionOutput = extensionResultsBatch[i];
+                ExtendedRead& er = resultvector[i];
+
+                er.readId = extensionOutput.readId1;
+                er.extendedSequence = std::move(extensionOutput.extendedRead);
+
+                if(extensionOutput.mateHasBeenFound){
+                    er.status = ExtendedReadStatus::FoundMate;
+                }else{
+                    if(extensionOutput.aborted){
+                        if(extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+
+                            er.status = ExtendedReadStatus::CandidateAbort;
+                        }else if(extensionOutput.abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                            er.status = ExtendedReadStatus::MSANoExtension;
+                        }
+                    }else{
+                        er.status = ExtendedReadStatus::LengthAbort;
+                    }
+                }  
+                
+                if(extensionOutput.success){
                     numSuccessRead++;
-                }
-
-                if(result0.success && !result1.success){
-                    auto r = handleMultiResult(&result0, nullptr, 
-                        currentIds[2*i],
-                        currentIds[2*i+1],
-                        currentReadLengths[2*i],
-                        currentReadLengths[2*i+1],
-                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
-                    );
-                    resultvector.emplace_back(std::move(r));
-                    numSuccess0++;
-                }
-
-                if(!result0.success && result1.success){
-                    auto r = handleMultiResult(nullptr, &result1,
-                        currentIds[2*i],
-                        currentIds[2*i+1],
-                        currentReadLengths[2*i],
-                        currentReadLengths[2*i+1],
-                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
-                    );
-                    resultvector.emplace_back(std::move(r));
-                    numSuccess1++;
-                }
-
-                if(result0.success && result1.success){
-
-                    const auto& extendedString0 = result0.extendedReads.front().second;
-                    const auto& extendedString1 = result1.extendedReads.front().second;
-
-                    std::string mateExtendedReverseComplement = reverseComplementString(
-                        extendedString1.c_str(), 
-                        extendedString1.length()
-                    );
-                    const int mismatches = care::cpu::hammingDistance(
-                        extendedString0.cbegin(),
-                        extendedString0.cend(),
-                        mateExtendedReverseComplement.cbegin(),
-                        mateExtendedReverseComplement.cend()
-                    );
-
-                    mismatchesBetweenMateExtensions[mismatches]++;
-
-                    auto r = handleMultiResult(&result0, &result1,
-                        currentIds[2*i],
-                        currentIds[2*i+1],
-                        currentReadLengths[2*i],
-                        currentReadLengths[2*i+1],
-                        currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts,
-                        currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts
-                    );
-                    resultvector.emplace_back(std::move(r));
-
-                    numSuccess01++;
-                }
+                }                
             }
 
             auto outputfunc = [&, vec = std::move(resultvector)](){

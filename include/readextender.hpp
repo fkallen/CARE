@@ -40,6 +40,8 @@ namespace care{
 struct ReadExtenderBase{
 public:
 
+    enum class ExtensionDirection {LR, RL};
+
     enum class AbortReason{
         MsaNotExtended, 
         NoPairedCandidates, 
@@ -50,6 +52,38 @@ public:
     struct ReadPairIds{
         read_number first;
         read_number second;
+    };
+
+    struct ExtendInput{
+        read_number readId1{};
+        const unsigned int* encodedRead1{};
+        int readLength1{};
+        int numInts1{};
+        read_number readId2{};
+        const unsigned int* encodedRead2{};
+        int readLength2{};
+        int numInts2{};
+        bool verbose{};
+        std::mutex* verboseMutex;
+    };
+
+    struct ExtendResultNew{
+        bool mateHasBeenFound = false;
+        bool success = false;
+        bool aborted = false;
+        int numIterations = 0;
+
+        ExtensionDirection direction = ExtensionDirection::LR;
+        AbortReason abortReason = AbortReason::None;
+
+        read_number readId1{}; //same as input ids
+        read_number readId2{}; //same as input ids
+
+        std::string extendedRead{};
+
+        read_number getReadPairId() const noexcept{
+            return readId1 / 2;
+        }
     };
 
     struct ExtendResult{
@@ -65,18 +99,7 @@ public:
 
     };
 
-    struct ExtendInput{
-        read_number readId1{};
-        const unsigned int* encodedRead1{};
-        int readLength1{};
-        int numInts1{};
-        read_number readId2{};
-        const unsigned int* encodedRead2{};
-        int readLength2{};
-        int numInts2{};
-        bool verbose{};
-        std::mutex* verboseMutex;
-    };
+    
 
     ReadExtenderBase(
         int insertSize,
@@ -917,11 +940,12 @@ public:
         int accumExtensionLengths = 0;
         int iteration = 0;
         int mateLength = 0;
+        ExtensionDirection direction{};
         read_number myReadId = 0;
         read_number mateReadId = 0;
-        read_number currentAnchorReadId;
+        read_number currentAnchorReadId = 0;
         std::vector<read_number> candidateReadIds;
-        std::vector<read_number>::iterator mateIdLocationIter;
+        std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
         std::vector<int> candidateSequenceLengths;
         std::vector<unsigned int> candidateSequencesFwdData;
@@ -941,28 +965,83 @@ public:
                 && !abort 
                 && !mateHasBeenFound);
         }
+
+        void reset(){
+            auto clear = [](auto& vec){vec.clear();};
+
+            abort = false;
+            mateHasBeenFound = false;
+            abortReason = AbortReason::None;
+            currentAnchorLength = 0;
+            accumExtensionLengths = 0;
+            iteration = 0;
+            mateLength = 0;
+            direction = ExtensionDirection::LR;
+            myReadId = 0;
+            mateReadId = 0;
+            currentAnchorReadId = 0;
+            
+            clear(candidateReadIds);
+            mateIdLocationIter = candidateReadIds.end();
+            clear(currentAnchor);
+            clear(candidateSequenceLengths);
+            clear(candidateSequencesFwdData);
+            clear(candidateSequencesRevcData);
+            clear(alignments);
+            clear(alignmentFlags);
+            clear(totalDecodedAnchors);
+            clear(totalAnchorBeginInExtendedRead);
+            clear(usedCandidateReadIdsPerIteration);
+            clear(usedAlignmentsPerIteration);
+            clear(usedAlignmentFlagsPerIteration);
+            clear(allUsedCandidateReadIdPairs);
+        }
     };
 
-    Task makeTask(const ExtendInput& input){
-        Task task;
+    Task makeTask(const ExtendInput& input, ExtensionDirection direction){
+        if(direction == ExtensionDirection::LR){
+            Task task;
+            task.direction = direction;
 
-        task.currentAnchor.resize(input.numInts1);
-        std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+            task.currentAnchor.resize(input.numInts1);
+            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
 
-        task.currentAnchorLength = input.readLength1;
-        task.currentAnchorReadId = input.readId1;
-        task.accumExtensionLengths = 0;
-        task.iteration = 0;
+            task.currentAnchorLength = input.readLength1;
+            task.currentAnchorReadId = input.readId1;
+            task.accumExtensionLengths = 0;
+            task.iteration = 0;
 
-        task.myReadId = input.readId1;
+            task.myReadId = input.readId1;
 
-        task.mateLength = input.readLength2;
-        task.mateReadId = input.readId2;
+            task.mateLength = input.readLength2;
+            task.mateReadId = input.readId2;
 
-        return task;
+            return task;
+        }else if(direction == ExtensionDirection::RL){
+            Task task;
+            task.direction = direction;
+
+            task.currentAnchor.resize(input.numInts2);
+            std::copy_n(input.encodedRead2, input.numInts2, task.currentAnchor.begin());
+
+            task.currentAnchorLength = input.readLength2;
+            task.currentAnchorReadId = input.readId2;
+            task.accumExtensionLengths = 0;
+            task.iteration = 0;
+
+            task.myReadId = input.readId2;
+
+            task.mateLength = input.readLength1;
+            task.mateReadId = input.readId1;
+
+            return task;
+        }else{
+            assert(false);
+            return Task{};
+        }
     }
 
-    std::vector<ExtendResult> extendPairedReadBatch(
+    std::vector<ExtendResultNew> extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
     );
 
@@ -976,6 +1055,15 @@ public:
     }
 
 protected:
+
+    std::vector<ExtendResultNew> processTasks(
+        std::vector<Task>& tasks
+    );
+
+    std::vector<ExtendResultNew> combineDirectionResults(
+        std::vector<ExtendResultNew>& lr,
+        std::vector<ExtendResultNew>& rl
+    );
 
     bool isSameReadPair(read_number id1, read_number id2) const noexcept{
         //read pairs have consecutive read ids. (0,1) (2,3) ...
@@ -1395,7 +1483,7 @@ private:
 };
 
 
-
+using ReadExtender = ReadExtenderBase;
 
 
 

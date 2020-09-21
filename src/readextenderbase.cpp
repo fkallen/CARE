@@ -7,15 +7,12 @@
 
 namespace care{
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
-        const std::vector<ExtendInput>& inputs
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processTasks(
+        std::vector<ReadExtenderBase::Task>& tasks
     ){
-
         constexpr int maxextension = 20;
 
-        std::vector<Task> tasks(inputs.size());
-
-        std::transform(inputs.begin(), inputs.end(), tasks.begin(), [this](const auto& i){return makeTask(i);});
+        std::vector<ExtendResultNew> extendResults;
 
         std::vector<int> indicesOfActiveTasks(tasks.size());
         std::vector<int> indicesOfActiveTasksTmp(tasks.size());
@@ -563,15 +560,16 @@ namespace care{
         }
 
         //construct results
-        std::vector<ExtendResult> extendResults;
 
         for(const auto& task : tasks){
 
-            ExtendResult extendResult;
+            ExtendResultNew extendResult;
+            extendResult.direction = task.direction;
             extendResult.numIterations = task.iteration;
             extendResult.aborted = task.abort;
             extendResult.abortReason = task.abortReason;
-            extendResult.extensionLengths.emplace_back(task.totalAnchorBeginInExtendedRead.back());
+            extendResult.readId1 = task.myReadId;
+            extendResult.readId2 = task.mateReadId;
 
             // if(abort){
             //     ; //no read extension possible
@@ -649,7 +647,7 @@ namespace care{
 
                     std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
 
-                    extendResult.extendedReads.emplace_back(task.myReadId, std::move(extendedRead));
+                    extendResult.extendedRead = std::move(extendedRead);
 
                     extendResult.mateHasBeenFound = task.mateHasBeenFound;
                 }
@@ -663,6 +661,83 @@ namespace care{
         }
 
         return extendResults;
+    }
+
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combineDirectionResults(
+        std::vector<ReadExtenderBase::ExtendResultNew>& resultsLR,
+        std::vector<ReadExtenderBase::ExtendResultNew>& resultsRL
+    ){
+        auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
+        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+
+        std::sort(resultsLR.begin(), resultsLR.end(), idcomp);
+
+        std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
+
+        std::vector<ReadExtenderBase::ExtendResultNew> combinedResults(resultsLR.size() +  resultsRL.size());
+
+        std::merge(
+            resultsLR.begin(), resultsLR.end(), 
+            resultsRL.begin(), resultsRL.end(), 
+            combinedResults.begin(),
+            idcomp
+        );
+
+        auto combineWithSameId = [&](auto begin, auto end){
+            auto partitionPoint = std::partition(begin, end, [](const auto& x){ return x.mateHasBeenFound;});
+
+            //if there are results which found mate, choose longest
+            if(std::distance(begin, partitionPoint) > 0){
+                return *std::max_element(begin, partitionPoint, lengthcomp);
+            }else{
+                //from results which did not find mate, choose longest
+                 return *std::max_element(partitionPoint, end, lengthcomp);
+            }
+        };
+
+        auto iter1 = combinedResults.begin();
+        auto iter2 = combinedResults.begin();
+        auto dest = combinedResults.begin();
+
+        while(iter1 != combinedResults.end()){
+            while(iter2 != combinedResults.end() && iter1->getReadPairId() == iter2->getReadPairId()){
+                ++iter2;
+            }
+
+            //range [iter1, iter2) has same read pair id
+            *dest = combineWithSameId(iter1, iter2);
+
+            ++dest;
+            iter1 = iter2;
+        }
+
+        combinedResults.erase(dest, combinedResults.end());
+
+        return combinedResults;
+    }
+
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::extendPairedReadBatch(
+        const std::vector<ExtendInput>& inputs
+    ){
+
+        std::vector<Task> tasks(inputs.size());
+
+        std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
+            [this](const auto& i){return makeTask(i, ExtensionDirection::LR);});
+
+        std::vector<ExtendResultNew> extendResultsLR = processTasks(tasks);
+
+        std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
+            [this](const auto& i){return makeTask(i, ExtensionDirection::RL);});
+
+        std::vector<ExtendResultNew> extendResultsRL = processTasks(tasks);
+
+        std::vector<ExtendResultNew> extendResultsCombined = combineDirectionResults(
+            extendResultsLR,
+            extendResultsRL
+        );
+
+        return extendResultsCombined;
     }
 
 }
