@@ -151,13 +151,15 @@ extend_gpu(
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
         //goodAlignmentProperties2.maxErrorRate = 0.05;
 
+        constexpr int maxextensionPerStep = 20;
+
         ReadExtenderGpu readExtenderGpu{
             insertSize,
             insertSizeStddev,
+            maxextensionPerStep,
             maximumSequenceLength,
             gpuReadStorage, 
-            nullptr,
-            &minhasher,
+            minhasher,
             correctionOptions,
             goodAlignmentProperties2
         };

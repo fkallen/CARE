@@ -34,7 +34,7 @@ bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 
 	const std::vector<std::string> mandatory = {
 		"inputfiles", "outdir", "outputfilenames", "coverage",
-		"insertsize", "insertsizedev"
+		"insertsize", "insertsizedev", "pairmode"
 	};
 
 	bool success = true;
@@ -89,7 +89,12 @@ int main(int argc, char** argv){
 			cxxopts::value<int>())
 		("insertsizedev", 
 			"Insert size deviation for paired reads.", 
-			cxxopts::value<int>());
+			cxxopts::value<int>())
+		("pairmode", 
+			"Type of input reads."
+			"SE / se : Single-end reads"
+			"PE / pe : Paired-end reads",
+			cxxopts::value<std::string>());
 
 
 	options.add_options("Additional")
@@ -272,6 +277,7 @@ int main(int argc, char** argv){
 	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
 	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";
 	std::cout << "Maximum number of reads: " << fileOptions.nReads << "\n";
+	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
 	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
 	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
 	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";

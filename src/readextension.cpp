@@ -148,9 +148,12 @@ extend_cpu(
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
         //goodAlignmentProperties2.maxErrorRate = 0.05;
 
+        constexpr int maxextensionPerStep = 20;
+
         ReadExtenderCpu readExtender{
             insertSize,
             insertSizeStddev,
+            maxextensionPerStep,
             maximumSequenceLength,
             readStorage, 
             minhasher,

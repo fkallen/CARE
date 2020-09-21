@@ -10,8 +10,7 @@ namespace care{
     std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processTasks(
         std::vector<ReadExtenderBase::Task>& tasks
     ){
-        constexpr int maxextension = 20;
-
+ 
         std::vector<ExtendResultNew> extendResults;
 
         std::vector<int> indicesOfActiveTasks(tasks.size());
@@ -456,18 +455,18 @@ namespace care{
                             //     }
                             // }
 
-                            // const int maxExtensionByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
+                            // const int maxextensionPerStepByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
 
                             //the first currentAnchorLength columns are occupied by anchor. try to extend read 
-                            //by at most maxextension bp.
+                            //by at most maxextensionPerStep bp.
 
-                            //can extend by at most maxextension bps
+                            //can extend by at most maxextensionPerStep bps
                             int extendBy = std::min(
                                 consensusLength - task.currentAnchorLength, 
-                                maxextension
+                                maxextensionPerStep
                                 // std::min(
-                                //     maxExtensionByGoodColumn, 
-                                //     maxextension
+                                //     maxextensionPerStepByGoodColumn, 
+                                //     maxextensionPerStep
                                 // )
                             );
                             //cannot extend over fragment 

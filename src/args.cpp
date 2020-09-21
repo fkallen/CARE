@@ -209,24 +209,21 @@ namespace args{
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
         FileOptions result{};
 
-        // result.format = FileFormat::NONE;
-        // if(pr.count("inputfile")){
-		//     result.inputfile = pr["inputfile"].as<std::string>();
-        //     result.format = getFileFormat(result.inputfile);
-        // }
+
         if(pr.count("outdir")){
 		    result.outputdirectory = pr["outdir"].as<std::string>();
         }
-        // if(pr.count("outfile")){
-        //     result.outputfilename = pr["outfile"].as<std::string>();
-        // }
+        if(pr.count("pairmode")){
+            const std::string arg = pr["pairmode"].as<std::string>();
 
-        // if(result.outputfilename == "")
-        //     result.outputfilename = "care_corrected_" + filehelpers::getFileName(result.inputfile);
-
-		// result.outputfile = result.outputdirectory + "/" + result.outputfilename;
-
-        
+            if(arg == "se" || arg == "SE"){
+                result.pairType = SequencePairType::SingleEnd;
+            }else if(arg == "pe" || arg == "PE"){
+                result.pairType = SequencePairType::PairedEnd;
+            }else{
+                result.pairType = SequencePairType::Invalid;
+            }
+        }        
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
         }
@@ -456,6 +453,32 @@ namespace args{
             if(opt.outputfilenames.size() > 1 && opt.inputfiles.size() != opt.outputfilenames.size()){
                 valid = false;
                 std::cout << "Error: An output file name must be specified for each input file. Number of input files : " << opt.inputfiles.size() << ", number of output file names: " << opt.outputfilenames.size() << "\n";
+            }
+        }
+
+        {
+            //Disallow invalid type
+            if(opt.pairType == SequencePairType::Invalid){
+                valid = false;
+                std::cout << "Error: pairmode is invalid." << std::endl;
+            }
+
+            //In paired end mode, there must be a single input file with interleaved reads, or exactly two input files, one per direction.
+            if(opt.pairType == SequencePairType::PairedEnd){
+                const int countOk = opt.inputfiles.size() == 1 || opt.inputfiles.size() == 2;
+                if(!countOk){
+                    valid = false;
+                    std::cout << "Error: Invalid number of input files for selected pairmode 'PairedEnd'." << std::endl;
+                }
+            }
+
+            //In single end mode, a single file allowed
+            if(opt.pairType == SequencePairType::SingleEnd){
+                const int countOk = opt.inputfiles.size() == 1;
+                if(!countOk){
+                    valid = false;
+                    std::cout << "Error: Invalid number of input files for selected pairmode 'SingleEnd'." << std::endl;
+                }
             }
         }
         

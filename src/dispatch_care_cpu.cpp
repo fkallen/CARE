@@ -448,7 +448,8 @@ namespace care{
 
             //readStorage.constructionIsComplete();
         }else{
-            readStorage.constructPaired(
+            if(fileOptions.pairType == SequencePairType::PairedEnd && fileOptions.inputfiles.size() == 2){
+                readStorage.constructPaired(
                 fileOptions.inputfiles,
                 correctionOptions.useQualityScores,
                 maximumNumberOfReads,
@@ -457,6 +458,18 @@ namespace care{
                 runtimeOptions.threads,
                 runtimeOptions.showProgress
             );
+            }else{
+                readStorage.construct(
+                    fileOptions.inputfiles,
+                    correctionOptions.useQualityScores,
+                    maximumNumberOfReads,
+                    minimumSequenceLength,
+                    maximumSequenceLength,
+                    runtimeOptions.threads,
+                    runtimeOptions.showProgress
+                );
+            }
+            
         }
 
         buildReadStorageTimer.print();

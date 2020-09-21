@@ -33,17 +33,16 @@ public:
     ReadExtenderGpu(
         int insertSize,
         int insertSizeStddev,
+        int maxextensionPerStep,
         int maximumSequenceLength,
         const gpu::DistributedReadStorage& rs, 
-        const Minhasher* mh,
-        const gpu::GpuMinhasher* gmh,
+        const gpu::GpuMinhasher& gmh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) 
-    : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, coropts, gap),
+    : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
         gpuReadStorage(&rs),
-        minhasher(mh), 
-        gpuMinhasher(gmh){
+        gpuMinhasher(&gmh){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -553,9 +552,6 @@ private:
 
     const gpu::DistributedReadStorage* gpuReadStorage;
     gpu::DistributedReadStorage::GatherHandleSequences gatherHandleSequences;
-
-    const Minhasher* minhasher;
-    Minhasher::Handle minhashHandle;
 
     const gpu::GpuMinhasher* gpuMinhasher;
     gpu::GpuMinhasher::QueryHandle gpuMinhashHandle;

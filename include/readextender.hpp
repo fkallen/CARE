@@ -104,19 +104,22 @@ public:
     ReadExtenderBase(
         int insertSize,
         int insertSizeStddev,
+        int maxextensionPerStep,
         int maximumSequenceLength,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) : insertSize(insertSize), 
         insertSizeStddev(insertSizeStddev),
-            maximumSequenceLength(maximumSequenceLength),
-            correctionOptions(coropts),
-            goodAlignmentProperties(gap),
-            hashTimer{"Hash timer"},
-            collectTimer{"Collect timer"},
-            alignmentTimer{"Alignment timer"},
-            alignmentFilterTimer{"Alignment filter timer"},
-            msaTimer{"MSA timer"}{
+        maxextensionPerStep(maxextensionPerStep),
+        maximumSequenceLength(maximumSequenceLength),
+        correctionOptions(coropts),
+        goodAlignmentProperties(gap),
+        hashTimer{"Hash timer"},
+        collectTimer{"Collect timer"},
+        alignmentTimer{"Alignment timer"},
+        alignmentFilterTimer{"Alignment filter timer"},
+        msaTimer{"MSA timer"}
+    {
 
         encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
         decodedSequencePitchInBytes = maximumSequenceLength;
@@ -446,7 +449,6 @@ public:
                     candidateSequenceLengths[i].data(),
                     numCandidates,
                     goodAlignmentProperties.min_overlap,
-                    //currentAnchorLength[i] - maxextension,
                     goodAlignmentProperties.maxErrorRate,
                     goodAlignmentProperties.min_overlap_ratio
                 );
@@ -461,7 +463,6 @@ public:
                     candidateSequenceLengths[i].data(),
                     numCandidates,
                     goodAlignmentProperties.min_overlap,
-                    //currentAnchorLength[i] - maxextension,
                     goodAlignmentProperties.maxErrorRate,
                     goodAlignmentProperties.min_overlap_ratio
                 );
@@ -738,7 +739,7 @@ public:
                     int consensusLength = msa.consensus.size();
 
                     //the first currentAnchorLength[i] columns are occupied by anchor. try to extend read 
-                    //by at most maxextension bp. In case consensuslength == anchorlength, abort
+                    //by at most maxextensionPerStep bp. In case consensuslength == anchorlength, abort
 
                     if(consensusLength == currentAnchorLength[i]){
                         abort = true;
@@ -747,7 +748,7 @@ public:
                         assert(consensusLength > currentAnchorLength[i]);
                         
 
-                        const int extendBy = std::min(consensusLength - currentAnchorLength[i], maxextension);
+                        const int extendBy = std::min(consensusLength - currentAnchorLength[i], maxextensionPerStep);
                         accumExtensionLengths[i] += extendBy;
 
                         if(input.verbose){
@@ -932,6 +933,23 @@ public:
     }
 #endif
 
+    
+
+    std::vector<ExtendResultNew> extendPairedReadBatch(
+        const std::vector<ExtendInput>& inputs
+    );
+
+
+    void printTimers(){
+        hashTimer.print();
+        collectTimer.print();
+        alignmentTimer.print();
+        alignmentFilterTimer.print();
+        msaTimer.print();
+    }
+
+protected:
+
     struct Task{
         bool abort = false;
         bool mateHasBeenFound = false;
@@ -1040,21 +1058,6 @@ public:
             return Task{};
         }
     }
-
-    std::vector<ExtendResultNew> extendPairedReadBatch(
-        const std::vector<ExtendInput>& inputs
-    );
-
-
-    void printTimers(){
-        hashTimer.print();
-        collectTimer.print();
-        alignmentTimer.print();
-        alignmentFilterTimer.print();
-        msaTimer.print();
-    }
-
-protected:
 
     std::vector<ExtendResultNew> processTasks(
         std::vector<Task>& tasks
@@ -1262,25 +1265,26 @@ protected:
     virtual void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
     virtual void calculateAlignments(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
 
-    int insertSize;
-    int insertSizeStddev;
-    int maximumSequenceLength;
-    std::size_t encodedSequencePitchInInts;
-    std::size_t decodedSequencePitchInBytes;
-    std::size_t qualityPitchInBytes;
+    int insertSize{};
+    int insertSizeStddev{};
+    int maxextensionPerStep{};
+    int maximumSequenceLength{};
+    std::size_t encodedSequencePitchInInts{};
+    std::size_t decodedSequencePitchInBytes{};
+    std::size_t qualityPitchInBytes{};
 
-    CorrectionOptions correctionOptions;
-    GoodAlignmentProperties goodAlignmentProperties;
+    CorrectionOptions correctionOptions{};
+    GoodAlignmentProperties goodAlignmentProperties{};
 
-    helpers::CpuTimer hashTimer;
-    helpers::CpuTimer collectTimer;
-    helpers::CpuTimer alignmentTimer;
-    helpers::CpuTimer alignmentFilterTimer;
-    helpers::CpuTimer msaTimer;
+    helpers::CpuTimer hashTimer{};
+    helpers::CpuTimer collectTimer{};
+    helpers::CpuTimer alignmentTimer{};
+    helpers::CpuTimer alignmentFilterTimer{};
+    helpers::CpuTimer msaTimer{};
 };
 
 
-
+using ReadExtender = ReadExtenderBase;
 
 
 
@@ -1296,12 +1300,13 @@ public:
     ReadExtenderCpu(
         int insertSize,
         int insertSizeStddev,
+        int maxextensionPerStep,
         int maximumSequenceLength,
         const cpu::ContiguousReadStorage& rs, 
         const Minhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
-    ) : ReadExtenderBase(insertSize, insertSizeStddev, maximumSequenceLength, coropts, gap),
+    ) : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
         readStorage(&rs), minhasher(&mh){
 
     }
@@ -1427,7 +1432,6 @@ private:
                 task.candidateSequenceLengths.data(),
                 numCandidates,
                 goodAlignmentProperties.min_overlap,
-                //currentAnchorLength - maxextension,
                 goodAlignmentProperties.maxErrorRate,
                 goodAlignmentProperties.min_overlap_ratio
             );
@@ -1442,7 +1446,6 @@ private:
                 task.candidateSequenceLengths.data(),
                 numCandidates,
                 goodAlignmentProperties.min_overlap,
-                //currentAnchorLength - maxextension,
                 goodAlignmentProperties.maxErrorRate,
                 goodAlignmentProperties.min_overlap_ratio
             );
@@ -1481,11 +1484,6 @@ private:
     cpu::shd::CpuAlignmentHandle alignmentHandle;
 
 };
-
-
-using ReadExtender = ReadExtenderBase;
-
-
 
 
 

@@ -10,6 +10,22 @@
 
 namespace care{
 
+    enum class SequencePairType{
+        Invalid,
+        SingleEnd,
+        PairedEnd,
+    };
+
+    __inline__
+    std::string to_string(SequencePairType s){
+        switch(s){
+            case SequencePairType::Invalid: return "Invalid";
+            case SequencePairType::SingleEnd: return "SingleEnd";
+            case SequencePairType::PairedEnd: return "PairedEnd";
+            default: return "Error";
+        }
+    }
+
 	//Options which can be parsed from command-line arguments
 
     struct GoodAlignmentProperties{
@@ -51,6 +67,7 @@ namespace care{
     };
 
 	struct FileOptions{
+        SequencePairType pairType = SequencePairType::Invalid;
 		std::string outputdirectory;
 		std::uint64_t nReads = 0;
         int minimum_sequence_length = 0;
