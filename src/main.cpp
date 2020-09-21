@@ -94,6 +94,9 @@ int main(int argc, char** argv){
 			"Type of input reads."
 			"SE / se : Single-end reads"
 			"PE / pe : Paired-end reads",
+			cxxopts::value<std::string>())
+		("eo", 
+			"The name of the output file containing extended reads",
 			cxxopts::value<std::string>());
 
 
@@ -289,6 +292,7 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
+	std::cout << "Extended reads output file: " << fileOptions.extendedReadsOutputfilename << "\n";
 	std::cout << "Output file names: ";
 	for(auto& s : fileOptions.outputfilenames){
 		std::cout << s << ' ';

@@ -68,7 +68,7 @@ namespace care{
 
 	struct FileOptions{
         SequencePairType pairType = SequencePairType::Invalid;
-		std::string outputdirectory;
+		std::string outputdirectory = "";
 		std::uint64_t nReads = 0;
         int minimum_sequence_length = 0;
         int maximum_sequence_length = 0;
@@ -76,7 +76,8 @@ namespace care{
         std::string load_binary_reads_from = "";
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
-        std::string tempdirectory;
+        std::string tempdirectory = "";
+        std::string extendedReadsOutputfilename = "UNSET_";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 	};

@@ -223,7 +223,10 @@ namespace args{
             }else{
                 result.pairType = SequencePairType::Invalid;
             }
-        }        
+        }  
+        if(pr.count("eo")){
+            result.extendedReadsOutputfilename = pr["eo"].as<std::string>();
+        }       
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
         }
@@ -415,6 +418,15 @@ namespace args{
                     std::cout << "Error: cannot open output file " << outputfile << std::endl;
                 }
             }            
+        }
+
+        {
+            const std::string outputfile = opt.outputdirectory + "/" + opt.extendedReadsOutputfilename;
+            std::ofstream os(outputfile);
+            if(!(bool)os){
+                valid = false;
+                std::cout << "Error: cannot open extended reads output file " << outputfile << std::endl;
+            }
         }
 
         {
