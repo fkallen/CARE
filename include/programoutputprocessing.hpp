@@ -454,9 +454,6 @@ namespace care{
                     int batchsize = 0;
                     while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
                         batch->items[batchsize] = *(partialResultsReader.next());
-                        if(batch->items[batchsize].readId == 2644){
-                            std::cerr << "2644 put in batch\n";
-                        }
                         batchsize++;
                     }
 
@@ -674,12 +671,6 @@ namespace care{
 
                 auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
                 auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;   
-
-                bool debug = std::any_of(first2, last2, [](const auto& x){ return x.readId == 2644;});
-
-                if(debug){
-                    std::cerr << "2644 in range\n";
-                }
 
                 while(first1 != last1) {
                     if(first2 == last2){
