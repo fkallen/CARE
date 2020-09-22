@@ -154,10 +154,14 @@ void constructOutputFileFromExtensionResults(
     //     }
     // }
 
-    auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
+    auto origIdResultIdLessThan = [&](read_number origId, read_number resultId){
         //return origId < (resultId / 2);
         //return origId < resultId;
-        return (origId / 2) < (resultId / 2);
+        if(pairmode == SequencePairType::PairedEnd){
+            return (origId / 2) < (resultId / 2);
+        }else{
+            return origId < resultId;
+        }
     };
 
     std::map<ExtendedReadStatus, std::int64_t> statusHistogram;

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <numeric>
 #include <vector>
+#include <cassert>
 
 namespace care{
 
@@ -734,6 +735,123 @@ namespace care{
         std::vector<ExtendResultNew> extendResultsCombined = combinePairedEndDirectionResults(
             extendResultsLR,
             extendResultsRL
+        );
+
+        return extendResultsCombined;
+    }
+
+
+    /*
+        SINGLE END
+    */
+
+
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processSingleEndTasks(
+        std::vector<Task>& tasks
+    ){
+        return processPairedEndTasks(tasks);
+    }
+
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combineSingleEndDirectionResults(
+        std::vector<ReadExtenderBase::ExtendResultNew>& resultsLR,
+        std::vector<ReadExtenderBase::ExtendResultNew>& resultsRL,
+        const std::vector<ReadExtenderBase::Task>& tasks
+    ){
+        auto idcomp = [](const auto& l, const auto& r){ return l.readId1 < r.readId1;};
+        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+
+        //for each consecutive range with same readId, keep the longest sequence
+        auto keepLongest = [&](auto& vec){
+            auto iter1 = vec.begin();
+            auto iter2 = vec.begin();
+            auto dest = vec.begin();
+
+            while(iter1 != vec.end()){
+                while(iter2 != vec.end() && iter1->readId1 == iter2->readId1){
+                    ++iter2;
+                }
+
+                //range [iter1, iter2) has same read id
+                *dest =  *std::max_element(iter1, iter2, lengthcomp);
+
+                ++dest;
+                iter1 = iter2;
+            }
+
+            return dest;
+        };
+
+        std::sort(resultsLR.begin(), resultsLR.end(), idcomp);
+        
+        auto resultsLR_end = keepLongest(resultsLR);
+
+        std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
+
+        auto resultsRL_end = keepLongest(resultsRL);
+
+        const int remainingLR = std::distance(resultsLR.begin(), resultsLR_end);
+        const int remainingRL = std::distance(resultsRL.begin(), resultsRL_end);
+
+        assert(remainingLR == remainingRL);
+
+        std::vector<ReadExtenderBase::ExtendResultNew> combinedResults(remainingRL);
+
+        for(int i = 0; i < remainingRL; i++){
+            auto& comb = combinedResults[i];
+            auto& res1 = resultsLR[i];
+            auto& res2 = resultsRL[i];
+            const auto& task = tasks[i];
+
+            assert(res1.readId1 == res2.readId1);
+            assert(task.myReadId == res1.readId1);
+
+            comb.success = true;
+            comb.numIterations = res1.numIterations + res2.numIterations;
+            comb.readId1 = res1.readId1;
+            comb.readId2 = res1.readId2;
+
+            //get reverse complement of RL extension. overlap it with LR extension
+            const int newbasesRL = res2.extendedRead.length() - task.myLength;
+            if(newbasesRL > 0){
+                reverseComplementStringInplace(res2.extendedRead.data() + task.myLength, newbasesRL);
+                comb.extendedRead.append(res2.extendedRead.data() + task.myLength, newbasesRL);
+            }
+
+            comb.extendedRead.append(res1.extendedRead);
+
+            
+        }
+
+        return combinedResults;
+    }
+
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::extendSingleEndReadBatch(
+        const std::vector<ExtendInput>& inputs
+    ){
+
+        std::vector<Task> tasks(inputs.size());
+
+        std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
+            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::LR);});
+
+        std::vector<ExtendResultNew> extendResultsLR = processSingleEndTasks(tasks);
+
+        std::vector<Task> tasks2(inputs.size());
+        std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
+            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::RL);});
+
+        //make sure candidates which were used in LR direction cannot be used again in RL direction
+
+        for(std::size_t i = 0; i < inputs.size(); i++){
+            tasks2[i].allUsedCandidateReadIdPairs = std::move(tasks[i].allUsedCandidateReadIdPairs);
+        }
+
+        std::vector<ExtendResultNew> extendResultsRL = processSingleEndTasks(tasks2);
+
+        std::vector<ExtendResultNew> extendResultsCombined = combineSingleEndDirectionResults(
+            extendResultsLR,
+            extendResultsRL,
+            tasks
         );
 
         return extendResultsCombined;

@@ -23,7 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
-
+#include <limits>
 
 #include <readextension_cpu.hpp>
 #include <extensionresultprocessing.hpp>
@@ -958,6 +958,7 @@ protected:
         bool abort = false;
         bool mateHasBeenFound = false;
         AbortReason abortReason = AbortReason::None;
+        int myLength = 0;
         int currentAnchorLength = 0;
         int accumExtensionLengths = 0;
         int iteration = 0;
@@ -994,6 +995,7 @@ protected:
             abort = false;
             mateHasBeenFound = false;
             abortReason = AbortReason::None;
+            myLength = 0;
             currentAnchorLength = 0;
             accumExtensionLengths = 0;
             iteration = 0;
@@ -1033,6 +1035,7 @@ protected:
             task.accumExtensionLengths = 0;
             task.iteration = 0;
 
+            task.myLength = input.readLength1;
             task.myReadId = input.readId1;
 
             task.mateLength = input.readLength2;
@@ -1051,6 +1054,7 @@ protected:
             task.accumExtensionLengths = 0;
             task.iteration = 0;
 
+            task.myLength = input.readLength2;
             task.myReadId = input.readId2;
 
             task.mateLength = input.readLength1;
@@ -1063,6 +1067,57 @@ protected:
         }
     }
 
+
+    Task makeSingleEndTask(const ExtendInput& input, ExtensionDirection direction){
+        if(direction == ExtensionDirection::LR){
+            Task task;
+            task.direction = direction;
+
+            task.currentAnchor.resize(input.numInts1);
+            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+
+            task.currentAnchorLength = input.readLength1;
+            task.currentAnchorReadId = input.readId1;
+            task.accumExtensionLengths = 0;
+            task.iteration = 0;
+
+            task.myLength = input.readLength1;
+            task.myReadId = input.readId1;
+
+            task.mateLength = 0;
+            task.mateReadId = std::numeric_limits<read_number>::max();
+
+            return task;
+        }else if(direction == ExtensionDirection::RL){
+            
+            Task task;
+            task.direction = direction;
+
+            task.currentAnchor.resize(input.numInts1);
+            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+
+            //to extend a single-end read to the left, its reverse complement will be extended to the right
+            reverseComplementInplace2Bit(task.currentAnchor.data(), input.readLength1);
+
+            task.currentAnchorLength = input.readLength1;
+            task.currentAnchorReadId = input.readId1;
+            task.accumExtensionLengths = 0;
+            task.iteration = 0;
+
+            task.myLength = input.readLength1;
+            task.myReadId = input.readId1;
+
+            task.mateLength = 0;
+            task.mateReadId = std::numeric_limits<read_number>::max();
+
+            return task;
+        }else{
+            assert(false);
+            return Task{};
+        }
+    }
+
+#if 0
     struct SingleEndTask{
         bool abort = false;
         AbortReason abortReason = AbortReason::None;
@@ -1141,6 +1196,7 @@ protected:
 
         return task;
     }
+#endif
 
     std::vector<ExtendResultNew> processPairedEndTasks(
         std::vector<Task>& tasks
@@ -1152,12 +1208,13 @@ protected:
     );
 
     std::vector<ExtendResultNew> processSingleEndTasks(
-        std::vector<SingleEndTask>& tasks
+        std::vector<Task>& tasks
     );
 
     std::vector<ExtendResultNew> combineSingleEndDirectionResults(
         std::vector<ExtendResultNew>& lr,
-        std::vector<ExtendResultNew>& rl
+        std::vector<ExtendResultNew>& rl,
+        const std::vector<Task>& tasks
     );
 
     bool isSameReadPair(read_number id1, read_number id2) const noexcept{

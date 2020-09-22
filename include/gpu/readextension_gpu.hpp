@@ -26,21 +26,8 @@ namespace gpu{
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        Minhasher& minhasher,
-        cpu::ContiguousReadStorage& readStorage
-    );
-
-    MemoryFileFixedSize<ExtendedRead> 
-    extend_gpu(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const ExtensionOptions& extensionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
-        const SequenceFileProperties& sequenceFileProperties,
-        GpuMinhasher& minhasher,
-        gpu::DistributedReadStorage& gpuReadStorage
+        const GpuMinhasher& minhasher,
+        const gpu::DistributedReadStorage& gpuReadStorage
     );
 
 

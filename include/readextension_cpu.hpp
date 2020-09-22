@@ -23,8 +23,8 @@ namespace care{
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        Minhasher& minhasher,
-        cpu::ContiguousReadStorage& readStorage
+        const Minhasher& minhasher,
+        const cpu::ContiguousReadStorage& readStorage
     );
 
 
