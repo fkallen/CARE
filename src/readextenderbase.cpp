@@ -7,7 +7,7 @@
 
 namespace care{
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processTasks(
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processPairedEndTasks(
         std::vector<ReadExtenderBase::Task>& tasks
     ){
  
@@ -662,7 +662,7 @@ namespace care{
         return extendResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combineDirectionResults(
+    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combinePairedEndDirectionResults(
         std::vector<ReadExtenderBase::ExtendResultNew>& resultsLR,
         std::vector<ReadExtenderBase::ExtendResultNew>& resultsRL
     ){
@@ -722,16 +722,16 @@ namespace care{
         std::vector<Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makeTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::LR);});
 
-        std::vector<ExtendResultNew> extendResultsLR = processTasks(tasks);
+        std::vector<ExtendResultNew> extendResultsLR = processPairedEndTasks(tasks);
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makeTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::RL);});
 
-        std::vector<ExtendResultNew> extendResultsRL = processTasks(tasks);
+        std::vector<ExtendResultNew> extendResultsRL = processPairedEndTasks(tasks);
 
-        std::vector<ExtendResultNew> extendResultsCombined = combineDirectionResults(
+        std::vector<ExtendResultNew> extendResultsCombined = combinePairedEndDirectionResults(
             extendResultsLR,
             extendResultsRL
         );

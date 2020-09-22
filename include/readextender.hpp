@@ -939,6 +939,10 @@ public:
         const std::vector<ExtendInput>& inputs
     );
 
+    std::vector<ExtendResultNew> extendSingleEndReadBatch(
+        const std::vector<ExtendInput>& inputs
+    );
+
 
     void printTimers(){
         hashTimer.print();
@@ -1016,7 +1020,7 @@ protected:
         }
     };
 
-    Task makeTask(const ExtendInput& input, ExtensionDirection direction){
+    Task makePairedEndTask(const ExtendInput& input, ExtensionDirection direction){
         if(direction == ExtensionDirection::LR){
             Task task;
             task.direction = direction;
@@ -1059,11 +1063,99 @@ protected:
         }
     }
 
-    std::vector<ExtendResultNew> processTasks(
+    struct SingleEndTask{
+        bool abort = false;
+        AbortReason abortReason = AbortReason::None;
+        int currentAnchorLength = 0;
+        int myReadLength = 0;
+        int accumExtensionLengths = 0;
+        int iteration = 0;
+        ExtensionDirection direction{};
+        read_number myReadId = 0;
+        read_number currentAnchorReadId = 0;
+        std::vector<read_number> candidateReadIds;
+        std::vector<read_number>::iterator mateIdLocationIter{};
+        std::vector<unsigned int> currentAnchor;
+        std::vector<int> candidateSequenceLengths;
+        std::vector<unsigned int> candidateSequencesFwdData;
+        std::vector<unsigned int> candidateSequencesRevcData;
+        std::vector<care::cpu::SHDResult> alignments;
+        std::vector<BestAlignment_t> alignmentFlags;
+        std::vector<std::string> totalDecodedAnchors;
+        std::vector<int> totalAnchorBeginInExtendedRead;
+        std::vector<std::vector<read_number>> usedCandidateReadIdsPerIteration;
+        std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
+        std::vector<std::vector<BestAlignment_t>> usedAlignmentFlagsPerIteration;
+        std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
+
+        bool isActive(int insertSize, int insertSizeStddev) const noexcept{
+            return (iteration < insertSize 
+                //TODO && accumExtensionLengths < insertSize - (mateLength) + insertSizeStddev
+                && !abort);
+        }
+
+        void reset(){
+            auto clear = [](auto& vec){vec.clear();};
+
+            abort = false;
+            abortReason = AbortReason::None;
+            myReadLength = 0;
+            currentAnchorLength = 0;
+            accumExtensionLengths = 0;
+            iteration = 0;
+            direction = ExtensionDirection::LR;
+            myReadId = 0;
+            currentAnchorReadId = 0;
+            
+            clear(candidateReadIds);
+            mateIdLocationIter = candidateReadIds.end();
+            clear(currentAnchor);
+            clear(candidateSequenceLengths);
+            clear(candidateSequencesFwdData);
+            clear(candidateSequencesRevcData);
+            clear(alignments);
+            clear(alignmentFlags);
+            clear(totalDecodedAnchors);
+            clear(totalAnchorBeginInExtendedRead);
+            clear(usedCandidateReadIdsPerIteration);
+            clear(usedAlignmentsPerIteration);
+            clear(usedAlignmentFlagsPerIteration);
+            clear(allUsedCandidateReadIdPairs);
+        }
+    };
+
+    SingleEndTask makeSingleEndTask(const ExtendInput& input, ExtensionDirection direction){
+        SingleEndTask task;
+        task.direction = direction;
+
+        task.currentAnchor.resize(input.numInts1);
+        std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+
+        task.currentAnchorLength = input.readLength1;
+        task.currentAnchorReadId = input.readId1;
+        task.accumExtensionLengths = 0;
+        task.iteration = 0;
+
+        task.myReadLength = input.readLength1;
+        task.myReadId = input.readId1;
+
+        return task;
+    }
+
+    std::vector<ExtendResultNew> processPairedEndTasks(
         std::vector<Task>& tasks
     );
 
-    std::vector<ExtendResultNew> combineDirectionResults(
+    std::vector<ExtendResultNew> combinePairedEndDirectionResults(
+        std::vector<ExtendResultNew>& lr,
+        std::vector<ExtendResultNew>& rl
+    );
+
+    std::vector<ExtendResultNew> processSingleEndTasks(
+        std::vector<SingleEndTask>& tasks
+    );
+
+    std::vector<ExtendResultNew> combineSingleEndDirectionResults(
         std::vector<ExtendResultNew>& lr,
         std::vector<ExtendResultNew>& rl
     );
