@@ -483,6 +483,7 @@ namespace care{
             std::vector<int> isExtended;
             std::vector<ReadWithId> items;
             std::vector<ReadWithId> items2;
+            std::vector<std::string> extendedSequences;
         };
 
         std::array<ReadBatch, 4> readBatches;
@@ -510,6 +511,7 @@ namespace care{
                 batch->isExtended.resize(inputreader_maxbatchsize);
                 batch->items.resize(inputreader_maxbatchsize);
                 //batch->items2.resize(inputreader_maxbatchsize);
+                batch->extendedSequences.resize(inputreader_maxbatchsize);
 
                 std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
                 batch->isExtended[0] = 0;
@@ -540,6 +542,7 @@ namespace care{
                 batch->items.resize(inputreader_maxbatchsize);
                 batch->items2.resize(inputreader_maxbatchsize);
                 batch->isExtended.resize(inputreader_maxbatchsize);
+                batch->extendedSequences.resize(inputreader_maxbatchsize);
 
                 batch->isExtended[0] = 0;
                 std::swap(batch->items[0], pairedInputReader.getCurrent1()); //process element from outer loop next() call
@@ -585,6 +588,7 @@ namespace care{
                     format = FileFormat::FASTA;
 
                 std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, format);
+                std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", format);
 
                 std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
@@ -602,8 +606,18 @@ namespace care{
                         const bool extended = outputBatch->isExtended[processed];                       
 
                         if(extended){
-                            const auto& readWithId = outputBatch->items[processed];
-                            extendedReadWriter->writeRead(readWithId.read);
+                            const auto& readWithId1 = outputBatch->items[processed];
+                            const auto& str = outputBatch->extendedSequences[processed];
+                            //extendedReadWriter->writeRead(str);
+                            extendedReadWriter->writeRead(readWithId1.read.header, str, readWithId1.read.quality);
+
+                            #if 1                         
+
+                            if(pairmode == SequencePairType::SingleEnd){
+                                extendedOrigReadWriter->writeRead(readWithId1.read);
+                            }
+
+                            #endif
                         }else{
                             if(pairmode == SequencePairType::PairedEnd){                                    
                                 const auto& readWithId1 = outputBatch->items[processed];
@@ -712,7 +726,9 @@ namespace care{
                             matePtr = inputBatch->items2.data() + inputBatch->processedItems + dist;
                         }
 
-                        inputBatch->isExtended[inputBatch->processedItems + dist] = combineResultsWithRead(buffer, readWithId, matePtr);
+                        auto& extendedSequence = inputBatch->extendedSequences[inputBatch->processedItems + dist];
+
+                        inputBatch->isExtended[inputBatch->processedItems + dist] = combineResultsWithRead(buffer, readWithId, matePtr, extendedSequence);
 
                         ++first1;
                     }
