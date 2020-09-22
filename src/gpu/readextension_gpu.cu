@@ -145,7 +145,12 @@ extend_gpu_pairedend(
 
     #pragma omp parallel
     {
-        const int deviceId = runtimeOptions.deviceIds.at(0);
+        const int numDeviceIds = runtimeOptions.deviceIds.size();
+
+        assert(numDeviceIds > 0);
+
+        const int ompThreadId = omp_get_thread_num();
+        const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
         cudaSetDevice(deviceId); CUERR;
 
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
@@ -308,9 +313,7 @@ extend_gpu_pairedend(
                 totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
             }
 
-            const int tid = omp_get_thread_num();
-
-            if(0 == tid){
+            if(0 == ompThreadId){
                 readExtenderGpu.printTimers();
             }      
         }
@@ -458,7 +461,12 @@ extend_gpu_singleend(
 
     #pragma omp parallel
     {
-        const int deviceId = runtimeOptions.deviceIds.at(0);
+        const int numDeviceIds = runtimeOptions.deviceIds.size();
+
+        assert(numDeviceIds > 0);
+
+        const int ompThreadId = omp_get_thread_num();
+        const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
         cudaSetDevice(deviceId); CUERR;
 
         GoodAlignmentProperties goodAlignmentProperties2 = goodAlignmentProperties;
@@ -615,9 +623,7 @@ extend_gpu_singleend(
                 totalMismatchesBetweenMateExtensions[pair.first] += pair.second;
             }
 
-            const int tid = omp_get_thread_num();
-
-            if(0 == tid){
+            if(0 == ompThreadId){
                 readExtenderGpu.printTimers();
             }      
         }
