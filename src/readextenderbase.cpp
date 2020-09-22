@@ -8,11 +8,11 @@
 
 namespace care{
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processPairedEndTasks(
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::processPairedEndTasks(
         std::vector<ReadExtenderBase::Task>& tasks
     ){
  
-        std::vector<ExtendResultNew> extendResults;
+        std::vector<ExtendResult> extendResults;
 
         std::vector<int> indicesOfActiveTasks(tasks.size());
         std::vector<int> indicesOfActiveTasksTmp(tasks.size());
@@ -563,7 +563,7 @@ namespace care{
 
         for(const auto& task : tasks){
 
-            ExtendResultNew extendResult;
+            ExtendResult extendResult;
             extendResult.direction = task.direction;
             extendResult.numIterations = task.iteration;
             extendResult.aborted = task.abort;
@@ -663,9 +663,9 @@ namespace care{
         return extendResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResultNew>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResultNew>& resultsRL
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
+        std::vector<ReadExtenderBase::ExtendResult>& resultsRL
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
@@ -674,7 +674,7 @@ namespace care{
 
         std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
 
-        std::vector<ReadExtenderBase::ExtendResultNew> combinedResults(resultsLR.size() +  resultsRL.size());
+        std::vector<ReadExtenderBase::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
 
         std::merge(
             resultsLR.begin(), resultsLR.end(), 
@@ -716,7 +716,7 @@ namespace care{
         return combinedResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::extendPairedReadBatch(
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
@@ -725,14 +725,14 @@ namespace care{
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
             [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::LR);});
 
-        std::vector<ExtendResultNew> extendResultsLR = processPairedEndTasks(tasks);
+        std::vector<ExtendResult> extendResultsLR = processPairedEndTasks(tasks);
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
             [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::RL);});
 
-        std::vector<ExtendResultNew> extendResultsRL = processPairedEndTasks(tasks);
+        std::vector<ExtendResult> extendResultsRL = processPairedEndTasks(tasks);
 
-        std::vector<ExtendResultNew> extendResultsCombined = combinePairedEndDirectionResults(
+        std::vector<ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
             extendResultsLR,
             extendResultsRL
         );
@@ -746,15 +746,15 @@ namespace care{
     */
 
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::processSingleEndTasks(
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::processSingleEndTasks(
         std::vector<Task>& tasks
     ){
         return processPairedEndTasks(tasks);
     }
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::combineSingleEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResultNew>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResultNew>& resultsRL,
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
+        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
+        std::vector<ReadExtenderBase::ExtendResult>& resultsRL,
         const std::vector<ReadExtenderBase::Task>& tasks
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.readId1 < r.readId1;};
@@ -794,7 +794,7 @@ namespace care{
 
         assert(remainingLR == remainingRL);
 
-        std::vector<ReadExtenderBase::ExtendResultNew> combinedResults(remainingRL);
+        std::vector<ReadExtenderBase::ExtendResult> combinedResults(remainingRL);
 
         for(int i = 0; i < remainingRL; i++){
             auto& comb = combinedResults[i];
@@ -825,7 +825,7 @@ namespace care{
         return combinedResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResultNew> ReadExtenderBase::extendSingleEndReadBatch(
+    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
@@ -834,7 +834,7 @@ namespace care{
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
             [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::LR);});
 
-        std::vector<ExtendResultNew> extendResultsLR = processSingleEndTasks(tasks);
+        std::vector<ExtendResult> extendResultsLR = processSingleEndTasks(tasks);
 
         std::vector<Task> tasks2(inputs.size());
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
@@ -846,9 +846,9 @@ namespace care{
             tasks2[i].allUsedCandidateReadIdPairs = std::move(tasks[i].allUsedCandidateReadIdPairs);
         }
 
-        std::vector<ExtendResultNew> extendResultsRL = processSingleEndTasks(tasks2);
+        std::vector<ExtendResult> extendResultsRL = processSingleEndTasks(tasks2);
 
-        std::vector<ExtendResultNew> extendResultsCombined = combineSingleEndDirectionResults(
+        std::vector<ExtendResult> extendResultsCombined = combineSingleEndDirectionResults(
             extendResultsLR,
             extendResultsRL,
             tasks

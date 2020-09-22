@@ -67,7 +67,7 @@ public:
         std::mutex* verboseMutex;
     };
 
-    struct ExtendResultNew{
+    struct ExtendResult{
         bool mateHasBeenFound = false;
         bool success = false;
         bool aborted = false;
@@ -86,7 +86,7 @@ public:
         }
     };
 
-    struct ExtendResult{
+    struct ExtendResultOld{
         bool mateHasBeenFound = false;
         bool success = false;
         bool aborted = false;
@@ -134,7 +134,7 @@ public:
     /*
         Assumes read1 is on the forward strand, read2 is on the reverse strand
     */
-    ExtendResult extendPairedRead(
+    ExtendResultOld extendPairedRead(
         const ExtendInput& input
     ){
 
@@ -935,11 +935,11 @@ public:
 
     
 
-    std::vector<ExtendResultNew> extendPairedReadBatch(
+    std::vector<ExtendResult> extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
     );
 
-    std::vector<ExtendResultNew> extendSingleEndReadBatch(
+    std::vector<ExtendResult> extendSingleEndReadBatch(
         const std::vector<ExtendInput>& inputs
     );
 
@@ -1198,22 +1198,22 @@ protected:
     }
 #endif
 
-    std::vector<ExtendResultNew> processPairedEndTasks(
+    std::vector<ExtendResult> processPairedEndTasks(
         std::vector<Task>& tasks
     );
 
-    std::vector<ExtendResultNew> combinePairedEndDirectionResults(
-        std::vector<ExtendResultNew>& lr,
-        std::vector<ExtendResultNew>& rl
+    std::vector<ExtendResult> combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& lr,
+        std::vector<ExtendResult>& rl
     );
 
-    std::vector<ExtendResultNew> processSingleEndTasks(
+    std::vector<ExtendResult> processSingleEndTasks(
         std::vector<Task>& tasks
     );
 
-    std::vector<ExtendResultNew> combineSingleEndDirectionResults(
-        std::vector<ExtendResultNew>& lr,
-        std::vector<ExtendResultNew>& rl,
+    std::vector<ExtendResult> combineSingleEndDirectionResults(
+        std::vector<ExtendResult>& lr,
+        std::vector<ExtendResult>& rl,
         const std::vector<Task>& tasks
     );
 
