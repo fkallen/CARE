@@ -334,14 +334,14 @@ void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
     }
 }
 
-MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn){
+MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn) const{
     return inspectColumnsRegionSplit(firstColumn, nColumns);
 }
 
 
 
 
-MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl){
+MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const{
     assert(lastColumnExcl >= 0);
     assert(lastColumnExcl <= nColumns);
 

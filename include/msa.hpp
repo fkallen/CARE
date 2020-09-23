@@ -94,8 +94,8 @@ public:
 
     void printCountMatrix(int which, std::ostream& os) const;
 
-    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn);
-    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl);
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn) const;
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const;
 };
 
 struct MSAProperties{
