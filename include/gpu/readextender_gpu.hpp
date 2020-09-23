@@ -376,6 +376,8 @@ private:
         auto* anchorcpyptr = h_subjectSequencesData.get();
         auto* candcpyptr = h_candidateSequencesData.get();
 
+        int maxLength = 0;
+
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
             const int numCandidates = task.candidateReadIds.size();
@@ -395,6 +397,11 @@ private:
                 numCandidates,
                 h_candidateSequencesLength.get() + offset
             );
+
+            auto localmax = std::max_element(task.candidateSequenceLengths.begin(), task.candidateSequenceLengths.end());
+            if(localmax != task.candidateSequenceLengths.end()){
+                maxLength = std::max(maxLength, *localmax);
+            }
 
             anchorcpyptr = std::copy(
                 task.currentAnchor.begin(), 
@@ -418,7 +425,7 @@ private:
         const bool removeAmbiguousCandidates = false;
         const int maxNumAnchors = numIndices;
         const int maxNumCandidates = totalNumCandidates;
-        const int maximumSequenceLength = 100;
+        const int maximumSequenceLength = maxLength;
         const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
         const int min_overlap = goodAlignmentProperties.min_overlap;
         const float maxErrorRate = goodAlignmentProperties.maxErrorRate;
