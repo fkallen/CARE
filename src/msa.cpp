@@ -1331,7 +1331,7 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
         bool candidateShouldBeCorrected = false;
-
+        
         //check range condition and length condition
         if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
             && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
