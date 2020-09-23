@@ -83,12 +83,14 @@ namespace care{
 
             collectTimer.start();
 
+            /*
+                Remove candidate pairs which have already been used for extension
+            */
+
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = tasks[indexOfActiveTask];
 
-                /*
-                    Remove candidate pairs which have already been used for extension
-                */
+                
                 {
 
                     std::vector<read_number> tmp(task.candidateReadIds.size());
@@ -110,12 +112,14 @@ namespace care{
 
             loadCandidateSequenceData(tasks, indicesOfActiveTasks);
 
+            /*
+                Compute reverse complement of candidates
+            */
+
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = tasks[indexOfActiveTask];
 
-                /*
-                    Compute reverse complements
-                */
+                
 
                 const int numCandidates = task.candidateReadIds.size();
 
@@ -147,10 +151,10 @@ namespace care{
 
             alignmentTimer.stop();
 
+            alignmentFilterTimer.start();
+
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = tasks[indexOfActiveTask];
-
-                alignmentFilterTimer.start();
 
                 /*
                     Remove bad alignments and the corresponding alignments of their mate
@@ -161,26 +165,26 @@ namespace care{
                 std::vector<int> positionsOfCandidatesToKeep(size);
                 std::vector<int> tmpPositionsOfCandidatesToKeep(size);
 
-                int numRemainingCandidates = 0;
+                task.numRemainingCandidates = 0;
 
                 //select candidates with good alignment and positive shift
                 for(int c = 0; c < size; c++){
                     const BestAlignment_t alignmentFlag0 = task.alignmentFlags[c];
                     
                     if(alignmentFlag0 != BestAlignment_t::None && task.alignments[c].shift >= 0){
-                        positionsOfCandidatesToKeep[numRemainingCandidates] = c;
-                        numRemainingCandidates++;
+                        positionsOfCandidatesToKeep[task.numRemainingCandidates] = c;
+                        task.numRemainingCandidates++;
                     }else{
                         ; //if any of the mates aligns badly, remove both of them
                     }
                 }
 
                 positionsOfCandidatesToKeep.erase(
-                    positionsOfCandidatesToKeep.begin() + numRemainingCandidates, 
+                    positionsOfCandidatesToKeep.begin() + task.numRemainingCandidates, 
                     positionsOfCandidatesToKeep.end()
                 );
 
-                if(numRemainingCandidates == 0){
+                if(task.numRemainingCandidates == 0){
                     task.abort = true;
                     task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
 
@@ -240,18 +244,18 @@ namespace care{
                     int numRemainingCandidatesTmp = tmpPositionsOfCandidatesToKeep.size();
 
                     std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
-                    std::swap(numRemainingCandidatesTmp, numRemainingCandidates);
+                    std::swap(numRemainingCandidatesTmp, task.numRemainingCandidates);
                 }
 
 
                 //compact selected candidates inplace
 
-                std::vector<unsigned int> candidateSequenceData;
+                
 
                 {
-                    candidateSequenceData.resize(numRemainingCandidates * encodedSequencePitchInInts);
+                    task.candidateSequenceData.resize(task.numRemainingCandidates * encodedSequencePitchInInts);
 
-                    for(int c = 0; c < numRemainingCandidates; c++){
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
                         const int index = positionsOfCandidatesToKeep[c];
 
                         task.alignments[c] = task.alignments[index];
@@ -265,7 +269,7 @@ namespace care{
                             std::copy_n(
                                 task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
-                                candidateSequenceData.data() + c * encodedSequencePitchInInts
+                                task.candidateSequenceData.data() + c * encodedSequencePitchInInts
                             );
                         }else{
                             //BestAlignment_t::ReverseComplement
@@ -273,7 +277,7 @@ namespace care{
                             std::copy_n(
                                 task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
-                                candidateSequenceData.data() + c * encodedSequencePitchInInts
+                                task.candidateSequenceData.data() + c * encodedSequencePitchInInts
                             );
                         }
 
@@ -294,28 +298,28 @@ namespace care{
 
                     //erase past-end elements
                     task.alignments.erase(
-                        task.alignments.begin() + numRemainingCandidates, 
+                        task.alignments.begin() + task.numRemainingCandidates, 
                         task.alignments.end()
                     );
                     task.alignmentFlags.erase(
-                        task.alignmentFlags.begin() + numRemainingCandidates, 
+                        task.alignmentFlags.begin() + task.numRemainingCandidates, 
                         task.alignmentFlags.end()
                     );
                     task.candidateReadIds.erase(
-                        task.candidateReadIds.begin() + numRemainingCandidates, 
+                        task.candidateReadIds.begin() + task.numRemainingCandidates, 
                         task.candidateReadIds.end()
                     );
                     task.candidateSequenceLengths.erase(
-                        task.candidateSequenceLengths.begin() + numRemainingCandidates, 
+                        task.candidateSequenceLengths.begin() + task.numRemainingCandidates, 
                         task.candidateSequenceLengths.end()
                     );
                     // //not sure if these 2 arrays will be required further on
                     // candidateSequencesFwdData.erase(
-                    //     candidateSequencesFwdData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    //     candidateSequencesFwdData.begin() + task.numRemainingCandidates * encodedSequencePitchInInts, 
                     //     candidateSequencesFwdData.end()
                     // );
                     // candidateSequencesRevcData.erase(
-                    //     candidateSequencesRevcData.begin() + numRemainingCandidates * encodedSequencePitchInInts, 
+                    //     candidateSequencesRevcData.begin() + task.numRemainingCandidates * encodedSequencePitchInInts, 
                     //     candidateSequencesRevcData.end()
                     // );
                     
@@ -357,16 +361,26 @@ namespace care{
                         task.candidateReadIds.erase(task.candidateReadIds.begin() + mateIndex);
                         task.candidateSequenceLengths.erase(task.candidateSequenceLengths.begin() + mateIndex);
 
-                        candidateSequenceData.erase(
-                            candidateSequenceData.begin() + mateIndex * encodedSequencePitchInInts,
-                            candidateSequenceData.begin() + (mateIndex + 1) * encodedSequencePitchInInts
+                        task.candidateSequenceData.erase(
+                            task.candidateSequenceData.begin() + mateIndex * encodedSequencePitchInInts,
+                            task.candidateSequenceData.begin() + (mateIndex + 1) * encodedSequencePitchInInts
                         );
                     }
                 }
 
-                alignmentFilterTimer.stop();
+            }
 
-                msaTimer.start();
+            alignmentFilterTimer.stop();
+
+            std::vector<Task> newTasksFromSplit;
+
+
+            msaTimer.start();
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
+
+                
 
                 
 
@@ -383,10 +397,10 @@ namespace care{
                         return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
                     };
 
-                    std::vector<int> candidateShifts(numRemainingCandidates);
-                    std::vector<float> candidateOverlapWeights(numRemainingCandidates);
+                    std::vector<int> candidateShifts(task.numRemainingCandidates);
+                    std::vector<float> candidateOverlapWeights(task.numRemainingCandidates);
 
-                    for(int c = 0; c < numRemainingCandidates; c++){
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
                         candidateShifts[c] = task.alignments[c].shift;
 
                         candidateOverlapWeights[c] = calculateOverlapWeight(
@@ -396,12 +410,12 @@ namespace care{
                         );
                     }
 
-                    std::vector<char> candidateStrings(decodedSequencePitchInBytes * numRemainingCandidates, '\0');
+                    std::vector<char> candidateStrings(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
 
-                    for(int c = 0; c < numRemainingCandidates; c++){
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
                         decode2BitSequence(
                             candidateStrings.data() + c * decodedSequencePitchInBytes,
-                            candidateSequenceData.data() + c * encodedSequencePitchInInts,
+                            task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
                             task.candidateSequenceLengths[c]
                         );
                     }
@@ -409,7 +423,7 @@ namespace care{
                     MultipleSequenceAlignment::InputData msaInput;
                     msaInput.useQualityScores = false;
                     msaInput.subjectLength = task.currentAnchorLength;
-                    msaInput.nCandidates = numRemainingCandidates;
+                    msaInput.nCandidates = task.numRemainingCandidates;
                     msaInput.candidatesPitch = decodedSequencePitchInBytes;
                     msaInput.candidateQualitiesPitch = 0;
                     msaInput.subject = decodedAnchor.c_str();
@@ -424,7 +438,73 @@ namespace care{
 
                     msa.build(msaInput);
 
-                    //msa.inspectColumnsRegionSplit(task.currentAnchorLength);
+                    auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
+
+                    if(possibleSplits.splits.size() > 1){
+                        //auto& task = tasks[indexOfActiveTask];
+                        
+                        std::sort(
+                            possibleSplits.splits.begin(), 
+                            possibleSplits.splits.end(),
+                            [](const auto& vec1, const auto& vec2){
+                                //sort by size, descending
+                                return vec2.size() < vec1.size();
+                            }
+                        );
+
+
+                        // std::cerr << "msa before split:\n";
+                        // msa.print(std::cerr);
+                        // std::cerr << "\n";
+
+                        // int numsplit = 0;
+
+                        // for(const auto& split : possibleSplits.splits){
+                        //     const int numCandidates = split.size();
+
+                        //     std::vector<char> newCandidateStrings(decodedSequencePitchInBytes * numCandidates);
+                        //     std::vector<int> newCandidateLengths(numCandidates);
+                        //     std::vector<int> newCandidateShifts(numCandidates);
+                        //     std::vector<float> newCandidateOverlapWeights(numCandidates);
+
+                        //     for(int i = 0; i < numCandidates; i++){
+                        //         const int c = split[i];
+                        //         std::copy_n(
+                        //             candidateStrings.begin() + c * decodedSequencePitchInBytes,
+                        //             decodedSequencePitchInBytes,
+                        //             newCandidateStrings.begin() + i * decodedSequencePitchInBytes
+                        //         );
+
+                        //         newCandidateLengths[i] = task.candidateSequenceLengths[c];
+                        //         newCandidateShifts[i] = candidateShifts[c];
+                        //         newCandidateOverlapWeights[i] = candidateOverlapWeights[c];
+                        //     }
+
+                        //     MultipleSequenceAlignment::InputData newMsaInput;
+                        //     newMsaInput.useQualityScores = false;
+                        //     newMsaInput.subjectLength = task.currentAnchorLength;
+                        //     newMsaInput.nCandidates = numCandidates;
+                        //     newMsaInput.candidatesPitch = decodedSequencePitchInBytes;
+                        //     newMsaInput.candidateQualitiesPitch = 0;
+                        //     newMsaInput.subject = decodedAnchor.c_str();
+                        //     newMsaInput.candidates = newCandidateStrings.data();
+                        //     newMsaInput.subjectQualities = nullptr;
+                        //     newMsaInput.candidateQualities = nullptr;
+                        //     newMsaInput.candidateLengths = newCandidateLengths.data();
+                        //     newMsaInput.candidateShifts = newCandidateShifts.data();
+                        //     newMsaInput.candidateDefaultWeightFactors = newCandidateOverlapWeights.data();
+
+                        //     msa.build(newMsaInput);
+
+                        //     std::cerr << "msa after split " << numsplit << ":\n";
+                        //     msa.print(std::cerr);
+                        //     std::cerr << "\n";
+
+                        //     numsplit++;
+                        // }
+
+                        
+                    }
 
                     // std::cerr << "A matrix\n";
                     // msa.printCountMatrix(0, std::cerr);
@@ -516,11 +596,18 @@ namespace care{
 
                 }
 
-                msaTimer.stop();
+            }
 
-                /*
-                    update book-keeping of used candidates
-                */                        
+            msaTimer.stop();
+
+            /*
+                update book-keeping of used candidates
+            */  
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
+
+                                      
                 {
                     std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + task.candidateReadIds.size());
                     auto tmp_end = std::merge(
@@ -736,6 +823,56 @@ namespace care{
             extendResultsLR,
             extendResultsRL
         );
+
+        //replace original positions in extend read by original sequences
+        for(std::size_t i = 0; i < inputs.size(); i++){
+            auto& comb = extendResultsCombined[i];
+            const auto& input = inputs[i];
+
+            if(comb.direction == ExtensionDirection::LR){
+                decode2BitSequence(
+                    comb.extendedRead.data(),
+                    input.encodedRead1,
+                    input.readLength1
+                );
+
+                if(comb.mateHasBeenFound){
+                    std::vector<char> buf(input.readLength2);
+                    decode2BitSequence(
+                        buf.data(),
+                        input.encodedRead2,
+                        input.readLength2
+                    );
+                    reverseComplementStringInplace(buf.data(), buf.size());
+                    std::copy(
+                        buf.begin(),
+                        buf.end(),
+                        comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength2
+                    );
+                }
+            }else{
+                decode2BitSequence(
+                    comb.extendedRead.data(),
+                    input.encodedRead2,
+                    input.readLength2
+                );
+
+                if(comb.mateHasBeenFound){
+                    std::vector<char> buf(input.readLength1);
+                    decode2BitSequence(
+                        buf.data(),
+                        input.encodedRead1,
+                        input.readLength1
+                    );
+                    reverseComplementStringInplace(buf.data(), buf.size());
+                    std::copy(
+                        buf.begin(),
+                        buf.end(),
+                        comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength1
+                    );
+                }
+            }
+        }
 
         return extendResultsCombined;
     }

@@ -39,6 +39,10 @@ public:
         const float* candidateDefaultWeightFactors;
     };
 
+    struct PossibleMsaSplits{
+        std::vector<std::vector<int>> splits;
+    };
+
     std::vector<char> consensus;
     std::vector<float> support;
     std::vector<int> coverage;
@@ -90,8 +94,8 @@ public:
 
     void printCountMatrix(int which, std::ostream& os) const;
 
-    void inspectColumnsRegionSplit(int firstColumn);
-    void inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl);
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn);
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl);
 };
 
 struct MSAProperties{

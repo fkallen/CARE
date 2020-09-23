@@ -94,8 +94,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
@@ -412,8 +412,8 @@ extend_gpu_singleend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 

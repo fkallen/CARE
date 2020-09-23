@@ -121,7 +121,7 @@ void constructOutputFileFromExtensionResults(
     bool isSorted
 ){
 
-#if 0                        
+#if 1                        
     writeExtensionResultsToFile(
         tempdir, 
         partialResults, 

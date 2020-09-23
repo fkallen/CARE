@@ -963,6 +963,7 @@ protected:
         int accumExtensionLengths = 0;
         int iteration = 0;
         int mateLength = 0;
+        int numRemainingCandidates = 0;
         ExtensionDirection direction{};
         read_number myReadId = 0;
         read_number mateReadId = 0;
@@ -973,6 +974,7 @@ protected:
         std::vector<int> candidateSequenceLengths;
         std::vector<unsigned int> candidateSequencesFwdData;
         std::vector<unsigned int> candidateSequencesRevcData;
+        std::vector<unsigned int> candidateSequenceData;
         std::vector<care::cpu::SHDResult> alignments;
         std::vector<BestAlignment_t> alignmentFlags;
         std::vector<std::string> totalDecodedAnchors;
@@ -981,6 +983,7 @@ protected:
         std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
         std::vector<std::vector<BestAlignment_t>> usedAlignmentFlagsPerIteration;
         std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
+        
 
         bool isActive(int insertSize, int insertSizeStddev) const noexcept{
             return (iteration < insertSize 
@@ -1004,6 +1007,7 @@ protected:
             myReadId = 0;
             mateReadId = 0;
             currentAnchorReadId = 0;
+            numRemainingCandidates = 0;
             
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
@@ -1011,6 +1015,7 @@ protected:
             clear(candidateSequenceLengths);
             clear(candidateSequencesFwdData);
             clear(candidateSequencesRevcData);
+            clear(candidateSequenceData);
             clear(alignments);
             clear(alignmentFlags);
             clear(totalDecodedAnchors);
