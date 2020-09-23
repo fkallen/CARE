@@ -964,6 +964,7 @@ protected:
         int iteration = 0;
         int mateLength = 0;
         int numRemainingCandidates = 0;
+        int splitDepth = 0;
         ExtensionDirection direction{};
         read_number myReadId = 0;
         read_number mateReadId = 0;
@@ -1008,6 +1009,7 @@ protected:
             mateReadId = 0;
             currentAnchorReadId = 0;
             numRemainingCandidates = 0;
+            splitDepth = 0;
             
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
