@@ -838,6 +838,10 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
         const int candidateLength = candidateLengths[candidate_index];
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
+#if 1
+        const bool candidateShouldBeCorrected = subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct;
+#else
         bool candidateShouldBeCorrected = false;
 
         //check range condition and length condition
@@ -875,7 +879,7 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
 
             candidateShouldBeCorrected = true;
         }
-
+#endif
         if(candidateShouldBeCorrected){
             std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
             result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
