@@ -401,8 +401,6 @@ namespace gpu{
             std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
             std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
 
-            std::vector<int> h_begin_offsets;
-
             const int maxNumThreads = parallelFor.getNumThreads();
 
             allRanges.resize(getNumberOfMaps() * numSequences);
@@ -410,7 +408,6 @@ namespace gpu{
             numAnchorsPerChunk.resize(maxNumThreads, 0);
             idsPerChunkPrefixSum.resize(maxNumThreads, 0);
             numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
-            h_begin_offsets.resize(numSequences+1);
 
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
 
@@ -477,6 +474,8 @@ namespace gpu{
             }
 
             const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
+
+            handle.h_begin_offsets[0] = 0;
 
             //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
             //then copy to the device
