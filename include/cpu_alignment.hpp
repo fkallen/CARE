@@ -42,6 +42,33 @@ namespace cpu{
         return hammingDistance(first1, last1, first2, last2, isEqual);
     }
 
+    template<class Iter1, class Iter2, class Equal>
+    int hammingDistanceOverlap(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2, Equal isEqual){
+        int result = 0;
+
+        while(first1 != last1 && first2 != last2){
+            result += isEqual(*first1, *first2) ? 0 : 1;
+
+            ++first1;
+            ++first2;
+        }
+
+        //positions which do not overlap are excluded
+
+        return result;
+    }
+
+    template<class Iter1, class Iter2>
+    int hammingDistanceOverlap(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2){
+        auto isEqual = [](const auto& l, const auto& r){
+            return l == r;
+        };
+
+        return hammingDistanceOverlap(first1, last1, first2, last2, isEqual);
+    }
+
+
+
 
 
 namespace shd{
