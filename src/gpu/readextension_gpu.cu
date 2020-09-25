@@ -95,8 +95,8 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
-
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+ 
     BackgroundThread outputThread(true);
 
     const std::uint64_t totalNumReadPairs = sequenceFileProperties.nReads / 2;

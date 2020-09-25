@@ -1,4 +1,5 @@
 #include <readextender.hpp>
+#include <cpu_alignment.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -18,6 +19,11 @@ namespace care{
         std::vector<int> indicesOfActiveTasks(tasks.size());
         std::vector<int> indicesOfActiveTasksTmp(tasks.size());
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
+
+        std::map<read_number, int> splitTracker; //counts number of tasks per read id, which can change by splitting a task
+        for(const auto& t : tasks){
+            splitTracker[t.myReadId] = 1;
+        }
 
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
@@ -248,6 +254,8 @@ namespace care{
                     std::swap(numRemainingCandidatesTmp, task.numRemainingCandidates);
                 }
 
+                //std::cerr << ", remaining candidates " << task.numRemainingCandidates << "\n";
+
 
                 //compact selected candidates inplace
 
@@ -379,7 +387,7 @@ namespace care{
             std::vector<int> newTaskIndices;
 
 
-            auto constructMsa = [&](const auto& task){
+            auto constructMsa = [&](auto& task){
                 const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
                 auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
@@ -388,24 +396,24 @@ namespace care{
                     return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
                 };
 
-                std::vector<int> candidateShifts(task.numRemainingCandidates);
-                std::vector<float> candidateOverlapWeights(task.numRemainingCandidates);
+                task.candidateShifts.resize(task.numRemainingCandidates);
+                task.candidateOverlapWeights.resize(task.numRemainingCandidates);
 
                 for(int c = 0; c < task.numRemainingCandidates; c++){
-                    candidateShifts[c] = task.alignments[c].shift;
+                    task.candidateShifts[c] = task.alignments[c].shift;
 
-                    candidateOverlapWeights[c] = calculateOverlapWeight(
+                    task.candidateOverlapWeights[c] = calculateOverlapWeight(
                         task.currentAnchorLength, 
                         task.alignments[c].nOps,
                         task.alignments[c].overlap
                     );
                 }
 
-                std::vector<char> candidateStrings(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
+                task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
 
                 for(int c = 0; c < task.numRemainingCandidates; c++){
                     decode2BitSequence(
-                        candidateStrings.data() + c * decodedSequencePitchInBytes,
+                        task.candidateStrings.data() + c * decodedSequencePitchInBytes,
                         task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
                         task.candidateSequenceLengths[c]
                     );
@@ -418,12 +426,12 @@ namespace care{
                 msaInput.candidatesPitch = decodedSequencePitchInBytes;
                 msaInput.candidateQualitiesPitch = 0;
                 msaInput.subject = decodedAnchor.c_str();
-                msaInput.candidates = candidateStrings.data();
+                msaInput.candidates = task.candidateStrings.data();
                 msaInput.subjectQualities = nullptr;
                 msaInput.candidateQualities = nullptr;
                 msaInput.candidateLengths = task.candidateSequenceLengths.data();
-                msaInput.candidateShifts = candidateShifts.data();
-                msaInput.candidateDefaultWeightFactors = candidateOverlapWeights.data();
+                msaInput.candidateShifts = task.candidateShifts.data();
+                msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();
 
                 MultipleSequenceAlignment msa;
 
@@ -437,16 +445,16 @@ namespace care{
                     //mate not found. prepare next while-loop iteration
                     int consensusLength = msa.consensus.size();
 
-                    //scanning from right to left, find first column with coverage >= 3
+                    //scanning from right to left, find first column with coverage >= 2
                     // int lastGoodColumn = 0;
                     // for(int col = consensusLength - 1; col >= 0; col--){
-                    //     if(msa.coverage[col] >= 3){
+                    //     if(msa.coverage[col] >= 1){
                     //         lastGoodColumn = col;
                     //         break;
                     //     }
                     // }
 
-                    // const int maxextensionPerStepByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
+                    //const int maxextensionPerStepByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
 
                     //the first currentAnchorLength columns are occupied by anchor. try to extend read 
                     //by at most maxextensionPerStep bp.
@@ -455,6 +463,7 @@ namespace care{
                     int extendBy = std::min(
                         consensusLength - task.currentAnchorLength, 
                         maxextensionPerStep
+                        //maxextensionPerStepByGoodColumn
                         // std::min(
                         //     maxextensionPerStepByGoodColumn, 
                         //     maxextensionPerStep
@@ -462,6 +471,10 @@ namespace care{
                     );
                     //cannot extend over fragment 
                     extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
+
+                    // std::cerr << "splitdepth = " << task.splitDepth << "\n";
+                    // msa.print(std::cerr);
+                    // std::cerr << "extendBy = " << extendBy << "\n\n";
 
                     if(extendBy == 0){
                         task.abort = true;
@@ -505,23 +518,25 @@ namespace care{
 
                 for(int i = 0; i < numCandidateIndices; i++){
                     const int c = selectedCandidateIndices[i];
-                    if(!(0 <= c && c < task.candidateReadIds.size())){
-                        std::cerr << "c = " << c << ", candidateReadIds.size() = " << task.candidateReadIds.size() << "\n";
-                    }
+                    // if(!(0 <= c && c < task.candidateReadIds.size())){
+                    //     std::cerr << "c = " << c << ", candidateReadIds.size() = " << task.candidateReadIds.size() << "\n";
+                    // }
 
-                    assert(0 <= c && c < task.candidateReadIds.size());
-                    assert(0 <= c && c < task.candidateSequenceLengths.size());
-                    assert(0 <= c && c < task.alignments.size());
-                    assert(0 <= c && c < task.alignmentFlags.size());
+                    // assert(0 <= c && c < task.candidateReadIds.size());
+                    // assert(0 <= c && c < task.candidateSequenceLengths.size());
+                    // assert(0 <= c && c < task.alignments.size());
+                    // assert(0 <= c && c < task.alignmentFlags.size());
 
-                    assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesFwdData.size());
-                    assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesRevcData.size());
-                    assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequenceData.size());
+                    // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesFwdData.size());
+                    // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesRevcData.size());
+                    // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequenceData.size());
 
                     task.candidateReadIds[i] = task.candidateReadIds[c];
                     task.candidateSequenceLengths[i] = task.candidateSequenceLengths[c];
                     task.alignments[i] = task.alignments[c];
                     task.alignmentFlags[i] = task.alignmentFlags[c];
+                    task.candidateShifts[i] = task.candidateShifts[c];
+                    task.candidateOverlapWeights[i] = task.candidateOverlapWeights[c];
 
                     std::copy_n(
                         task.candidateSequencesFwdData.begin() + c * encodedSequencePitchInInts,
@@ -539,6 +554,12 @@ namespace care{
                         task.candidateSequenceData.begin() + c * encodedSequencePitchInInts,
                         encodedSequencePitchInInts,
                         task.candidateSequenceData.begin() + i * encodedSequencePitchInInts
+                    );
+
+                    std::copy_n(
+                        task.candidateStrings.begin() + c * decodedSequencePitchInBytes,
+                        decodedSequencePitchInBytes,
+                        task.candidateStrings.begin() + i * decodedSequencePitchInBytes
                     );
                 }
 
@@ -588,9 +609,14 @@ namespace care{
 
                 const MultipleSequenceAlignment msa = constructMsa(task);
 
+                // std::cerr << "original msa\n";
+                // msa.print(std::cerr);
+                // std::cerr << "\n";
+
                 
-#if 1
-                if(task.splitDepth < 1){
+#if 0
+                //if(task.splitDepth == 0){
+                if(splitTracker[task.myReadId] <= 8){
                     auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
 
                     if(possibleSplits.splits.size() > 1){
@@ -599,86 +625,67 @@ namespace care{
                         std::sort(
                             possibleSplits.splits.begin(), 
                             possibleSplits.splits.end(),
-                            [](const auto& vec1, const auto& vec2){
+                            [](const auto& split1, const auto& split2){
                                 //sort by size, descending
-                                return vec2.size() < vec1.size();
+                                return split2.listOfCandidates.size() < split1.listOfCandidates.size();
                             }
                         );
+
+                        // std::cerr << "split[0] = ";
+                        // for(auto x : possibleSplits.splits[0].listOfCandidates) std::cerr << x << " ";
+                        // std::cerr << "\nsplit[1] = ";
+                        // for(auto x : possibleSplits.splits[1].listOfCandidates) std::cerr << x << " ";
+                        // std::cerr << "\n";
+
+                        // auto printColumnInfo = [](const auto& x){
+                        //     std::cerr << "(" << x.column << ", " << x.letter << ", " << x.ratio << ") ";
+                        // };
+
+                        // std::cerr << "columns[0] = ";
+                        // for(auto x : possibleSplits.splits[0].columnInfo) printColumnInfo(x);
+                        // std::cerr << "\ncolumns[1] = ";
+                        // for(auto x : possibleSplits.splits[1].columnInfo) printColumnInfo(x);
+                        // std::cerr << "\n";
+
 
                         //create a copy of task, and only keep candidates of first split
                         Task taskCopy = task;
                         taskCopy.splitDepth++;
 
-                        keepSelectedCandidates(taskCopy, possibleSplits.splits[0]);
+                        // std::cerr << "split\n";
+                        // msa.print(std::cerr); 
+                        // std::cerr << "\n into \n";
+
+                        keepSelectedCandidates(taskCopy, possibleSplits.splits[0].listOfCandidates);
                         const MultipleSequenceAlignment msaOfCopy = constructMsa(taskCopy);
+
+                        // msaOfCopy.print(std::cerr); 
+                        // std::cerr << "\n and \n";
+
                         extendWithMsa(taskCopy, msaOfCopy);
 
                         //only keep canddiates of second split
-                        keepSelectedCandidates(task, possibleSplits.splits[1]);
+                        keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates);
                         const MultipleSequenceAlignment newMsa = constructMsa(task);
+
+                        // newMsa.print(std::cerr); 
+                        // std::cerr << "\n";
+
                         extendWithMsa(task, newMsa);
 
                         //if extension was not possible in task, replace task by task copy
                         if(task.abort && task.abortReason == AbortReason::MsaNotExtended){
                             //replace task by taskCopy
                             task = std::move(taskCopy);
-                        }else{
-                            //if extension was possible possible in both task and taskCopy, taskCopy will be added to tasks and list of active tasks
+                        }else if(!taskCopy.abort){
+                            //if extension was possible in both task and taskCopy, taskCopy will be added to tasks and list of active tasks
                             newTaskIndices.emplace_back(tasks.size() + newTasksFromSplit.size());
                             newTasksFromSplit.emplace_back(std::move(taskCopy));
-                        }
 
-                        // std::cerr << "msa before split:\n";
-                        // msa.print(std::cerr);
-                        // std::cerr << "\n";
+                            splitTracker[task.myReadId]++;
 
-                        // int numsplit = 0;
 
-                        // for(const auto& split : possibleSplits.splits){
-                        //     const int numCandidates = split.size();
-
-                        //     std::vector<char> newCandidateStrings(decodedSequencePitchInBytes * numCandidates);
-                        //     std::vector<int> newCandidateLengths(numCandidates);
-                        //     std::vector<int> newCandidateShifts(numCandidates);
-                        //     std::vector<float> newCandidateOverlapWeights(numCandidates);
-
-                        //     for(int i = 0; i < numCandidates; i++){
-                        //         const int c = split[i];
-                        //         std::copy_n(
-                        //             candidateStrings.begin() + c * decodedSequencePitchInBytes,
-                        //             decodedSequencePitchInBytes,
-                        //             newCandidateStrings.begin() + i * decodedSequencePitchInBytes
-                        //         );
-
-                        //         newCandidateLengths[i] = task.candidateSequenceLengths[c];
-                        //         newCandidateShifts[i] = candidateShifts[c];
-                        //         newCandidateOverlapWeights[i] = candidateOverlapWeights[c];
-                        //     }
-
-                        //     MultipleSequenceAlignment::InputData newMsaInput;
-                        //     newMsaInput.useQualityScores = false;
-                        //     newMsaInput.subjectLength = task.currentAnchorLength;
-                        //     newMsaInput.nCandidates = numCandidates;
-                        //     newMsaInput.candidatesPitch = decodedSequencePitchInBytes;
-                        //     newMsaInput.candidateQualitiesPitch = 0;
-                        //     newMsaInput.subject = decodedAnchor.c_str();
-                        //     newMsaInput.candidates = newCandidateStrings.data();
-                        //     newMsaInput.subjectQualities = nullptr;
-                        //     newMsaInput.candidateQualities = nullptr;
-                        //     newMsaInput.candidateLengths = newCandidateLengths.data();
-                        //     newMsaInput.candidateShifts = newCandidateShifts.data();
-                        //     newMsaInput.candidateDefaultWeightFactors = newCandidateOverlapWeights.data();
-
-                        //     msa.build(newMsaInput);
-
-                        //     std::cerr << "msa after split " << numsplit << ":\n";
-                        //     msa.print(std::cerr);
-                        //     std::cerr << "\n";
-
-                        //     numsplit++;
-                        // }
-
-                        
+                        }                        
                     }else{
                         extendWithMsa(task, msa);
                     }
@@ -878,8 +885,71 @@ namespace care{
             if(std::distance(begin, partitionPoint) > 0){
                 return *std::max_element(begin, partitionPoint, lengthcomp);
             }else{
-                //from results which did not find mate, choose longest
-                 return *std::max_element(partitionPoint, end, lengthcomp);
+#if 0                
+                //TODO optimization: store pairs of indices to results
+                std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+
+                //try to find a pair of extensions with opposite directions which could be overlapped to produce an extension which reached the mate
+                for(auto x = partitionPoint; x != end; ++x){
+                    for(auto y = std::next(x); y != end; ++y){
+                        const int xl = x->extendedRead.length();
+                        const int yl = y->extendedRead.length();
+
+                        if((x->direction == ExtensionDirection::LR && y->direction == ExtensionDirection::RL)
+                                || (x->direction == ExtensionDirection::RL && y->direction == ExtensionDirection::LR)){
+                            if(xl + yl >= insertSize - insertSizeStddev){
+
+                                //put direction LR first
+                                if(x->direction == ExtensionDirection::LR){
+                                    pairsToCheck.emplace_back(*x, *y);
+                                }else{
+                                    pairsToCheck.emplace_back(*y, *x);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for(const auto& pair : pairsToCheck){
+                    const auto& lr = pair.first;
+                    const auto& rl = pair.second;
+                    assert(lr.direction == ExtensionDirection::LR);
+                    assert(rl.direction == ExtensionDirection::RL);
+
+                    std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
+                    reverseComplementStringInplace(revcRLSeq.data(), revcRLSeq.size());
+
+                    std::cerr << to_string(lr.abortReason) << " " << to_string(rl.abortReason) << " - " << lr.readId1 << "\n";
+                    std::cerr << lr.extendedRead << "\n";
+                    std::cerr << revcRLSeq << "\n\n";
+
+                    //find mismatch-free overlap such that the resulting string ends in range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+                    const int maxNumberOfPossibleShifts = 2*insertSizeStddev + 1;
+                    const int maxLength = lr.extendedRead.length() + rl.extendedRead.length();
+                    const int numPossibleShifts = std::min(maxLength - (insertSize - insertSizeStddev), maxNumberOfPossibleShifts);
+
+                    int bestShift = -1;
+                    for(int shift = 0; shift < numPossibleShifts; shift++){
+                        const int firstPosInLR = (insertSize - insertSizeStddev) - rl.extendedRead.length();
+                        const int ham = cpu::hammingDistanceOverlap(
+                            lr.extendedRead.begin() + firstPosInLR, lr.extendedRead.end(), 
+                            revcRLSeq.begin(), revcRLSeq.end()
+                        );
+                        if(ham == 0){
+                            bestShift = shift;
+                            break;
+                        }
+                    }
+
+                    
+                }
+#endif
+                if(false){
+                    
+                }else{
+                    //from results which did not find mate, choose longest
+                    return *std::max_element(partitionPoint, end, lengthcomp);
+                }
             }
         };
 
@@ -904,7 +974,7 @@ namespace care{
         return combinedResults;
     }
 
-    int batchId = 0;
+    //int batchId = 0;
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
@@ -987,7 +1057,7 @@ namespace care{
 
         //std::cerr << "done " << batchId << "\n";
 
-        batchId++;
+        //batchId++;
 
         return extendResultsCombined;
     }

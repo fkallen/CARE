@@ -39,8 +39,23 @@ public:
         const float* candidateDefaultWeightFactors;
     };
 
+    struct PossibleSplitColumn{
+        char letter = 'F';
+        int column = -1;
+        float ratio = 0.0f;
+    };
+
+    struct MsaSplit{
+        MsaSplit() = default;
+        MsaSplit(std::vector<PossibleSplitColumn>&& c, std::vector<int>&& l)
+            : columnInfo(std::move(c)), listOfCandidates(std::move(l)){}
+            
+        std::vector<PossibleSplitColumn> columnInfo;
+        std::vector<int> listOfCandidates;
+    };
+
     struct PossibleMsaSplits{
-        std::vector<std::vector<int>> splits;
+        std::vector<MsaSplit> splits;
     };
 
     std::vector<char> consensus;

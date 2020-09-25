@@ -159,13 +159,35 @@ private:
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
 
-            h_anchorSequencesLength[t] = task.currentAnchorLength;
+            if(task.iteration >= 0){
 
-            std::copy(
-                task.currentAnchor.begin(),
-                task.currentAnchor.end(),
-                h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
-            );
+                h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+                std::copy(
+                    task.currentAnchor.begin(),
+                    task.currentAnchor.end(),
+                    h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
+                );
+            }else{
+                //only hash kmers which include extended positions
+
+                const int extendedPositionsPreviousIteration 
+                    = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
+
+                const int lengthToHash = std::min(task.currentAnchorLength, gpuMinhasher->getKmerSize() + extendedPositionsPreviousIteration - 1);
+                h_anchorSequencesLength[t] = lengthToHash;
+
+                //std::cerr << "lengthToHash = " << lengthToHash << "\n";
+
+                std::vector<char> buf(task.currentAnchorLength);
+                decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+                encodeSequence2Bit(
+                    h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
+                    buf.data() + task.currentAnchorLength - lengthToHash, 
+                    lengthToHash
+                );
+
+            }
         }
 
         cudaMemcpyAsync(
@@ -233,6 +255,8 @@ private:
                 h_candidateReadIds.get() + offsetBegin,
                 h_candidateReadIds.get() + offsetEnd
             );
+
+            //std::cerr << "task " << task.myReadId << ", iteration " << task.iteration << ", candidates " << task.candidateReadIds.size();
         }
 
         nvtx::pop_range();

@@ -345,12 +345,6 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     assert(lastColumnExcl >= 0);
     assert(lastColumnExcl <= nColumns);
 
-    struct PossibleSplitColumn{
-        char letter = 'F';
-        int column = -1;
-        float ratio = 0.0f;
-    };
-
     std::vector<PossibleSplitColumn> possibleColumns;
 
     for(int col = firstColumn; col < lastColumnExcl; col++){
@@ -359,7 +353,8 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
 
         auto checkNuc = [&](const auto& counts, const char nuc){
             const float ratio = float(counts[col]) / float(coverage[col]);
-            if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+            //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+            if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
                 array[numPossibleNucs] = {nuc, col, ratio};
                 numPossibleNucs++;
             }
@@ -378,12 +373,13 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
 
     assert(possibleColumns.size() % 2 == 0);
 
-    if(possibleColumns.size() > 2 && possibleColumns.size() <= 32){
+    if(possibleColumns.size() >= 2 && possibleColumns.size() <= 32){
 
         PossibleMsaSplits result;
 
         //calculate proper results
         {
+            //std::map<unsigned int, std::pair<std::vector<PossibleSplitColumn>, std::vector<int>>> map;
             std::map<unsigned int, std::vector<int>> map;
 
             for(int l = 0; l < nCandidates; l++){
@@ -474,7 +470,22 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
             }
 
             for(auto& pair : finalMap){
-                result.splits.emplace_back(std::move(pair.second));
+
+                std::vector<int> listOfCandidates = std::move(pair.second);
+                std::vector<PossibleSplitColumn> columnInfo;
+
+                const unsigned int flag = pair.first;
+                const int num = possibleColumns.size() / 2;
+                for(int i = 0; i < num; i++){
+                    const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                    const bool match = (cur & 0b10) == 0b10;
+                    if(match){
+                        const int which = cur & 1;
+                        columnInfo.emplace_back(possibleColumns[2*i + which]);
+                    }
+                }
+
+                result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));                
             }
         }
 
@@ -629,11 +640,15 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
         return result;
     }else{
         // single split with all candidates
-        std::vector<int> seq(nCandidates);
-        std::iota(seq.begin(), seq.end(), 0);
+        std::vector<int> listOfCandidates(nCandidates);
+        std::iota(listOfCandidates.begin(), listOfCandidates.end(), 0);
 
         PossibleMsaSplits result;
-        result.splits.emplace_back(std::move(seq));
+
+        std::vector<PossibleSplitColumn> columnInfo;
+
+
+        result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));
         
         return result;
     }

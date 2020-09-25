@@ -955,6 +955,7 @@ public:
 protected:
 
     struct Task{
+        bool pairedEnd = false;
         bool abort = false;
         bool mateHasBeenFound = false;
         AbortReason abortReason = AbortReason::None;
@@ -969,6 +970,7 @@ protected:
         read_number myReadId = 0;
         read_number mateReadId = 0;
         read_number currentAnchorReadId = 0;
+        std::string decodedMate;
         std::vector<read_number> candidateReadIds;
         std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
@@ -984,6 +986,9 @@ protected:
         std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
         std::vector<std::vector<BestAlignment_t>> usedAlignmentFlagsPerIteration;
         std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
+        std::vector<char> candidateStrings;
+        std::vector<int> candidateShifts;
+        std::vector<float> candidateOverlapWeights;
         
 
         bool isActive(int insertSize, int insertSizeStddev) const noexcept{
@@ -996,6 +1001,7 @@ protected:
         void reset(){
             auto clear = [](auto& vec){vec.clear();};
 
+            pairedEnd = false;
             abort = false;
             mateHasBeenFound = false;
             abortReason = AbortReason::None;
@@ -1011,6 +1017,7 @@ protected:
             numRemainingCandidates = 0;
             splitDepth = 0;
             
+            clear(decodedMate);
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
             clear(currentAnchor);
@@ -1026,12 +1033,16 @@ protected:
             clear(usedAlignmentsPerIteration);
             clear(usedAlignmentFlagsPerIteration);
             clear(allUsedCandidateReadIdPairs);
+            clear(candidateStrings);
+            clear(candidateShifts);
+            clear(candidateOverlapWeights);
         }
     };
 
     Task makePairedEndTask(const ExtendInput& input, ExtensionDirection direction){
         if(direction == ExtensionDirection::LR){
             Task task;
+            task.pairedEnd = true;
             task.direction = direction;
 
             task.currentAnchor.resize(input.numInts1);
@@ -1048,9 +1059,17 @@ protected:
             task.mateLength = input.readLength2;
             task.mateReadId = input.readId2;
 
+            task.decodedMate.resize(input.readLength2);
+            decode2BitSequence(
+                task.decodedMate.data(),
+                input.encodedRead2,
+                input.numInts2
+            );
+
             return task;
         }else if(direction == ExtensionDirection::RL){
             Task task;
+            task.pairedEnd = true;
             task.direction = direction;
 
             task.currentAnchor.resize(input.numInts2);
@@ -1067,6 +1086,13 @@ protected:
             task.mateLength = input.readLength1;
             task.mateReadId = input.readId1;
 
+            task.decodedMate.resize(input.readLength1);
+            decode2BitSequence(
+                task.decodedMate.data(),
+                input.encodedRead1,
+                input.numInts1
+            );
+
             return task;
         }else{
             assert(false);
@@ -1078,6 +1104,7 @@ protected:
     Task makeSingleEndTask(const ExtendInput& input, ExtensionDirection direction){
         if(direction == ExtensionDirection::LR){
             Task task;
+            task.pairedEnd = false;
             task.direction = direction;
 
             task.currentAnchor.resize(input.numInts1);
@@ -1098,6 +1125,7 @@ protected:
         }else if(direction == ExtensionDirection::RL){
             
             Task task;
+            task.pairedEnd = false;
             task.direction = direction;
 
             task.currentAnchor.resize(input.numInts1);
@@ -1642,8 +1670,17 @@ private:
 };
 
 
+__inline__
+std::string to_string(ReadExtenderBase::AbortReason r){
+    using ar = ReadExtenderBase::AbortReason;
 
-
+    switch(r){
+        case ar::MsaNotExtended: return "MsaNotExtended";
+        case ar::NoPairedCandidates: return "NoPairedCandidates";
+        case ar::NoPairedCandidatesAfterAlignment: return "NoPairedCandidatesAfterAlignment";
+        default: return "None";
+    }
+}
 
 
 
