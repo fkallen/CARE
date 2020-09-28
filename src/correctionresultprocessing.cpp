@@ -897,6 +897,34 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
 
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
+    //if there are no partial results, copy original files to output files
+    if(partialResults.getNumElements() == 0){
+        if(outputfiles.size() == 1){
+            std::ofstream outstream(outputfiles[0], std::ios::binary);
+            if(!bool(outstream)){
+                throw std::runtime_error("Cannot open output file " + outputfiles[0]);
+            }
+
+            for(const auto& ifname : originalReadFiles){
+                std::ifstream instream(ifname, std::ios::binary);
+                outstream << instream.rdbuf();
+            }
+        }else{
+            const int numFiles = outputfiles.size();
+            for(int i = 0; i < numFiles; i++){
+                std::ofstream outstream(outputfiles[i], std::ios::binary);
+                if(!bool(outstream)){
+                    throw std::runtime_error("Cannot open output file " + outputfiles[0]);
+                }
+
+                std::ifstream instream(originalReadFiles[i], std::ios::binary);
+                outstream << instream.rdbuf();
+            }
+        }
+
+        return;
+    }
+
 
     if(!isSorted){
         auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
