@@ -71,17 +71,15 @@ namespace care{
                     task.candidateReadIds.erase(readIdPos);
                 }
 
-                //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
-                if(task.mateLength + task.accumExtensionLengths < insertSize - insertSizeStddev){
-                    auto readIdPos = std::lower_bound(
-                        task.candidateReadIds.begin(),                                            
-                        task.candidateReadIds.end(),
-                        task.mateReadId
-                    );
+                //remove mate of input from candidate list
+                auto mateReadIdPos = std::lower_bound(
+                    task.candidateReadIds.begin(),                                            
+                    task.candidateReadIds.end(),
+                    task.mateReadId
+                );
 
-                    if(readIdPos != task.candidateReadIds.end() && *readIdPos == task.mateReadId){
-                        task.candidateReadIds.erase(readIdPos);
-                    }
+                if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
+                    task.candidateReadIds.erase(mateReadIdPos);
                 }
             }
 
@@ -334,51 +332,6 @@ namespace care{
                     
                 }
 
-            
-                //check if mate has been reached
-                task.mateIdLocationIter = std::lower_bound(
-                    task.candidateReadIds.begin(),
-                    task.candidateReadIds.end(),
-                    task.mateReadId
-                );
-
-                task.mateHasBeenFound = (task.mateIdLocationIter != task.candidateReadIds.end() && *task.mateIdLocationIter == task.mateReadId);
-
-                if(task.mateHasBeenFound){
-
-
-
-                    const int mateIndex = std::distance(task.candidateReadIds.begin(), task.mateIdLocationIter);
-                    const auto& mateAlignment = task.alignments[mateIndex];
-
-                    bool discardMateId = false;
-                    //check that mate alignes as reverse complement (to be on the same strand is current read)
-                    if(task.alignmentFlags[mateIndex] != BestAlignment_t::ReverseComplement){
-                        discardMateId = true;                    
-                    }
-                    
-                    //check that extending to mate does not leave fragment. If it does, remove mate from candidate list
-                    if(task.accumExtensionLengths + task.mateLength + mateAlignment.shift > insertSize + insertSizeStddev){
-                        discardMateId = true;
-                    }
-
-                    if(discardMateId){
-                        task.mateHasBeenFound = false;
-
-                        task.alignments.erase(task.alignments.begin() + mateIndex);
-                        task.alignmentFlags.erase(task.alignmentFlags.begin() + mateIndex);
-                        task.candidateReadIds.erase(task.candidateReadIds.begin() + mateIndex);
-                        task.candidateSequenceLengths.erase(task.candidateSequenceLengths.begin() + mateIndex);
-
-                        task.candidateSequenceData.erase(
-                            task.candidateSequenceData.begin() + mateIndex * encodedSequencePitchInInts,
-                            task.candidateSequenceData.begin() + (mateIndex + 1) * encodedSequencePitchInInts
-                        );
-
-                        task.numRemainingCandidates--;
-                    }
-                }
-
             }
 
             alignmentFilterTimer.stop();
@@ -441,41 +394,68 @@ namespace care{
             };
 
             auto extendWithMsa = [&](auto& task, const auto& msa){
-                if(!task.mateHasBeenFound){
-                    //mate not found. prepare next while-loop iteration
-                    int consensusLength = msa.consensus.size();
 
-                    //scanning from right to left, find first column with coverage >= 2
-                    // int lastGoodColumn = 0;
-                    // for(int col = consensusLength - 1; col >= 0; col--){
-                    //     if(msa.coverage[col] >= 1){
-                    //         lastGoodColumn = col;
-                    //         break;
-                    //     }
-                    // }
+                int consensusLength = msa.consensus.size();
+                //can extend by at most maxextensionPerStep bps
+                int extendBy = std::min(
+                    consensusLength - task.currentAnchorLength, 
+                    maxextensionPerStep
+                );
+                //cannot extend over fragment 
+                extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
 
-                    //const int maxextensionPerStepByGoodColumn = std::max(0, (lastGoodColumn+1) - task.currentAnchorLength);
+                constexpr int requiredOverlapMate = 70; //TODO relative overlap 
+                constexpr int numMismatchesUpperBound = 2;
 
-                    //the first currentAnchorLength columns are occupied by anchor. try to extend read 
-                    //by at most maxextensionPerStep bp.
+                if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + task.mateLength >= insertSize - insertSizeStddev){
+                    //check if mate can be overlapped with consensus 
+                    std::map<int, std::vector<int>> hamMap; //map hamming distance to list start positions
+                    for(int startpos = 0; startpos < consensusLength - requiredOverlapMate; startpos++){
+                        if(task.accumExtensionLengths + startpos + task.mateLength >= insertSize - insertSizeStddev 
+                                && task.accumExtensionLengths + startpos + task.mateLength <= insertSize + insertSizeStddev){
+                            
+                            const int ham = cpu::hammingDistanceOverlap(
+                                msa.consensus.begin() + startpos, msa.consensus.end(), 
+                                task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                            );
 
-                    //can extend by at most maxextensionPerStep bps
-                    int extendBy = std::min(
-                        consensusLength - task.currentAnchorLength, 
-                        maxextensionPerStep
-                        //maxextensionPerStepByGoodColumn
-                        // std::min(
-                        //     maxextensionPerStepByGoodColumn, 
-                        //     maxextensionPerStep
-                        // )
-                    );
-                    //cannot extend over fragment 
-                    extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
+                            hamMap[ham].emplace_back(startpos);
+                        }
+                    }
 
-                    // std::cerr << "splitdepth = " << task.splitDepth << "\n";
-                    // msa.print(std::cerr);
-                    // std::cerr << "extendBy = " << extendBy << "\n\n";
+                    std::vector<std::pair<int, std::vector<int>>> flatMap(hamMap.begin(), hamMap.end());
+                    std::sort(flatMap.begin(), flatMap.end(), [](const auto& p1, const auto& p2){return p1.first < p2.first;});
 
+
+                    if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
+                        task.mateHasBeenFound = true;
+
+                        task.accumExtensionLengths += flatMap[0].second.front();
+                        std::string decodedAnchor(task.decodedMateRevC);
+
+                        task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+                        task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                    }else{
+                        if(extendBy == 0){
+                            task.abort = true;
+                            task.abortReason = AbortReason::MsaNotExtended;
+                        }else{
+                            task.accumExtensionLengths += extendBy;
+
+                            //update data for next iteration of outer while loop
+                            const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
+
+                            task.currentAnchor.resize(numInts);
+
+                            encodeSequence2Bit(
+                                task.currentAnchor.data(), 
+                                msa.consensus.data() + extendBy, 
+                                task.currentAnchorLength
+                            );
+                        }
+                    }
+                }else{
                     if(extendBy == 0){
                         task.abort = true;
                         task.abortReason = AbortReason::MsaNotExtended;
@@ -493,22 +473,6 @@ namespace care{
                             task.currentAnchorLength
                         );
                     }
-                }else{
-                    //find end of mate in msa
-                    const int index = std::distance(task.candidateReadIds.begin(), task.mateIdLocationIter);
-                    const int shift = task.alignments[index].shift;
-                    const int clength = task.candidateSequenceLengths[index];
-                    assert(shift >= 0);
-                    const int endcolumn = shift + clength;
-
-                    const int extendby = shift;
-                    assert(extendby >= 0);
-                    task.accumExtensionLengths += extendby;
-
-                    std::string decodedAnchor(msa.consensus.data() + extendby, endcolumn - extendby);
-
-                    task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
                 }
             };
 
@@ -614,9 +578,9 @@ namespace care{
                 // std::cerr << "\n";
 
                 
-#if 0
+#if 1
                 //if(task.splitDepth == 0){
-                if(splitTracker[task.myReadId] <= 8){
+                if(splitTracker[task.myReadId] <= 4){
                     auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
 
                     if(possibleSplits.splits.size() > 1){

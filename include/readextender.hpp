@@ -971,6 +971,7 @@ protected:
         read_number mateReadId = 0;
         read_number currentAnchorReadId = 0;
         std::string decodedMate;
+        std::string decodedMateRevC;
         std::vector<read_number> candidateReadIds;
         std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
@@ -1018,6 +1019,7 @@ protected:
             splitDepth = 0;
             
             clear(decodedMate);
+            clear(decodedMateRevC);
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
             clear(currentAnchor);
@@ -1063,8 +1065,10 @@ protected:
             decode2BitSequence(
                 task.decodedMate.data(),
                 input.encodedRead2,
-                input.numInts2
+                input.readLength2
             );
+
+            task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength2);
 
             return task;
         }else if(direction == ExtensionDirection::RL){
@@ -1090,8 +1094,9 @@ protected:
             decode2BitSequence(
                 task.decodedMate.data(),
                 input.encodedRead1,
-                input.numInts1
+                input.readLength1
             );
+            task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength1);
 
             return task;
         }else{
