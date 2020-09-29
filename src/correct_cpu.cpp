@@ -1114,7 +1114,7 @@ namespace cpu{
             
         }
 
-        ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos)
+        ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm)
         {   
             float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
             return {
@@ -1152,8 +1152,8 @@ namespace cpu{
                 msa.countsT[pos]/countsACGT,
                 props.avg_support,
                 props.min_support,
-                float(props.max_coverage),
-                float(props.min_coverage)
+                float(props.max_coverage)/norm,
+                float(props.min_coverage)/norm
             };
         }
 
@@ -1186,7 +1186,8 @@ namespace cpu{
                         data.classifier_anchor->decide(make_sample(data.multipleSequenceAlignment,
                                                                    task.msaProperties,
                                                                    orig[i],
-                                                                   subject_b+i)) < THRESHOLD)
+                                                                   subject_b+i,
+                                                                   correctionOptions.estimatedCoverage)) < THRESHOLD)
                     {
                         corr[i] = orig[i];
                     }
@@ -1222,8 +1223,9 @@ namespace cpu{
                         ml_sample_t sample = make_sample(data.multipleSequenceAlignment,
                                                          task.msaProperties,
                                                          orig[i],
-                                                         subject_b+i);
-                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << ' 0 ';
+                                                         subject_b+i,
+                                                         correctionOptions.estimatedCoverage);
+                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << " 0 ";
                         for (float j: sample) data.ml_stream_anchor << j << ' ';
                         data.ml_stream_anchor << '\n';
                     }
@@ -1296,9 +1298,9 @@ namespace cpu{
             const size_t& subject_end = msa.subjectColumnsEnd_excl;
 
             for(int cand = 0; cand < msa.nCandidates; ++cand) {
-                const int& cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
-                const int& cand_length = task.bestCandidateLengths[cand];
-                const int& cand_end = cand_begin + cand_length;
+                const size_t cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const size_t cand_length = task.bestCandidateLengths[cand];
+                const size_t cand_end = cand_begin + cand_length;
                 const size_t offset = cand * data.decodedSequencePitchInBytes;
                 
                 MSAProperties props = getMSAProperties2(
@@ -1313,10 +1315,10 @@ namespace cpu{
                 if(cand_begin >= subject_begin - opts.new_columns_to_correct
                     && cand_end <= subject_end + opts.new_columns_to_correct)
                 {
-                    for (int i = 0; i < cand_length; ++i) {
+                    for (size_t i = 0; i < cand_length; ++i) {
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
-                            auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i);
-                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << ' 1 ';
+                            auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage);
+                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << " 1 ";
                             for (float j: sample) data.ml_stream_cands << j << ' ';
                             data.ml_stream_cands << '\n';
                         }
@@ -1339,9 +1341,9 @@ namespace cpu{
             const size_t& subject_end = msa.subjectColumnsEnd_excl;
             
             for(int cand = 0; cand < msa.nCandidates; ++cand) {
-                const int& cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
-                const int& cand_length = task.bestCandidateLengths[cand];
-                const int& cand_end = cand_begin + cand_length;
+                const size_t cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const size_t cand_length = task.bestCandidateLengths[cand];
+                const size_t cand_end = cand_begin + cand_length;
                 const size_t offset = cand * data.decodedSequencePitchInBytes;
                 
                 MSAProperties props = getMSAProperties2(
@@ -1359,10 +1361,10 @@ namespace cpu{
                     task.candidateCorrections.emplace_back(cand, task.bestAlignmentShifts[cand],
                         std::string{&msa.consensus[cand_begin], cand_length});
 
-                    for (int i = 0; i < cand_length; ++i) {
+                    for (size_t i = 0; i < cand_length; ++i) {
                         constexpr float THRESHOLD = 0.73f;
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                            && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i)) < THRESHOLD)
+                            && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage)) < THRESHOLD)
                         {
                             task.candidateCorrections.back().sequence[i] = data.decodedCandidateSequences[offset+i];
                         }
