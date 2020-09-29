@@ -843,15 +843,19 @@ namespace care{
         );
 
         auto combineWithSameId = [&](auto begin, auto end){
+            assert(std::distance(begin, end) > 0);
+
             auto partitionPoint = std::partition(begin, end, [](const auto& x){ return x.mateHasBeenFound;});
 
             //if there are results which found mate, choose longest
             if(std::distance(begin, partitionPoint) > 0){
                 return *std::max_element(begin, partitionPoint, lengthcomp);
             }else{
-#if 0                
+#if 1                
                 //TODO optimization: store pairs of indices to results
                 std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+
+                constexpr int minimumOverlap = 40;
 
                 //try to find a pair of extensions with opposite directions which could be overlapped to produce an extension which reached the mate
                 for(auto x = partitionPoint; x != end; ++x){
@@ -861,7 +865,7 @@ namespace care{
 
                         if((x->direction == ExtensionDirection::LR && y->direction == ExtensionDirection::RL)
                                 || (x->direction == ExtensionDirection::RL && y->direction == ExtensionDirection::LR)){
-                            if(xl + yl >= insertSize - insertSizeStddev){
+                            if(xl + yl >= insertSize - insertSizeStddev + minimumOverlap){
 
                                 //put direction LR first
                                 if(x->direction == ExtensionDirection::LR){
@@ -874,6 +878,107 @@ namespace care{
                     }
                 }
 
+                auto glue = [&](const std::string& lrString, const std::string& rlString){
+                    std::vector<std::string> possibleResults;
+
+                    const int lrLength = lrString.length();
+                    const int rlLength = rlString.length();
+
+                    const int maxNumberOfPossibleShifts = 2*insertSizeStddev + 1;
+                    const int maxLength = lrLength + rlLength;
+                    const int numPossibleShifts = std::min(maxLength - (insertSize - insertSizeStddev), maxNumberOfPossibleShifts);
+
+                    for(int shift = 0; shift < numPossibleShifts; shift++){
+                        const int firstPosInLR = (insertSize - insertSizeStddev) - rlLength + shift;
+                        const int overlapSize = std::min(lrLength - firstPosInLR, rlLength);
+
+                        if(overlapSize >= minimumOverlap){
+
+                            const int ham = cpu::hammingDistanceOverlap(
+                                lrString.begin() + firstPosInLR, lrString.end(), 
+                                rlString.begin(), rlString.end()
+                            );
+                            const float mismatchRatio = float(ham) / float(overlapSize);
+                            if(fleq(mismatchRatio, 0.05f)){
+                                // sstream << "shift = " << shift << ", ham = " << ham << "\n";
+                                // std::copy(lrString.begin() + firstPosInLR, lrString.end(), std::ostream_iterator<char>(sstream, ""));
+                                // sstream << "\n";
+                                // std::copy(rlString.begin(), rlString.end(), std::ostream_iterator<char>(sstream, ""));
+                                // sstream << "\n";
+
+                                std::cerr << "Alignment:\n";
+                                std::cerr << lrString << "\n";
+                                for(int i = 0; i < firstPosInLR; i++){
+                                    std::cerr << " ";
+                                }
+                                std::cerr << rlString << "\n";
+
+                                const int newLength = (insertSize - insertSizeStddev) + shift;
+                                const int lr1remaining = newLength - rlString.length();
+                                std::string sequence(newLength, 'F');
+
+                                const auto it = std::copy_n(lrString.begin(), lr1remaining, sequence.begin());
+                                std::copy(rlString.begin(), rlString.end(), it);
+
+                                possibleResults.emplace_back(std::move(sequence));
+
+                                //sstream << "Combined to " << sequence << "\n";
+                            }
+                        }
+                    }
+
+                    return possibleResults;
+                };
+
+                auto glue2 = [&](const std::string& lrString, const std::string& rlString){
+                    std::vector<std::string> possibleResults;
+
+                    const int lrLength = lrString.length();
+                    const int rlLength = rlString.length();
+
+                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+
+                    for(int p = 0; p < maxNumberOfPossibilities; p++){
+                        //the last position of rlString should be at position x in the combined string
+                        const int x = (insertSize-1) - insertSizeStddev + p;
+
+                        const int rlBeginInCombined = x - rlLength + 1; //theoretical position of first character of rl in the combined string
+                        const int lrEndInCombined = std::min(x, lrLength - 1);
+                        const int overlapSize = std::min(
+                            std::max(0, lrEndInCombined - rlBeginInCombined + 1),
+                            std::min(lrLength, rlLength)
+                        );
+
+                        if(overlapSize >= minimumOverlap){
+                            const int rlStart = std::max(0, -rlBeginInCombined);
+                            const int ham = cpu::hammingDistanceOverlap(
+                                lrString.begin() + lrLength - overlapSize, lrString.end(), 
+                                rlString.begin() + rlStart, rlString.end()
+                            );
+                            const float mismatchRatio = float(ham) / float(overlapSize);
+
+                            if(mismatchRatio < 0.05){
+                                const int newLength = x+1;
+                                const int lr1remaining = newLength - (rlLength - rlStart);
+                                std::string sequence(newLength, 'F');
+                                //assert(newLength == lr1remaining + rlLength - rlStart);
+                                const auto it = std::copy_n(lrString.begin(), lr1remaining, sequence.begin());
+                                std::copy(rlString.begin() + rlStart, rlString.end(), it);
+
+                                // std::cerr << "alignment:\n";
+                                // std::cerr << "ham = " << ham << ", overlap = " << overlapSize << "\n";
+                                // std::cerr << lrString << "\n\n" << rlString << "\n";
+
+                                possibleResults.emplace_back(std::move(sequence));
+                            }
+                        }
+                    }
+
+                    return possibleResults;
+                };
+
+                std::vector<std::string> possibleResults;
+
                 for(const auto& pair : pairsToCheck){
                     const auto& lr = pair.first;
                     const auto& rl = pair.second;
@@ -883,37 +988,66 @@ namespace care{
                     std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
                     reverseComplementStringInplace(revcRLSeq.data(), revcRLSeq.size());
 
-                    std::cerr << to_string(lr.abortReason) << " " << to_string(rl.abortReason) << " - " << lr.readId1 << "\n";
-                    std::cerr << lr.extendedRead << "\n";
-                    std::cerr << revcRLSeq << "\n\n";
+                    //  std::stringstream sstream;
 
-                    //find mismatch-free overlap such that the resulting string ends in range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
-                    const int maxNumberOfPossibleShifts = 2*insertSizeStddev + 1;
-                    const int maxLength = lr.extendedRead.length() + rl.extendedRead.length();
-                    const int numPossibleShifts = std::min(maxLength - (insertSize - insertSizeStddev), maxNumberOfPossibleShifts);
+                    //  sstream << to_string(lr.abortReason) << " " << to_string(rl.abortReason) << " - " << lr.readId1 << "\n";
+                    //  sstream << lr.extendedRead << "\n";
+                    //  sstream << revcRLSeq << "\n\n";
 
-                    int bestShift = -1;
-                    for(int shift = 0; shift < numPossibleShifts; shift++){
-                        const int firstPosInLR = (insertSize - insertSizeStddev) - rl.extendedRead.length();
-                        const int ham = cpu::hammingDistanceOverlap(
-                            lr.extendedRead.begin() + firstPosInLR, lr.extendedRead.end(), 
-                            revcRLSeq.begin(), revcRLSeq.end()
-                        );
-                        if(ham == 0){
-                            bestShift = shift;
-                            break;
-                        }
+                    // std::cerr << sstream.rdbuf();
+
+                    auto strings = glue2(lr.extendedRead, revcRLSeq);
+                    possibleResults.insert(possibleResults.end(), std::make_move_iterator(strings.begin()), std::make_move_iterator(strings.end()));
+                }
+
+                if(possibleResults.size() > 0){
+                    
+                    std::map<std::string, int> histogram;
+                    for(const auto& r : possibleResults){
+                        histogram[r]++;
                     }
 
+                    //find sequence with highest frequency and return it;
+                    auto maxIter = std::max_element(
+                        histogram.begin(), histogram.end(),
+                        [](const auto& p1, const auto& p2){
+                            return p1.second < p2.second;
+                        }
+                    );
+
+                    // if(histogram.size() >= 1){
+                    //     std::cerr << "Possible results:\n";
+
+                    //     for(const auto& pair : histogram){
+                    //         std::cerr << pair.second << " : " << pair.first << "\n";
+                    //     }
+                    // }
+
+                    ExtendResult er;
+                    er.mateHasBeenFound = true;
+                    er.success = true;
+                    er.aborted = false;
+                    er.numIterations = -1;
+
+                    er.direction = ExtensionDirection::LR;
+                    er.abortReason = AbortReason::None;
                     
-                }
-#endif
-                if(false){
-                    
+                    er.readId1 = pairsToCheck[0].first.readId1;
+                    er.readId2 = pairsToCheck[0].first.readId2;
+                    er.extendedRead = std::move(maxIter->first);
+
+
+                    return er;
                 }else{
                     //from results which did not find mate, choose longest
-                    return *std::max_element(partitionPoint, end, lengthcomp);
+                    return *std::max_element(partitionPoint, end, lengthcomp);    
                 }
+
+
+#else
+                //from results which did not find mate, choose longest
+                return *std::max_element(partitionPoint, end, lengthcomp);
+#endif                
             }
         };
 
@@ -926,7 +1060,7 @@ namespace care{
                 ++iter2;
             }
 
-            //range [iter1, iter2) has same read pair id
+            //elements in range [iter1, iter2) have same read pair id
             *dest = combineWithSameId(iter1, iter2);
 
             ++dest;
