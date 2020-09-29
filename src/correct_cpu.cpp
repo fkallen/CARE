@@ -1294,14 +1294,14 @@ namespace cpu{
                 const CorrectionOptions& opts) 
         {
             const auto& msa = data.multipleSequenceAlignment;
-            const size_t& subject_begin = msa.subjectColumnsBegin_incl;
-            const size_t& subject_end = msa.subjectColumnsEnd_excl;
+            const int subject_begin = msa.subjectColumnsBegin_incl;
+            const int subject_end = msa.subjectColumnsEnd_excl;
 
             for(int cand = 0; cand < msa.nCandidates; ++cand) {
-                const size_t cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
-                const size_t cand_length = task.bestCandidateLengths[cand];
-                const size_t cand_end = cand_begin + cand_length;
-                const size_t offset = cand * data.decodedSequencePitchInBytes;
+                const int cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const int cand_length = task.bestCandidateLengths[cand];
+                const int cand_end = cand_begin + cand_length;
+                const int offset = cand * data.decodedSequencePitchInBytes;
                 
                 MSAProperties props = getMSAProperties2(
                     msa.support.data(),
@@ -1315,7 +1315,7 @@ namespace cpu{
                 if(cand_begin >= subject_begin - opts.new_columns_to_correct
                     && cand_end <= subject_end + opts.new_columns_to_correct)
                 {
-                    for (size_t i = 0; i < cand_length; ++i) {
+                    for (int i = 0; i < cand_length; ++i) {
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
                             auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage);
                             data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << " 1 ";
@@ -1337,14 +1337,14 @@ namespace cpu{
 
             task.candidateCorrections = std::vector<CorrectedCandidate>{};
 
-            const size_t& subject_begin = msa.subjectColumnsBegin_incl;
-            const size_t& subject_end = msa.subjectColumnsEnd_excl;
+            const int subject_begin = msa.subjectColumnsBegin_incl;
+            const int subject_end = msa.subjectColumnsEnd_excl;
             
             for(int cand = 0; cand < msa.nCandidates; ++cand) {
-                const size_t cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
-                const size_t cand_length = task.bestCandidateLengths[cand];
-                const size_t cand_end = cand_begin + cand_length;
-                const size_t offset = cand * data.decodedSequencePitchInBytes;
+                const int cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const int cand_length = task.bestCandidateLengths[cand];
+                const int cand_end = cand_begin + cand_length;
+                const int offset = cand * data.decodedSequencePitchInBytes;
                 
                 MSAProperties props = getMSAProperties2(
                     msa.support.data(),
@@ -1359,9 +1359,9 @@ namespace cpu{
                     && cand_end <= subject_end + opts.new_columns_to_correct)
                 {
                     task.candidateCorrections.emplace_back(cand, task.bestAlignmentShifts[cand],
-                        std::string{&msa.consensus[cand_begin], cand_length});
+                        std::string(&msa.consensus[cand_begin], cand_length));
 
-                    for (size_t i = 0; i < cand_length; ++i) {
+                    for (int i = 0; i < cand_length; ++i) {
                         constexpr float THRESHOLD = 0.73f;
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
                             && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage)) < THRESHOLD)
