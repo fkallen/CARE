@@ -261,9 +261,10 @@ int main(int argc, char** argv){
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
-	std::cout << "Correction type: " << int(correctionOptions.correctionType) 
+	std::cout << "Correction type (anchor): " << int(correctionOptions.correctionType) 
 		<< " (" << nameOfCorrectionType(correctionOptions.correctionType) << ")\n";
-
+	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
+		<< " (" << nameOfCorrectionType(correctionOptions.correctionTypeCands) << ")\n";
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
 	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";

@@ -1223,7 +1223,7 @@ namespace cpu{
                                                          task.msaProperties,
                                                          orig[i],
                                                          subject_b+i);
-                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << ' ';
+                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << ' 0 ';
                         for (float j: sample) data.ml_stream_anchor << j << ' ';
                         data.ml_stream_anchor << '\n';
                     }
@@ -1316,7 +1316,7 @@ namespace cpu{
                     for (int i = 0; i < cand_length; ++i) {
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
                             auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i);
-                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << ' ';
+                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << ' 1 ';
                             for (float j: sample) data.ml_stream_cands << j << ' ';
                             data.ml_stream_cands << '\n';
                         }
