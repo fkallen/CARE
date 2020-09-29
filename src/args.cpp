@@ -57,6 +57,10 @@ namespace args{
             result.excludeAmbiguousReads = pr["excludeAmbiguous"].as<bool>();
         }
 
+        if(pr.count("candidateCorrection")){
+            result.correctCandidates = pr["candidateCorrection"].as<bool>();
+        }
+
         if(pr.count("correctionTypeCands")){
             const int val = pr["correctionTypeCands"].as<int>();
 
@@ -259,8 +263,8 @@ namespace args{
             result.mlForestfileAnchor = pr["ml-forestfile"].as<std::string>();
         }
 
-        if(pr.count("ml-forestfile-cands")){
-            result.mlForestfileCands = pr["ml-forestfile-cands"].as<std::string>();
+        if(pr.count("ml-cands-forestfile")){
+            result.mlForestfileCands = pr["ml-cands-forestfile"].as<std::string>();
         }
 
         if(pr.count("inputfiles")){

@@ -156,9 +156,13 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
-		("correctionType", "0: Classic, 1: Forest",
+		("correctionType", "0: Classic, 1: Forest, 2: Print",
 			cxxopts::value<int>()->default_value("0"))
-		("ml-forestfile", "The shared object file to load which contains ML error correction logic",
+		("correctionTypeCands", "0: Classic, 1: Forest, 2: Print",
+			cxxopts::value<int>()->default_value("0"))
+		("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
+			cxxopts::value<std::string>())
+		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
 			cxxopts::value<std::string>())
 		
 	;
@@ -294,7 +298,7 @@ int main(int argc, char** argv){
 	}
 	std::cout << "\n";
 	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
-	std::cout << "ml-forestfile-cands: " << fileOptions.mlForestfileCands << "\n";
+	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
