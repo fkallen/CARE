@@ -57,8 +57,14 @@ namespace args{
             result.excludeAmbiguousReads = pr["excludeAmbiguous"].as<bool>();
         }
 
-        if(pr.count("candidateCorrection")){
-            result.correctCandidates = pr["candidateCorrection"].as<bool>();
+        if(pr.count("correctionTypeCands")){
+            const int val = pr["correctionTypeCands"].as<int>();
+
+            switch(val){
+                case 1: result.correctionTypeCands = CorrectionType::Forest; break;
+                case 2: result.correctionTypeCands = CorrectionType::Print; break;
+                default: result.correctionTypeCands = CorrectionType::Classic; break;
+            }
         }
 
         if(pr.count("useQualityScores")){
@@ -250,7 +256,11 @@ namespace args{
         }
 
         if(pr.count("ml-forestfile")){
-            result.mlForestfile = pr["ml-forestfile"].as<std::string>();
+            result.mlForestfileAnchor = pr["ml-forestfile"].as<std::string>();
+        }
+
+        if(pr.count("ml-forestfile-cands")){
+            result.mlForestfileCands = pr["ml-forestfile-cands"].as<std::string>();
         }
 
         if(pr.count("inputfiles")){

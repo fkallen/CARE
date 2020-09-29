@@ -221,16 +221,14 @@ int main(int argc, char** argv){
 	}
 
 	if(correctionOptions.correctionType != CorrectionType::Classic){
-		if(fileOptions.mlForestfile == ""){
+		if(fileOptions.mlForestfileAnchor == ""){
 			std::cerr << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
 			return 0;
 		}
 
-		if(correctionOptions.correctCandidates){
-			std::cerr << "Candidate correction can only be used with classic correction type and will be disabled.";
-			correctionOptions.correctCandidates = false;
+		if(fileOptions.mlForestfileCands == ""){
+			fileOptions.mlForestfileCands = fileOptions.mlForestfileAnchor;
 		}
-
 	}
 
 	//print all options that will be used
@@ -295,7 +293,8 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
-	std::cout << "ml-forestfile: " << fileOptions.mlForestfile << "\n";
+	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
+	std::cout << "ml-forestfile-cands: " << fileOptions.mlForestfileCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

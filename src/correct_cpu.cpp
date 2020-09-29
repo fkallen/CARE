@@ -218,8 +218,8 @@ namespace cpu{
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
 
-            std::shared_ptr<ForestClf> forestClassifier1;
-            std::stringstream ml_stream;
+            std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+            std::stringstream ml_stream_anchor, ml_stream_cands;
         };
 
         void makeBatchTasks(BatchData& data){
@@ -1114,54 +1114,50 @@ namespace cpu{
             
         }
 
-        ml_sample_t make_sample(const BatchData& data, const BatchData::Task& task, size_t pos)
+        ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos)
         {   
-            const int b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
-            auto& msa = data.multipleSequenceAlignment;
-            auto& orig = task.decodedSubjectSequence;
-            float countsACGT = msa.countsA[b+pos] + msa.countsC[b+pos] + msa.countsG[b+pos] + msa.countsT[b+pos];
+            float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
             return {
-                float(orig[pos] == 'A'),
-                float(orig[pos] == 'C'),
-                float(orig[pos] == 'G'),
-                float(orig[pos] == 'T'),
-                float(msa.consensus[b+pos] == 'A'),
-                float(msa.consensus[b+pos] == 'C'),
-                float(msa.consensus[b+pos] == 'G'),
-                float(msa.consensus[b+pos] == 'T'),
-                orig[pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
-                orig[pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
-                orig[pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
-                orig[pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
-                orig[pos] == 'A'?msa.weightsA[b+pos]:0,
-                orig[pos] == 'C'?msa.weightsC[b+pos]:0,
-                orig[pos] == 'G'?msa.weightsG[b+pos]:0,
-                orig[pos] == 'T'?msa.weightsT[b+pos]:0,
-                msa.consensus[b+pos] == 'A'?msa.countsA[b+pos]/countsACGT:0,
-                msa.consensus[b+pos] == 'C'?msa.countsC[b+pos]/countsACGT:0,
-                msa.consensus[b+pos] == 'G'?msa.countsG[b+pos]/countsACGT:0,
-                msa.consensus[b+pos] == 'T'?msa.countsT[b+pos]/countsACGT:0,
-                msa.consensus[b+pos] == 'A'?msa.weightsA[b+pos]:0,
-                msa.consensus[b+pos] == 'C'?msa.weightsC[b+pos]:0,
-                msa.consensus[b+pos] == 'G'?msa.weightsG[b+pos]:0,
-                msa.consensus[b+pos] == 'T'?msa.weightsT[b+pos]:0,
-                msa.weightsA[b+pos],
-                msa.weightsC[b+pos],
-                msa.weightsG[b+pos],
-                msa.weightsT[b+pos],
-                msa.countsA[b+pos]/countsACGT,
-                msa.countsC[b+pos]/countsACGT,
-                msa.countsG[b+pos]/countsACGT,
-                msa.countsT[b+pos]/countsACGT,
-                task.msaProperties.avg_support,
-                task.msaProperties.min_support,
-                float(task.msaProperties.max_coverage),
-                float(task.msaProperties.min_coverage)
+                float(orig == 'A'),
+                float(orig == 'C'),
+                float(orig == 'G'),
+                float(orig == 'T'),
+                float(msa.consensus[pos] == 'A'),
+                float(msa.consensus[pos] == 'C'),
+                float(msa.consensus[pos] == 'G'),
+                float(msa.consensus[pos] == 'T'),
+                orig == 'A'?msa.countsA[pos]/countsACGT:0,
+                orig == 'C'?msa.countsC[pos]/countsACGT:0,
+                orig == 'G'?msa.countsG[pos]/countsACGT:0,
+                orig == 'T'?msa.countsT[pos]/countsACGT:0,
+                orig == 'A'?msa.weightsA[pos]:0,
+                orig == 'C'?msa.weightsC[pos]:0,
+                orig == 'G'?msa.weightsG[pos]:0,
+                orig == 'T'?msa.weightsT[pos]:0,
+                msa.consensus[pos] == 'A'?msa.countsA[pos]/countsACGT:0,
+                msa.consensus[pos] == 'C'?msa.countsC[pos]/countsACGT:0,
+                msa.consensus[pos] == 'G'?msa.countsG[pos]/countsACGT:0,
+                msa.consensus[pos] == 'T'?msa.countsT[pos]/countsACGT:0,
+                msa.consensus[pos] == 'A'?msa.weightsA[pos]:0,
+                msa.consensus[pos] == 'C'?msa.weightsC[pos]:0,
+                msa.consensus[pos] == 'G'?msa.weightsG[pos]:0,
+                msa.consensus[pos] == 'T'?msa.weightsT[pos]:0,
+                msa.weightsA[pos],
+                msa.weightsC[pos],
+                msa.weightsG[pos],
+                msa.weightsT[pos],
+                msa.countsA[pos]/countsACGT,
+                msa.countsC[pos]/countsACGT,
+                msa.countsG[pos]/countsACGT,
+                msa.countsT[pos]/countsACGT,
+                props.avg_support,
+                props.min_support,
+                float(props.max_coverage),
+                float(props.min_coverage)
             };
         }
 
-
-        void correctSubjectForest(
+        void correctSubjectClf(
                 BatchData& data,
                 BatchData::Task& task,
                 const CorrectionOptions& correctionOptions)
@@ -1187,7 +1183,10 @@ namespace cpu{
                 constexpr float THRESHOLD = 0.73f;
                 for (int i = 0; i < task.subjectSequenceLength; ++i) {
                     if (orig[i] != cons[subject_b+i] &&
-                        data.forestClassifier1->decide(make_sample(data, task, i)) < THRESHOLD)
+                        data.classifier_anchor->decide(make_sample(data.multipleSequenceAlignment,
+                                                                   task.msaProperties,
+                                                                   orig[i],
+                                                                   subject_b+i)) < THRESHOLD)
                     {
                         corr[i] = orig[i];
                     }
@@ -1204,8 +1203,8 @@ namespace cpu{
         {
             const int subject_b = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
             const int subject_e = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
-            auto& cons = data.multipleSequenceAlignment.consensus;
-            auto& orig = task.decodedSubjectSequence;
+            const auto& cons = data.multipleSequenceAlignment.consensus;
+            const auto& orig = task.decodedSubjectSequence;
 
             task.msaProperties = getMSAProperties2(
                 data.multipleSequenceAlignment.support.data(),
@@ -1220,10 +1219,13 @@ namespace cpu{
             if (!task.msaProperties.isHQ) {
                 for (int i = 0; i < task.subjectSequenceLength; ++i) {
                     if (orig[i] != cons[subject_b+i]) {
-                        ml_sample_t sample = make_sample(data, task, i);
-                        data.ml_stream << task.subjectReadId << ' ' << i << ' ';
-                        for (float j: sample) data.ml_stream << j << ' ';
-                        data.ml_stream << '\n';
+                        ml_sample_t sample = make_sample(data.multipleSequenceAlignment,
+                                                         task.msaProperties,
+                                                         orig[i],
+                                                         subject_b+i);
+                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << ' ';
+                        for (float j: sample) data.ml_stream_anchor << j << ' ';
+                        data.ml_stream_anchor << '\n';
                     }
                 }
             }
@@ -1238,12 +1240,12 @@ namespace cpu{
             if(correctionOptions.correctionType == CorrectionType::Classic)
                 correctSubjectClassic(data, task, correctionOptions);
             else if(correctionOptions.correctionType == CorrectionType::Forest)
-                correctSubjectForest(data, task, correctionOptions);
+                correctSubjectClf(data, task, correctionOptions);
             else if (correctionOptions.correctionType == CorrectionType::Print)
                 correctSubjectPrint(data, task, correctionOptions);
         }
 
-        void correctCandidates(
+        void correctCandidatesClassic(
                 BatchData& data,
                 BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
@@ -1281,6 +1283,108 @@ namespace cpu{
                         std::cerr << "revc " << candidateId << " " << fwd << "\n";
                     }
                 }
+            }
+        }
+
+        void correctCandidatesPrint(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& opts) 
+        {
+            const auto& msa = data.multipleSequenceAlignment;
+            const size_t& subject_begin = msa.subjectColumnsBegin_incl;
+            const size_t& subject_end = msa.subjectColumnsEnd_excl;
+
+            for(int cand = 0; cand < msa.nCandidates; ++cand) {
+                const int& cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const int& cand_length = task.bestCandidateLengths[cand];
+                const int& cand_end = cand_begin + cand_length;
+                const size_t offset = cand * data.decodedSequencePitchInBytes;
+                
+                MSAProperties props = getMSAProperties2(
+                    msa.support.data(),
+                    msa.coverage.data(),
+                    cand_begin,
+                    cand_end,
+                    opts.estimatedErrorrate,
+                    opts.estimatedCoverage,
+                    opts.m_coverage);
+
+                if(cand_begin >= subject_begin - opts.new_columns_to_correct
+                    && cand_end <= subject_end + opts.new_columns_to_correct)
+                {
+                    for (int i = 0; i < cand_length; ++i) {
+                        if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
+                            auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i);
+                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << ' ';
+                            for (float j: sample) data.ml_stream_cands << j << ' ';
+                            data.ml_stream_cands << '\n';
+                        }
+                    }
+                }
+            }
+            task.candidateCorrections = std::vector<CorrectedCandidate>{};
+        }
+
+        void correctCandidatesClf(
+                BatchData& data,
+                BatchData::Task& task,
+                const CorrectionOptions& opts) 
+        {
+            const auto& msa = data.multipleSequenceAlignment;
+
+            task.candidateCorrections = std::vector<CorrectedCandidate>{};
+
+            const size_t& subject_begin = msa.subjectColumnsBegin_incl;
+            const size_t& subject_end = msa.subjectColumnsEnd_excl;
+            
+            for(int cand = 0; cand < msa.nCandidates; ++cand) {
+                const int& cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
+                const int& cand_length = task.bestCandidateLengths[cand];
+                const int& cand_end = cand_begin + cand_length;
+                const size_t offset = cand * data.decodedSequencePitchInBytes;
+                
+                MSAProperties props = getMSAProperties2(
+                    msa.support.data(),
+                    msa.coverage.data(),
+                    cand_begin,
+                    cand_end,
+                    opts.estimatedErrorrate,
+                    opts.estimatedCoverage,
+                    opts.m_coverage);
+
+                if(cand_begin >= subject_begin - opts.new_columns_to_correct
+                    && cand_end <= subject_end + opts.new_columns_to_correct)
+                {
+                    task.candidateCorrections.emplace_back(cand, task.bestAlignmentShifts[cand],
+                        std::string{&msa.consensus[cand_begin], cand_length});
+
+                    for (int i = 0; i < cand_length; ++i) {
+                        constexpr float THRESHOLD = 0.73f;
+                        if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
+                            && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i)) < THRESHOLD)
+                        {
+                            task.candidateCorrections.back().sequence[i] = data.decodedCandidateSequences[offset+i];
+                        }
+                    }
+                }
+            }
+        }
+
+        void correctCandidates(
+            BatchData& data,
+            BatchData::Task& task,
+            const CorrectionOptions& opts)
+        {
+            switch (opts.correctionTypeCands) {
+                case CorrectionType::Print:
+                    correctCandidatesPrint(data, task, opts);
+                    break;
+                case CorrectionType::Forest:
+                    correctCandidatesClf(data, task, opts);
+                    break;
+                default:
+                    correctCandidatesClassic(data, task, opts);
             }
         }
 
@@ -1565,17 +1669,18 @@ correct_cpu(
 
     TimeMeasurements timingsOfAllThreads;
     
-    std::shared_ptr<ForestClf> forestClassifier1;
-    std::ofstream global_ml_stream;
-    // good idea ? :/
+    std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+    std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
     {
-            forestClassifier1 = std::make_shared<ForestClf>(fileOptions.mlForestfile);
+            classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
+            classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
-            global_ml_stream.open(fileOptions.mlForestfile);
+            ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
+            ml_stream_cands_.open(fileOptions.mlForestfileCands);
     }
 
 
@@ -1632,7 +1737,7 @@ correct_cpu(
         batchData.qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
         
         // forest stuff
-        batchData.forestClassifier1 = forestClassifier1;
+        batchData.classifier_anchor = classifier_anchor;
 
 
         while(!(readIdGenerator.empty())){
@@ -1834,8 +1939,12 @@ correct_cpu(
 
             #pragma omp critical
             {
-                global_ml_stream << batchData.ml_stream.rdbuf();
-                batchData.ml_stream = std::stringstream{};
+                ml_stream_anchor_ << batchData.ml_stream_anchor.rdbuf();
+                batchData.ml_stream_anchor = std::stringstream{};
+                
+                // could be same file, thus same critical block
+                ml_stream_cands_ << batchData.ml_stream_cands.rdbuf();
+                batchData.ml_stream_cands = std::stringstream{};
             }
 
             progressThread.addProgress(batchData.subjectReadIds.size()); 
