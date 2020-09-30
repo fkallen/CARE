@@ -900,7 +900,7 @@ namespace care{
                     if(overlapSize >= minimumOverlap){
                         const int rlStart = std::max(0, -rlBeginInCombined);
                         const int ham = cpu::hammingDistanceOverlap(
-                            lrString.begin() + lrLength - overlapSize, lrString.end(), 
+                            lrString.begin() + (lrEndInCombined+1) - overlapSize, lrString.end(), 
                             rlString.begin() + rlStart, rlString.end()
                         );
                         const float mismatchRatio = float(ham) / float(overlapSize);
@@ -987,6 +987,16 @@ namespace care{
                 return er;
             }else{
                 //from results which did not find mate, choose longest
+                // std::cerr << "Could not merge the following extensions:\n";
+
+                // for(auto it = begin; it != end; ++it){
+                //     std::cerr << "id: " << it->readId1;
+                //     std::cerr << ", aborted: " << it->aborted;
+                //     std::cerr << ", reason: " << to_string(it->abortReason);
+                //     std::cerr << ", direction: " << to_string(it->direction) << "\n";
+                //     std::cerr << it->extendedRead << "\n";
+                // }
+                // std::cerr << "\n";
                 return *std::max_element(begin, end, lengthcomp);    
             }
         };
