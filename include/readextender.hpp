@@ -1687,6 +1687,18 @@ std::string to_string(ReadExtenderBase::AbortReason r){
     }
 }
 
+__inline__
+std::string to_string(ReadExtenderBase::ExtensionDirection r){
+    using ar = ReadExtenderBase::ExtensionDirection;
+
+    switch(r){
+        case ar::LR: return "LR";
+        case ar::RL: return "RL";
+    }
+
+    return "INVALID ENUM VALUE to_string(ExtensionDirection)";
+}
+
 
 
 }
