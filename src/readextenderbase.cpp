@@ -62,7 +62,7 @@ namespace care{
         //     task.totalAnchorBeginInExtendedRead.emplace_back(0);
         // }
 
-#if 1
+#if 0
         //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
             return vec[index];
@@ -932,7 +932,17 @@ namespace care{
                     extendResult.success = true;
 
                     std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
-
+                    //std::cerr << "before: " << extendedRead << "\n";
+                    std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
+                    if(task.mateHasBeenFound){
+                        std::copy(
+                            task.decodedMateRevC.begin(),
+                            task.decodedMateRevC.end(),
+                            extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
+                        );
+                    }
+                    // extendedRead.replace(extendedRead.begin(), extendedRead.begin() + decodedAnchor, decodedAnchor.begin(), decodedAnchor.end());
+                    // std::cerr << "after : " << extendedRead << "\n";
                     
                     // msa.print(std::cerr);
                     // std::cerr << "msa cons:\n";
@@ -1035,8 +1045,11 @@ namespace care{
                     const int rlBeginInCombined = x - rlLength + 1; //theoretical position of first character of rl in the combined string
                     const int lrEndInCombined = std::min(x, lrLength - 1);
                     const int overlapSize = std::min(
-                        std::max(0, lrEndInCombined - rlBeginInCombined + 1),
-                        std::min(lrLength, rlLength)
+                        std::max(0, lrEndInCombined - rlBeginInCombined + 1), // overlap can be at most the positions between begin of rl and end of lr
+                        std::min(
+                            std::min(lrLength, rlLength), // overlap cannot be longer than any of both strings
+                            x+1 //overlap cannot be longer than specified segment length
+                        )
                     );
 
                     if(overlapSize >= minimumOverlap){
@@ -1214,54 +1227,54 @@ namespace care{
 
         //std::cerr << "replace " << batchId << "\n";
         //replace original positions in extend read by original sequences
-        for(std::size_t i = 0; i < inputs.size(); i++){
-            auto& comb = extendResultsCombined[i];
-            const auto& input = inputs[i];
+        // for(std::size_t i = 0; i < inputs.size(); i++){
+        //     auto& comb = extendResultsCombined[i];
+        //     const auto& input = inputs[i];
 
-            if(comb.direction == ExtensionDirection::LR){
-                decode2BitSequence(
-                    comb.extendedRead.data(),
-                    input.encodedRead1,
-                    input.readLength1
-                );
+        //     if(comb.direction == ExtensionDirection::LR){
+        //         decode2BitSequence(
+        //             comb.extendedRead.data(),
+        //             input.encodedRead1,
+        //             input.readLength1
+        //         );
 
-                if(comb.mateHasBeenFound){
-                    std::vector<char> buf(input.readLength2);
-                    decode2BitSequence(
-                        buf.data(),
-                        input.encodedRead2,
-                        input.readLength2
-                    );
-                    reverseComplementStringInplace(buf.data(), buf.size());
-                    std::copy(
-                        buf.begin(),
-                        buf.end(),
-                        comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength2
-                    );
-                }
-            }else{
-                decode2BitSequence(
-                    comb.extendedRead.data(),
-                    input.encodedRead2,
-                    input.readLength2
-                );
+        //         if(comb.mateHasBeenFound){
+        //             std::vector<char> buf(input.readLength2);
+        //             decode2BitSequence(
+        //                 buf.data(),
+        //                 input.encodedRead2,
+        //                 input.readLength2
+        //             );
+        //             reverseComplementStringInplace(buf.data(), buf.size());
+        //             std::copy(
+        //                 buf.begin(),
+        //                 buf.end(),
+        //                 comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength2
+        //             );
+        //         }
+        //     }else{
+        //         decode2BitSequence(
+        //             comb.extendedRead.data(),
+        //             input.encodedRead2,
+        //             input.readLength2
+        //         );
 
-                if(comb.mateHasBeenFound){
-                    std::vector<char> buf(input.readLength1);
-                    decode2BitSequence(
-                        buf.data(),
-                        input.encodedRead1,
-                        input.readLength1
-                    );
-                    reverseComplementStringInplace(buf.data(), buf.size());
-                    std::copy(
-                        buf.begin(),
-                        buf.end(),
-                        comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength1
-                    );
-                }
-            }
-        }
+        //         if(comb.mateHasBeenFound){
+        //             std::vector<char> buf(input.readLength1);
+        //             decode2BitSequence(
+        //                 buf.data(),
+        //                 input.encodedRead1,
+        //                 input.readLength1
+        //             );
+        //             reverseComplementStringInplace(buf.data(), buf.size());
+        //             std::copy(
+        //                 buf.begin(),
+        //                 buf.end(),
+        //                 comb.extendedRead.begin() + comb.extendedRead.length() - input.readLength1
+        //             );
+        //         }
+        //     }
+        // }
 
         //std::cerr << "done " << batchId << "\n";
 
