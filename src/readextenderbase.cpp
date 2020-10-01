@@ -39,7 +39,31 @@ namespace care{
             task.totalAnchorBeginInExtendedRead.emplace_back(0);
         }
 
+        // for(auto& task : tasks){
+        //     if(task.pairedEnd){
+        //         auto currentAnchorCopy = task.currentAnchor;
+        //         auto currentAnchorLengthCopy = task.currentAnchorLength;
+
+        //         const int numInts = getEncodedNumInts2Bit(task.mateLength);
+        //         task.currentAnchor.resize(numInts);
+        //         encodeSequence2Bit(task.currentAnchor.data(), decodedMate.c_str(), task.mateLength);
+                
+        //     }
+
+        //     std::string decodedAnchor(task.currentAnchorLength, '\0');
+
+        //     decode2BitSequence(
+        //         &decodedAnchor[0],
+        //         task.currentAnchor.data(),
+        //         task.currentAnchorLength
+        //     );
+
+        //     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+        //     task.totalAnchorBeginInExtendedRead.emplace_back(0);
+        // }
+
 #if 1
+        //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
             return vec[index];
         };
@@ -79,6 +103,7 @@ namespace care{
 
                 if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
                     task.candidateReadIds.erase(mateReadIdPos);
+                    task.mateRemovedFromCandidates = true;
                 }
             }
 
@@ -94,36 +119,93 @@ namespace care{
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
-                
-                {
+                std::vector<read_number> tmp(task.candidateReadIds.size());
 
-                    std::vector<read_number> tmp(task.candidateReadIds.size());
+                auto end = std::set_difference(
+                    task.candidateReadIds.begin(),
+                    task.candidateReadIds.end(),
+                    task.allUsedCandidateReadIdPairs.begin(),
+                    task.allUsedCandidateReadIdPairs.end(),
+                    tmp.begin()
+                );
 
-                    auto end = std::set_difference(
-                        task.candidateReadIds.begin(),
-                        task.candidateReadIds.end(),
-                        task.allUsedCandidateReadIdPairs.begin(),
-                        task.allUsedCandidateReadIdPairs.end(),
-                        tmp.begin()
-                    );
+                tmp.erase(end, tmp.end());
 
-                    tmp.erase(end, tmp.end());
-
-                    std::swap(task.candidateReadIds, tmp);
-
-                }
+                std::swap(task.candidateReadIds, tmp);
             }
 
             loadCandidateSequenceData(tasks, indicesOfActiveTasks);
+
+            /*
+                If mate has been removed from candidate list, remove all candidates which are equivalent to mate
+            */
+
+           for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = vecAccess(tasks, indexOfActiveTask);
+
+                if(task.mateRemovedFromCandidates){
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    std::vector<int> positionsOfCandidatesToKeep;
+                    positionsOfCandidatesToKeep.reserve(numCandidates);
+
+                    for(int c = 0; c < numCandidates; c++){
+                        const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                        + std::size_t(encodedSequencePitchInInts) * c;
+
+                        auto mismatchIters = std::mismatch(
+                            task.encodedMate.begin(), task.encodedMate.end(),
+                            seqPtr, seqPtr + encodedSequencePitchInInts
+                        );
+
+                        //candidate differs from mate
+                        if(mismatchIters.first != task.encodedMate.end()){                            
+                            positionsOfCandidatesToKeep.emplace_back(c);
+                        }else{
+                            ;//std::cerr << "";
+                        }
+                    }
+
+                    //compact
+                    const int toKeep = positionsOfCandidatesToKeep.size();
+                    for(int c = 0; c < toKeep; c++){
+                        const int index = vecAccess(positionsOfCandidatesToKeep, c);
+
+                        vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
+                        vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);                        
+
+                        std::copy_n(
+                            task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
+                            encodedSequencePitchInInts,
+                            task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
+                        );
+                    }
+
+                    //erase
+                    task.candidateReadIds.erase(
+                        task.candidateReadIds.begin() + toKeep, 
+                        task.candidateReadIds.end()
+                    );
+                    task.candidateSequenceLengths.erase(
+                        task.candidateSequenceLengths.begin() + toKeep, 
+                        task.candidateSequenceLengths.end()
+                    );
+                    task.candidateSequencesFwdData.erase(
+                        task.candidateSequencesFwdData.begin() + toKeep * encodedSequencePitchInInts, 
+                        task.candidateSequencesFwdData.end()
+                    );
+
+                    task.mateRemovedFromCandidates = false;
+                }
+
+           }
 
             /*
                 Compute reverse complement of candidates
             */
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = vecAccess(tasks, indexOfActiveTask);
-
-                
+                auto& task = vecAccess(tasks, indexOfActiveTask);               
 
                 const int numCandidates = task.candidateReadIds.size();
 

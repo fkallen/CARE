@@ -958,6 +958,7 @@ protected:
         bool pairedEnd = false;
         bool abort = false;
         bool mateHasBeenFound = false;
+        bool mateRemovedFromCandidates = false;
         AbortReason abortReason = AbortReason::None;
         int myLength = 0;
         int currentAnchorLength = 0;
@@ -976,6 +977,7 @@ protected:
         std::vector<read_number> candidateReadIds;
         std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
+        std::vector<unsigned int> encodedMate;
         std::vector<int> candidateSequenceLengths;
         std::vector<unsigned int> candidateSequencesFwdData;
         std::vector<unsigned int> candidateSequencesRevcData;
@@ -1006,6 +1008,7 @@ protected:
             pairedEnd = false;
             abort = false;
             mateHasBeenFound = false;
+            mateRemovedFromCandidates = false;
             abortReason = AbortReason::None;
             myLength = 0;
             currentAnchorLength = 0;
@@ -1025,6 +1028,7 @@ protected:
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
             clear(currentAnchor);
+            clear(encodedMate);
             clear(candidateSequenceLengths);
             clear(candidateSequencesFwdData);
             clear(candidateSequencesRevcData);
@@ -1051,6 +1055,9 @@ protected:
 
             task.currentAnchor.resize(input.numInts1);
             std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+
+            task.encodedMate.resize(input.numInts2);
+            std::copy_n(input.encodedRead2, input.numInts2, task.encodedMate.begin());
 
             task.currentAnchorLength = input.readLength1;
             task.currentAnchorReadId = input.readId1;
@@ -1087,6 +1094,9 @@ protected:
 
             task.currentAnchor.resize(input.numInts2);
             std::copy_n(input.encodedRead2, input.numInts2, task.currentAnchor.begin());
+
+            task.encodedMate.resize(input.numInts1);
+            std::copy_n(input.encodedRead1, input.numInts1, task.encodedMate.begin());
 
             task.currentAnchorLength = input.readLength2;
             task.currentAnchorReadId = input.readId2;

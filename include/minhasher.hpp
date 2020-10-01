@@ -145,6 +145,12 @@ struct Minhasher {
             int sequenceLength,
             std::uint64_t) const noexcept;
 
+    // void getCandidatesOfMap(
+    //         Minhasher::Handle& handle,
+    //         const char* sequence,
+    //         int sequenceLength,
+    //         int map) const noexcept;
+
 private:
 
     std::array<std::uint64_t, maximum_number_of_maps>

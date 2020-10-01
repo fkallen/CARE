@@ -393,6 +393,30 @@ namespace care{
         handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
     }
 
+    // void Minhasher::getCandidatesOfMap(
+    //         Minhasher::Handle& handle,
+    //         const char* sequence,
+    //         int sequenceLength,
+    //         int map
+    // ) const noexcept{
+
+    //     assert(map < getNumberOfMaps());
+
+    //     // we do not consider reads which are shorter than k
+    //     if(sequenceLength < getKmerSize()){
+    //         handle.allUniqueResults.clear();
+    //         return;
+    //     }
+   
+    //     const auto hashValues = minhashfunc(sequence, sequenceLength);
+    //     const kmer_type key = hashValues[map] & key_mask;
+    //     const auto entries_range = queryMap(map, key);
+    //     const int n_entries = std::distance(entries_range.first, entries_range.second);
+        
+    //     handle.allUniqueResults.resize(n_entries);
+    //     std::copy(entries_range.first, entries_range.second, handle.allUniqueResults.begin());
+    // }
+
 
 
 
