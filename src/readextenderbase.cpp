@@ -39,6 +39,16 @@ namespace care{
             task.totalAnchorBeginInExtendedRead.emplace_back(0);
         }
 
+#if 1
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
+            return vec[index];
+        };
+#else 
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
+            return vec.at(index);
+        };
+#endif 
+
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
 
@@ -47,7 +57,7 @@ namespace care{
             getCandidateReadIds(tasks, indicesOfActiveTasks);
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 // remove self from candidate list
                 auto readIdPos = std::lower_bound(
@@ -82,7 +92,7 @@ namespace care{
             */
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 
                 {
@@ -111,7 +121,7 @@ namespace care{
             */
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 
 
@@ -148,7 +158,7 @@ namespace care{
             alignmentFilterTimer.start();
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 /*
                     Remove bad alignments and the corresponding alignments of their mate
@@ -163,10 +173,10 @@ namespace care{
 
                 //select candidates with good alignment and positive shift
                 for(int c = 0; c < size; c++){
-                    const BestAlignment_t alignmentFlag0 = task.alignmentFlags[c];
+                    const BestAlignment_t alignmentFlag0 = vecAccess(task.alignmentFlags, c);
                     
-                    if(alignmentFlag0 != BestAlignment_t::None && task.alignments[c].shift >= 0){
-                        positionsOfCandidatesToKeep[task.numRemainingCandidates] = c;
+                    if(alignmentFlag0 != BestAlignment_t::None && vecAccess(task.alignments, c).shift >= 0){
+                        vecAccess(positionsOfCandidatesToKeep, task.numRemainingCandidates) = c;
                         task.numRemainingCandidates++;
                     }else{
                         ; //if any of the mates aligns badly, remove both of them
@@ -194,7 +204,7 @@ namespace care{
                         positionsOfCandidatesToKeep.begin(), 
                         positionsOfCandidatesToKeep.end(),
                         [&](const auto& position){
-                            const auto& alignment = task.alignments[position];
+                            const auto& alignment = vecAccess(task.alignments, position);
                             const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
                             return fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f;
                         }
@@ -206,23 +216,13 @@ namespace care{
                 }
                 
 
-                // const bool goodAlignmentExists = std::any_of(
-                //     positionsOfCandidatesToKeep.begin(), 
-                //     positionsOfCandidatesToKeep.end(),
-                //     [&](const auto& position){
-                //         const auto& alignment = task.alignments[position];
-                //         const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                //         return fgeq(relativeOverlap, 0.7f) && relativeOverlap < 1.0f; //fleq(relativeOverlap, 1.0f);
-                //     }
-                // );
-
                 if(goodAlignmentExists){
                     positionsOfCandidatesToKeep.erase(
                         std::remove_if(
                             positionsOfCandidatesToKeep.begin(), 
                             positionsOfCandidatesToKeep.end(),
                             [&](const auto& position){
-                                const auto& alignment = task.alignments[position];
+                                const auto& alignment = vecAccess(task.alignments, position);
                                 const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
                                 return !fgeq(relativeOverlap, relativeOverlapThreshold);
                             }
@@ -243,16 +243,16 @@ namespace care{
                     task.candidateSequenceData.resize(task.numRemainingCandidates * encodedSequencePitchInInts);
 
                     for(int c = 0; c < task.numRemainingCandidates; c++){
-                        const int index = positionsOfCandidatesToKeep[c];
+                        const int index = vecAccess(positionsOfCandidatesToKeep, c);
 
-                        task.alignments[c] = task.alignments[index];
-                        task.alignmentFlags[c] = task.alignmentFlags[index];
-                        task.candidateReadIds[c] = task.candidateReadIds[index];
-                        task.candidateSequenceLengths[c] = task.candidateSequenceLengths[index];
+                        vecAccess(task.alignments, c) = vecAccess(task.alignments, index);
+                        vecAccess(task.alignmentFlags, c) = vecAccess(task.alignmentFlags, index);
+                        vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
+                        vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);
                         
-                        assert(task.alignmentFlags[index] != BestAlignment_t::None);
+                        assert(vecAccess(task.alignmentFlags, index) != BestAlignment_t::None);
 
-                        if(task.alignmentFlags[index] == BestAlignment_t::Forward){
+                        if(vecAccess(task.alignmentFlags, index) == BestAlignment_t::Forward){
                             std::copy_n(
                                 task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
                                 encodedSequencePitchInInts,
@@ -333,12 +333,12 @@ namespace care{
                 task.candidateOverlapWeights.resize(task.numRemainingCandidates);
 
                 for(int c = 0; c < task.numRemainingCandidates; c++){
-                    task.candidateShifts[c] = task.alignments[c].shift;
+                    vecAccess(task.candidateShifts, c) = vecAccess(task.alignments, c).shift;
 
-                    task.candidateOverlapWeights[c] = calculateOverlapWeight(
+                    vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
                         task.currentAnchorLength, 
-                        task.alignments[c].nOps,
-                        task.alignments[c].overlap
+                        vecAccess(task.alignments, c).nOps,
+                        vecAccess(task.alignments, c).overlap
                     );
                 }
 
@@ -348,7 +348,7 @@ namespace care{
                     decode2BitSequence(
                         task.candidateStrings.data() + c * decodedSequencePitchInBytes,
                         task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
-                        task.candidateSequenceLengths[c]
+                        vecAccess(task.candidateSequenceLengths, c)
                     );
                 }
 
@@ -522,7 +522,7 @@ namespace care{
                 assert(numCandidateIndices <= task.numRemainingCandidates);
 
                 for(int i = 0; i < numCandidateIndices; i++){
-                    const int c = selectedCandidateIndices[i];
+                    const int c = vecAccess(selectedCandidateIndices, i);
                     // if(!(0 <= c && c < task.candidateReadIds.size())){
                     //     std::cerr << "c = " << c << ", candidateReadIds.size() = " << task.candidateReadIds.size() << "\n";
                     // }
@@ -536,12 +536,12 @@ namespace care{
                     // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesRevcData.size());
                     // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequenceData.size());
 
-                    task.candidateReadIds[i] = task.candidateReadIds[c];
-                    task.candidateSequenceLengths[i] = task.candidateSequenceLengths[c];
-                    task.alignments[i] = task.alignments[c];
-                    task.alignmentFlags[i] = task.alignmentFlags[c];
-                    task.candidateShifts[i] = task.candidateShifts[c];
-                    task.candidateOverlapWeights[i] = task.candidateOverlapWeights[c];
+                    vecAccess(task.candidateReadIds, i) = vecAccess(task.candidateReadIds, c);
+                    vecAccess(task.candidateSequenceLengths , i) = vecAccess(task.candidateSequenceLengths, c);
+                    vecAccess(task.alignments, i) = vecAccess(task.alignments, c);
+                    vecAccess(task.alignmentFlags, i) = vecAccess(task.alignmentFlags, c);
+                    vecAccess(task.candidateShifts, i) = vecAccess(task.candidateShifts, c);
+                    vecAccess(task.candidateOverlapWeights, i) = vecAccess(task.candidateOverlapWeights, c);
 
                     std::copy_n(
                         task.candidateSequencesFwdData.begin() + c * encodedSequencePitchInInts,
@@ -610,7 +610,7 @@ namespace care{
             msaTimer.start();
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 const MultipleSequenceAlignment msa = constructMsa(task);
 
@@ -806,7 +806,7 @@ namespace care{
                     //     std::cerr << "\n";
                     // }
 
-                    const std::string& decodedAnchor = task.totalDecodedAnchors[0];
+                    const std::string& decodedAnchor = vecAccess(task.totalDecodedAnchors, 0);
 
                     const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
                     std::vector<float> initialWeights(numsteps-1, 1.0f);
@@ -816,11 +816,11 @@ namespace care{
                     std::vector<int> stepstringlengths(numsteps-1);
                     for(int c = 1; c < numsteps; c++){
                         std::copy(
-                            task.totalDecodedAnchors[c].begin(),
-                            task.totalDecodedAnchors[c].end(),
+                            vecAccess(task.totalDecodedAnchors, c).begin(),
+                            vecAccess(task.totalDecodedAnchors, c).end(),
                             stepstrings.begin() + (c-1) * maxlen
                         );
-                        stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
+                        vecAccess(stepstringlengths, c-1) = vecAccess(task.totalDecodedAnchors, c).size();
                     }
 
                     MultipleSequenceAlignment::InputData msaInput;
