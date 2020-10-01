@@ -25,33 +25,22 @@ namespace care{
             splitTracker[t.myReadId] = 1;
         }
 
+        //set input string as current anchor
+        for(auto& task : tasks){
+            std::string decodedAnchor(task.currentAnchorLength, '\0');
+
+            decode2BitSequence(
+                &decodedAnchor[0],
+                task.currentAnchor.data(),
+                task.currentAnchorLength
+            );
+
+            task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+            task.totalAnchorBeginInExtendedRead.emplace_back(0);
+        }
+
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
-
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = tasks[indexOfActiveTask];
-
-                //update "total" arrays
-                {
-                    std::string decodedAnchor(task.currentAnchorLength, '\0');
-
-                    decode2BitSequence(
-                        &decodedAnchor[0],
-                        task.currentAnchor.data(),
-                        task.currentAnchorLength
-                    );
-
-                    // if(task.myReadId == 90 || task.mateReadId == 90){
-                    //     std::cerr << "Id " << task.myReadId << ", Iteration: " << task.iteration << "\n";
-                    //     std::cerr << "task.totalDecodedAnchors.emplace_back " << decodedAnchor << "\n";
-                    // }
-
-                    task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-                } 
-            }
-
-
 
             hashTimer.start();
 
@@ -228,28 +217,19 @@ namespace care{
                 // );
 
                 if(goodAlignmentExists){
-                    tmpPositionsOfCandidatesToKeep.resize(positionsOfCandidatesToKeep.size());
-
-                    auto end = std::copy_if(
-                        positionsOfCandidatesToKeep.begin(), 
-                        positionsOfCandidatesToKeep.end(),
-                        tmpPositionsOfCandidatesToKeep.begin(),
-                        [&](const auto& position){
-                            const auto& alignment = task.alignments[position];
-                            const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                            return fgeq(relativeOverlap, relativeOverlapThreshold);
-                        }
+                    positionsOfCandidatesToKeep.erase(
+                        std::remove_if(
+                            positionsOfCandidatesToKeep.begin(), 
+                            positionsOfCandidatesToKeep.end(),
+                            [&](const auto& position){
+                                const auto& alignment = task.alignments[position];
+                                const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
+                                return !fgeq(relativeOverlap, relativeOverlapThreshold);
+                            }
+                        ),
+                        positionsOfCandidatesToKeep.end()
                     );
-
-                    tmpPositionsOfCandidatesToKeep.erase(
-                        end,
-                        tmpPositionsOfCandidatesToKeep.end()
-                    );
-
-                    int numRemainingCandidatesTmp = tmpPositionsOfCandidatesToKeep.size();
-
-                    std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
-                    std::swap(numRemainingCandidatesTmp, task.numRemainingCandidates);
+                    task.numRemainingCandidates = positionsOfCandidatesToKeep.size();
                 }
 
                 //std::cerr << ", remaining candidates " << task.numRemainingCandidates << "\n";
@@ -430,11 +410,23 @@ namespace care{
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
                         task.mateHasBeenFound = true;
 
+                        //const int currentAccumExtensionLengths = task.accumExtensionLengths;
+                        
                         task.accumExtensionLengths += flatMap[0].second.front();
                         std::string decodedAnchor(task.decodedMateRevC);
 
                         task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                        // const int startpos = flatMap[0].second.front();
+                        // task.resultsequence.resize(currentAccumExtensionLengths + startpos + task.decodedMateRevC.length());
+                        // const auto replaceBegin = task.resultsequence.begin() + currentAccumExtensionLengths + startpos;
+                        // task.resultsequence.replace(
+                        //     replaceBegin, 
+                        //     replaceBegin + task.decodedMateRevC.length(), 
+                        //     task.decodedMateRevC.begin(), 
+                        //     task.decodedMateRevC.end()
+                        // );
 
                     }else{
                         if(extendBy == 0){
@@ -443,16 +435,41 @@ namespace care{
                         }else{
                             task.accumExtensionLengths += extendBy;
 
-                            //update data for next iteration of outer while loop
+                            //update data for next iteration of outer while loop                           
+
+                            std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
+
                             const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
 
                             task.currentAnchor.resize(numInts);
 
                             encodeSequence2Bit(
                                 task.currentAnchor.data(), 
-                                msa.consensus.data() + extendBy, 
+                                decodedAnchor.data(), 
                                 task.currentAnchorLength
                             );
+
+                            task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+                            task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                            // task.resultsequence.insert(
+                            //     task.resultsequence.end(), 
+                            //     msa.consensus.data() + task.currentAnchorLength, 
+                            //     msa.consensus.data() + task.currentAnchorLength + extendBy
+                            // );
+
+
+                            // std::string tmp(task.currentAnchorLength, '\0');
+
+                            // decode2BitSequence(
+                            //     &tmp[0],
+                            //     task.currentAnchor.data(),
+                            //     task.currentAnchorLength
+                            // );
+
+                            // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
+
+                            // assert(sub == tmp);
                         }
                     }
                 }else{
@@ -463,15 +480,39 @@ namespace care{
                         task.accumExtensionLengths += extendBy;
 
                         //update data for next iteration of outer while loop
+                        std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
+
                         const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
 
                         task.currentAnchor.resize(numInts);
 
                         encodeSequence2Bit(
                             task.currentAnchor.data(), 
-                            msa.consensus.data() + extendBy, 
+                            decodedAnchor.data(), 
                             task.currentAnchorLength
                         );
+
+                        task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+                        task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                        // task.resultsequence.insert(
+                        //     task.resultsequence.end(), 
+                        //     msa.consensus.data() + task.currentAnchorLength, 
+                        //     msa.consensus.data() + task.currentAnchorLength + extendBy
+                        // );
+
+                        // std::string tmp(task.currentAnchorLength, '\0');
+
+                        // decode2BitSequence(
+                        //     &tmp[0],
+                        //     task.currentAnchor.data(),
+                        //     task.currentAnchorLength
+                        // );
+
+                        // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
+
+                        // assert(sub == tmp);
+
                     }
                 }
             };
@@ -703,19 +744,17 @@ namespace care{
             }
             
             //update list of active task indices
-            indicesOfActiveTasksTmp.erase(
-                std::copy_if(
+
+            indicesOfActiveTasks.erase(
+                std::remove_if(
                     indicesOfActiveTasks.begin(), 
-                    indicesOfActiveTasks.end(), 
-                    indicesOfActiveTasksTmp.begin(),
+                    indicesOfActiveTasks.end(),
                     [&](int index){
-                        return tasks[index].isActive(insertSize, insertSizeStddev);
+                        return !tasks[index].isActive(insertSize, insertSizeStddev);
                     }
                 ),
-                indicesOfActiveTasksTmp.end()
+                indicesOfActiveTasks.end()
             );
-
-            std::swap(indicesOfActiveTasks, indicesOfActiveTasksTmp);
         }
 
         //construct results
@@ -730,6 +769,12 @@ namespace care{
             extendResult.readId1 = task.myReadId;
             extendResult.readId2 = task.mateReadId;
 
+#if 0
+            //extendResult.extendedRead = std::move(task.resultsequence);
+            extendResult.success = true;
+            extendResult.mateHasBeenFound = task.mateHasBeenFound;
+
+#else
             // if(abort){
             //     ; //no read extension possible
             // }else
@@ -806,6 +851,14 @@ namespace care{
 
                     std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
 
+                    
+                    // msa.print(std::cerr);
+                    // std::cerr << "msa cons:\n";
+                    // std::cerr << extendedRead << "\n";
+                    // std::cerr << "new cons:\n";
+                    // std::cerr << task.resultsequence << "\n";
+
+
                     extendResult.extendedRead = std::move(extendedRead);
 
                     extendResult.mateHasBeenFound = task.mateHasBeenFound;
@@ -815,6 +868,13 @@ namespace care{
                 // }
             }
 
+            // if(extendResult.extendedRead.length() != task.resultsequence.length()){
+            //     std::cerr << task.myReadId << "\n";
+            //     std::cerr << extendResult.extendedRead << "\n";
+            //     std::cerr << task.resultsequence << "\n";
+            //     std::exit(0);
+            // }
+#endif
             extendResults.emplace_back(std::move(extendResult));
 
         }

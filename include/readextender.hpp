@@ -972,6 +972,7 @@ protected:
         read_number currentAnchorReadId = 0;
         std::string decodedMate;
         std::string decodedMateRevC;
+        std::string resultsequence;
         std::vector<read_number> candidateReadIds;
         std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
@@ -1020,6 +1021,7 @@ protected:
             
             clear(decodedMate);
             clear(decodedMateRevC);
+            clear(resultsequence);
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
             clear(currentAnchor);
@@ -1070,6 +1072,13 @@ protected:
 
             task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength2);
 
+            task.resultsequence.resize(input.readLength1);
+            decode2BitSequence(
+                task.resultsequence.data(),
+                input.encodedRead1,
+                input.readLength1
+            );
+
             return task;
         }else if(direction == ExtensionDirection::RL){
             Task task;
@@ -1097,6 +1106,13 @@ protected:
                 input.readLength1
             );
             task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength1);
+
+            task.resultsequence.resize(input.readLength2);
+            decode2BitSequence(
+                task.resultsequence.data(),
+                input.encodedRead2,
+                input.readLength2
+            );
 
             return task;
         }else{
@@ -1126,6 +1142,13 @@ protected:
             task.mateLength = 0;
             task.mateReadId = std::numeric_limits<read_number>::max();
 
+            task.resultsequence.resize(input.readLength1);
+            decode2BitSequence(
+                task.resultsequence.data(),
+                input.encodedRead1,
+                input.readLength1
+            );
+
             return task;
         }else if(direction == ExtensionDirection::RL){
             
@@ -1149,6 +1172,13 @@ protected:
 
             task.mateLength = 0;
             task.mateReadId = std::numeric_limits<read_number>::max();
+
+            task.resultsequence.resize(input.readLength1);
+            decode2BitSequence(
+                task.resultsequence.data(),
+                input.encodedRead1,
+                input.readLength1
+            );
 
             return task;
         }else{
