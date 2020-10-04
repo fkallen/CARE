@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <array>
 // #include <numeric>
 
 namespace care {

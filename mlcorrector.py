@@ -36,7 +36,7 @@ def onehot_(enc):
 
 def retrieve_data(xpath, ypath, outpath):
     ### get X
-    row_t = np.dtype([("readId", "u4"), ("col", "u4"), ('atts', '(37,)f4'), ('class', bool)], align=False)
+    row_t = np.dtype([("readId", "u4"), ("col", "i2"), ('atts', '(36,)f4'), ('class', bool)])
 
     linecount = sum(1 for line in open(xpath, "r"))
     # linecount = 1000000
@@ -72,7 +72,11 @@ def retrieve_data(xpath, ypath, outpath):
                     filepos += 1
                 trueseq = truthfile.readline()
                 filepos += 1
-            s['class'] = onehot_(s['atts'][5:9])==trueseq[s['col']]
+            if s['col']>=0:
+                s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
+            else:
+                s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
+
 
     print(samples[0:10])
     np.save(outpath, samples)
@@ -100,7 +104,7 @@ def train(train_data, test_data):
     clf = RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
     # clf = tree.DecisionTreeClassifier(max_depth=3).fit(X_train, y_train) 
     extract_forest(clf, out_file='ml/forest.bin')
-    # tree.export_graphviz(clf.estimators_[0], out_file='tree.dot')
+    tree.export_graphviz(clf.estimators_[0], out_file='ml/tree.dot')
 
     print("predicting...")
 
@@ -108,9 +112,9 @@ def train(train_data, test_data):
     
     fpr, tpr, thresholds = metrics.roc_curve(y_test, probs[:,1], pos_label=True)
     plt.plot(fpr, tpr, label="ROC curve (area = %.2f)" % metrics.roc_auc_score(y_test, probs[:,1]))
-    print(thresholds)
-    for i, txt in enumerate(thresholds):
-        plt.annotate("{:4.3f}".format(txt), (fpr[i], tpr[i]))
+    # print(thresholds)
+    # for i, txt in enumerate(thresholds):
+    #     plt.annotate("{:4.3f}".format(txt), (fpr[i], tpr[i]))
 
     plt.plot([0, 1], [0, 1], linestyle="dashed", color='gray')
     plt.title("Receiver Operating Characteristic")
@@ -142,8 +146,9 @@ def extract_node(tree_, i, out_file):
 def extract_forest(clf, out_file):
     with open(out_file, "wb") as out_file:
         out_file.write(struct.pack("I", len(clf.estimators_)))
-        for tree in clf.estimators_:
+        for i, tree in enumerate(clf.estimators_):
             out_file.write(struct.pack("I", tree.get_n_leaves()-1))
+            print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
             extract_node(tree.tree_, 0, out_file)
 
 

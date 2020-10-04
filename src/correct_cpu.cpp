@@ -20,6 +20,7 @@
 #include <filehelpers.hpp>
 #include <forestclassifier.hpp>
 #include <forest.hpp>
+#include <random>
 #include <hostdevicefunctions.cuh>
 
 #include <array>
@@ -244,6 +245,10 @@ namespace cpu{
                 task.candidateSequencesRevcData = data.candidateSequencesRevcData.data() + size_t(offset) * data.encodedSequencePitchInInts;
 
                 task.decodedSubjectSequence = data.decodedSubjectSequences.data() + size_t(i) * data.decodedSequencePitchInBytes;
+
+                // !!!!!!!
+    
+                // !!!!!!!
 
                 task.bestAlignments = data.bestAlignments.data() + offset;
                 task.bestAlignmentFlags = data.bestAlignmentFlags.data() + offset;
@@ -1116,6 +1121,7 @@ namespace cpu{
 
         ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm)
         {   
+            // std::cerr << "making sample" << std::endl;
             float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
             return {
                 float(orig == 'A'),
@@ -1225,7 +1231,7 @@ namespace cpu{
                                                          orig[i],
                                                          subject_b+i,
                                                          correctionOptions.estimatedCoverage);
-                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << " 0 ";
+                        data.ml_stream_anchor << task.subjectReadId << ' ' << i << " ";
                         for (float j: sample) data.ml_stream_anchor << j << ' ';
                         data.ml_stream_anchor << '\n';
                     }
@@ -1288,6 +1294,11 @@ namespace cpu{
             }
         }
 
+        //TODO: beautify dirty hack
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::bernoulli_distribution coinflip(0.01);
+
         void correctCandidatesPrint(
                 BatchData& data,
                 BatchData::Task& task,
@@ -1311,14 +1322,14 @@ namespace cpu{
                     opts.estimatedErrorrate,
                     opts.estimatedCoverage,
                     opts.m_coverage);
-
+                
                 if(cand_begin >= subject_begin - opts.new_columns_to_correct
                     && cand_end <= subject_end + opts.new_columns_to_correct)
                 {
                     for (int i = 0; i < cand_length; ++i) {
-                        if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
-                            auto sample = make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage);
-                            data.ml_stream_cands << data.candidateReadIds[cand] << ' ' << i << " 1 ";
+                        if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i] && coinflip(gen)) {
+                            auto sample = make_sample(msa, props, data.decodedCandidateSequences[offset+i], cand_begin+i, opts.estimatedCoverage);
+                            data.ml_stream_cands << task.bestCandidateReadIds[cand] << ' ' << (task.bestAlignmentFlags[cand]==BestAlignment_t::ReverseComplement?-i-1:i) << ' ';
                             for (float j: sample) data.ml_stream_cands << j << ' ';
                             data.ml_stream_cands << '\n';
                         }
@@ -1339,7 +1350,6 @@ namespace cpu{
 
             const int subject_begin = msa.subjectColumnsBegin_incl;
             const int subject_end = msa.subjectColumnsEnd_excl;
-            
             for(int cand = 0; cand < msa.nCandidates; ++cand) {
                 const int cand_begin = msa.subjectColumnsBegin_incl + task.bestAlignmentShifts[cand];
                 const int cand_length = task.bestCandidateLengths[cand];
@@ -1354,17 +1364,19 @@ namespace cpu{
                     opts.estimatedErrorrate,
                     opts.estimatedCoverage,
                     opts.m_coverage);
-
+                
                 if(cand_begin >= subject_begin - opts.new_columns_to_correct
                     && cand_end <= subject_end + opts.new_columns_to_correct)
                 {
+
                     task.candidateCorrections.emplace_back(cand, task.bestAlignmentShifts[cand],
                         std::string(&msa.consensus[cand_begin], cand_length));
+
 
                     for (int i = 0; i < cand_length; ++i) {
                         constexpr float THRESHOLD = 0.73f;
                         if (data.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                            && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[i], cand_begin+i, opts.estimatedCoverage)) < THRESHOLD)
+                            && data.classifier_cands->decide(make_sample(msa, props, data.decodedCandidateSequences[offset+i], cand_begin+i, opts.estimatedCoverage)) < THRESHOLD)
                         {
                             task.candidateCorrections.back().sequence[i] = data.decodedCandidateSequences[offset+i];
                         }
@@ -1638,6 +1650,7 @@ correct_cpu(
 
 #ifndef DO_PROFILE
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    // cpu::RangeGenerator<read_number> readIdGenerator(10000000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1676,16 +1689,24 @@ correct_cpu(
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
     {
-            classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
-            classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
+        // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
+        classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
-            ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
-            ml_stream_cands_.open(fileOptions.mlForestfileCands);
+         ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
     }
 
-
+    if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
+    {
+        // std::cerr << fileOptions.mlForestfileCands << std::endl;
+        classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
+    }
+    else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
+    {
+        ml_stream_cands_.open(fileOptions.mlForestfileCands);
+    }
+    
     // std::ifstream interestingstream("interestingIds.txt");
     // if(interestingstream){
     //     std::string line;
@@ -1740,6 +1761,7 @@ correct_cpu(
         
         // forest stuff
         batchData.classifier_anchor = classifier_anchor;
+        batchData.classifier_cands = classifier_cands;
 
 
         while(!(readIdGenerator.empty())){
