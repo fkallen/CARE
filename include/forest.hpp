@@ -1,3 +1,7 @@
+#ifndef CARE_FOREST_HPP
+#define CARE_FOREST_HPP
+
+
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -99,4 +103,10 @@ public:
     }
 };
 
+
+
+
 } // namespace care
+
+
+#endif
