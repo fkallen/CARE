@@ -23,6 +23,10 @@
 #include <random>
 #include <hostdevicefunctions.cuh>
 
+
+#include <corrector.hpp>
+
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -1585,6 +1589,8 @@ namespace cpu{
         }
 
 
+
+
 MemoryFileFixedSize<EncodedTempCorrectedSequence>
 correct_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
@@ -2037,135 +2043,325 @@ correct_cpu(
 
 
 
+MemoryFileFixedSize<EncodedTempCorrectedSequence>
+correct_cpu_refactored(
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    const SequenceFileProperties& sequenceFileProperties,
+    Minhasher& minhasher,
+    cpu::ContiguousReadStorage& readStorage
+){
+
+    omp_set_num_threads(runtimeOptions.threads);
+
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
 
 
+    CpuErrorCorrector::ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
 
-#if 0
-        void correctSubjectWithForest(...){
 
-            auto MSAFeatures = extractFeatures(data.multipleSequenceAlignment.consensus.data(),
-                                            data.multipleSequenceAlignment.support.data(),
-                                            data.multipleSequenceAlignment.coverage.data(),
-                                            data.multipleSequenceAlignment.origCoverages.data(),
-                                            data.multipleSequenceAlignment.nColumns,
-                                            data.multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                            data.multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                            task.original_subject_string,
-                                            correctionOptions.kmerlength, 0.5f,
-                                            correctionOptions.estimatedCoverage);
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
 
-            task.corrected_subject = task.original_subject_string;
+    if(memoryAvailableBytesHost > correctionFlags.sizeInBytes()){
+        memoryAvailableBytesHost -= correctionFlags.sizeInBytes();
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
 
-            for(const auto& msafeature : MSAFeatures){
-                constexpr float maxgini = 0.05f;
-                constexpr float forest_correction_fraction = 0.5f;
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
 
-                const bool doCorrect = forestClassifier.shouldCorrect(
-                                                msafeature.position_support,
-                                                msafeature.position_coverage,
-                                                msafeature.alignment_coverage,
-                                                msafeature.dataset_coverage,
-                                                msafeature.min_support,
-                                                msafeature.min_coverage,
-                                                msafeature.max_support,
-                                                msafeature.max_coverage,
-                                                msafeature.mean_support,
-                                                msafeature.mean_coverage,
-                                                msafeature.median_support,
-                                                msafeature.median_coverage,
-                                                maxgini,
-                                                forest_correction_fraction);
+    if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
+    }
 
-                if(doCorrect){
-                    task.corrected = true;
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
-                    const int globalIndex = data.multipleSequenceAlignment.subjectColumnsBegin_incl + msafeature.position;
-                    task.corrected_subject[msafeature.position] = data.multipleSequenceAlignment.consensus[globalIndex];
+
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    // cpu::RangeGenerator<read_number> readIdGenerator(10000000);
+
+    
+    auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
+        //std::unique_lock<std::mutex> l(outputstreammutex);
+        //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
+        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+            //std::cerr << tmp.readId << " " << tmp << '\n';
+            partialResults.storeElement(std::move(encoded));
+        }
+    };
+
+    BackgroundThread outputThread(true);
+
+    CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
+
+   
+    std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+    std::ofstream ml_stream_anchor_, ml_stream_cands_;
+
+    if (correctionOptions.correctionType == CorrectionType::Forest)
+    {
+        // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
+        classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
+    }
+    else if (correctionOptions.correctionType == CorrectionType::Print)
+    {
+        ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
+    }
+
+    if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
+    {
+        // std::cerr << fileOptions.mlForestfileCands << std::endl;
+        classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
+    }
+    else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
+    {
+        ml_stream_cands_.open(fileOptions.mlForestfileCands);
+    }
+
+    
+    auto showProgress = [&](auto totalCount, auto seconds){
+        if(runtimeOptions.showProgress){
+
+            printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, sequenceFileProperties.nReads,
+                    int(seconds / 3600),
+                    int(seconds / 60) % 60,
+                    int(seconds) % 60);
+            std::cout.flush();
+        }
+
+        if(totalCount == sequenceFileProperties.nReads){
+            std::cerr << '\n';
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration;
+    };
+
+    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+
+    const int numThreads = runtimeOptions.threads;
+
+    #pragma omp parallel
+    {
+        //const int threadId = omp_get_thread_num();
+
+        const std::size_t encodedSequencePitchInInts2Bit = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+        const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
+        const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+
+        std::random_device rd;
+
+        CpuErrorCorrector::MLSettings mlSettings;
+        mlSettings.classifier_anchor = classifier_anchor;
+        mlSettings.classifier_cands = classifier_cands;
+        mlSettings.rndGenerator = std::mt19937(rd() + std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+        CpuErrorCorrector errorCorrector(
+            encodedSequencePitchInInts2Bit,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            correctionOptions,
+            goodAlignmentProperties,
+            minhasher,
+            readStorage,
+            correctionFlags,
+            &mlSettings
+        );
+
+        ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+
+        std::vector<read_number> batchReadIds;
+        std::vector<unsigned int> encodedData(getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength));
+        std::vector<char> qualities(sequenceFileProperties.maxSequenceLength);      
+
+        while(!(readIdGenerator.empty())){
+
+            batchReadIds.resize(correctionOptions.batchsize);
+
+            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                correctionOptions.batchsize, 
+                batchReadIds.begin()
+            );
+            
+            batchReadIds.erase(readIdsEnd, batchReadIds.end());
+
+            if(batchReadIds.empty()){
+                continue;
+            }
+
+            std::vector<TempCorrectedSequence> anchorCorrections;
+            std::vector<TempCorrectedSequence> candidateCorrections;
+            std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+            std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+
+            for(auto id : batchReadIds){
+                CpuErrorCorrector::CorrectionInput input;
+                input.anchorReadId = id;
+                input.encodedAnchor = encodedData.data();
+                input.anchorQualityscores = qualities.data();
+
+                readStorage.gatherSequenceLengths(
+                    readStorageGatherHandle,
+                    &id,
+                    1,
+                    &input.anchorLength
+                );
+
+                readStorage.gatherSequenceData(
+                    readStorageGatherHandle,
+                    &id,
+                    1,
+                    encodedData.data(),
+                    encodedSequencePitchInInts2Bit
+                );
+
+                if(correctionOptions.useQualityScores){
+                    readStorage.gatherSequenceQualities(
+                        readStorageGatherHandle,
+                        &id,
+                        1,
+                        qualities.data(),
+                        qualityPitchInBytes
+                    );
+                }
+
+                auto output = errorCorrector.process(input);
+
+                if(output.hasAnchorCorrection){
+                    encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
+                    anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                }
+
+                for(auto& tmp : output.candidateCorrections){
+                    encodedCandidateCorrections.emplace_back(tmp.encode());
+                    candidateCorrections.emplace_back(std::move(tmp));
                 }
             }
-        }
-#endif
 
-#if 0
-        void correctSubjectWithNeuralNetwork(...){
-            assert(false);
-            /*auto MSAFeatures3 = extractFeatures3_2(
-                                    data.multipleSequenceAlignment.countsA.data(),
-                                    data.multipleSequenceAlignment.countsC.data(),
-                                    data.multipleSequenceAlignment.countsG.data(),
-                                    data.multipleSequenceAlignment.countsT.data(),
-                                    data.multipleSequenceAlignment.weightsA.data(),
-                                    data.multipleSequenceAlignment.weightsC.data(),
-                                    data.multipleSequenceAlignment.weightsG.data(),
-                                    data.multipleSequenceAlignment.weightsT.data(),
-                                    data.multipleSequenceAlignment.nRows,
-                                    data.multipleSequenceAlignment.columnProperties.columnsToCheck,
-                                    data.multipleSequenceAlignment.consensus.data(),
-                                    data.multipleSequenceAlignment.support.data(),
-                                    data.multipleSequenceAlignment.coverage.data(),
-                                    data.multipleSequenceAlignment.origCoverages.data(),
-                                    data.multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
-                                    data.multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
-                                    task.original_subject_string,
-                                    correctionOptions.estimatedCoverage);
+            auto outputfunction = [
+                &, 
+                encodedAnchorCorrections = std::move(encodedAnchorCorrections),
+                anchorCorrections = std::move(anchorCorrections),
+                encodedCandidateCorrections = std::move(encodedCandidateCorrections),
+                candidateCorrections = std::move(candidateCorrections)
+            ](){
+                const int numA = anchorCorrections.size();
+                const int numC = candidateCorrections.size();
 
-                std::vector<float> predictions = nnClassifier.infer(MSAFeatures3);
-                assert(predictions.size() == MSAFeatures3.size());
-
-                task.corrected_subject = task.original_subject_string;
-
-                for(size_t index = 0; index < predictions.size(); index++){
-                    constexpr float threshold = 0.8;
-                    const auto& msafeature = MSAFeatures3[index];
-
-                    if(predictions[index] >= threshold){
-                        task.corrected = true;
-
-                        const int globalIndex = data.multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
-                        task.corrected_subject[msafeature.position] = data.multipleSequenceAlignment.consensus[globalIndex];
-                    }
-                }*/
-        }
-#endif 
-
-
-    #if 0
-                std::cout << correctionTasks[0].readId << " MSA: rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
-                std::cout << "Consensus:\n   ";
-                for(int i = 0; i < multipleSequenceAlignment.nColumns; i++){
-                    std::cout << multipleSequenceAlignment.consensus[i];
+                for(int i = 0; i < numA; i++){
+                    saveCorrectedSequence(
+                        std::move(anchorCorrections[i]), 
+                        std::move(encodedAnchorCorrections[i])
+                    );
                 }
-                std::cout << '\n';
 
-                /*printSequencesInMSA(std::cout,
-                                    correctionTasks[0].original_subject_string.c_str(), 
-                                    subjectLength,
-                                    bestCandidateStrings.data(),
-                                    bestCandidateLengths.data(),
-                                    int(bestAlignments.size()),
-                                    bestAlignmentShifts.data(),
-                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                    multipleSequenceAlignment.nColumns,
-                                    sequenceFileProperties.maxSequenceLength);*/
+                for(int i = 0; i < numC; i++){
+                    saveCorrectedSequence(
+                        std::move(candidateCorrections[i]), 
+                        std::move(encodedCandidateCorrections[i])
+                    );
+                }
+            };
 
-                printSequencesInMSAConsEq(std::cout,
-                                    correctionTasks[0].original_subject_string.c_str(),
-                                    subjectLength,
-                                    bestCandidateStrings.data(),
-                                    bestCandidateLengths.data(),
-                                    int(bestAlignments.size()),
-                                    bestAlignmentShifts.data(),
-                                    multipleSequenceAlignment.consensus.data(),
-                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                    multipleSequenceAlignment.nColumns,
-                                    sequenceFileProperties.maxSequenceLength);
+            outputThread.enqueue(std::move(outputfunction));
+
+            if(correctionOptions.correctionType == CorrectionType::Print){
+
+                #pragma omp critical
+                {
+                    ml_stream_anchor_ << errorCorrector.getMlStreamAnchor().rdbuf();
+                    // could be same file, thus same critical block
+                    ml_stream_cands_ << errorCorrector.getMlStreamCandidates().rdbuf();
+                }
+
+                errorCorrector.getMlStreamAnchor().clear();
+                errorCorrector.getMlStreamAnchor().str("");
+                errorCorrector.getMlStreamCandidates().clear();
+                errorCorrector.getMlStreamCandidates().str("");
+            }
+
+            progressThread.addProgress(batchReadIds.size()); 
+            
+        } //while unprocessed reads exist loop end   
+
+        #pragma omp critical
+        {
+            timingsOfAllThreads += errorCorrector.getTimings();            
+        }
+
+
+
+
+    } // parallel end
+
+    progressThread.finished();
+
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+    //outputstream.flush();
+    partialResults.flush();
+
+    #ifdef ENABLE_TIMING
+
+    auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
+
+    auto printDuration = [&](const auto& name, const auto& duration){
+        std::cout << "# average time per thread ("<< name << "): "
+                  << duration.count() / numThreads  << " s. "
+                  << (100.0 * duration.count() / totalDurationOfThreads.count()) << " %."<< std::endl;
+    };
+
+    #define printme(x) printDuration((#x), timingsOfAllThreads.x);
+
+    printme(getSubjectSequenceDataTimeTotal);
+    printme(getCandidatesTimeTotal);
+    printme(copyCandidateDataToBufferTimeTotal);
+    printme(getAlignmentsTimeTotal);
+    printme(findBestAlignmentDirectionTimeTotal);
+    printme(gatherBestAlignmentDataTimeTotal);
+    printme(mismatchRatioFilteringTimeTotal);
+    printme(compactBestAlignmentDataTimeTotal);
+    printme(fetchQualitiesTimeTotal);
+    printme(makeCandidateStringsTimeTotal);
+    printme(msaAddSequencesTimeTotal);
+    printme(msaFindConsensusTimeTotal);
+    printme(msaMinimizationTimeTotal);
+    printme(msaCorrectSubjectTimeTotal);
+    printme(msaCorrectCandidatesTimeTotal);
+
+    #undef printme
+
     #endif
 
+    return partialResults;
+}
 
-}
-}
+
+
+
+} //namespace cpu
+
+} //namespace care
 
 
 #ifdef MSA_IMPLICIT
