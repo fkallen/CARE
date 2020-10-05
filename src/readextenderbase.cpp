@@ -39,28 +39,6 @@ namespace care{
             task.totalAnchorBeginInExtendedRead.emplace_back(0);
         }
 
-        // for(auto& task : tasks){
-        //     if(task.pairedEnd){
-        //         auto currentAnchorCopy = task.currentAnchor;
-        //         auto currentAnchorLengthCopy = task.currentAnchorLength;
-
-        //         const int numInts = getEncodedNumInts2Bit(task.mateLength);
-        //         task.currentAnchor.resize(numInts);
-        //         encodeSequence2Bit(task.currentAnchor.data(), decodedMate.c_str(), task.mateLength);
-                
-        //     }
-
-        //     std::string decodedAnchor(task.currentAnchorLength, '\0');
-
-        //     decode2BitSequence(
-        //         &decodedAnchor[0],
-        //         task.currentAnchor.data(),
-        //         task.currentAnchorLength
-        //     );
-
-        //     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-        //     task.totalAnchorBeginInExtendedRead.emplace_back(0);
-        // }
 
 #if 0
         //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
@@ -94,16 +72,19 @@ namespace care{
                     task.candidateReadIds.erase(readIdPos);
                 }
 
-                //remove mate of input from candidate list
-                auto mateReadIdPos = std::lower_bound(
-                    task.candidateReadIds.begin(),                                            
-                    task.candidateReadIds.end(),
-                    task.mateReadId
-                );
+                if(task.pairedEnd){
 
-                if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
-                    task.candidateReadIds.erase(mateReadIdPos);
-                    task.mateRemovedFromCandidates = true;
+                    //remove mate of input from candidate list
+                    auto mateReadIdPos = std::lower_bound(
+                        task.candidateReadIds.begin(),                                            
+                        task.candidateReadIds.end(),
+                        task.mateReadId
+                    );
+
+                    if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
+                        task.candidateReadIds.erase(mateReadIdPos);
+                        task.mateRemovedFromCandidates = true;
+                    }
                 }
             }
 
@@ -243,7 +224,7 @@ namespace care{
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
                 /*
-                    Remove bad alignments and the corresponding alignments of their mate
+                    Remove bad alignments
                 */        
 
                 const int size = task.alignments.size();
@@ -261,7 +242,7 @@ namespace care{
                         vecAccess(positionsOfCandidatesToKeep, task.numRemainingCandidates) = c;
                         task.numRemainingCandidates++;
                     }else{
-                        ; //if any of the mates aligns badly, remove both of them
+                        ; // remove alignment
                     }
                 }
 
@@ -678,14 +659,16 @@ namespace care{
                     task.candidateSequenceData.begin() + numCandidateIndices * encodedSequencePitchInInts,
                     task.candidateSequenceData.end()
                 );
-                task.mateIdLocationIter = std::lower_bound(
-                    task.candidateReadIds.begin(),
-                    task.candidateReadIds.end(),
-                    task.mateReadId
-                );
+                if(task.pairedEnd){
+                    task.mateIdLocationIter = std::lower_bound(
+                        task.candidateReadIds.begin(),
+                        task.candidateReadIds.end(),
+                        task.mateReadId
+                    );
 
-                task.mateHasBeenFound = (task.mateIdLocationIter != task.candidateReadIds.end() 
-                    && *task.mateIdLocationIter == task.mateReadId);
+                    task.mateHasBeenFound = (task.mateIdLocationIter != task.candidateReadIds.end() 
+                        && *task.mateIdLocationIter == task.mateReadId);
+                }
                 task.numRemainingCandidates = numCandidateIndices;
             };
 
@@ -818,9 +801,9 @@ namespace care{
                     std::swap(task.allUsedCandidateReadIdPairs, tmp);
                 }
 
-                task.usedCandidateReadIdsPerIteration.emplace_back(std::move(task.candidateReadIds));
-                task.usedAlignmentsPerIteration.emplace_back(std::move(task.alignments));
-                task.usedAlignmentFlagsPerIteration.emplace_back(std::move(task.alignmentFlags));
+                // task.usedCandidateReadIdsPerIteration.emplace_back(std::move(task.candidateReadIds));
+                // task.usedAlignmentsPerIteration.emplace_back(std::move(task.alignments));
+                // task.usedAlignmentFlagsPerIteration.emplace_back(std::move(task.alignmentFlags));
 
                 task.iteration++;
             }
