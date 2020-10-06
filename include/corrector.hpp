@@ -11,7 +11,7 @@
 #include <bestalignment.hpp>
 #include <msa.hpp>
 #include <qualityscoreweights.hpp>
-#include <forest.hpp>
+#include <classification.hpp>
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 
@@ -21,7 +21,6 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
-#include <random>
 
 namespace care{
 
@@ -131,10 +130,7 @@ public:
         }
     };   
 
-    struct MLSettings{
-        std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
-        std::mt19937 rndGenerator;
-    };
+
 
     CpuErrorCorrector() = default;
     CpuErrorCorrector(
@@ -146,7 +142,7 @@ public:
         const Minhasher& minhasher_,
         const cpu::ContiguousReadStorage& readStorage_,
         ReadCorrectionFlags& correctionFlags_,
-        MLSettings* mlSettings_
+        ClfAgent* clfAgent_
     ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
         decodedSequencePitchInBytes(decodedSequencePitchInBytes_),
         qualityPitchInBytes(qualityPitchInBytes_),
@@ -155,7 +151,7 @@ public:
         minhasher(&minhasher_),
         readStorage(&readStorage_),
         correctionFlags(&correctionFlags_),
-        mlSettings(mlSettings_)
+        clfAgent(clfAgent_)
     {
 
     }
@@ -1024,18 +1020,16 @@ private:
 
         corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
         if (!task.msaProperties.isHQ) {
-            constexpr float THRESHOLD = 0.73f;
+            constexpr float THRESHOLD = 0.73f; //TODO: move into agent or somewhere else. runtime parameter?
             for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i] &&
-                    mlSettings->classifier_anchor->decide(
-                        make_sample(
+                    clfAgent->decide_anchor(
                             task.multipleSequenceAlignment,
                             task.msaProperties,
                             orig[i],
                             subject_b+i,
                             correctionOptions->estimatedCoverage
-                        )
-                    ) < THRESHOLD)
+                        ) < THRESHOLD)
                 {
                     corr[i] = orig[i];
                 }
@@ -1064,14 +1058,12 @@ private:
         if (!task.msaProperties.isHQ) {
             for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
-                    ml_sample_t sample = make_sample(task.multipleSequenceAlignment,
-                                                        task.msaProperties,
-                                                        orig[i],
-                                                        subject_b+i,
-                                                        correctionOptions->estimatedCoverage);
-                    ml_stream_anchor << task.input.anchorReadId << ' ' << i << " ";
-                    for (float j: sample) ml_stream_anchor << j << ' ';
-                    ml_stream_anchor << '\n';
+                    clfAgent->print_anchor(task.multipleSequenceAlignment,
+                                          task.msaProperties,
+                                          orig[i],
+                                          subject_b+i,
+                                          correctionOptions->estimatedCoverage,
+                                          task.input.anchorReadId, i);
                 }
             }
         }
@@ -1131,8 +1123,6 @@ private:
         const int subject_begin = msa.subjectColumnsBegin_incl;
         const int subject_end = msa.subjectColumnsEnd_excl;
 
-        std::bernoulli_distribution coinflip(0.01);
-
         for(int cand = 0; cand < msa.nCandidates; ++cand) {
             const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
             const int cand_length = task.candidateSequencesLengths[cand];
@@ -1152,13 +1142,7 @@ private:
                 && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
             {
                 for (int i = 0; i < cand_length; ++i) {
-                    if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i] && coinflip(mlSettings->rndGenerator)) {
-                        auto sample = make_sample(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage);
-                        ml_stream_cands << task.candidateReadIds[cand] << ' ' 
-                            << (task.alignmentFlags[cand]==BestAlignment_t::ReverseComplement?-i-1:i) << ' ';
-                        for (float j: sample) ml_stream_cands << j << ' ';
-                        ml_stream_cands << '\n';
-                    }
+                    clfAgent->print_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage, task.input.anchorReadId, i);
                 }
             }
         }
@@ -1199,9 +1183,8 @@ private:
                 for (int i = 0; i < cand_length; ++i) {
                     constexpr float THRESHOLD = 0.73f;
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                        && mlSettings->classifier_cands->decide(
-                                make_sample(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage)
-                            ) < THRESHOLD)
+                        && clfAgent->decide_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage)
+                            < THRESHOLD)
                     {
                         task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];
                     }
@@ -1331,7 +1314,7 @@ private:
                         }
                     }
                     
-                    
+
                     tmp.useEdits = edits <= maxEdits;
                 }else{
                     tmp.useEdits = false;
@@ -1344,49 +1327,6 @@ private:
         return result;
     }
 
-    ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm) const noexcept
-    {   
-        // std::cerr << "making sample" << std::endl;
-        float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
-        return {
-            float(orig == 'A'),
-            float(orig == 'C'),
-            float(orig == 'G'),
-            float(orig == 'T'),
-            float(msa.consensus[pos] == 'A'),
-            float(msa.consensus[pos] == 'C'),
-            float(msa.consensus[pos] == 'G'),
-            float(msa.consensus[pos] == 'T'),
-            orig == 'A'?msa.countsA[pos]/countsACGT:0,
-            orig == 'C'?msa.countsC[pos]/countsACGT:0,
-            orig == 'G'?msa.countsG[pos]/countsACGT:0,
-            orig == 'T'?msa.countsT[pos]/countsACGT:0,
-            orig == 'A'?msa.weightsA[pos]:0,
-            orig == 'C'?msa.weightsC[pos]:0,
-            orig == 'G'?msa.weightsG[pos]:0,
-            orig == 'T'?msa.weightsT[pos]:0,
-            msa.consensus[pos] == 'A'?msa.countsA[pos]/countsACGT:0,
-            msa.consensus[pos] == 'C'?msa.countsC[pos]/countsACGT:0,
-            msa.consensus[pos] == 'G'?msa.countsG[pos]/countsACGT:0,
-            msa.consensus[pos] == 'T'?msa.countsT[pos]/countsACGT:0,
-            msa.consensus[pos] == 'A'?msa.weightsA[pos]:0,
-            msa.consensus[pos] == 'C'?msa.weightsC[pos]:0,
-            msa.consensus[pos] == 'G'?msa.weightsG[pos]:0,
-            msa.consensus[pos] == 'T'?msa.weightsT[pos]:0,
-            msa.weightsA[pos],
-            msa.weightsC[pos],
-            msa.weightsG[pos],
-            msa.weightsT[pos],
-            msa.countsA[pos]/countsACGT,
-            msa.countsC[pos]/countsACGT,
-            msa.countsG[pos]/countsACGT,
-            msa.countsT[pos]/countsACGT,
-            props.avg_support,
-            props.min_support,
-            float(props.max_coverage)/norm,
-            float(props.min_coverage)/norm
-        };
-    }
 
 private:
 
@@ -1400,7 +1340,7 @@ private:
     const cpu::ContiguousReadStorage* readStorage{};
 
     ReadCorrectionFlags* correctionFlags{};
-    MLSettings* mlSettings{};
+    ClfAgent* clfAgent{};
 
     mutable cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle{};    
     mutable Minhasher::Handle minhashHandle{};

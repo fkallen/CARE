@@ -18,9 +18,9 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
-#include <forestclassifier.hpp>
-#include <forest.hpp>
-#include <random>
+// #include <forestclassifier.hpp>
+#include <classification.hpp>
+// #include <random>
 #include <hostdevicefunctions.cuh>
 
 
@@ -223,7 +223,8 @@ namespace cpu{
             int decodedSequencePitchInBytes = 0;
             int qualityPitchInBytes = 0;
 
-            std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+            std::shared_ptr<anchor_clf_t> classifier_anchor;
+            std::shared_ptr<cands_clf_t> classifier_cands;
             std::stringstream ml_stream_anchor, ml_stream_cands;
         };
 
@@ -1122,6 +1123,8 @@ namespace cpu{
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
             
         }
+        
+        using ml_sample_t = std::array<float, 36>;
 
         ml_sample_t make_sample(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm)
         {   
@@ -1690,13 +1693,13 @@ correct_cpu(
 
     TimeMeasurements timingsOfAllThreads;
     
-    std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+    std::shared_ptr<ForestClf<ml_sample_t>> classifier_anchor, classifier_cands;
     std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
-        classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
+        classifier_anchor = std::make_shared<ForestClf<ml_sample_t>>(fileOptions.mlForestfileAnchor);
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
@@ -1706,7 +1709,7 @@ correct_cpu(
     if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileCands << std::endl;
-        classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
+        classifier_cands = std::make_shared<ForestClf<ml_sample_t>>(fileOptions.mlForestfileCands);
     }
     else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
     {
@@ -2113,13 +2116,14 @@ correct_cpu_refactored(
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
 
    
-    std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
+    std::shared_ptr<anchor_clf_t> classifier_anchor;
+    std::shared_ptr<cands_clf_t> classifier_cands;
     std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
-        classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
+        classifier_anchor = std::make_shared<anchor_clf_t>(fileOptions.mlForestfileAnchor);
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
@@ -2129,7 +2133,7 @@ correct_cpu_refactored(
     if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileCands << std::endl;
-        classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
+        classifier_cands = std::make_shared<cands_clf_t>(fileOptions.mlForestfileCands);
     }
     else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
     {
@@ -2169,12 +2173,7 @@ correct_cpu_refactored(
         const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 
-        std::random_device rd;
-
-        CpuErrorCorrector::MLSettings mlSettings;
-        mlSettings.classifier_anchor = classifier_anchor;
-        mlSettings.classifier_cands = classifier_cands;
-        mlSettings.rndGenerator = std::mt19937(rd() + std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        ClfAgent clfAgent(classifier_anchor, classifier_cands);
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
@@ -2185,7 +2184,7 @@ correct_cpu_refactored(
             minhasher,
             readStorage,
             correctionFlags,
-            &mlSettings
+            &clfAgent
         );
 
         ContiguousReadStorage::GatherHandle readStorageGatherHandle;
@@ -2289,15 +2288,13 @@ correct_cpu_refactored(
 
                 #pragma omp critical
                 {
-                    ml_stream_anchor_ << errorCorrector.getMlStreamAnchor().rdbuf();
+                    ml_stream_anchor_ << clfAgent.anchor_stream.rdbuf();
                     // could be same file, thus same critical block
-                    ml_stream_cands_ << errorCorrector.getMlStreamCandidates().rdbuf();
+                    ml_stream_cands_ << clfAgent.cands_stream.rdbuf();
                 }
 
-                errorCorrector.getMlStreamAnchor().clear();
-                errorCorrector.getMlStreamAnchor().str("");
-                errorCorrector.getMlStreamCandidates().clear();
-                errorCorrector.getMlStreamCandidates().str("");
+                clfAgent.anchor_stream = std::stringstream{};
+                clfAgent.cands_stream = std::stringstream{};
             }
 
             progressThread.addProgress(batchReadIds.size()); 
@@ -2308,9 +2305,6 @@ correct_cpu_refactored(
         {
             timingsOfAllThreads += errorCorrector.getTimings();            
         }
-
-
-
 
     } // parallel end
 
