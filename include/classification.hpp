@@ -7,15 +7,15 @@
 #include <msa.hpp>
 
 
-// This header allows toggling of feature transformations and classifiers.
+// This header allows toggling of feature transformations and classifiers,
+// and seperates classification logic from the main corrector code.
 // SEE BOTTOM OF FILE FOR TOGGLES! 
 
 // TODO: implement logistic regression and investigate peformance
 // Possibly same accuracy with VASTLY superior performance
 
 // The current features were designed with the possibility of using logistic regression in mind
-// but are highly redundant for any decision tree. This header serves to seperate
-// feature extraction from the rest of the code.
+// but are highly redundant for any decision tree.
 
 namespace care {
 
