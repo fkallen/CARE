@@ -31,13 +31,17 @@ struct clf_agent
     //TODO: access permission
     std::shared_ptr<AnchorClf> classifier_anchor;
     std::shared_ptr<CandClf> classifier_cands;
+    std::stringstream anchor_stream, cands_stream;
+    std::shared_ptr<std::ofstream> anchor_file, cands_file;
     std::mt19937 rng;
     std::bernoulli_distribution coinflip;
-    std::stringstream anchor_stream, cands_stream;
+
 
     clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
         classifier_anchor(c_opts.correctionType==CorrectionType::Forest?std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor):nullptr),
         classifier_cands(c_opts.correctionTypeCands==CorrectionType::Forest?std::make_shared<CandClf>(f_opts.mlForestfileCands):nullptr),
+        anchor_file(c_opts.correctionType==CorrectionType::Print?std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor):nullptr),
+        cands_file(c_opts.correctionTypeCands==CorrectionType::Print?std::make_shared<std::ofstream>(f_opts.mlForestfileCands):nullptr),
         rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count())),
         coinflip(0.01)
     {}
@@ -45,6 +49,8 @@ struct clf_agent
     clf_agent(const clf_agent& other) :
         classifier_anchor(other.classifier_anchor),
         classifier_cands(other.classifier_cands),
+        anchor_file(other.anchor_file),
+        cands_file(other.cands_file),
         rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count() + std::hash<std::thread::id>{}(std::this_thread::get_id()))),
         coinflip(other.coinflip)
     {}
@@ -72,6 +78,13 @@ struct clf_agent
 
     float decide_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) {       
         return classifier_cands->decide(cands_extractor(msa, props, orig, pos, norm));
+    }
+
+    void flush() {
+        *anchor_file << anchor_stream.rdbuf();
+        *cands_file << cands_stream.rdbuf();
+        anchor_stream = std::stringstream();
+        cands_stream = std::stringstream();
     }
 };
 

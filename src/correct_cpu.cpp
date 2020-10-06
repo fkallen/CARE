@@ -2118,14 +2118,8 @@ correct_cpu_refactored(
    
     std::shared_ptr<anchor_clf_t> classifier_anchor;
     std::shared_ptr<cands_clf_t> classifier_cands;
-    std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
     ClfAgent clfAgent_(correctionOptions, fileOptions);
-
-    if (correctionOptions.correctionType == CorrectionType::Print)
-        ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
-    if (correctionOptions.correctionTypeCands == CorrectionType::Print)
-        ml_stream_cands_.open(fileOptions.mlForestfileCands);
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -2274,13 +2268,8 @@ correct_cpu_refactored(
 
                 #pragma omp critical
                 {
-                    ml_stream_anchor_ << clfAgent.anchor_stream.rdbuf();
-                    // could be same file, thus same critical block
-                    ml_stream_cands_ << clfAgent.cands_stream.rdbuf();
+                    clfAgent.flush();
                 }
-
-                clfAgent.anchor_stream = std::stringstream{};
-                clfAgent.cands_stream = std::stringstream{};
             }
 
             progressThread.addProgress(batchReadIds.size()); 
