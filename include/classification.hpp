@@ -35,11 +35,18 @@ struct clf_agent
     std::bernoulli_distribution coinflip;
     std::stringstream anchor_stream, cands_stream;
 
-    clf_agent(std::shared_ptr<AnchorClf> clf_a, std::shared_ptr<CandClf> clf_c) :
-        classifier_anchor(clf_a),
-        classifier_cands(clf_c),
-        rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count() + std::hash<std::thread::id>{}(std::this_thread::get_id()))),
+    clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
+        classifier_anchor(c_opts.correctionType==CorrectionType::Forest?std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor):nullptr),
+        classifier_cands(c_opts.correctionTypeCands==CorrectionType::Forest?std::make_shared<CandClf>(f_opts.mlForestfileCands):nullptr),
+        rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count())),
         coinflip(0.01)
+    {}
+
+    clf_agent(const clf_agent& other) :
+        classifier_anchor(other.classifier_anchor),
+        classifier_cands(other.classifier_cands),
+        rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count() + std::hash<std::thread::id>{}(std::this_thread::get_id()))),
+        coinflip(other.coinflip)
     {}
 
     //TODO: if this could just get task as parameter, everthing would look much nicer, consider un-private-ing stuff?

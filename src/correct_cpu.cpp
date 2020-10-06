@@ -2120,26 +2120,12 @@ correct_cpu_refactored(
     std::shared_ptr<cands_clf_t> classifier_cands;
     std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
-    if (correctionOptions.correctionType == CorrectionType::Forest)
-    {
-        // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
-        classifier_anchor = std::make_shared<anchor_clf_t>(fileOptions.mlForestfileAnchor);
-    }
-    else if (correctionOptions.correctionType == CorrectionType::Print)
-    {
+    ClfAgent clfAgent_(correctionOptions, fileOptions);
+
+    if (correctionOptions.correctionType == CorrectionType::Print)
         ml_stream_anchor_.open(fileOptions.mlForestfileAnchor);
-    }
-
-    if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
-    {
-        // std::cerr << fileOptions.mlForestfileCands << std::endl;
-        classifier_cands = std::make_shared<cands_clf_t>(fileOptions.mlForestfileCands);
-    }
-    else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
-    {
+    if (correctionOptions.correctionTypeCands == CorrectionType::Print)
         ml_stream_cands_.open(fileOptions.mlForestfileCands);
-    }
-
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -2173,7 +2159,7 @@ correct_cpu_refactored(
         const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 
-        ClfAgent clfAgent(classifier_anchor, classifier_cands);
+        ClfAgent clfAgent = clfAgent_;
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
