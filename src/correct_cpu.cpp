@@ -1593,7 +1593,7 @@ namespace cpu{
         }
 
 
-#if 1
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence>
 correct_cpu(
@@ -1694,13 +1694,13 @@ correct_cpu(
 
     TimeMeasurements timingsOfAllThreads;
     
-    std::shared_ptr<ForestClf<ml_sample_t>> classifier_anchor, classifier_cands;
+    std::shared_ptr<ForestClf> classifier_anchor, classifier_cands;
     std::ofstream ml_stream_anchor_, ml_stream_cands_;
 
     if (correctionOptions.correctionType == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileAnchor << std::endl;
-        classifier_anchor = std::make_shared<ForestClf<ml_sample_t>>(fileOptions.mlForestfileAnchor);
+        classifier_anchor = std::make_shared<ForestClf>(fileOptions.mlForestfileAnchor);
     }
     else if (correctionOptions.correctionType == CorrectionType::Print)
     {
@@ -1710,7 +1710,7 @@ correct_cpu(
     if (correctionOptions.correctionTypeCands == CorrectionType::Forest)
     {
         // std::cerr << fileOptions.mlForestfileCands << std::endl;
-        classifier_cands = std::make_shared<ForestClf<ml_sample_t>>(fileOptions.mlForestfileCands);
+        classifier_cands = std::make_shared<ForestClf>(fileOptions.mlForestfileCands);
     }
     else if (correctionOptions.correctionTypeCands == CorrectionType::Print)
     {
@@ -2273,13 +2273,7 @@ correct_cpu(
 
             outputThread.enqueue(std::move(outputfunction));
 
-            if(correctionOptions.correctionType == CorrectionType::Print){
-
-                #pragma omp critical
-                {
-                    clfAgent.flush();
-                }
-            }
+            clfAgent.flush();
 
             progressThread.addProgress(batchReadIds.size()); 
             
