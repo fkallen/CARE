@@ -4,13 +4,11 @@ care-cpu
 care-gpu
 care-cpu-debug
 care-gpu-debug
-forests/*.so
 .CUB_INCDIR
 .CUDA_DIR
 .PREFIX
 .THRUST_INCDIR
 evaluationtool/arteval
 evaluationtool/artevalsmallercorrected
-
-#editors
-.vscode
+evaluationtool/findkmersingenome
+evaluationtool/findmissingkmers

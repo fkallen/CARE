@@ -72,9 +72,8 @@ void forEachReadVectorInFiles(const std::vector<std::string>& filenames, Func&& 
             //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
             if(status >= 0){
                 reads[i].readNumber = readNumber;
-                //reads[i].name = readers[i]->getCurrentName();
-                //reads[i].comment = readers[i]->getCurrentComment();
-                reads[i].name = readers[i]->getCurrentHeader();
+                reads[i].name = readers[i]->getCurrentName();
+                reads[i].comment = readers[i]->getCurrentComment();
                 reads[i].sequence = readers[i]->getCurrentSequence();
                 reads[i].quality = readers[i]->getCurrentQuality();
             }else if(status < -1){
@@ -91,9 +90,8 @@ void forEachReadVectorInFiles(const std::vector<std::string>& filenames, Func&& 
                     //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
                     if(status >= 0){
                         reads[i].readNumber = readNumber;
-                        //reads[i].name = readers[i]->getCurrentName();
-                        //reads[i].comment = readers[i]->getCurrentComment();
-                        reads[i].name = readers[i]->getCurrentHeader();
+                        reads[i].name = readers[i]->getCurrentName();
+                        reads[i].comment = readers[i]->getCurrentComment();
                         reads[i].sequence = readers[i]->getCurrentSequence();
                         reads[i].quality = readers[i]->getCurrentQuality();
                     }else if(status < -1){
