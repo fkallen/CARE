@@ -1589,7 +1589,7 @@ namespace cpu{
         }
 
 
-
+#if 1
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence>
 correct_cpu(
@@ -2041,10 +2041,10 @@ correct_cpu(
 
 }
 
-
+#else
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence>
-correct_cpu_refactored(
+correct_cpu(
     const GoodAlignmentProperties& goodAlignmentProperties,
     const CorrectionOptions& correctionOptions,
     const RuntimeOptions& runtimeOptions,
@@ -2356,7 +2356,7 @@ correct_cpu_refactored(
     return partialResults;
 }
 
-
+#endif
 
 
 } //namespace cpu
