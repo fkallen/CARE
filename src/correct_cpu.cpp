@@ -24,6 +24,7 @@
 #include <hostdevicefunctions.cuh>
 
 
+#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
 
 
@@ -2102,6 +2103,8 @@ correct_cpu(
     // cpu::RangeGenerator<read_number> readIdGenerator(10000000);
 
     
+
+    
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
         //std::unique_lock<std::mutex> l(outputstreammutex);
         //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
@@ -2290,7 +2293,7 @@ correct_cpu(
     //outputstream.flush();
     partialResults.flush();
 
-    #ifdef ENABLE_TIMING
+    #ifdef ENABLE_CPU_CORRECTOR_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
 

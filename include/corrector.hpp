@@ -165,13 +165,13 @@ public:
 
         TimeMeasurements timings;
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         auto tpa = std::chrono::system_clock::now();
         #endif
 
         determineCandidateReadIds(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
@@ -181,35 +181,35 @@ public:
             return CorrectionOutput{};
         }
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         getCandidateSequenceData(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         getCandidateAlignments(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         filterCandidatesByAlignmentFlag(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
@@ -219,13 +219,13 @@ public:
             return CorrectionOutput{};
         }
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         filterCandidatesByAlignmentMismatchRatio(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
@@ -237,30 +237,30 @@ public:
 
         if(correctionOptions->useQualityScores){
 
-            #ifdef ENABLE_TIMING
+            #ifdef ENABLE_CPU_CORRECTOR_TIMING
             tpa = std::chrono::system_clock::now();
             #endif
 
             getCandidateQualities(task);
 
-            #ifdef ENABLE_TIMING
+            #ifdef ENABLE_CPU_CORRECTOR_TIMING
             timings.fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
         }
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         makeCandidateStrings(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
@@ -268,29 +268,29 @@ public:
 
         buildMultipleSequenceAlignment(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         removeCandidatesOfDifferentRegionByMSA(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         tpa = std::chrono::system_clock::now();
         #endif
 
         correctAnchor(task);
 
-        #ifdef ENABLE_TIMING
+        #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
 
@@ -305,14 +305,14 @@ public:
 
         if(task.msaProperties.isHQ && correctionOptions->correctCandidates){
 
-            #ifdef ENABLE_TIMING
+            #ifdef ENABLE_CPU_CORRECTOR_TIMING
             tpa = std::chrono::system_clock::now();
             #endif
 
             correctCandidates(task);
 
-            #ifdef ENABLE_TIMING
-            batchData.timings.msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+            #ifdef ENABLE_CPU_CORRECTOR_TIMING
+            timings.msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
         }
