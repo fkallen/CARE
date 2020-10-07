@@ -66,8 +66,12 @@ public:
             flags[position] = readCouldNotBeCorrectedAsAnchor();
         }
 
-        std::uint8_t getFlag(std::int64_t position) const noexcept{
-            return flags[position];
+        bool isCorrectedAsHQAnchor(std::int64_t position) const noexcept{
+            return (flags[position] & readCorrectedAsHQAnchor()) > 0;
+        }
+
+        bool isNotCorrectedAsAnchor(std::int64_t position) const noexcept{
+            return (flags[position] & readCouldNotBeCorrectedAsAnchor()) > 0;
         }
 
         std::size_t size;
@@ -177,7 +181,8 @@ public:
 
 
         if(task.candidateReadIds.size() == 0){
-            //TODO return uncorrected anchor
+            //return uncorrected anchor
+            return CorrectionOutput{};
         }
 
         #ifdef ENABLE_TIMING
@@ -214,7 +219,8 @@ public:
 
 
         if(task.candidateReadIds.size() == 0){
-            //TODO return uncorrected anchor
+            //return uncorrected anchor
+            return CorrectionOutput{};
         }
 
         #ifdef ENABLE_TIMING
@@ -229,7 +235,8 @@ public:
 
 
         if(task.candidateReadIds.size() == 0){
-            //TODO return uncorrected anchor
+            //return uncorrected anchor
+            return CorrectionOutput{};
         }
 
         if(correctionOptions->useQualityScores){
@@ -366,6 +373,13 @@ private:
         Task task;
         task.active = true;
         task.input = input;
+
+        const int length = input.anchorLength;
+
+        //decode anchor
+        task.decodedAnchor.resize(length);
+        decode2BitSequence(task.decodedAnchor.data(), input.encodedAnchor, length);
+
         return task;
     }
 
@@ -382,8 +396,6 @@ private:
 
             const int length = task.input.anchorLength;
             char* const decodedBegin = task.decodedAnchor.data();
-
-            decode2BitSequence(decodedBegin, task.input.encodedAnchor, length);
 
             //TODO modify minhasher to work with char ptr + size instead of string
             std::string sequence(decodedBegin, length);
@@ -706,6 +718,8 @@ private:
     void makeCandidateStrings(Task& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
+        task.decodedCandidateSequences.resize(decodedSequencePitchInBytes * numCandidates);
+        
         for(int i = 0; i < numCandidates; i++){
             const unsigned int* const srcptr = task.candidateSequencesData.data() + i * encodedSequencePitchInInts;
             char* const destptr = task.decodedCandidateSequences.data() + i * decodedSequencePitchInBytes;
@@ -1263,12 +1277,9 @@ private:
         for(const auto& correctedCandidate : task.candidateCorrections){
             const read_number candidateId = task.candidateReadIds[correctedCandidate.index];
             
-            bool savingIsOk = false;
-            
-            if(!(correctionFlags->getFlag(candidateId) & ReadCorrectionFlags::readCorrectedAsHQAnchor())){
-                savingIsOk = true;
-            }
-            
+            //don't save candidate if hq anchor correction exists
+            bool savingIsOk = !correctionFlags->isCorrectedAsHQAnchor(candidateId);
+                        
             if (savingIsOk) {                            
                 
                 TempCorrectedSequence tmp;
