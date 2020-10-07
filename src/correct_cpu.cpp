@@ -2172,9 +2172,10 @@ correct_cpu(
 
         ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
-        std::vector<read_number> batchReadIds;
-        std::vector<unsigned int> encodedData(getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength));
-        std::vector<char> qualities(sequenceFileProperties.maxSequenceLength);      
+        std::vector<read_number> batchReadIds(correctionOptions.batchsize);
+        std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
+        std::vector<char> batchQualities(correctionOptions.batchsize * qualityPitchInBytes);
+        std::vector<int> batchReadLengths(correctionOptions.batchsize);    
 
         while(!(readIdGenerator.empty())){
 
@@ -2191,41 +2192,46 @@ correct_cpu(
                 continue;
             }
 
+            //collect input data of all reads in batch
+
+            readStorage.gatherSequenceLengths(
+                readStorageGatherHandle,
+                batchReadIds.data(),
+                batchReadIds.size(),
+                batchReadLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                readStorageGatherHandle,
+                batchReadIds.data(),
+                batchReadIds.size(),
+                batchEncodedData.data(),
+                encodedSequencePitchInInts2Bit
+            );
+
+            if(correctionOptions.useQualityScores){
+                readStorage.gatherSequenceQualities(
+                    readStorageGatherHandle,
+                    batchReadIds.data(),
+                    batchReadIds.size(),
+                    batchQualities.data(),
+                    qualityPitchInBytes
+                );
+            }
+
             std::vector<TempCorrectedSequence> anchorCorrections;
             std::vector<TempCorrectedSequence> candidateCorrections;
             std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
             std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
 
-            for(auto id : batchReadIds){
+            for(size_t i = 0; i < batchReadIds.size(); i++){
+                const read_number readId = batchReadIds[i];
+
                 CpuErrorCorrector::CorrectionInput input;
-                input.anchorReadId = id;
-                input.encodedAnchor = encodedData.data();
-                input.anchorQualityscores = qualities.data();
-
-                readStorage.gatherSequenceLengths(
-                    readStorageGatherHandle,
-                    &id,
-                    1,
-                    &input.anchorLength
-                );
-
-                readStorage.gatherSequenceData(
-                    readStorageGatherHandle,
-                    &id,
-                    1,
-                    encodedData.data(),
-                    encodedSequencePitchInInts2Bit
-                );
-
-                if(correctionOptions.useQualityScores){
-                    readStorage.gatherSequenceQualities(
-                        readStorageGatherHandle,
-                        &id,
-                        1,
-                        qualities.data(),
-                        qualityPitchInBytes
-                    );
-                }
+                input.anchorReadId = readId;
+                input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
+                input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
+                input.anchorLength = batchReadLengths[i];
 
                 auto output = errorCorrector.process(input);
 
