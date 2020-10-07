@@ -624,7 +624,7 @@ private:
             }
         }
 
-        float mismatchratioThreshold = std::numeric_limits<float>::min();
+        float mismatchratioThreshold = std::numeric_limits<float>::lowest();
         if( std::any_of(counts.begin(), counts.end(), [](auto c){return c > 0;}) ){
             
             if (counts[0] >= goodAlignmentsCountThreshold) {
@@ -637,7 +637,7 @@ private:
                 if(lastResortFunc()){
                     mismatchratioThreshold = 4 * mismatchratioBaseFactor;
                 }else{
-                    ; //mismatchratioThreshold = std::numeric_limits<float>::min();
+                    ; //mismatchratioThreshold = std::numeric_limits<float>::lowest();
                 }
             }
         }
