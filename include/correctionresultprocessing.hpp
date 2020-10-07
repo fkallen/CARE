@@ -72,6 +72,17 @@ namespace care{
             constexpr std::uint32_t mask = (std::uint32_t(1) << 29)-1;
             return (encodedflags & mask);
         }
+
+        //from serialized object beginning at ptr, return the read id of this object
+        static read_number parseReadId(const std::uint8_t* ptr){
+            read_number id;
+            std::memcpy(&id, ptr, sizeof(read_number));
+            return id;
+        }
+
+        read_number getReadId() const noexcept{
+            return readId;
+        }
     };
 
     // represents a sequence produced by the correction of a read.
