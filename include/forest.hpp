@@ -29,10 +29,7 @@ T read_one(std::ifstream& is) {
     return ret;
 }
 
-using ml_sample_t = std::array<float, 36>;
-
-
-
+template<typename features_t>
 class ForestClf {
     friend class GpuForest;
 
@@ -67,7 +64,7 @@ class ForestClf {
         }
     }
 
-    float decide(const ml_sample_t& features, const Tree& tree, size_t i = 0) const {
+    float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
@@ -95,7 +92,7 @@ public:
         is.close();
     }
 
-    float decide(const ml_sample_t& features) const {
+    float decide(const features_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
             prob += decide(features, tree);
