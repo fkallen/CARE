@@ -61,6 +61,16 @@ namespace args{
             result.correctCandidates = pr["candidateCorrection"].as<bool>();
         }
 
+        if(pr.count("correctionTypeCands")){
+            const int val = pr["correctionTypeCands"].as<int>();
+
+            switch(val){
+                case 1: result.correctionTypeCands = CorrectionType::Forest; break;
+                case 2: result.correctionTypeCands = CorrectionType::Print; break;
+                default: result.correctionTypeCands = CorrectionType::Classic; break;
+            }
+        }
+
         if(pr.count("useQualityScores")){
             result.useQualityScores = pr["useQualityScores"].as<bool>();
         }
@@ -254,7 +264,11 @@ namespace args{
         }
 
         if(pr.count("ml-forestfile")){
-            result.mlForestfile = pr["ml-forestfile"].as<std::string>();
+            result.mlForestfileAnchor = pr["ml-forestfile"].as<std::string>();
+        }
+
+        if(pr.count("ml-cands-forestfile")){
+            result.mlForestfileCands = pr["ml-cands-forestfile"].as<std::string>();
         }
 
         if(pr.count("inputfiles")){

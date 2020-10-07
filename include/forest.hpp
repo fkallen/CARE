@@ -1,7 +1,12 @@
+#ifndef CARE_FOREST_HPP
+#define CARE_FOREST_HPP
+
+
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <array>
 // #include <numeric>
 
 namespace care {
@@ -24,17 +29,16 @@ T read_one(std::ifstream& is) {
     return ret;
 }
 
-using ml_sample_t = std::array<float, 36>;
-
-
-
+template<typename features_t>
 class ForestClf {
     friend class GpuForest;
 
+    using Features = features_t;
+
     struct Node {
         uint8_t att;
-        float thresh;
         uint8_t flag;
+        float thresh;
         union {
             uint32_t idx;
             float prob; 
@@ -62,7 +66,7 @@ class ForestClf {
         }
     }
 
-    float decide(const ml_sample_t& features, const Tree& tree, size_t i = 0) const {
+    float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
                 return tree[i].lhs.prob;
@@ -90,7 +94,7 @@ public:
         is.close();
     }
 
-    float decide(const ml_sample_t& features) const {
+    float decide(const features_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
             prob += decide(features, tree);
@@ -98,4 +102,10 @@ public:
     }
 };
 
+
+
+
 } // namespace care
+
+
+#endif

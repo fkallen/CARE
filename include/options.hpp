@@ -44,7 +44,9 @@ namespace care{
         int kmerlength = 20;
         int numHashFunctions = 48;
         CorrectionType correctionType = CorrectionType::Classic;
+        CorrectionType correctionTypeCands = CorrectionType::Classic;
     };
+
 
 	struct RuntimeOptions{
 		int threads = 1;
@@ -68,7 +70,8 @@ namespace care{
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
         std::string tempdirectory;
-        std::string mlForestfile = "";
+        std::string mlForestfileAnchor = "";
+        std::string mlForestfileCands = "";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 	};

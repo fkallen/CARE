@@ -4,7 +4,7 @@
 
 #include <hpc_helpers.cuh>
 
-#include <forest.hpp>
+//#include <forest.hpp>
 
 #if __CUDACC_VER_MAJOR__ >= 11
 
@@ -17,8 +17,10 @@ namespace cg = cooperative_groups;
 
 namespace care{
 
-
+template<class CpuForest>
 class GpuForest {
+
+    using Features = typename CpuForest::Features;
 
     struct Node {
         uint8_t att;
@@ -79,7 +81,7 @@ class GpuForest {
     Node** h_data;
 
 
-    GpuForest(const ForestClf& clf, int gpuId)
+    GpuForest(const CpuForest& clf, int gpuId)
         : deviceId(gpuId) {
 
         int curgpu;
@@ -144,7 +146,7 @@ class GpuForest {
         return prob / numTrees;
     }
 
-    float decide(const ml_sample_t& features) const {
+    float decide(const Features& features) const {
         return decide(features.data());
     }
 };
