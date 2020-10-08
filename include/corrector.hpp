@@ -155,7 +155,7 @@ public:
         minhasher(&minhasher_),
         readStorage(&readStorage_),
         correctionFlags(&correctionFlags_),
-        clfAgent(clfAgent_),
+        clfAgent(&clfAgent_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
     {
 
