@@ -96,19 +96,11 @@ struct MSAProperties{
 
 struct CorrectionResult{
     bool isCorrected;
-    bool isHQ;
     std::string correctedSequence;
-    std::vector<int> uncorrectedPositionsNoConsensus;
-    std::vector<float> bestAlignmentWeightOfConsensusBase;
-    std::vector<float> bestAlignmentWeightOfAnchorBase;
 
     void reset(){
         isCorrected = false;
-        isHQ = false;
         correctedSequence.clear();
-        uncorrectedPositionsNoConsensus.clear();
-        bestAlignmentWeightOfConsensusBase.clear();
-        bestAlignmentWeightOfAnchorBase.clear();
     }
 };
 
@@ -133,14 +125,8 @@ struct RegionSelectionResult{
     int consensuscount = 0;
 };
 
-MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int nColumns,
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage);
 
-MSAProperties getMSAProperties2(const float* support,
+MSAProperties getMSAProperties(const float* support,
                             const int* coverage,
                             int firstCol,
                             int lastCol, //exclusive
@@ -149,40 +135,6 @@ MSAProperties getMSAProperties2(const float* support,
                             float m_coverage);
 
 CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize);
-
-//candidates is a 2d array of size candidatesPitch * nCandidates.
-//candidates with reverse complement alignment must be reverse complement in this array.
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize);
-
-
-CorrectionResult getCorrectedSubjectNew(const char* consensus,
                                     const float* support,
                                     const int* coverage,
                                     const int* originalCoverage,

@@ -978,7 +978,7 @@ private:
         const int subjectColumnsBegin_incl = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
 
-        task.msaProperties = getMSAProperties2(
+        task.msaProperties = getMSAProperties(
             task.multipleSequenceAlignment.support.data(),
             task.multipleSequenceAlignment.coverage.data(),
             subjectColumnsBegin_incl,
@@ -988,7 +988,7 @@ private:
             correctionOptions->m_coverage
         );
 
-        task.subjectCorrection = getCorrectedSubjectNew(
+        task.subjectCorrection = getCorrectedSubject(
             task.multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
             task.multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
             task.multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
@@ -1008,10 +1008,7 @@ private:
             correctionOptions->m_coverage,
             correctionOptions->kmerlength,
             task.input.anchorReadId
-        );
-
-        task.msaProperties.isHQ = task.subjectCorrection.isHQ;
-        
+        );        
     }       
 
     void correctAnchorClf(Task& task) const
@@ -1022,7 +1019,7 @@ private:
         auto& orig = task.decodedAnchor;
         auto& corr = task.subjectCorrection.correctedSequence;
         
-        task.msaProperties = getMSAProperties2(
+        task.msaProperties = getMSAProperties(
             task.multipleSequenceAlignment.support.data(),
             task.multipleSequenceAlignment.coverage.data(),
             subject_b,
@@ -1059,7 +1056,7 @@ private:
         const auto& cons = task.multipleSequenceAlignment.consensus;
         const auto& orig = task.decodedAnchor;
 
-        task.msaProperties = getMSAProperties2(
+        task.msaProperties = getMSAProperties(
             task.multipleSequenceAlignment.support.data(),
             task.multipleSequenceAlignment.coverage.data(),
             subject_b,
@@ -1110,25 +1107,6 @@ private:
             correctionOptions->m_coverage,
             correctionOptions->new_columns_to_correct
         );
-        
-        if(0) /*if(task.subjectReadId == 1)*/{
-            for(const auto& correctedCandidate : task.candidateCorrections){
-                const read_number candidateId = task.candidateReadIds[correctedCandidate.index];
-                
-                if(task.alignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                    std::cerr << candidateId << " " << correctedCandidate.sequence << "\n";
-                }else{
-                    std::string fwd;
-                    fwd.resize(correctedCandidate.sequence.length());
-                    reverseComplementString(
-                        &fwd[0], 
-                        correctedCandidate.sequence.c_str(), 
-                                            correctedCandidate.sequence.length()
-                    );
-                    std::cerr << "revc " << candidateId << " " << fwd << "\n";
-                }
-            }
-        }
     }
 
     void correctCandidatesPrint(Task& task) const{
@@ -1143,7 +1121,7 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = getMSAProperties2(
+            MSAProperties props = getMSAProperties(
                 msa.support.data(),
                 msa.coverage.data(),
                 cand_begin,
@@ -1177,7 +1155,7 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = getMSAProperties2(
+            MSAProperties props = getMSAProperties(
                 msa.support.data(),
                 msa.coverage.data(),
                 cand_begin,
@@ -1248,7 +1226,6 @@ private:
             
             tmp.hq = task.msaProperties.isHQ;
             tmp.type = TempCorrectedSequence::Type::Anchor;
-            tmp.uncorrectedPositionsNoConsensus = std::move(task.subjectCorrection.uncorrectedPositionsNoConsensus);
             tmp.readId = task.input.anchorReadId;
             tmp.sequence = std::move(correctedSequenceString); 
             

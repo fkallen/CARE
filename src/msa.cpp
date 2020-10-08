@@ -428,26 +428,7 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
 }
 
 
-
-
-
 MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int nColumns,
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage){
-
-    return getMSAProperties2(support,
-                            coverage,
-                            0,
-                            nColumns,
-                            estimatedErrorrate,
-                            estimatedCoverage,
-                            m_coverage);
-}
-
-MSAProperties getMSAProperties2(const float* support,
                             const int* coverage,
                             int firstCol,
                             int lastCol, //exclusive
@@ -528,246 +509,6 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                                     const int* originalCoverage,
                                     int nColumns,
                                     const char* subject,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize){
-
-    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    CorrectionResult result;
-    result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-
-    if(isHQ){
-        //corrected sequence = consensus;
-
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
-        result.isCorrected = true;
-    }else{
-        //set corrected sequence to original subject. then search for positions with good properties. correct these positions
-        std::copy(subject,
-                  subject + nColumns,
-                  result.correctedSequence.begin());
-
-        bool foundAColumn = false;
-        for(int column = 0; column < nColumns; column++){
-
-            if(support[column] > 0.5f && originalCoverage[column] < min_coverage_threshold){
-                float avgsupportkregion = 0;
-                int c = 0;
-                bool neighborregioncoverageisgood = true;
-
-                for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
-                    if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
-                        avgsupportkregion += support[neighborcolumn];
-                        neighborregioncoverageisgood &= (fgeq(coverage[neighborcolumn], min_coverage_threshold));
-                        c++;
-                    }
-                }
-
-                avgsupportkregion /= c;
-                if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-estimatedErrorrate)){
-                    result.correctedSequence[column] = consensus[column];
-                    foundAColumn = true;
-                }else{
-                    if(subject[column] != consensus[column]){
-                        result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                    }
-                }
-            }else{
-                if(subject[column] != consensus[column]){
-                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                }
-            }
-        }
-
-        result.isCorrected = foundAColumn;
-    }
-
-    return result;
-}
-
-#if 0
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize){
-
-    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    CorrectionResult result;
-    result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
-    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
-
-    if(isHQ){
-        //corrected sequence = consensus;
-
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
-        result.isCorrected = true;
-    }else{
-        //set corrected sequence to original subject. then search for positions with good properties. correct these positions
-        std::copy(subject,
-                  subject + nColumns,
-                  result.correctedSequence.begin());
-
-        bool foundAColumn = false;
-        for(int column = 0; column < nColumns; column++){
-            const int origCoverage = originalCoverage[column];
-            const char origBase = subject[column];
-            const char cons = consensus[column];
-
-            const int globalIndex = subjectColumnsBegin_incl + column;
-
-            if(origBase != cons
-                    && support[column] > 0.5f
-                    //&& origCoverage <= 7){
-                ){
-                bool canCorrect = true;
-                if(canCorrect && origCoverage > 1){
-                    int numFoundCandidates = 0;
-
-                    for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
-
-                        const char* candidateptr = candidates + candidatenr * candidatesPitch;
-                        const int candidateLength = candidateLengths[candidatenr];
-                        const int candidateShift = candidateShifts[candidatenr];
-                        const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
-                        if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
-                            //char candidateBase = 'F';
-
-                            //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
-                            //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
-                            //}else{
-                            const char candidateBase = candidateptr[candidateBasePosition];
-                            //}
-
-                            const float overlapweight = candidateAlignmentWeights[candidatenr];
-                            assert(overlapweight <= 1.0f);
-                            assert(overlapweight >= 0.0f);
-
-                            if(origBase == candidateBase){
-                                numFoundCandidates++;
-
-                                if(fgeq(overlapweight, 0.90f)){
-                                    canCorrect = false;
-                                    //break;
-                                }
-                            }else{
-                                ;
-                            }
-                        }
-                    }
-                    assert(numFoundCandidates+1 == origCoverage);
-
-                }
-
-#if 1
-                float maxweightOrig = 0;
-                float maxweightCons = 0;
-
-                for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
-
-                    const char* candidateptr = candidates + candidatenr * candidatesPitch;
-                    const int candidateLength = candidateLengths[candidatenr];
-                    const int candidateShift = candidateShifts[candidatenr];
-                    const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
-                    if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
-                        //char candidateBase = 'F';
-
-                        //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
-                        //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
-                        //}else{
-                        const char candidateBase = candidateptr[candidateBasePosition];
-                        //}
-
-                        const float overlapweight = candidateAlignmentWeights[candidatenr];
-                        assert(overlapweight <= 1.0f);
-                        assert(overlapweight > 0.0f);
-
-                        if(origBase == candidateBase){
-                            maxweightOrig = std::max(maxweightOrig, overlapweight);
-                        }else{
-                            if(cons == candidateBase){
-                                maxweightCons = std::max(maxweightCons, overlapweight);
-                            }
-                        }
-                    }
-                }
-
-                result.bestAlignmentWeightOfConsensusBase[column] = maxweightCons;
-                result.bestAlignmentWeightOfAnchorBase[column] = maxweightOrig;
-#endif
-
-                if(canCorrect){
-
-                    float avgsupportkregion = 0;
-                    int c = 0;
-                    bool neighborregioncoverageisgood = true;
-
-                    for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
-                        if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
-                            avgsupportkregion += support[neighborcolumn];
-                            neighborregioncoverageisgood &= (coverage[neighborcolumn] >= min_coverage_threshold);
-                            c++;
-                        }
-                    }
-
-                    avgsupportkregion /= c;
-                    if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-4*estimatedErrorrate)){
-                        result.correctedSequence[column] = consensus[column];
-                        foundAColumn = true;
-                    }
-                }else{
-                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                }
-            }
-        }
-
-        result.isCorrected = foundAColumn;
-    }
-
-    return result;
-}
-
-
-
-#else 
-
-
-CorrectionResult getCorrectedSubjectNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
                                     int subjectColumnsBegin_incl,
                                     const char* candidates,
                                     int nCandidates,
@@ -811,12 +552,8 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     CorrectionResult result{};
     result.isCorrected = false;
     result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
-    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
 
     result.isCorrected = true;
-    result.isHQ = false;
 
     const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) 
                                         && isGoodMinSupport(min_support) 
@@ -824,35 +561,7 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     int flag = 0;    
 
     if(canBeCorrectedByConsensus){
-        int smallestErrorrateThatWouldMakeHQ = 100;
-
-
-        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-            const float factor = percent / 100.0f;
-            const float avg_threshold = 1.0f - 1.0f * factor;
-            const float min_threshold = 1.0f - 3.0f * factor;
-            // if(readId == 134){
-            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
-            //         avg_support, avg_threshold, min_support, min_threshold);
-            // }
-            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
-                smallestErrorrateThatWouldMakeHQ = percent;
-            }
-        }
-
-        const bool isHQ = isGoodMinCoverage(min_coverage)
-                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-
-        // if(readId == 134){
-        //     printf("read 134 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
-        //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
-        // }
-
-        //broadcastbuffer = isHQ;
-        result.isHQ = isHQ;
-
-        flag = isHQ ? 2 : 1;
+        flag = msaProperties.isHQ ? 2 : 1;
     }
 
     if(flag > 0){
@@ -873,14 +582,6 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
 
     return result;
 }
-
-
-
-
-
-
-#endif
-
 
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,

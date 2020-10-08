@@ -252,11 +252,10 @@ namespace care{
 
         std::string sequence = "";
         std::vector<Edit> edits;
-        std::vector<int> uncorrectedPositionsNoConsensus{}; //if anchor
 
         bool operator==(const TempCorrectedSequence& rhs) const{
             return hq == rhs.hq && useEdits == rhs.useEdits && type == rhs.type && shift == rhs.shift && readId == rhs.readId
-                && sequence == rhs.sequence && edits == rhs.edits && uncorrectedPositionsNoConsensus == rhs.uncorrectedPositionsNoConsensus;
+                && sequence == rhs.sequence && edits == rhs.edits;
         }
 
         bool operator!=(const TempCorrectedSequence& rhs) const{
