@@ -99,6 +99,8 @@ int main(int argc, char** argv){
 			"The name of the output file containing extended reads",
 			cxxopts::value<std::string>());
 
+	options.add_options("Mandatory GPU")
+		("g,gpu", "One or more GPU device ids to be used for correction. ", cxxopts::value<std::vector<int>>());
 
 	options.add_options("Additional")
 			
@@ -149,8 +151,6 @@ int main(int argc, char** argv){
 		("coveragefactortuning", "coveragefactortuning. "
 			"Default: " + tostring(CorrectionOptions{}.m_coverage),
 		cxxopts::value<float>())
-		("g,gpu", "One or more GPU device ids to be used for correction. "
-				"When running the CARE GPU, at least one valid device id is required.", cxxopts::value<std::vector<int>>())
 		("nReads", "Upper bound for number of reads in the inputfile. If missing or set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>())
 		("min_length", "Lower bound for read length in file. If missing or set 0, the input file is parsed to find the exact minimum length before any work is done.",
@@ -179,7 +179,7 @@ int main(int argc, char** argv){
 	auto parseresults = options.parse(argc, argv);
 
 	if(help) {
-		std::cout << options.help({"", "Mandatory", "Additional"}) << std::endl;
+		std::cout << options.help({"", "Mandatory", "Mandatory GPU", "Additional"}) << std::endl;
 		std::exit(0);
 	}
 
