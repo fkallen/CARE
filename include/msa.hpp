@@ -61,7 +61,6 @@ struct RegionSelectionResult{
 };
 
 struct MultipleSequenceAlignment{
-
 public:
 
     struct InputData{
@@ -95,14 +94,21 @@ public:
     std::vector<float> weightsG;
     std::vector<float> weightsT;
 
-    int nCandidates;
-    int nColumns;
+    int nCandidates{};
+    int nColumns{};
 
-    int subjectColumnsBegin_incl;
-    int subjectColumnsEnd_excl;
+    int subjectColumnsBegin_incl{};
+    int subjectColumnsEnd_excl{};
 
 
-    InputData inputData;
+    InputData inputData{};
+    const cpu::QualityScoreConversion* qualityConversion{};
+
+    MultipleSequenceAlignment() = default;
+    MultipleSequenceAlignment(const cpu::QualityScoreConversion* conversion)
+        : qualityConversion(conversion){
+
+    }
 
 
     void build(const InputData& args);
@@ -121,6 +127,10 @@ public:
 
     void print(std::ostream& os) const;
     void printWithDiffToConsensus(std::ostream& os) const;
+
+    void setQualityConversion(const cpu::QualityScoreConversion* conversion){
+        qualityConversion = conversion;
+    }
 
     MSAProperties getMSAProperties(
         int firstCol,
@@ -150,11 +160,6 @@ public:
         int dataset_coverage
     ) const;
 };
-
-
-extern cpu::QualityScoreConversion qualityConversion;
-
-
 
 
 

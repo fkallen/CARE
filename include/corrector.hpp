@@ -155,7 +155,8 @@ public:
         minhasher(&minhasher_),
         readStorage(&readStorage_),
         correctionFlags(&correctionFlags_),
-        clfAgent(clfAgent_)
+        clfAgent(clfAgent_),
+        qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
     {
 
     }
@@ -369,6 +370,7 @@ private:
         Task task;
         task.active = true;
         task.input = input;
+        task.multipleSequenceAlignment.setQualityConversion(qualityCoversion.get());
 
         const int length = input.anchorLength;
 
@@ -1218,6 +1220,8 @@ private:
 
     mutable std::stringstream ml_stream_anchor;
     mutable std::stringstream ml_stream_cands;
+
+    std::unique_ptr<cpu::QualityScoreConversion> qualityCoversion;
 
     TimeMeasurements totalTime{};
 };

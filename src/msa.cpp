@@ -1,14 +1,9 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
 
-#include <qualityscoreweights.hpp>
 #include <bestalignment.hpp>
 
 namespace care{
-
-
-cpu::QualityScoreConversion qualityConversion{};
-
 
 void MultipleSequenceAlignment::build(const InputData& args){
 
@@ -100,7 +95,7 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
     for(int i = 0; i < length; i++){
         const int globalIndex = subjectColumnsBegin_incl + shift + i;
         const char base = sequence[i];
-        const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion.getWeight(quality[i]) : 1.0f);
+        const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion->getWeight(quality[i]) : 1.0f);
         switch(base){
             case 'A': countsA[globalIndex]++; weightsA[globalIndex] += weight;break;
             case 'C': countsC[globalIndex]++; weightsC[globalIndex] += weight;break;
