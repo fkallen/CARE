@@ -277,7 +277,7 @@ public:
         tpa = std::chrono::system_clock::now();
         #endif
 
-        removeCandidatesOfDifferentRegionByMSA(task);
+        refineMSA(task);
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -776,199 +776,113 @@ private:
         task.multipleSequenceAlignment.build(buildArgs);
     }
 
-    void removeCandidatesOfDifferentRegionByMSA(Task& task) const{
+    void refineMSA(Task& task) const{
 
         constexpr int max_num_minimizations = 5;
 
-        auto findCandidatesLambda = [&](){
-            return findCandidatesOfDifferentRegion(
-                task.decodedAnchor.data(),
-                task.input.anchorLength,
-                task.decodedCandidateSequences.data(),
-                task.candidateSequencesLengths.data(),
-                task.candidateReadIds.size(),
-                decodedSequencePitchInBytes,
-                task.multipleSequenceAlignment.consensus.data(),
-                task.multipleSequenceAlignment.countsA.data(),
-                task.multipleSequenceAlignment.countsC.data(),
-                task.multipleSequenceAlignment.countsG.data(),
-                task.multipleSequenceAlignment.countsT.data(),
-                task.multipleSequenceAlignment.weightsA.data(),
-                task.multipleSequenceAlignment.weightsC.data(),
-                task.multipleSequenceAlignment.weightsG.data(),
-                task.multipleSequenceAlignment.weightsT.data(),
-                task.alignmentOps.data(), 
-                task.alignmentOverlaps.data(),
-                task.multipleSequenceAlignment.subjectColumnsBegin_incl,
-                task.multipleSequenceAlignment.subjectColumnsEnd_excl,
-                task.alignmentShifts.data(),
-                correctionOptions->estimatedCoverage,
-                goodAlignmentProperties->maxErrorRate
-            );
-        };
-
         auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
+            const int numCandidates = task.candidateReadIds.size();
 
-            if(minimizationResult.performedMinimization){
-                const int numCandidates = task.candidateReadIds.size();
+            int insertpos = 0;
+            for(int i = 0; i < numCandidates; i++){
+                if(!minimizationResult.differentRegionCandidate[i]){                        
+                    //keep candidate
 
+                    task.candidateReadIds[insertpos] = task.candidateReadIds[i];
 
-                int insertpos = 0;
-                for(int i = 0; i < numCandidates; i++){
-                    if(!minimizationResult.differentRegionCandidate[i]){                        
-                        //keep candidate
+                    std::copy_n(
+                        task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
+                        encodedSequencePitchInInts,
+                        task.candidateSequencesData.data() + insertpos * size_t(encodedSequencePitchInInts)
+                    );
 
-                        task.candidateReadIds[insertpos] = task.candidateReadIds[i];
+                    task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
+                    task.alignmentFlags[insertpos] = task.alignmentFlags[i];
+                    task.alignments[insertpos] = task.alignments[i]; 
+                    task.alignmentOps[insertpos] = task.alignmentOps[i];
+                    task.alignmentShifts[insertpos] = task.alignmentShifts[i];
+                    task.alignmentOverlaps[insertpos] = task.alignmentOverlaps[i];
+                    task.alignmentWeights[insertpos] = task.alignmentWeights[i];
 
-                        std::copy_n(
-                            task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
-                            encodedSequencePitchInInts,
-                            task.candidateSequencesData.data() + insertpos * size_t(encodedSequencePitchInInts)
-                        );
+                    std::copy_n(
+                        task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
+                        qualityPitchInBytes,
+                        task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
+                    );
+                    std::copy_n(
+                        task.decodedCandidateSequences.data() + i * size_t(decodedSequencePitchInBytes),
+                        decodedSequencePitchInBytes,
+                        task.decodedCandidateSequences.data() + insertpos * size_t(decodedSequencePitchInBytes)
+                    );
 
-                        task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
-                        task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-                        task.alignments[insertpos] = task.alignments[i]; 
-                        task.alignmentOps[insertpos] = task.alignmentOps[i];
-                        task.alignmentShifts[insertpos] = task.alignmentShifts[i];
-                        task.alignmentOverlaps[insertpos] = task.alignmentOverlaps[i];
-                        task.alignmentWeights[insertpos] = task.alignmentWeights[i];
-
-                        std::copy_n(
-                            task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
-                            qualityPitchInBytes,
-                            task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
-                        );
-                        std::copy_n(
-                            task.decodedCandidateSequences.data() + i * size_t(decodedSequencePitchInBytes),
-                            decodedSequencePitchInBytes,
-                            task.decodedCandidateSequences.data() + insertpos * size_t(decodedSequencePitchInBytes)
-                        );
-
-                        insertpos++;
-                    }
+                    insertpos++;
                 }
-
-                task.candidateReadIds.erase(
-                    task.candidateReadIds.begin() + insertpos, 
-                    task.candidateReadIds.end()
-                );
-                task.candidateSequencesData.erase(
-                    task.candidateSequencesData.begin() + encodedSequencePitchInInts * insertpos, 
-                    task.candidateSequencesData.end()
-                );
-                task.candidateSequencesLengths.erase(
-                    task.candidateSequencesLengths.begin() + insertpos, 
-                    task.candidateSequencesLengths.end()
-                );
-                task.alignmentFlags.erase(
-                    task.alignmentFlags.begin() + insertpos, 
-                    task.alignmentFlags.end()
-                );
-                task.alignments.erase(
-                    task.alignments.begin() + insertpos, 
-                    task.alignments.end()
-                );
-                task.candidateQualities.erase(
-                    task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
-                    task.candidateQualities.end()
-                );
-                task.decodedCandidateSequences.erase(
-                    task.decodedCandidateSequences.begin() + decodedSequencePitchInBytes * insertpos, 
-                    task.decodedCandidateSequences.end()
-                );
-                task.alignmentOps.erase(
-                    task.alignmentOps.begin() + insertpos, 
-                    task.alignmentOps.end()
-                );
-                task.alignmentShifts.erase(
-                    task.alignmentShifts.begin() + insertpos, 
-                    task.alignmentShifts.end()
-                );
-                task.alignmentOverlaps.erase(
-                    task.alignmentOverlaps.begin() + insertpos, 
-                    task.alignmentOverlaps.end()
-                );
-                task.alignmentWeights.erase(
-                    task.alignmentWeights.begin() + insertpos, 
-                    task.alignmentWeights.end()
-                );
-
-                //build minimized multiple sequence alignment
-                buildMultipleSequenceAlignment(task);
             }
+
+            task.candidateReadIds.erase(
+                task.candidateReadIds.begin() + insertpos, 
+                task.candidateReadIds.end()
+            );
+            task.candidateSequencesData.erase(
+                task.candidateSequencesData.begin() + encodedSequencePitchInInts * insertpos, 
+                task.candidateSequencesData.end()
+            );
+            task.candidateSequencesLengths.erase(
+                task.candidateSequencesLengths.begin() + insertpos, 
+                task.candidateSequencesLengths.end()
+            );
+            task.alignmentFlags.erase(
+                task.alignmentFlags.begin() + insertpos, 
+                task.alignmentFlags.end()
+            );
+            task.alignments.erase(
+                task.alignments.begin() + insertpos, 
+                task.alignments.end()
+            );
+            task.candidateQualities.erase(
+                task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
+                task.candidateQualities.end()
+            );
+            task.decodedCandidateSequences.erase(
+                task.decodedCandidateSequences.begin() + decodedSequencePitchInBytes * insertpos, 
+                task.decodedCandidateSequences.end()
+            );
+            task.alignmentOps.erase(
+                task.alignmentOps.begin() + insertpos, 
+                task.alignmentOps.end()
+            );
+            task.alignmentShifts.erase(
+                task.alignmentShifts.begin() + insertpos, 
+                task.alignmentShifts.end()
+            );
+            task.alignmentOverlaps.erase(
+                task.alignmentOverlaps.begin() + insertpos, 
+                task.alignmentOverlaps.end()
+            );
+            task.alignmentWeights.erase(
+                task.alignmentWeights.begin() + insertpos, 
+                task.alignmentWeights.end()
+            );
         };
 
         if(max_num_minimizations > 0){                
 
             for(int numIterations = 0; numIterations < max_num_minimizations; numIterations++){
-                const auto minimizationResult = findCandidatesLambda();
-                removeCandidatesOfDifferentRegion(minimizationResult);
-                if(!minimizationResult.performedMinimization){
+                const auto minimizationResult = task.multipleSequenceAlignment.findCandidatesOfDifferentRegion(
+                    correctionOptions->estimatedCoverage
+                );
+
+                if(minimizationResult.performedMinimization){
+                    removeCandidatesOfDifferentRegion(minimizationResult);
+
+                    //build minimized multiple sequence alignment
+                    buildMultipleSequenceAlignment(task);
+                }else{
                     break;
-                }
+                }               
+                
             }
-        }
-#if 0
-        if(task.subjectReadId == 10307280){
-            std::cerr << "subjectColumnsBegin_incl = " << task.multipleSequenceAlignment.subjectColumnsBegin_incl << "\n";
-            std::cerr << "subjectColumnsEnd_excl = " << task.multipleSequenceAlignment.subjectColumnsEnd_excl << "\n";
-            //std::cerr << "lastColumn_excl = " << dataArrays.h_msa_column_properties[i].lastColumn_excl << "\n";
-            std::cerr << "counts: \n";
-            for(int k = 0; k < task.multipleSequenceAlignment.countsA.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.countsA[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.countsC.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.countsC[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.countsG.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.countsG[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.countsT.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.countsT[k] << ' ';
-            }
-            std::cerr << "\n";
-
-            std::cerr << "weights: \n";
-            for(int k = 0; k < task.multipleSequenceAlignment.weightsA.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.weightsA[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.weightsC.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.weightsC[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.weightsG.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.weightsG[k] << ' ';
-            }
-            std::cerr << "\n";
-            for(int k = 0; k < task.multipleSequenceAlignment.weightsT.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.weightsT[k] << ' ';
-            }
-            std::cerr << "\n";
-
-            std::cerr << "coverage: \n";
-            for(int k = 0; k < task.multipleSequenceAlignment.coverage.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.coverage[k] << ' ';
-            }
-            std::cerr << "\n";
-
-            std::cerr << "support: \n";
-            for(int k = 0; k < task.multipleSequenceAlignment.support.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.support[k] << ' ';
-            }
-            std::cerr << "\n";
-
-            std::cerr << "consensus: \n";
-            for(int k = 0; k < task.multipleSequenceAlignment.consensus.size(); k++){
-                std::cerr << task.multipleSequenceAlignment.consensus[k] << ' ';
-            }
-            std::cerr << "\n";
-        }
-#endif            
+        }      
     }
 
     void correctAnchorClassic(Task& task) const{

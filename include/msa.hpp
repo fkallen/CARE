@@ -145,32 +145,13 @@ public:
         float m_coverage,
         int new_columns_to_correct
     ) const;
+
+    RegionSelectionResult findCandidatesOfDifferentRegion(
+        int dataset_coverage
+    ) const;
 };
 
 
-
-RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
-                                                    int subjectLength,
-                                                    const char* candidates,
-                                                    const int* candidateLengths,
-                                                    int nCandidates,
-                                                    size_t candidatesPitch,
-                                                    const char* consensus,
-                                                    const int* countsA,
-                                                    const int* countsC,
-                                                    const int* countsG,
-                                                    const int* countsT,
-                                                    const float* weightsA,
-                                                    const float* weightsC,
-                                                    const float* weightsG,
-                                                    const float* weightsT,
-                                                    const int* alignments_nOps,
-                                                    const int* alignments_overlaps,
-                                                    int subjectColumnsBegin_incl,
-                                                    int subjectColumnsEnd_excl,
-                                                    const int* candidateShifts,
-                                                    int dataset_coverage,
-                                                    float desiredAlignmentMaxErrorRate);
 
 std::pair<int,int> findGoodConsensusRegionOfSubject(const char* subject,
                                                     int subjectLength,
@@ -191,30 +172,7 @@ std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
 extern cpu::QualityScoreConversion qualityConversion;
 
 
-void printSequencesInMSA(std::ostream& out,
-                         const char* subject,
-                         int subjectLength,
-                         const char* candidates,
-                         const int* candidateLengths,
-                         int nCandidates,
-                         const int* candidateShifts,
-                         int subjectColumnsBegin_incl,
-                         int subjectColumnsEnd_excl,
-                         int nColumns,
-                         size_t candidatesPitch);
 
-void printSequencesInMSAConsEq(std::ostream& out,
-                      const char* subject,
-                      int subjectLength,
-                      const char* candidates,
-                      const int* candidateLengths,
-                      int nCandidates,
-                      const int* candidateShifts,
-                      const char* consensus,
-                      int subjectColumnsBegin_incl,
-                      int subjectColumnsEnd_excl,
-                      int nColumns,
-                      size_t candidatesPitch);
 
 
 }
