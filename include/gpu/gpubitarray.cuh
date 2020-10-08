@@ -1,8 +1,6 @@
 #ifndef CARE_GPUBITARRAY_CUH
 #define CARE_GPUBITARRAY_CUH
 
-#include <gpu/nvtxtimelinemarkers.hpp>
-
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <cassert>

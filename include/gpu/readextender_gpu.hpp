@@ -7,7 +7,6 @@
 
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
-#include <gpu/simpleallocation.cuh>
 #include <gpu/gpuminhasher.cuh>
 
 #include <algorithm>
@@ -24,10 +23,10 @@ public:
     static constexpr int primary_stream_index = 0;
 
     template<class T>
-    using DeviceBuffer = SimpleAllocationDevice<T>;
+    using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
 
     template<class T>
-    using PinnedBuffer = SimpleAllocationPinnedHost<T>;
+    using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
 
     ReadExtenderGpu(

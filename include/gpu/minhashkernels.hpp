@@ -3,7 +3,6 @@
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
-#include <gpu/simpleallocation.cuh>
 
 #include <array>
 #include <vector>
@@ -13,26 +12,26 @@ namespace care{
 
 template<class T>
 struct MergeRangesGpuHandle{
-    SimpleAllocationDevice<T> d_data;
-    SimpleAllocationPinnedHost<T> h_data;
+    helpers::SimpleAllocationDevice<T> d_data;
+    helpers::SimpleAllocationPinnedHost<T> h_data;
     
-    SimpleAllocationPinnedHost<int> h_rangesBeginPerSequence;
-    SimpleAllocationDevice<int> d_rangesBeginPerSequence;
+    helpers::SimpleAllocationPinnedHost<int> h_rangesBeginPerSequence;
+    helpers::SimpleAllocationDevice<int> d_rangesBeginPerSequence;
 
-    SimpleAllocationDevice<T> d_results;
-    SimpleAllocationPinnedHost<T> h_results;
+    helpers::SimpleAllocationDevice<T> d_results;
+    helpers::SimpleAllocationPinnedHost<T> h_results;
 
-    SimpleAllocationPinnedHost<int> h_numresults;
+    helpers::SimpleAllocationPinnedHost<int> h_numresults;
 
-    SimpleAllocationPinnedHost<int> h_num_runs;
-    SimpleAllocationDevice<int> d_num_runs;
+    helpers::SimpleAllocationPinnedHost<int> h_num_runs;
+    helpers::SimpleAllocationDevice<int> d_num_runs;
 
-    SimpleAllocationPinnedHost<int> h_uniqueRangeLengths;
-    SimpleAllocationDevice<int> d_uniqueRangeLengths;
+    helpers::SimpleAllocationPinnedHost<int> h_uniqueRangeLengths;
+    helpers::SimpleAllocationDevice<int> d_uniqueRangeLengths;
 
-    SimpleAllocationDevice<int> d_uniqueRangeLengthsPrefixsum;
+    helpers::SimpleAllocationDevice<int> d_uniqueRangeLengthsPrefixsum;
 
-    SimpleAllocationDevice<char> cubTempStorage;
+    helpers::SimpleAllocationDevice<char> cubTempStorage;
 
     int initialDataSize = 0;
 

@@ -102,9 +102,21 @@ namespace shd{
         std::vector<unsigned int> candidateConversionBuffer;
     };
 
-    template<ShiftDirection direction>
     AlignmentResult
     cpuShiftedHammingDistancePopcount2BitHiLo(
+            CpuAlignmentHandle& handle,
+            const unsigned int* subjectHiLo,
+            int subjectLength,
+            const unsigned int* candidateHiLo,
+            int candidateLength,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio) noexcept;
+
+
+    template<ShiftDirection direction>
+    AlignmentResult
+    cpuShiftedHammingDistancePopcount2BitHiLoWithDirection(
             CpuAlignmentHandle& handle,
             const unsigned int* subjectHiLo,
             int subjectLength,
@@ -308,6 +320,61 @@ namespace shd{
 
     template<ShiftDirection direction, class Iter>
     Iter
+    cpuShiftedHammingDistancePopcount2BitWithDirection(
+            CpuAlignmentHandle& handle,
+            Iter destinationBegin,
+            const unsigned int* subject2Bit,
+            int subjectLength,
+            const unsigned int* candidates2Bit,
+            int candidatePitchInInts,
+            const int* candidateLengths,
+            int numCandidates,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio) noexcept{
+
+        const int newsubjectInts = getEncodedNumInts2BitHiLo(subjectLength);
+
+        handle.anchorConversionBuffer.resize(newsubjectInts);
+        handle.candidateConversionBuffer.resize(candidatePitchInInts);
+
+        convert2BitNewTo2BitHiLo(
+            handle.anchorConversionBuffer.data(),
+            subject2Bit,
+            subjectLength
+        );
+
+        auto curIter = destinationBegin;
+
+        for(int candidateIndex = 0; candidateIndex < numCandidates; candidateIndex++, ++curIter){
+            const unsigned int* candidate2Bit = candidates2Bit + candidatePitchInInts * candidateIndex;
+            const int candidateLength = candidateLengths[candidateIndex];
+
+            convert2BitNewTo2BitHiLo(
+                handle.candidateConversionBuffer.data(),
+                candidate2Bit,
+                candidateLength
+            );
+
+            *curIter = cpuShiftedHammingDistancePopcount2BitHiLoWithDirection<direction>(
+                            handle,
+                            handle.anchorConversionBuffer.data(),
+                            subjectLength,
+                            handle.candidateConversionBuffer.data(),
+                            candidateLength,
+                            min_overlap,
+                            maxErrorRate,
+                            min_overlap_ratio
+                        );
+        }
+
+        return curIter;
+    }
+
+
+
+    template<class Iter>
+    Iter
     cpuShiftedHammingDistancePopcount2Bit(
             CpuAlignmentHandle& handle,
             Iter destinationBegin,
@@ -344,7 +411,7 @@ namespace shd{
                 candidateLength
             );
 
-            *curIter = cpuShiftedHammingDistancePopcount2BitHiLo<direction>(
+            *curIter = cpuShiftedHammingDistancePopcount2BitHiLo(
                             handle,
                             handle.anchorConversionBuffer.data(),
                             subjectLength,
@@ -358,6 +425,7 @@ namespace shd{
 
         return curIter;
     }
+
 
 
 

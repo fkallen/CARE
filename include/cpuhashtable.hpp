@@ -23,7 +23,7 @@
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
-#include <gpu/thrust_custom_allocators.hpp>
+#include <hpc_helpers.cuh>
 #endif
 
 namespace care{
@@ -476,7 +476,7 @@ namespace cpuhashtabledetail{
         template<bool allowFallback>
         struct TransformGPUCompactKeys{
             template<class T>
-            using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
+            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
 
             template<class Key_t, class Value_t, class Index_t>
             static std::size_t estimateRequiredGpuMem(
@@ -616,7 +616,7 @@ namespace cpuhashtabledetail{
         template<bool allowFallback>
         struct TransformGPURemoveKeysWithToManyValues{
             template<class T>
-            using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
+            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
 
             template<class Key_t, class Value_t, class Index_t>
             static TransformRemoveKeysResult execute(std::vector<Key_t>& keys, 
@@ -769,7 +769,7 @@ namespace cpuhashtabledetail{
         template<bool allowFallback>
         struct GPUTransformation{
             template<class T>
-            using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
+            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
 
             template<class Key_t, class Value_t, class Index_t, class Count_t>
             static std::pair<bool, TransformResult> execute(std::vector<Key_t>& keys, 

@@ -580,11 +580,13 @@ void constructOutputFileFromCorrectionResults_impl(
         };
 
         helpers::CpuTimer timer("sort_results_by_read_id");
+        
         partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+
         timer.print();
     }
 
-    helpers::CpuTimer mergetimer("merging");
+    helpers::CpuTimer mergeTimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -767,7 +769,7 @@ void constructOutputFileFromCorrectionResults_impl(
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    mergetimer.print();
+    mergeTimer.print();
 }
 
 
@@ -806,7 +808,7 @@ void constructOutputFileFromCorrectionResults2_impl(
         timer.print();
     }
 
-    helpers::CpuTimer mergetimer("merging");
+    helpers::CpuTimer mergeTimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -904,7 +906,7 @@ void constructOutputFileFromCorrectionResults2_impl(
         }
     }
 
-    mergetimer.print();
+    mergeTimer.print();
 }
 
 
@@ -942,7 +944,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
         timer.print();
     }
 
-    helpers::CpuTimer mergetimer("merging");
+    helpers::CpuTimer mergeTimer("merging");
 
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
@@ -1288,7 +1290,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
     outputWriterFuture.wait();
 
 
-    mergetimer.print();
+    mergeTimer.print();
 }
 
 void constructOutputFileFromCorrectionResults(
@@ -1459,12 +1461,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            // const auto& vec = uncorrectedPositionsNoConsensus;
-            // sstream << vec.size();
-            // if(!vec.empty()){
-            //     sstream << ' ';
-            //     std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(sstream, " "));
-            // }
+            ; //nothing
         }else{
             std::memcpy(ptr, &shift, sizeof(int));
             ptr += sizeof(int);
@@ -1516,15 +1513,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            // size_t vecsize;
-            // sstream >> vecsize;
-            // if(vecsize > 0){
-            //     auto& vec = uncorrectedPositionsNoConsensus;
-            //     vec.resize(vecsize);
-            //     for(size_t i = 0; i < vecsize; i++){
-            //         sstream >> vec[i];
-            //     }
-            // }
+            ; //nothing
         }else{
             std::memcpy(&shift, ptr, sizeof(int));
             ptr += sizeof(int);
@@ -1564,12 +1553,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            const auto& vec = uncorrectedPositionsNoConsensus;
-            os << vec.size();
-            if(!vec.empty()){
-                os << ' ';
-                std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
-            }
+            ; // nothing
         }else{
             os << shift;
         }
@@ -1616,15 +1600,7 @@ void constructOutputFileFromCorrectionResults(
             }
 
             if(type == TempCorrectedSequence::Type::Anchor){
-                size_t vecsize;
-                stream >> vecsize;
-                if(vecsize > 0){
-                    auto& vec = uncorrectedPositionsNoConsensus;
-                    vec.resize(vecsize);
-                    for(size_t i = 0; i < vecsize; i++){
-                        stream >> vec[i];
-                    }
-                }
+                ; //nothing
             }else{
                 stream >> shift;
                 shift = std::abs(shift);

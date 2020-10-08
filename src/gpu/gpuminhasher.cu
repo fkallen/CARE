@@ -1,4 +1,5 @@
 #include <gpu/gpuminhasher.cuh>
+#include <hpc_helpers.cuh>
 
 namespace care{
     namespace gpu{
@@ -747,14 +748,14 @@ GpuMinhasher::constructTablesWithGpuHashing(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;
@@ -926,19 +927,19 @@ GpuMinhasher::constructTablesWithGpuHashingUniquekmers1(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<int, 0> d_hashFuncIds(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationPinnedHost<int, 0> h_hashFuncIds(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<int, 0> d_signatureSizePerSequence(parallelReads);
-    SimpleAllocationPinnedHost<int, 0> h_signatureSizePerSequence(parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_temp(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_hashFuncIds(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<int, 0> h_hashFuncIds(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_signatureSizePerSequence(parallelReads);
+    helpers::SimpleAllocationPinnedHost<int, 0> h_signatureSizePerSequence(parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_temp(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;
@@ -1143,14 +1144,14 @@ GpuMinhasher::constructTablesWithGpuHashingUniquekmers2(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;

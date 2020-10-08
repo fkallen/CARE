@@ -94,8 +94,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
     //readIdGenerator.skip(4200000);
  
     BackgroundThread outputThread(true);
@@ -182,9 +182,9 @@ extend_gpu_pairedend(
 
         const int batchsizePairs = correctionOptions.batchsize;
 
-        SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
-        SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
-        SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
 
         cudaStream_t stream;
         cudaStreamCreate(&stream); CUERR;
@@ -498,9 +498,9 @@ extend_gpu_singleend(
 
         const int batchsize = correctionOptions.batchsize;
 
-        SimpleAllocationPinnedHost<read_number> currentIds(batchsize);
-        SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(encodedSequencePitchInInts * batchsize);
-        SimpleAllocationPinnedHost<int> currentReadLengths(batchsize);
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(batchsize);
+        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(encodedSequencePitchInInts * batchsize);
+        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(batchsize);
 
         cudaStream_t stream;
         cudaStreamCreate(&stream); CUERR;

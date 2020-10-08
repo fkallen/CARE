@@ -175,7 +175,11 @@ namespace args{
 
         if(pr.count("memTotal")){
             const auto memoryTotalLimitString = pr["memTotal"].as<std::string>();
-            result.memoryTotalLimit = parseMemoryString(memoryTotalLimitString);
+            const std::size_t parsedMemory = parseMemoryString(memoryTotalLimitString);
+            const std::size_t availableMemory = getAvailableMemoryInKB() * 1024;
+
+            // user-provided memory limit could be greater than currently available memory.
+            result.memoryTotalLimit = std::min(parsedMemory, availableMemory);
         }else{
             std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
             if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){

@@ -6,7 +6,6 @@
 #include <gpu/gpumsa.cuh>
 
 #include <bestalignment.hpp>
-#include <gpu/utility_kernels.cuh>
 
 #include <sequence.hpp>
 #include <correctionresultprocessing.hpp>
@@ -503,9 +502,14 @@ namespace gpu{
                     if(index2 < arrayLength && group.thread_rank() == 0){
                         tmp = sequenceAsChar4[index2];
                     }
-        
+                    #if __CUDACC_VER_MAJOR__ < 11
+		    //CUDA < 11 does not have shuffle api for char4
+		    *((int*)(&right)) = group.shfl_down(*((const int*)(&left)), 1);
+		    *((int*)(&tmp)) = group.shfl(*((const int*)(&tmp)), 0);
+                    #else
                     right = group.shfl_down(left, 1);
                     tmp = group.shfl(tmp, 0);
+                    #endif
                     if(group.thread_rank() == group.size() - 1){
                         right = tmp;
                     }

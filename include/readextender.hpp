@@ -1651,7 +1651,7 @@ private:
             task.alignmentFlags.resize(numCandidates);
             task.alignments.resize(numCandidates);
 
-            care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::Right>(
+            care::cpu::shd::cpuShiftedHammingDistancePopcount2BitWithDirection<care::cpu::shd::ShiftDirection::Right>(
                 alignmentHandle,
                 forwardAlignments.data(),
                 task.currentAnchor.data(),
@@ -1665,7 +1665,7 @@ private:
                 goodAlignmentProperties.min_overlap_ratio
             );
 
-            care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::Right>(
+            care::cpu::shd::cpuShiftedHammingDistancePopcount2BitWithDirection<care::cpu::shd::ShiftDirection::Right>(
                 alignmentHandle,
                 revcAlignments.data(),
                 task.currentAnchor.data(),

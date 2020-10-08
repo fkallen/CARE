@@ -571,7 +571,7 @@ void DistributedReadStorage::setReads(
 
         // //kernel for encoding
 
-        generic_kernel<<<640, 128, 0, streams[currentbuf]>>>(
+        helpers::lambda_kernel<<<640, 128, 0, streams[currentbuf]>>>(
             [
                 =, 
                 decodedSequences = d_decodedSequences_arr[currentbuf],

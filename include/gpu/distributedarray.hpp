@@ -4,11 +4,7 @@
 
 #ifdef __NVCC__
 
-#include <gpu/simpleallocation.cuh>
-#include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
-#include <gpu/nvtxtimelinemarkers.hpp>
-#include <gpu/peeraccess.hpp>
 #include <threadpool.hpp>
 //#include <util.hpp>
 #include <memorymanagement.hpp>
@@ -363,44 +359,44 @@ public:
         std::mutex mutex;
         care::ThreadPool::ParallelForHandle pforHandle;
 
-        SimpleAllocationPinnedHost<Index_t> pinnedIndicesOfHostLocation;
-        SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Index_t> pinnedIndicesOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
 
-        SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostLocation;
-        SimpleAllocationPinnedHost<Value_t> pinnedGatheredElementsOfHostLocation; 
+        helpers::SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Value_t> pinnedGatheredElementsOfHostLocation; 
 
-        std::vector<SimpleAllocationDevice<Value_t>> d_gatheredElementsOfGpuLocation; //numGpus
+        std::vector<helpers::SimpleAllocationDevice<Value_t>> d_gatheredElementsOfGpuLocation; //numGpus
 
-        std::map<int, SimpleAllocationDevice<Value_t>> map_d_tmpResults; //tmp buffers to store all gathered elements on the destination gpu
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_destinationPositionsOfGpu;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_elementsPerLocationPS;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocation;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocationPS;
-        std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_indicesForLocationsVector;
-        std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_destinationPositionsForLocationsVector;
+        std::map<int, helpers::SimpleAllocationDevice<Value_t>> map_d_tmpResults; //tmp buffers to store all gathered elements on the destination gpu
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_destinationPositionsOfGpu;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_elementsPerLocationPS;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocation;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocationPS;
+        std::map<int, std::vector<helpers::SimpleAllocationDevice<Index_t>>> map_d_indicesForLocationsVector;
+        std::map<int, std::vector<helpers::SimpleAllocationDevice<Index_t>>> map_d_destinationPositionsForLocationsVector;
 
 
         //kernel parameters per device id
-        std::map<int, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
 
-        std::map<int, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
 
-        std::map<int, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
 
-        using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
-        using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        using hscatvec_t = std::vector<helpers::SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        using dscatvec_t = std::vector<helpers::SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
         std::map<int, dscatvec_t> map_d_scatterkernelparams;
         std::map<int, hscatvec_t> map_h_scatterkernelparams;
 
 
-        std::map<int, SimpleAllocationDevice<char>> map_d_packedpointersAndNumIndicesArg;
-        SimpleAllocationPinnedHost<char> h_packedpointersAndNumIndicesArg;
+        std::map<int, helpers::SimpleAllocationDevice<char>> map_d_packedpointersAndNumIndicesArg;
+        helpers::SimpleAllocationPinnedHost<char> h_packedpointersAndNumIndicesArg;
 
-        std::map<int, SimpleAllocationDevice<char>> map_d_packedKernelParamsPartPref;
-        SimpleAllocationPinnedHost<char> h_packedKernelParamsPartPref;
+        std::map<int, helpers::SimpleAllocationDevice<char>> map_d_packedKernelParamsPartPref;
+        helpers::SimpleAllocationPinnedHost<char> h_packedKernelParamsPartPref;
 
         //
         std::map<int, cudaGraphExec_t> map_nohostExecutionGraph;
@@ -417,7 +413,7 @@ public:
     };
 
     using GatherHandle = std::unique_ptr<GatherHandleStruct>;
-    using PeerAccess_t = PeerAccess;
+    using PeerAccess_t = helpers::PeerAccess;
 
     MemoryUsage getMemoryInfoOfHandle(const GatherHandle& handle) const{
 
@@ -993,18 +989,18 @@ public:
             handle->map_d2hevents[deviceId] = std::move(event2); 
              
 
-            handle->map_d_tmpResults.emplace(deviceId, SimpleAllocationDevice<Value_t>{});
-            handle->map_d_destinationPositionsOfGpu.emplace(deviceId, SimpleAllocationDevice<Index_t>{});
-            handle->map_d_elementsPerLocationPS.emplace(deviceId, SimpleAllocationDevice<Index_t>(numLocations + 1));
+            handle->map_d_tmpResults.emplace(deviceId, helpers::SimpleAllocationDevice<Value_t>{});
+            handle->map_d_destinationPositionsOfGpu.emplace(deviceId, helpers::SimpleAllocationDevice<Index_t>{});
+            handle->map_d_elementsPerLocationPS.emplace(deviceId, helpers::SimpleAllocationDevice<Index_t>(numLocations + 1));
 
-            SimpleAllocationDevice<Index_t> aaa1(numLocations);
+            helpers::SimpleAllocationDevice<Index_t> aaa1(numLocations);
             handle->map_d_numIndicesPerLocation.emplace(deviceId, std::move(aaa1));
-            SimpleAllocationDevice<Index_t> aaa2(numLocations+1);
+            helpers::SimpleAllocationDevice<Index_t> aaa2(numLocations+1);
             handle->map_d_numIndicesPerLocationPS.emplace(deviceId, std::move(aaa2));
 
-            std::vector<SimpleAllocationDevice<Index_t>> vec1(numLocations + 1);
+            std::vector<helpers::SimpleAllocationDevice<Index_t>> vec1(numLocations + 1);
             handle->map_d_indicesForLocationsVector.emplace(deviceId, std::move(vec1));
-            std::vector<SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
+            std::vector<helpers::SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
             handle->map_d_destinationPositionsForLocationsVector.emplace(deviceId, std::move(vec2));
 
             cudaMemcpyAsync(
@@ -1016,17 +1012,17 @@ public:
             ); CUERR; 
             cudaStreamSynchronize(handle->map_streams[deviceId]); CUERR;
 
-            handle->map_d_splitkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
-            handle->map_h_splitkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
+            handle->map_d_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
+            handle->map_h_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
 
-            handle->map_d_prefixsumkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
-            handle->map_h_prefixsumkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_d_prefixsumkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_h_prefixsumkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
 
-            handle->map_d_gatherkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
-            handle->map_h_gatherkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+            handle->map_d_gatherkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+            handle->map_h_gatherkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
 
-            using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
-            using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+            using hscatvec_t = std::vector<helpers::SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+            using dscatvec_t = std::vector<helpers::SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
 
             hscatvec_t hscatvec(numGpus);
             for(int k = 0; k < numGpus; k++){
@@ -1039,10 +1035,10 @@ public:
             }
             handle->map_d_scatterkernelparams.emplace(deviceId, std::move(dscatvec));
 
-            handle->map_d_packedpointersAndNumIndicesArg.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedpointersAndNumIndicesArg.emplace(deviceId, helpers::SimpleAllocationDevice<char>());
             handle->map_d_packedpointersAndNumIndicesArg[deviceId].resize(handle->h_packedpointersAndNumIndicesArg.size());
 
-            handle->map_d_packedKernelParamsPartPref.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedKernelParamsPartPref.emplace(deviceId, helpers::SimpleAllocationDevice<char>());
             handle->map_d_packedKernelParamsPartPref[deviceId].resize(handle->h_packedKernelParamsPartPref.size());
 
      
@@ -1147,7 +1143,8 @@ public:
         //std::lock_guard<std::mutex> l(handle->mutex);
 
         if(singlePartitionInfo.isSinglePartition){
-            nvtx::push_range("singlePartitionGather", 0);
+            nvtx::ScopedRange r("singlePartitionGather", 0);
+
             gatherElementsInGpuMemAsyncSinglePartitionMode(
                 forLoop,
                 handle,
@@ -1159,12 +1156,11 @@ public:
                 resultPitch,
                 syncstream
             );
-            nvtx::pop_range();
 
         }else{
 
             if(elementsPerLocation[hostLocation] == 0){
-                nvtx::push_range("nohostGather", 1);
+                nvtx::ScopedRange r("nohostGather", 1);
 
                 gatherElementsInGpuMemAsyncNoHostPartition(
                     forLoop,
@@ -1178,10 +1174,9 @@ public:
                     syncstream
                 );
 
-                nvtx::pop_range();
             }else{        
 
-                nvtx::push_range("generalGather", 2);
+                nvtx::ScopedRange r("generalGather", 2);
 
                 gatherElementsInGpuMemAsyncGeneral(
                     forLoop,
@@ -1194,8 +1189,6 @@ public:
                     resultPitch,
                     syncstream
                 );
-
-                nvtx::pop_range();
 
             }
 
@@ -1383,7 +1376,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[deviceId].get(), 
             numLocations, 
             Index_t(0), 
@@ -1683,7 +1676,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
             numLocations, 
             Index_t(0), 
@@ -1919,7 +1912,7 @@ public:
             = (distarraykernels::PrefixSumKernelParams<Index_t>*)(((char*)d_partitionsplitkernelParams) + paramsOffset);
 
         //find indices per location + prefixsum
-        call_fill_kernel_async(
+        helpers::call_fill_kernel_async(
             handle->map_d_numIndicesPerLocation[resultDeviceId].get(), 
             numLocations, 
             Index_t(0), 
@@ -2011,7 +2004,8 @@ public:
             // std::cerr << "\n";
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                nvtx::push_range("generalgather_host", 7);
+                nvtx::ScopedRange r("generalgather_host", 7);
+
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
 
@@ -2020,7 +2014,7 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
-                nvtx::pop_range();
+
             };
 
             forLoop( 
@@ -2143,7 +2137,8 @@ public:
             const Index_t* const myIndices = handle->pinnedIndicesOfHostLocation.get();
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
-                nvtx::push_range("generalgather_host", 7);
+                nvtx::ScopedRange r("generalgather_host", 7);
+
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
 
@@ -2152,7 +2147,7 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
-                nvtx::pop_range();
+
             };
 
             forLoop( 
