@@ -19,12 +19,10 @@
 
 namespace care {
 
-template<typename AnchorFeatures,
-         typename CandFeatures,
-         typename AnchorClf,
+template<typename AnchorClf,
          typename CandClf,
-         AnchorFeatures (*anchor_extractor)(const care::MultipleSequenceAlignment&, const care::MSAProperties&, char, size_t, float), // c++17: "auto"
-         CandFeatures (*cands_extractor)(const care::MultipleSequenceAlignment&, const care::MSAProperties&, char, size_t, float)>
+         typename AnchorExtractor,
+         typename CandsExtractor>
 struct clf_agent
 {
 
@@ -35,13 +33,14 @@ struct clf_agent
     std::shared_ptr<std::ofstream> anchor_file, cands_file;
     std::mt19937 rng;
     std::bernoulli_distribution coinflip;
-
+    AnchorExtractor extract_anchor;
+    CandsExtractor extract_cands;
 
     clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
-        classifier_anchor(c_opts.correctionType==CorrectionType::Forest?std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor):nullptr),
-        classifier_cands(c_opts.correctionTypeCands==CorrectionType::Forest?std::make_shared<CandClf>(f_opts.mlForestfileCands):nullptr),
-        anchor_file(c_opts.correctionType==CorrectionType::Print?std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor):nullptr),
-        cands_file(c_opts.correctionTypeCands==CorrectionType::Print?std::make_shared<std::ofstream>(f_opts.mlForestfileCands):nullptr),
+        classifier_anchor(c_opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor) : nullptr),
+        classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands) : nullptr),
+        anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
+        cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
         rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count())),
         coinflip(0.01)
     {}
@@ -57,100 +56,103 @@ struct clf_agent
 
     //TODO: if this could just get task as parameter, everthing would look much nicer, consider un-private-ing stuff?
     void print_anchor(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
-        AnchorFeatures sample = anchor_extractor(msa, props, orig, msa_pos, norm);
         anchor_stream << read_id << ' ' << read_pos << ' ';
-        for (float j: sample) anchor_stream << j << ' ';
+        for (float j: extract_anchor(msa, props, orig, msa_pos, norm))
+            anchor_stream << j << ' ';
         anchor_stream << '\n';
     }
 
     void print_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
         if (!coinflip(rng)) return;
 
-        CandFeatures sample = cands_extractor(msa, props, orig, msa_pos, norm);
         cands_stream << read_id << ' ' << read_pos << ' ';
-        for (float j: sample) cands_stream << j << ' ';
+        for (float j: extract_cands(msa, props, orig, msa_pos, norm))
+            cands_stream << j << ' ';
         cands_stream << '\n';
     }
 
     float decide_anchor(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) {       
-        return classifier_anchor->decide(anchor_extractor(msa, props, orig, pos, norm));
+        return classifier_anchor->decide(extract_anchor(msa, props, orig, pos, norm));
     }
 
     float decide_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) {       
-        return classifier_cands->decide(cands_extractor(msa, props, orig, pos, norm));
+        return classifier_cands->decide(extract_cands(msa, props, orig, pos, norm));
     }
 
     void flush() {
-        *anchor_file << anchor_stream.rdbuf();
-        *cands_file << cands_stream.rdbuf();
+        #pragma omp critical
+        {
+            if (anchor_file)
+                *anchor_file << anchor_stream.rdbuf();
+            if (cands_file)
+                *cands_file << cands_stream.rdbuf();
+        }
         anchor_stream = std::stringstream();
         cands_stream = std::stringstream();
     }
 };
 
+namespace detail {
 
-std::array<float, 36> extract_anchor_linear_36(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) noexcept
-{   
-    float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
-    return {
-        float(orig == 'A'),
-        float(orig == 'C'),
-        float(orig == 'G'),
-        float(orig == 'T'),
-        float(msa.consensus[pos] == 'A'),
-        float(msa.consensus[pos] == 'C'),
-        float(msa.consensus[pos] == 'G'),
-        float(msa.consensus[pos] == 'T'),
-        orig == 'A'?msa.countsA[pos]/countsACGT:0,
-        orig == 'C'?msa.countsC[pos]/countsACGT:0,
-        orig == 'G'?msa.countsG[pos]/countsACGT:0,
-        orig == 'T'?msa.countsT[pos]/countsACGT:0,
-        orig == 'A'?msa.weightsA[pos]:0,
-        orig == 'C'?msa.weightsC[pos]:0,
-        orig == 'G'?msa.weightsG[pos]:0,
-        orig == 'T'?msa.weightsT[pos]:0,
-        msa.consensus[pos] == 'A'?msa.countsA[pos]/countsACGT:0,
-        msa.consensus[pos] == 'C'?msa.countsC[pos]/countsACGT:0,
-        msa.consensus[pos] == 'G'?msa.countsG[pos]/countsACGT:0,
-        msa.consensus[pos] == 'T'?msa.countsT[pos]/countsACGT:0,
-        msa.consensus[pos] == 'A'?msa.weightsA[pos]:0,
-        msa.consensus[pos] == 'C'?msa.weightsC[pos]:0,
-        msa.consensus[pos] == 'G'?msa.weightsG[pos]:0,
-        msa.consensus[pos] == 'T'?msa.weightsT[pos]:0,
-        msa.weightsA[pos],
-        msa.weightsC[pos],
-        msa.weightsG[pos],
-        msa.weightsT[pos],
-        msa.countsA[pos]/countsACGT,
-        msa.countsC[pos]/countsACGT,
-        msa.countsG[pos]/countsACGT,
-        msa.countsT[pos]/countsACGT,
-        props.avg_support,
-        props.min_support,
-        float(props.max_coverage)/norm,
-        float(props.min_coverage)/norm
-    };
-}
+struct extract_anchor_linear_36 {
+    using features_t = std::array<float, 36>;
+    features_t operator()(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm) noexcept {   
+        float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(msa.consensus[pos] == 'A'),
+            float(msa.consensus[pos] == 'C'),
+            float(msa.consensus[pos] == 'G'),
+            float(msa.consensus[pos] == 'T'),
+            orig == 'A'?msa.countsA[pos]/countsACGT:0,
+            orig == 'C'?msa.countsC[pos]/countsACGT:0,
+            orig == 'G'?msa.countsG[pos]/countsACGT:0,
+            orig == 'T'?msa.countsT[pos]/countsACGT:0,
+            orig == 'A'?msa.weightsA[pos]:0,
+            orig == 'C'?msa.weightsC[pos]:0,
+            orig == 'G'?msa.weightsG[pos]:0,
+            orig == 'T'?msa.weightsT[pos]:0,
+            msa.consensus[pos] == 'A'?msa.countsA[pos]/countsACGT:0,
+            msa.consensus[pos] == 'C'?msa.countsC[pos]/countsACGT:0,
+            msa.consensus[pos] == 'G'?msa.countsG[pos]/countsACGT:0,
+            msa.consensus[pos] == 'T'?msa.countsT[pos]/countsACGT:0,
+            msa.consensus[pos] == 'A'?msa.weightsA[pos]:0,
+            msa.consensus[pos] == 'C'?msa.weightsC[pos]:0,
+            msa.consensus[pos] == 'G'?msa.weightsG[pos]:0,
+            msa.consensus[pos] == 'T'?msa.weightsT[pos]:0,
+            msa.weightsA[pos],
+            msa.weightsC[pos],
+            msa.weightsG[pos],
+            msa.weightsT[pos],
+            msa.countsA[pos]/countsACGT,
+            msa.countsC[pos]/countsACGT,
+            msa.countsG[pos]/countsACGT,
+            msa.countsT[pos]/countsACGT,
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/norm,
+            float(props.min_coverage)/norm
+        };
+    }
+};
+
+} //namespace 
 
 
 //--------------------------------------------------------------------------------
 
-using anchor_features_t = std::array<float, 36>;
-using cands_features_t = std::array<float, 36>;
+using anchor_extractor = detail::extract_anchor_linear_36;
+using cands_extractor = detail::extract_anchor_linear_36;
 
-using anchor_clf_t = ForestClf<anchor_features_t>;
-using cands_clf_t = ForestClf<cands_features_t>;
+using anchor_clf_t = ForestClf;
+using cands_clf_t = ForestClf;
 
-// // c++17 only
-// // c++14: "tHE tEmplAte aRgUMent dOenS't hAvE eXtErnAL liNKAGe" 
-// constexpr auto& anchor_extractor = extract_anchor_linear_36;
-// constexpr auto& cands_extractor = extract_anchor_linear_36;
-// using ClfAgent = clf_agent<anchor_features_t, cands_features_t, anchor_clf_t, cands_clf_t, anchor_extractor, cands_extractor>;
-
-using ClfAgent = clf_agent<anchor_features_t, cands_features_t, anchor_clf_t, cands_clf_t, extract_anchor_linear_36, extract_anchor_linear_36>;
+using ClfAgent = clf_agent<anchor_clf_t, cands_clf_t, anchor_extractor, cands_extractor>;
 
 
 } // namespace care
 
 #endif
-

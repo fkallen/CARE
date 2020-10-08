@@ -268,7 +268,6 @@ int main(int argc, char** argv){
 	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
 		<< " (" << nameOfCorrectionType(correctionOptions.correctionTypeCands) << ")\n";
 
-
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
 	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";

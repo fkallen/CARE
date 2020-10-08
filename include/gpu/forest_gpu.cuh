@@ -3,6 +3,7 @@
 
 
 #include <hpc_helpers.cuh>
+#include <classification.hpp>
 
 //#include <forest.hpp>
 
@@ -20,7 +21,7 @@ namespace care{
 template<class CpuForest>
 class GpuForest {
 
-    using Features = typename CpuForest::Features;
+    using Features = anchor_extractor::features_t;
 
     struct Node {
         uint8_t att;

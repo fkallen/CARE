@@ -146,7 +146,7 @@ public:
         const Minhasher& minhasher_,
         const cpu::ContiguousReadStorage& readStorage_,
         ReadCorrectionFlags& correctionFlags_,
-        ClfAgent* clfAgent_
+        ClfAgent& clfAgent_
     ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
         decodedSequencePitchInBytes(decodedSequencePitchInBytes_),
         qualityPitchInBytes(qualityPitchInBytes_),

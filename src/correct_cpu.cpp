@@ -167,7 +167,7 @@ correct_cpu(
             minhasher,
             readStorage,
             correctionFlags,
-            &clfAgent
+            clfAgent
         );
 
         ContiguousReadStorage::GatherHandle readStorageGatherHandle;
@@ -273,13 +273,7 @@ correct_cpu(
 
             outputThread.enqueue(std::move(outputfunction));
 
-            if(correctionOptions.correctionType == CorrectionType::Print){
-
-                #pragma omp critical
-                {
-                    clfAgent.flush();
-                }
-            }
+            clfAgent.flush();
 
             progressThread.addProgress(batchReadIds.size()); 
             

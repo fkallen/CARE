@@ -13,7 +13,7 @@ namespace care {
 
 // de-serialization helpers
 template<typename T>
-T& read_one(std::ifstream& is, T& v) {
+inline T& read_one(std::ifstream& is, T& v) {
     char tmp[sizeof(v)];
     // this is only to be absolutely 100% standard-compliant no matter how read() is implemented
     // probably absolutely unnecessary but it will be optimized out
@@ -23,17 +23,15 @@ T& read_one(std::ifstream& is, T& v) {
 }
 
 template<typename T>
-T read_one(std::ifstream& is) {
+inline T read_one(std::ifstream& is) {
     T ret;
     read_one(is, ret);
     return ret;
 }
 
-template<typename features_t>
 class ForestClf {
+    template<class CpuForest>
     friend class GpuForest;
-
-    using Features = features_t;
 
     struct Node {
         uint8_t att;
@@ -66,6 +64,7 @@ class ForestClf {
         }
     }
 
+    template<typename features_t>
     float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
@@ -94,6 +93,7 @@ public:
         is.close();
     }
 
+    template<typename features_t>
     float decide(const features_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
