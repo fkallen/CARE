@@ -78,6 +78,25 @@ public:
         const float* candidateDefaultWeightFactors;
     };
 
+    struct PossibleSplitColumn{
+        char letter = 'F';
+        int column = -1;
+        float ratio = 0.0f;
+    };
+
+    struct MsaSplit{
+        MsaSplit() = default;
+        MsaSplit(std::vector<PossibleSplitColumn>&& c, std::vector<int>&& l)
+            : columnInfo(std::move(c)), listOfCandidates(std::move(l)){}
+            
+        std::vector<PossibleSplitColumn> columnInfo;
+        std::vector<int> listOfCandidates;
+    };
+
+    struct PossibleMsaSplits{
+        std::vector<MsaSplit> splits;
+    };
+
     std::vector<char> consensus;
     std::vector<float> support;
     std::vector<int> coverage;
@@ -96,6 +115,7 @@ public:
 
     int nCandidates{};
     int nColumns{};
+    int addedSequences{};
 
     int subjectColumnsBegin_incl{};
     int subjectColumnsEnd_excl{};
@@ -127,6 +147,9 @@ public:
 
     void print(std::ostream& os) const;
     void printWithDiffToConsensus(std::ostream& os) const;
+
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn) const;
+    PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const;
 
     void setQualityConversion(const cpu::QualityScoreConversion* conversion){
         qualityConversion = conversion;
