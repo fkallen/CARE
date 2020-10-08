@@ -18,61 +18,6 @@
 namespace care{
 
 
-
-
-struct MultipleSequenceAlignment{
-
-public:
-
-    std::vector<char> consensus;
-    std::vector<float> support;
-    std::vector<int> coverage;
-    std::vector<float> origWeights;
-    std::vector<int> origCoverages;
-
-    std::vector<int> countsA;
-    std::vector<int> countsC;
-    std::vector<int> countsG;
-    std::vector<int> countsT;
-
-    std::vector<float> weightsA;
-    std::vector<float> weightsC;
-    std::vector<float> weightsG;
-    std::vector<float> weightsT;
-
-    int nCandidates;
-    int nColumns;
-
-    int subjectColumnsBegin_incl;
-    int subjectColumnsEnd_excl;
-
-    void build(const char* subject,
-                int subjectLength,
-                const char* candidates,
-                const int* candidateLengths,
-                int nCandidates_,
-                const int* candidateShifts,
-                const float* candidateDefaultWeightFactors,
-                const char* subjectQualities,
-                const char* candidateQualities,
-                size_t candidatesPitch,
-                size_t candidateQualitiesPitch,
-                bool useQualityScores);
-
-    void resize(int cols);
-
-    void fillzero();
-
-    void findConsensus();
-
-    void findOrigWeightAndCoverage(const char* subject);
-
-    void addSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
-
-    //void removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
-
-};
-
 struct MSAProperties{
     float avg_support;
     float min_support;
@@ -86,19 +31,11 @@ struct MSAProperties{
 
 struct CorrectionResult{
     bool isCorrected;
-    bool isHQ;
     std::string correctedSequence;
-    std::vector<int> uncorrectedPositionsNoConsensus;
-    std::vector<float> bestAlignmentWeightOfConsensusBase;
-    std::vector<float> bestAlignmentWeightOfAnchorBase;
 
     void reset(){
         isCorrected = false;
-        isHQ = false;
         correctedSequence.clear();
-        uncorrectedPositionsNoConsensus.clear();
-        bestAlignmentWeightOfConsensusBase.clear();
-        bestAlignmentWeightOfAnchorBase.clear();
     }
 };
 
@@ -123,171 +60,107 @@ struct RegionSelectionResult{
     int consensuscount = 0;
 };
 
-MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int nColumns,
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage);
+struct MultipleSequenceAlignment{
+public:
 
-MSAProperties getMSAProperties2(const float* support,
-                            const int* coverage,
-                            int firstCol,
-                            int lastCol, //exclusive
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage);
+    struct InputData{
+        bool useQualityScores;
+        int subjectLength;
+        int nCandidates;
+        size_t candidatesPitch;
+        size_t candidateQualitiesPitch;
+        const char* subject;
+        const char* candidates;
+        const char* subjectQualities;
+        const char* candidateQualities;
+        const int* candidateLengths;
+        const int* candidateShifts;
+        const float* candidateDefaultWeightFactors;
+    };
 
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize);
+    std::vector<char> consensus;
+    std::vector<float> support;
+    std::vector<int> coverage;
+    std::vector<float> origWeights;
+    std::vector<int> origCoverages;
 
-//candidates is a 2d array of size candidatesPitch * nCandidates.
-//candidates with reverse complement alignment must be reverse complement in this array.
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize);
+    std::vector<int> countsA;
+    std::vector<int> countsC;
+    std::vector<int> countsG;
+    std::vector<int> countsT;
+
+    std::vector<float> weightsA;
+    std::vector<float> weightsC;
+    std::vector<float> weightsG;
+    std::vector<float> weightsT;
+
+    int nCandidates{};
+    int nColumns{};
+
+    int subjectColumnsBegin_incl{};
+    int subjectColumnsEnd_excl{};
 
 
-CorrectionResult getCorrectedSubjectNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    MSAProperties msaProperties,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize,
-                                    read_number readId);                                    
+    InputData inputData{};
+    const cpu::QualityScoreConversion* qualityConversion{};
 
-std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct);
+    MultipleSequenceAlignment() = default;
+    MultipleSequenceAlignment(const cpu::QualityScoreConversion* conversion)
+        : qualityConversion(conversion){
+
+    }
 
 
+    void build(const InputData& args);
 
-std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct);
+    void resize(int cols);
 
-RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
-                                                    int subjectLength,
-                                                    const char* candidates,
-                                                    const int* candidateLengths,
-                                                    int nCandidates,
-                                                    size_t candidatesPitch,
-                                                    const char* consensus,
-                                                    const int* countsA,
-                                                    const int* countsC,
-                                                    const int* countsG,
-                                                    const int* countsT,
-                                                    const float* weightsA,
-                                                    const float* weightsC,
-                                                    const float* weightsG,
-                                                    const float* weightsT,
-                                                    const int* alignments_nOps,
-                                                    const int* alignments_overlaps,
-                                                    int subjectColumnsBegin_incl,
-                                                    int subjectColumnsEnd_excl,
-                                                    const int* candidateShifts,
-                                                    int dataset_coverage,
-                                                    float desiredAlignmentMaxErrorRate);
+    void fillzero();
 
-std::pair<int,int> findGoodConsensusRegionOfSubject(const char* subject,
-                                                    int subjectLength,
-                                                    const char* consensus,
-                                                    const int* candidateShifts,
-                                                    const int* candidateLengths,
-                                                    int nCandidates);
+    void findConsensus();
 
-std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
-                                                    int subjectLength,
-                                                    const int* coverage,
-                                                    int nColumns,
-                                                    int subjectColumnsEnd_excl);
+    void findOrigWeightAndCoverage(const char* subject);
 
+    void addSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
+    //void removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
+    void print(std::ostream& os) const;
+    void printWithDiffToConsensus(std::ostream& os) const;
 
-extern cpu::QualityScoreConversion qualityConversion;
+    void setQualityConversion(const cpu::QualityScoreConversion* conversion){
+        qualityConversion = conversion;
+    }
 
+    MSAProperties getMSAProperties(
+        int firstCol,
+        int lastCol, //exclusive
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage
+    ) const;
 
-void printSequencesInMSA(std::ostream& out,
-                         const char* subject,
-                         int subjectLength,
-                         const char* candidates,
-                         const int* candidateLengths,
-                         int nCandidates,
-                         const int* candidateShifts,
-                         int subjectColumnsBegin_incl,
-                         int subjectColumnsEnd_excl,
-                         int nColumns,
-                         size_t candidatesPitch);
+    CorrectionResult getCorrectedSubject(
+        MSAProperties msaProperties,
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage,
+        int neighborRegionSize,
+        read_number readId
+    ) const;
 
-void printSequencesInMSAConsEq(std::ostream& out,
-                      const char* subject,
-                      int subjectLength,
-                      const char* candidates,
-                      const int* candidateLengths,
-                      int nCandidates,
-                      const int* candidateShifts,
-                      const char* consensus,
-                      int subjectColumnsBegin_incl,
-                      int subjectColumnsEnd_excl,
-                      int nColumns,
-                      size_t candidatesPitch);
+    std::vector<CorrectedCandidate> getCorrectedCandidates(
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage,
+        int new_columns_to_correct
+    ) const;
+
+    RegionSelectionResult findCandidatesOfDifferentRegion(
+        int dataset_coverage
+    ) const;
+};
+
 
 
 }

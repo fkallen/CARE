@@ -10,23 +10,20 @@ namespace care{
 namespace cpu{
 
     struct QualityScoreConversion{
-        int ASCII_BASE = 33;
-        float MIN_WEIGHT = 0.001f;
-
-        using Array_t = std::array<float, 256>;
-
-        Array_t qscore_to_error_prob;
-        Array_t qscore_to_weight;
-
+    public:
         QualityScoreConversion(){
-            for(int i = 0; i < 256; i++){
+            constexpr int size = 256;
+            constexpr int ASCII_BASE = 33;
+            constexpr float MIN_WEIGHT = 0.001f;
+
+            for(int i = 0; i < size; i++){
                 if(i < ASCII_BASE)
                     qscore_to_error_prob[i] = 1.0;
                 else
                     qscore_to_error_prob[i] = std::pow(10.0f, -(i-ASCII_BASE)/10.0f);
             }
 
-            for(int i = 0; i < 256; i++){
+            for(int i = 0; i < size; i++){
                 qscore_to_weight[i] = std::max(MIN_WEIGHT, 1.0f - qscore_to_error_prob[i]);
             }
         }
@@ -39,13 +36,11 @@ namespace cpu{
             return qscore_to_weight[static_cast<unsigned char>(c)];
         }
 
-        const Array_t& getWeights() const{
-            return qscore_to_weight;
-        }
+    private:
+        using Array_t = std::array<float, 256>;
 
-        const Array_t& getErrorProbabilities() const{
-            return qscore_to_error_prob;
-        }
+        Array_t qscore_to_error_prob;
+        Array_t qscore_to_weight;
     };
 
 }

@@ -1,166 +1,26 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
 
-#include <qualityscoreweights.hpp>
 #include <bestalignment.hpp>
 
 namespace care{
 
+void MultipleSequenceAlignment::build(const InputData& args){
 
-cpu::QualityScoreConversion qualityConversion{};
+    assert(args.subjectLength > 0);
+    assert(args.subject != nullptr);
 
+    inputData = args;
 
-std::pair<int,int> find_good_consensus_region_of_subject(const View<char>& subject,
-                                                    const View<char>& consensus,
-                                                    const View<int>& shifts,
-                                                    const View<int>& candidateLengths){
-    const int min_clip = 10;
-    constexpr int max_clip = 20;
-    constexpr int mismatches_required_for_clipping = 5;
-
-    const int subjectLength = subject.size();
-
-    const int negativeShifts = std::count_if(shifts.begin(), shifts.end(), [](int s){return s < 0;});
-    const int positiveShifts = std::count_if(shifts.begin(), shifts.end(), [](int s){return s > 0;});
-
-
-    int remainingRegionBegin = 0;
-    int remainingRegionEnd = subjectLength; //exclusive
-
-    auto getRemainingRegionBegin = [&](){
-        //look for mismatches on the left end
-        int nMismatches = 0;
-        int lastMismatchPos = -1;
-        for(int localIndex = 0; localIndex < max_clip && localIndex < subjectLength; localIndex++){
-            if(consensus[localIndex] != subject[localIndex]){
-                nMismatches++;
-                lastMismatchPos = localIndex;
-            }
-        }
-        if(nMismatches >= mismatches_required_for_clipping){
-            //clip after position of last mismatch in max_clip region
-            return std::min(subjectLength, lastMismatchPos+1);
-        }else{
-            //everything is fine
-            return 0;
-        }
-    };
-
-    auto getRemainingRegionEnd = [&](){
-        //look for mismatches on the right end
-        int nMismatches = 0;
-        int firstMismatchPos = subjectLength;
-        const int begin = std::max(subjectLength - max_clip, 0);
-
-        for(int localIndex = begin; localIndex < max_clip && localIndex < subjectLength; localIndex++){
-            if(consensus[localIndex] != subject[localIndex]){
-                nMismatches++;
-                firstMismatchPos = localIndex;
-            }
-        }
-        if(nMismatches >= mismatches_required_for_clipping){
-            //clip after position of last mismatch in max_clip region
-            return firstMismatchPos;
-        }else{
-            //everything is fine
-            return subjectLength;
-        }
-    };
-
-    //every shift is zero
-    if(negativeShifts == 0 && positiveShifts == 0){
-        //check both ends
-        remainingRegionBegin = getRemainingRegionBegin();
-        remainingRegionEnd = getRemainingRegionEnd();
-    }else{
-
-        if(negativeShifts == 0){
-            remainingRegionBegin = 0;
-            for(int i = 0; i < shifts.size(); i++){
-                if(shifts[i] <= max_clip){
-                    remainingRegionBegin = std::max(shifts[i], remainingRegionBegin);
-                }
-            }
-            remainingRegionBegin = std::max(min_clip, remainingRegionBegin);
-        }else if(positiveShifts == 0){
-            remainingRegionEnd = subjectLength;
-            for(int i = 0; i < shifts.size(); i++){
-                const int candidateEndsAt = shifts[i] + candidateLengths[i];
-                if(candidateEndsAt < subjectLength && candidateEndsAt >= subjectLength-max_clip){
-                    remainingRegionEnd = std::min(candidateEndsAt, remainingRegionEnd);
-                }
-            }
-            remainingRegionEnd = std::min(subjectLength - min_clip, remainingRegionEnd);
-        }else{
-            ;//do nothing
-        }
-    }
-
-    return {remainingRegionBegin, remainingRegionEnd};
-}
-
-
-
-
-
-template<int dummy=0>
-std::pair<int,int> find_good_consensus_region_of_subject2(const View<char>& subject,
-                                                    const View<int>& coverage){
-    constexpr int max_clip = 10;
-    constexpr int coverage_threshold = 4;
-
-    const int subjectLength = subject.size();
-
-    int remainingRegionBegin = 0;
-    int remainingRegionEnd = subjectLength; //exclusive
-
-    for(int i = 0; i < std::min(max_clip, subjectLength); i++){
-        if(coverage[i] < coverage_threshold){
-            remainingRegionBegin = i+1;
-        }else{
-            break;
-        }
-    }
-
-    for(int i = subjectLength - 1; i >= std::max(0, subjectLength - max_clip); i--){
-        if(coverage[i] < coverage_threshold){
-            remainingRegionEnd = i;
-        }else{
-            break;
-        }
-    }
-
-    return {remainingRegionBegin, remainingRegionEnd};
-
-}
-
-
-
-void MultipleSequenceAlignment::build(const char* subject,
-            int subjectLength,
-            const char* candidates,
-            const int* candidateLengths,
-            int nCandidates_,
-            const int* candidateShifts,
-            const float* candidateDefaultWeightFactors,
-            const char* subjectQualities,
-            const char* candidateQualities,
-            size_t candidatesPitch,
-            size_t candidateQualitiesPitch,
-            bool useQualityScores){
-
-    assert(subjectLength > 0);
-    assert(subject != nullptr);
-
-    nCandidates = nCandidates_;
+    nCandidates = args.nCandidates;
 
     //determine number of columns in pileup image
     int startindex = 0;
-    int endindex = subjectLength;
+    int endindex = args.subjectLength;
 
     for(int i = 0; i < nCandidates; ++i){
-        const int shift = candidateShifts[i];
-        const int candidateEndsAt = candidateLengths[i] + shift;
+        const int shift = args.candidateShifts[i];
+        const int candidateEndsAt = args.candidateLengths[i] + shift;
         startindex = std::min(shift, startindex);
         endindex = std::max(candidateEndsAt, endindex);
     }
@@ -168,27 +28,27 @@ void MultipleSequenceAlignment::build(const char* subject,
     nColumns = endindex - startindex;
 
     subjectColumnsBegin_incl = std::max(-startindex,0);
-    subjectColumnsEnd_excl = subjectColumnsBegin_incl + subjectLength;
+    subjectColumnsEnd_excl = subjectColumnsBegin_incl + args.subjectLength;
 
     resize(nColumns);
 
     fillzero();
 
-    addSequence(useQualityScores, subject, subjectQualities, subjectLength, 0, 1.0f);
+    addSequence(args.useQualityScores, args.subject, args.subjectQualities, args.subjectLength, 0, 1.0f);
 
     for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
-        const char* ptr = candidates + candidateIndex * candidatesPitch;
-        const char* qptr = candidateQualities + candidateIndex * candidateQualitiesPitch;
-        const int candidateLength = candidateLengths[candidateIndex];
-        const int shift = candidateShifts[candidateIndex];
-        const float defaultWeightFactor = candidateDefaultWeightFactors[candidateIndex];
+        const char* ptr = args.candidates + candidateIndex * args.candidatesPitch;
+        const char* qptr = args.candidateQualities + candidateIndex * args.candidateQualitiesPitch;
+        const int candidateLength = args.candidateLengths[candidateIndex];
+        const int shift = args.candidateShifts[candidateIndex];
+        const float defaultWeightFactor = args.candidateDefaultWeightFactors[candidateIndex];
 
-        addSequence(useQualityScores, ptr, qptr, candidateLength, shift, defaultWeightFactor);
+        addSequence(args.useQualityScores, ptr, qptr, candidateLength, shift, defaultWeightFactor);
     }
 
     findConsensus();
 
-    findOrigWeightAndCoverage(subject);
+    findOrigWeightAndCoverage(args.subject);
 }
 
 void MultipleSequenceAlignment::resize(int cols){
@@ -235,7 +95,7 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
     for(int i = 0; i < length; i++){
         const int globalIndex = subjectColumnsBegin_incl + shift + i;
         const char base = sequence[i];
-        const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion.getWeight(quality[i]) : 1.0f);
+        const float weight = defaultWeightFactor * (useQualityScores ? qualityConversion->getWeight(quality[i]) : 1.0f);
         switch(base){
             case 'A': countsA[globalIndex]++; weightsA[globalIndex] += weight;break;
             case 'C': countsC[globalIndex]++; weightsC[globalIndex] += weight;break;
@@ -309,30 +169,141 @@ void MultipleSequenceAlignment::findOrigWeightAndCoverage(const char* subject){
 }
 
 
+void MultipleSequenceAlignment::print(std::ostream& os) const{
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
 
-MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int nColumns,
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage){
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return inputData.candidateShifts[k-1];
+    };
 
-    return getMSAProperties2(support,
-                            coverage,
-                            0,
-                            nColumns,
-                            estimatedErrorrate,
-                            estimatedCoverage,
-                            m_coverage);
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+
+        if(sortedrow == 0){
+            os << ">> ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                os << "0";
+            }
+
+            for(int i = 0; i < inputData.subjectLength; i++){
+                os << inputData.subject[i];
+            }
+
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                os << "0";
+            }
+
+            os << " <<";
+        }else{
+            os << "   ";
+            int written = 0;
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                os << "0";
+                written++;
+            }
+
+            for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
+                os << inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
+                written++;
+            }
+
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+                        + inputData.candidateLengths[sortedrow-1]; 
+                    i < nColumns; i++){
+                os << "0";
+                written++;
+            }
+
+            assert(written == nColumns);
+
+            os << "   " << inputData.candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
+        }
+
+        os << '\n';
+    }
 }
 
-MSAProperties getMSAProperties2(const float* support,
-                            const int* coverage,
-                            int firstCol,
-                            int lastCol, //exclusive
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage){
+
+void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const{
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return inputData.candidateShifts[k-1];
+    };
+
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+
+        if(sortedrow == 0){
+            os << ">> ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                os << "0";
+            }
+
+            for(int i = 0; i < inputData.subjectLength; i++){
+                const int globalIndex = subjectColumnsBegin_incl + i;
+                const char c = consensus[globalIndex] == inputData.subject[i] ? '=' : inputData.subject[i];
+                os << c;
+            }
+
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                os << "0";
+            }
+
+            os << " <<";
+        }else{
+            os << "   ";
+            int written = 0;
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                os << "0";
+                written++;
+            }
+
+            for(int i = 0; i < inputData.candidateLengths[sortedrow-1]; i++){
+                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
+                const char base = inputData.candidates[(sortedrow-1) * inputData.candidatesPitch + i];
+                const char c = consensus[globalIndex] == base ? '=' : base;
+
+                os << c;
+                written++;
+            }
+
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) 
+                        + inputData.candidateLengths[sortedrow-1]; 
+                    i < nColumns; i++){
+                os << "0";
+                written++;
+            }
+
+            assert(written == nColumns);
+
+            os << "   " << inputData.candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
+        }
+
+        os << '\n';
+    }
+}
+
+
+MSAProperties MultipleSequenceAlignment::getMSAProperties(
+    int firstCol,
+    int lastCol, //exclusive
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage
+) const {
 
     assert(firstCol <= lastCol);
 
@@ -346,12 +317,12 @@ MSAProperties getMSAProperties2(const float* support,
 
     MSAProperties msaProperties;
 
-    msaProperties.min_support = *std::min_element(support + firstCol, support + lastCol);
+    msaProperties.min_support = *std::min_element(support.data() + firstCol, support.data() + lastCol);
 
-    const float supportsum = std::accumulate(support + firstCol, support + lastCol, 0.0f);
+    const float supportsum = std::accumulate(support.data() + firstCol, support.data() + lastCol, 0.0f);
     msaProperties.avg_support = supportsum / distance;
 
-    auto minmax = std::minmax_element(coverage + firstCol, coverage + lastCol);
+    auto minmax = std::minmax_element(coverage.data() + firstCol, coverage.data() + lastCol);
 
     msaProperties.min_coverage = *minmax.first;
     msaProperties.max_coverage = *minmax.second;
@@ -366,276 +337,49 @@ MSAProperties getMSAProperties2(const float* support,
         return fgeq(mincoverage, min_coverage_threshold);
     };
 
-    // msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-    //                     && isGoodMinSupport(msaProperties.min_support)
-    //                     && isGoodMinCoverage(msaProperties.min_coverage);
-
     msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
     msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
     msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
+
+
+    const float avg_support = msaProperties.avg_support;
+    const float min_support = msaProperties.min_support;
+    const int min_coverage = msaProperties.min_coverage;
+
+    msaProperties.isHQ = false;
+
+    const bool allGood = isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    if(allGood){
+        int smallestErrorrateThatWouldMakeHQ = 100;
+
+        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+            const float factor = percent / 100.0f;
+            const float avg_threshold = 1.0f - 1.0f * factor;
+            const float min_threshold = 1.0f - 3.0f * factor;
+            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                smallestErrorrateThatWouldMakeHQ = percent;
+            }
+        }
+
+        msaProperties.isHQ = isGoodMinCoverage(min_coverage)
+                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+    }
 
     return msaProperties;
 }
 
 
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize){
-
-    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    CorrectionResult result;
-    result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-
-    if(isHQ){
-        //corrected sequence = consensus;
-
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
-        result.isCorrected = true;
-    }else{
-        //set corrected sequence to original subject. then search for positions with good properties. correct these positions
-        std::copy(subject,
-                  subject + nColumns,
-                  result.correctedSequence.begin());
-
-        bool foundAColumn = false;
-        for(int column = 0; column < nColumns; column++){
-
-            if(support[column] > 0.5f && originalCoverage[column] < min_coverage_threshold){
-                float avgsupportkregion = 0;
-                int c = 0;
-                bool neighborregioncoverageisgood = true;
-
-                for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
-                    if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
-                        avgsupportkregion += support[neighborcolumn];
-                        neighborregioncoverageisgood &= (fgeq(coverage[neighborcolumn], min_coverage_threshold));
-                        c++;
-                    }
-                }
-
-                avgsupportkregion /= c;
-                if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-estimatedErrorrate)){
-                    result.correctedSequence[column] = consensus[column];
-                    foundAColumn = true;
-                }else{
-                    if(subject[column] != consensus[column]){
-                        result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                    }
-                }
-            }else{
-                if(subject[column] != consensus[column]){
-                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                }
-            }
-        }
-
-        result.isCorrected = foundAColumn;
-    }
-
-    return result;
-}
-
-#if 0
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    bool isHQ,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize){
-
-    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    CorrectionResult result;
-    result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
-    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
-
-    if(isHQ){
-        //corrected sequence = consensus;
-
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
-        result.isCorrected = true;
-    }else{
-        //set corrected sequence to original subject. then search for positions with good properties. correct these positions
-        std::copy(subject,
-                  subject + nColumns,
-                  result.correctedSequence.begin());
-
-        bool foundAColumn = false;
-        for(int column = 0; column < nColumns; column++){
-            const int origCoverage = originalCoverage[column];
-            const char origBase = subject[column];
-            const char cons = consensus[column];
-
-            const int globalIndex = subjectColumnsBegin_incl + column;
-
-            if(origBase != cons
-                    && support[column] > 0.5f
-                    //&& origCoverage <= 7){
-                ){
-                bool canCorrect = true;
-                if(canCorrect && origCoverage > 1){
-                    int numFoundCandidates = 0;
-
-                    for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
-
-                        const char* candidateptr = candidates + candidatenr * candidatesPitch;
-                        const int candidateLength = candidateLengths[candidatenr];
-                        const int candidateShift = candidateShifts[candidatenr];
-                        const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
-                        if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
-                            //char candidateBase = 'F';
-
-                            //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
-                            //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
-                            //}else{
-                            const char candidateBase = candidateptr[candidateBasePosition];
-                            //}
-
-                            const float overlapweight = candidateAlignmentWeights[candidatenr];
-                            assert(overlapweight <= 1.0f);
-                            assert(overlapweight >= 0.0f);
-
-                            if(origBase == candidateBase){
-                                numFoundCandidates++;
-
-                                if(fgeq(overlapweight, 0.90f)){
-                                    canCorrect = false;
-                                    //break;
-                                }
-                            }else{
-                                ;
-                            }
-                        }
-                    }
-                    assert(numFoundCandidates+1 == origCoverage);
-
-                }
-
-#if 1
-                float maxweightOrig = 0;
-                float maxweightCons = 0;
-
-                for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
-
-                    const char* candidateptr = candidates + candidatenr * candidatesPitch;
-                    const int candidateLength = candidateLengths[candidatenr];
-                    const int candidateShift = candidateShifts[candidatenr];
-                    const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
-                    if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
-                        //char candidateBase = 'F';
-
-                        //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
-                        //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
-                        //}else{
-                        const char candidateBase = candidateptr[candidateBasePosition];
-                        //}
-
-                        const float overlapweight = candidateAlignmentWeights[candidatenr];
-                        assert(overlapweight <= 1.0f);
-                        assert(overlapweight > 0.0f);
-
-                        if(origBase == candidateBase){
-                            maxweightOrig = std::max(maxweightOrig, overlapweight);
-                        }else{
-                            if(cons == candidateBase){
-                                maxweightCons = std::max(maxweightCons, overlapweight);
-                            }
-                        }
-                    }
-                }
-
-                result.bestAlignmentWeightOfConsensusBase[column] = maxweightCons;
-                result.bestAlignmentWeightOfAnchorBase[column] = maxweightOrig;
-#endif
-
-                if(canCorrect){
-
-                    float avgsupportkregion = 0;
-                    int c = 0;
-                    bool neighborregioncoverageisgood = true;
-
-                    for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
-                        if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
-                            avgsupportkregion += support[neighborcolumn];
-                            neighborregioncoverageisgood &= (coverage[neighborcolumn] >= min_coverage_threshold);
-                            c++;
-                        }
-                    }
-
-                    avgsupportkregion /= c;
-                    if(neighborregioncoverageisgood && fgeq(avgsupportkregion, 1.0f-4*estimatedErrorrate)){
-                        result.correctedSequence[column] = consensus[column];
-                        foundAColumn = true;
-                    }
-                }else{
-                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
-                }
-            }
-        }
-
-        result.isCorrected = foundAColumn;
-    }
-
-    return result;
-}
-
-
-
-#else 
-
-CorrectionResult getCorrectedSubjectNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    MSAProperties msaProperties,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize,
-                                    read_number readId){
+CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
+    MSAProperties msaProperties,
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage,
+    int neighborRegionSize,
+    read_number /* readId*/
+) const {
 
     if(nCandidates == 0){
         //cannot be corrected without candidates
@@ -645,83 +389,58 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
         return result;
     }
 
-    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+    auto canBeCorrectedByConsensus = [&](){
 
-    auto isGoodAvgSupport = [=](float avgsupport){
-        return fgeq(avgsupport, avg_support_threshold);
-    };
-    auto isGoodMinSupport = [=](float minsupport){
-        return fgeq(minsupport, min_support_threshold);
-    };
-    auto isGoodMinCoverage = [=](float mincoverage){
-        return fgeq(mincoverage, min_coverage_threshold);
-    };
+        const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-    const float avg_support = msaProperties.avg_support;
-    const float min_support = msaProperties.min_support;
-    const int min_coverage = msaProperties.min_coverage;
+        auto isGoodAvgSupport = [=](float avgsupport){
+            return fgeq(avgsupport, avg_support_threshold);
+        };
+        auto isGoodMinSupport = [=](float minsupport){
+            return fgeq(minsupport, min_support_threshold);
+        };
+        auto isGoodMinCoverage = [=](float mincoverage){
+            return fgeq(mincoverage, min_coverage_threshold);
+        };
+
+        const float avg_support = msaProperties.avg_support;
+        const float min_support = msaProperties.min_support;
+        const int min_coverage = msaProperties.min_coverage;
+
+        return isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    };
 
     CorrectionResult result{};
     result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
-    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
-    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
-    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
+    result.correctedSequence.resize(inputData.subjectLength);
 
     result.isCorrected = true;
-    result.isHQ = false;
 
-    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) 
-                                        && isGoodMinSupport(min_support) 
-                                        && isGoodMinCoverage(min_coverage);
+    
     int flag = 0;    
 
-    if(canBeCorrectedByConsensus){
-        int smallestErrorrateThatWouldMakeHQ = 100;
-
-
-        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-            const float factor = percent / 100.0f;
-            const float avg_threshold = 1.0f - 1.0f * factor;
-            const float min_threshold = 1.0f - 3.0f * factor;
-            // if(readId == 134){
-            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
-            //         avg_support, avg_threshold, min_support, min_threshold);
-            // }
-            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
-                smallestErrorrateThatWouldMakeHQ = percent;
-            }
-        }
-
-        const bool isHQ = isGoodMinCoverage(min_coverage)
-                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-
-        // if(readId == 134){
-        //     printf("read 134 isHQ %d, min_coverage %d, avg_support %f, min_support %f, smallestErrorrateThatWouldMakeHQ %d, min_coverage_threshold %f\n", 
-        //         isHQ, min_coverage, avg_support, min_support, smallestErrorrateThatWouldMakeHQ, min_coverage_threshold);
-        // }
-
-        //broadcastbuffer = isHQ;
-        result.isHQ = isHQ;
-
-        flag = isHQ ? 2 : 1;
+    if(canBeCorrectedByConsensus()){
+        flag = msaProperties.isHQ ? 2 : 1;
     }
 
     if(flag > 0){
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
+        std::copy_n(
+            consensus.data() + subjectColumnsBegin_incl,
+            inputData.subjectLength,
+            result.correctedSequence.begin()
+        );
     }else{
         //correct only positions with high support to consensus, else leave position unchanged.
-        for(int i = 0; i < nColumns; i += 1){
+        for(int i = 0; i < inputData.subjectLength; i += 1){
             //assert(consensus[i] == 'A' || consensus[i] == 'C' || consensus[i] == 'G' || consensus[i] == 'T');
-            if(support[i] > 0.90f && originalCoverage[i] <= 2){
-                result.correctedSequence[i] = consensus[i];
+            if(support[subjectColumnsBegin_incl + i] > 0.90f && origCoverages[subjectColumnsBegin_incl + i] <= 2){
+                result.correctedSequence[i] = consensus[subjectColumnsBegin_incl + i];
             }else{
-                result.correctedSequence[i] = subject[i];
+                result.correctedSequence[i] = inputData.subject[i];
             }
         }
     }
@@ -731,117 +450,26 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
 
 
 
-
-
-
-#endif
-
-
-
-std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct){
-
-    // const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    // const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    // const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    std::vector<CorrectedCandidate> result;
-    result.reserve(nCandidates);
-
-    for(int candidate_index = 0; candidate_index < nCandidates; ++candidate_index){
-
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + candidateShifts[candidate_index];
-        const int candidateLength = candidateLengths[candidate_index];
-        const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
-
-        //check range condition and length condition
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-            && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
-
-            // float newColMinSupport = 1.0f;
-            // int newColMinCov = std::numeric_limits<int>::max();
-
-            // //check new columns left of subject
-            // for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-            //     columnindex < subjectColumnsBegin_incl;
-            //     columnindex++){
-
-            //     assert(columnindex < nColumns);
-
-            //     if(queryColumnsBegin_incl <= columnindex){
-            //         newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-            //         newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-            //     }
-            // }
-            // //check new columns right of subject
-            // for(int columnindex = subjectColumnsEnd_excl;
-            //     columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-            //     && columnindex < nColumns;
-            //     columnindex++){
-
-            //     newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-            //     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-            // }
-
-            // if(fgeq(newColMinSupport, min_support_threshold)
-            //     && fgeq(newColMinCov, min_coverage_threshold)){
-
-                std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-
-                result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
-            //}
-        }
-    }
-
-    return result;
-}
-
-
-
-
-std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct){
+std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidates(
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage,
+    int new_columns_to_correct
+) const {
 
     //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
     std::vector<CorrectedCandidate> result;
-    result.reserve(nCandidates);
+    result.reserve(inputData.nCandidates);
 
-    for(int candidate_index = 0; candidate_index < nCandidates; ++candidate_index){
+    for(int candidate_index = 0; candidate_index < inputData.nCandidates; ++candidate_index){
 
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + candidateShifts[candidate_index];
-        const int candidateLength = candidateLengths[candidate_index];
+        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidate_index];
+        const int candidateLength = inputData.candidateLengths[candidate_index];
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
-#if 1
-        const bool candidateShouldBeCorrected = subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct;
-#else
         bool candidateShouldBeCorrected = false;
 
         //check range condition and length condition
@@ -879,10 +507,10 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
 
             candidateShouldBeCorrected = true;
         }
-#endif
+
         if(candidateShouldBeCorrected){
             std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-            result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
+            result.emplace_back(candidate_index, inputData.candidateShifts[candidate_index], std::move(correctedString));
         }
     }
 
@@ -897,28 +525,9 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
 //the indices of remaining candidates are returned in MinimizationResult::remaining_candidates
 //candidates in vector must be in the same order as they were inserted into the msa!!!
 
-RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
-                                                    int subjectLength,
-                                                    const char* candidates,
-                                                    const int* candidateLengths,
-                                                    int nCandidates,
-                                                    size_t candidatesPitch,
-                                                    const char* consensus,
-                                                    const int* countsA,
-                                                    const int* countsC,
-                                                    const int* countsG,
-                                                    const int* countsT,
-                                                    const float* weightsA,
-                                                    const float* weightsC,
-                                                    const float* weightsG,
-                                                    const float* weightsT,
-                                                    const int* alignments_nOps,
-                                                    const int* alignments_overlaps,
-                                                    int subjectColumnsBegin_incl,
-                                                    int subjectColumnsEnd_excl,
-                                                    const int* candidateShifts,
-                                                    int dataset_coverage,
-                                                    float desiredAlignmentMaxErrorRate){
+RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion(
+    int dataset_coverage
+) const {
 
     auto is_significant_count = [&](int count, int dataset_coverage){
         if(int(dataset_coverage * 0.3f) <= count)
@@ -936,11 +545,11 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
     int consindex = 0;
 
     //if anchor has no mismatch to consensus, don't minimize
-    auto pair = std::mismatch(subject,
-                                subject + subjectLength,
-                                consensus + subjectColumnsBegin_incl);
+    auto pair = std::mismatch(inputData.subject,
+                                inputData.subject + inputData.subjectLength,
+                                consensus.data() + subjectColumnsBegin_incl);
 
-    if(pair.first == subject + subjectLength){
+    if(pair.first == inputData.subject + inputData.subjectLength){
         RegionSelectionResult result;
         result.performedMinimization = false;
         return result;
@@ -1008,7 +617,7 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
         result.differentRegionCandidate.resize(nCandidates);
 
         //compare found base to original base
-        const char originalbase = subject[col - subjectColumnsBegin_incl];
+        const char originalbase = inputData.subject[col - subjectColumnsBegin_incl];
 
         result.significantBase = foundBase;
         result.originalBase = originalbase;
@@ -1030,10 +639,10 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
 
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
                 //check if row is affected by column col
-                const int row_begin_incl = subjectColumnsBegin_incl + candidateShifts[candidateIndex];
-                const int row_end_excl = row_begin_incl + candidateLengths[candidateIndex];
+                const int row_begin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidateIndex];
+                const int row_end_excl = row_begin_incl + inputData.candidateLengths[candidateIndex];
                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                const char base = notAffected ? 'F' : candidates[candidateIndex * candidatesPitch + (col - row_begin_incl)];
+                const char base = notAffected ? 'F' : inputData.candidates[candidateIndex * inputData.candidatesPitch + (col - row_begin_incl)];
 
                 /*printf("k %d, candidateIndex %d, row_begin_incl %d, row_end_excl %d, notAffected %d, base %c\n", candidateIndex, candidateIndex,
                 row_begin_incl, row_end_excl, notAffected, base);
@@ -1075,14 +684,7 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
             bool veryGoodAlignment = false;
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
                 if(result.differentRegionCandidate[candidateIndex]){
-                    const int nOps = alignments_nOps[candidateIndex];
-                    const int overlapsize = alignments_overlaps[candidateIndex];
-                    const float overlapweight = calculateOverlapWeight(
-                        subjectLength, 
-                        nOps, 
-                        overlapsize, 
-                        desiredAlignmentMaxErrorRate
-                    );
+                    const float overlapweight = inputData.candidateDefaultWeightFactors[candidateIndex];
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
 
@@ -1122,183 +724,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
 }
 
 
-std::pair<int,int> findGoodConsensusRegionOfSubject(const char* subject,
-                                                    int subjectLength,
-                                                    const char* consensus,
-                                                    const int* candidateShifts,
-                                                    const int* candidateLengths,
-                                                    int nCandidates){
-
-    View<char> subjectview{subject, subjectLength};
-    View<char> consensusview{consensus, subjectLength};
-    View<int> shiftview{candidateShifts, nCandidates}; //starting at index 1 because index 0 is subject
-    const View<int> lengthview{candidateLengths, nCandidates}; //starting at index 1 because index 0 is subject
-
-    auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview, lengthview);
-
-    return result;
-}
-
-std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
-                                                    int subjectLength,
-                                                    const int* coverage,
-                                                    int nColumns,
-                                                    int subjectColumnsEnd_excl){
-
-    if(nColumns - subjectColumnsEnd_excl <= 3){
-        View<char> subjectview{subject, subjectLength};
-
-        const View<int> coverageview{coverage, subjectLength};
-
-        auto result = find_good_consensus_region_of_subject2(subjectview, coverageview);
-
-        return result;
-    }else{
-        return std::make_pair(0, subjectLength);
-    }
-}
 
 
-
-
-void printSequencesInMSA(std::ostream& out,
-                         const char* subject,
-                         int subjectLength,
-                         const char* candidates,
-                         const int* candidateLengths,
-                         int nCandidates,
-                         const int* candidateShifts,
-                         int subjectColumnsBegin_incl,
-                         int subjectColumnsEnd_excl,
-                         int nColumns,
-                         size_t candidatesPitch){
-
-    std::vector<int> indices(nCandidates+1);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    auto get_shift_of_row = [&](int k){
-        if(k == 0) return 0;
-        else return candidateShifts[k-1];
-    };
-
-    std::sort(indices.begin(), indices.end(),
-              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-
-    for(int row = 0; row < nCandidates+1; row++) {
-        int sortedrow = indices[row];
-
-        if(sortedrow == 0){
-            out << ">> ";
-
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
-                std::cout << "0";
-            }
-
-            for(int i = 0; i < subjectLength; i++){
-                std::cout << subject[i];
-            }
-
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
-                std::cout << "0";
-            }
-
-            out << " <<";
-        }else{
-            out << "   ";
-            int written = 0;
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
-                std::cout << "0";
-                written++;
-            }
-
-            for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
-                std::cout << candidates[(sortedrow-1) * candidatesPitch + i];
-                written++;
-            }
-
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
-                std::cout << "0";
-                written++;
-            }
-
-            assert(written == nColumns);
-
-            out << "   " << candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
-        }
-
-        out << '\n';
-    }
-}
-
-void printSequencesInMSAConsEq(std::ostream& out,
-                         const char* subject,
-                         int subjectLength,
-                         const char* candidates,
-                         const int* candidateLengths,
-                         int nCandidates,
-                         const int* candidateShifts,
-                         const char* consensus,
-                         int subjectColumnsBegin_incl,
-                         int subjectColumnsEnd_excl,
-                         int nColumns,
-                         size_t candidatesPitch){
-
-    std::vector<int> indices(nCandidates+1);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    auto get_shift_of_row = [&](int k){
-        if(k == 0) return 0;
-        else return candidateShifts[k-1];
-    };
-
-    std::sort(indices.begin(), indices.end(),
-              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-
-    for(int row = 0; row < nCandidates+1; row++) {
-        int sortedrow = indices[row];
-
-        if(sortedrow == 0){
-            out << ">> ";
-
-            for(int i = 0; i < subjectColumnsBegin_incl; i++){
-                std::cout << "0";
-            }
-
-            for(int i = 0; i < subjectLength; i++){
-                const int globalIndex = subjectColumnsBegin_incl + i;
-                const char c = consensus[globalIndex] == subject[i] ? '=' : subject[i];
-                std::cout << c;
-            }
-
-            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
-                std::cout << "0";
-            }
-
-            out << " <<";
-        }else{
-            out << "   ";
-
-            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
-                std::cout << "0";
-            }
-
-            for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
-                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
-                const char base = candidates[(sortedrow-1) * candidatesPitch + i];
-                const char c = consensus[globalIndex] == base ? '=' : base;
-                std::cout << c;
-            }
-
-            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
-                std::cout << "0";
-            }
-
-            out << "   ";
-        }
-
-        out << '\n';
-    }
-}
 
 
 }
