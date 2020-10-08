@@ -9,7 +9,7 @@
 #include "hpc_helpers/include/nvtx_markers.cuh"
 #include "hpc_helpers/include/packed_types.cuh"
 #include "hpc_helpers/include/peer_access.cuh"
-//#include "hpc_helpers/include/simple_allocation.cuh"
+#include "hpc_helpers/include/simple_allocation.cuh"
 #include "hpc_helpers/include/timers.cuh"
 #include "hpc_helpers/include/type_helpers.h"
 #include "hpc_helpers/include/utility_kernels.cuh"

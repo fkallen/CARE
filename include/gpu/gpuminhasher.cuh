@@ -4,7 +4,6 @@
 #include <config.hpp>
 
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
@@ -42,14 +41,14 @@ namespace gpu{
         const DistributedReadStorage* readStorage;
         ThreadPool* threadPool;
 
-        SimpleAllocationDevice<unsigned int, 0> d_sequenceData;
-        SimpleAllocationDevice<int, 0> d_lengths;
+        helpers::SimpleAllocationDevice<unsigned int, 0> d_sequenceData;
+        helpers::SimpleAllocationDevice<int, 0> d_lengths;
 
-        SimpleAllocationPinnedHost<read_number, 0> h_indices;
-        SimpleAllocationDevice<read_number, 0> d_indices;
+        helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices;
+        helpers::SimpleAllocationDevice<read_number, 0> d_indices;
 
-        SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures;
-        SimpleAllocationDevice<std::uint64_t, 0> d_signatures;
+        helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures;
+        helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures;
         
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences gatherHandle;
@@ -195,10 +194,10 @@ namespace gpu{
             static constexpr int overprovisioningPercent = 0;
 
             template<class T>
-            using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+            using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
             
             template<class T>
-            using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+            using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
             int deviceId;
 

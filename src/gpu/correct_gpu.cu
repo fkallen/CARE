@@ -267,10 +267,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         PinnedBuffer<unsigned int> h_subject_sequences_data;
         PinnedBuffer<int> h_subject_sequences_lengths;
@@ -880,7 +880,7 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         int n_subjects;
         int n_queries;
@@ -1033,10 +1033,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         Batch() = default;
         Batch(const Batch&) = delete;
