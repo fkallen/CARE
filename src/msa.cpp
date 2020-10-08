@@ -428,13 +428,13 @@ void MultipleSequenceAlignment::printWithDiffToConsensus(std::ostream& os) const
 }
 
 
-MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int firstCol,
-                            int lastCol, //exclusive
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage){
+MSAProperties MultipleSequenceAlignment::getMSAProperties(
+    int firstCol,
+    int lastCol, //exclusive
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage
+) const {
 
     assert(firstCol <= lastCol);
 
@@ -448,12 +448,12 @@ MSAProperties getMSAProperties(const float* support,
 
     MSAProperties msaProperties;
 
-    msaProperties.min_support = *std::min_element(support + firstCol, support + lastCol);
+    msaProperties.min_support = *std::min_element(support.data() + firstCol, support.data() + lastCol);
 
-    const float supportsum = std::accumulate(support + firstCol, support + lastCol, 0.0f);
+    const float supportsum = std::accumulate(support.data() + firstCol, support.data() + lastCol, 0.0f);
     msaProperties.avg_support = supportsum / distance;
 
-    auto minmax = std::minmax_element(coverage + firstCol, coverage + lastCol);
+    auto minmax = std::minmax_element(coverage.data() + firstCol, coverage.data() + lastCol);
 
     msaProperties.min_coverage = *minmax.first;
     msaProperties.max_coverage = *minmax.second;
@@ -503,25 +503,14 @@ MSAProperties getMSAProperties(const float* support,
 }
 
 
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    MSAProperties msaProperties,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize,
-                                    read_number readId){
+CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
+    MSAProperties msaProperties,
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage,
+    int neighborRegionSize,
+    read_number /* readId*/
+) const {
 
     if(nCandidates == 0){
         //cannot be corrected without candidates
@@ -531,51 +520,58 @@ CorrectionResult getCorrectedSubject(const char* consensus,
         return result;
     }
 
-    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+    auto canBeCorrectedByConsensus = [&](){
 
-    auto isGoodAvgSupport = [=](float avgsupport){
-        return fgeq(avgsupport, avg_support_threshold);
-    };
-    auto isGoodMinSupport = [=](float minsupport){
-        return fgeq(minsupport, min_support_threshold);
-    };
-    auto isGoodMinCoverage = [=](float mincoverage){
-        return fgeq(mincoverage, min_coverage_threshold);
-    };
+        const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-    const float avg_support = msaProperties.avg_support;
-    const float min_support = msaProperties.min_support;
-    const int min_coverage = msaProperties.min_coverage;
+        auto isGoodAvgSupport = [=](float avgsupport){
+            return fgeq(avgsupport, avg_support_threshold);
+        };
+        auto isGoodMinSupport = [=](float minsupport){
+            return fgeq(minsupport, min_support_threshold);
+        };
+        auto isGoodMinCoverage = [=](float mincoverage){
+            return fgeq(mincoverage, min_coverage_threshold);
+        };
+
+        const float avg_support = msaProperties.avg_support;
+        const float min_support = msaProperties.min_support;
+        const int min_coverage = msaProperties.min_coverage;
+
+        return isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    };
 
     CorrectionResult result{};
     result.isCorrected = false;
-    result.correctedSequence.resize(nColumns);
+    result.correctedSequence.resize(inputData.subjectLength);
 
     result.isCorrected = true;
 
-    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) 
-                                        && isGoodMinSupport(min_support) 
-                                        && isGoodMinCoverage(min_coverage);
+    
     int flag = 0;    
 
-    if(canBeCorrectedByConsensus){
+    if(canBeCorrectedByConsensus()){
         flag = msaProperties.isHQ ? 2 : 1;
     }
 
     if(flag > 0){
-        std::copy(consensus,
-                  consensus + nColumns,
-                  result.correctedSequence.begin());
+        std::copy_n(
+            consensus.data() + subjectColumnsBegin_incl,
+            inputData.subjectLength,
+            result.correctedSequence.begin()
+        );
     }else{
         //correct only positions with high support to consensus, else leave position unchanged.
-        for(int i = 0; i < nColumns; i += 1){
+        for(int i = 0; i < inputData.subjectLength; i += 1){
             //assert(consensus[i] == 'A' || consensus[i] == 'C' || consensus[i] == 'G' || consensus[i] == 'T');
-            if(support[i] > 0.90f && originalCoverage[i] <= 2){
-                result.correctedSequence[i] = consensus[i];
+            if(support[subjectColumnsBegin_incl + i] > 0.90f && origCoverages[subjectColumnsBegin_incl + i] <= 2){
+                result.correctedSequence[i] = consensus[subjectColumnsBegin_incl + i];
             }else{
-                result.correctedSequence[i] = subject[i];
+                result.correctedSequence[i] = inputData.subject[i];
             }
         }
     }

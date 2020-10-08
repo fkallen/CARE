@@ -18,7 +18,47 @@
 namespace care{
 
 
+struct MSAProperties{
+    float avg_support;
+    float min_support;
+    int max_coverage;
+    int min_coverage;
+    bool isHQ;
+    bool failedAvgSupport;
+    bool failedMinSupport;
+    bool failedMinCoverage;
+};
 
+struct CorrectionResult{
+    bool isCorrected;
+    std::string correctedSequence;
+
+    void reset(){
+        isCorrected = false;
+        correctedSequence.clear();
+    }
+};
+
+struct CorrectedCandidate{
+    int index;
+    int shift;
+    std::string sequence;
+    CorrectedCandidate() noexcept{}
+    CorrectedCandidate(int index, int s, const std::string& sequence) noexcept
+        : index(index), shift(s), sequence(sequence){}
+};
+
+struct RegionSelectionResult{
+    bool performedMinimization = false;
+    std::vector<bool> differentRegionCandidate;
+
+    int column = 0;
+    char significantBase = 'F';
+    char consensusBase = 'F';
+    char originalBase = 'F';
+    int significantCount = 0;
+    int consensuscount = 0;
+};
 
 struct MultipleSequenceAlignment{
 
@@ -81,58 +121,26 @@ public:
 
     void print(std::ostream& os) const;
     void printWithDiffToConsensus(std::ostream& os) const;
-};
 
-struct MSAProperties{
-    float avg_support;
-    float min_support;
-    int max_coverage;
-    int min_coverage;
-    bool isHQ;
-    bool failedAvgSupport;
-    bool failedMinSupport;
-    bool failedMinCoverage;
-};
+    MSAProperties getMSAProperties(
+        int firstCol,
+        int lastCol, //exclusive
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage
+    ) const;
 
-struct CorrectionResult{
-    bool isCorrected;
-    std::string correctedSequence;
-
-    void reset(){
-        isCorrected = false;
-        correctedSequence.clear();
-    }
-};
-
-struct CorrectedCandidate{
-    int index;
-    int shift;
-    std::string sequence;
-    CorrectedCandidate() noexcept{}
-    CorrectedCandidate(int index, int s, const std::string& sequence) noexcept
-        : index(index), shift(s), sequence(sequence){}
-};
-
-struct RegionSelectionResult{
-    bool performedMinimization = false;
-    std::vector<bool> differentRegionCandidate;
-
-    int column = 0;
-    char significantBase = 'F';
-    char consensusBase = 'F';
-    char originalBase = 'F';
-    int significantCount = 0;
-    int consensuscount = 0;
+    CorrectionResult getCorrectedSubject(
+        MSAProperties msaProperties,
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage,
+        int neighborRegionSize,
+        read_number readId
+    ) const;
 };
 
 
-MSAProperties getMSAProperties(const float* support,
-                            const int* coverage,
-                            int firstCol,
-                            int lastCol, //exclusive
-                            float estimatedErrorrate,
-                            float estimatedCoverage,
-                            float m_coverage);
 
 CorrectionResult getCorrectedSubject(const char* consensus,
                                     const float* support,

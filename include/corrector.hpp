@@ -978,9 +978,7 @@ private:
         const int subjectColumnsBegin_incl = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
 
-        task.msaProperties = getMSAProperties(
-            task.multipleSequenceAlignment.support.data(),
-            task.multipleSequenceAlignment.coverage.data(),
+        task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
             subjectColumnsBegin_incl,
             subjectColumnsEnd_excl,
             correctionOptions->estimatedErrorrate,
@@ -988,20 +986,7 @@ private:
             correctionOptions->m_coverage
         );
 
-        task.subjectCorrection = getCorrectedSubject(
-            task.multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
-            task.multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
-            task.multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
-            task.multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
-            task.input.anchorLength,
-            task.decodedAnchor.data(),
-            subjectColumnsBegin_incl,
-            task.decodedCandidateSequences.data(),
-            task.candidateReadIds.size(),
-            task.alignmentWeights.data(),
-            task.candidateSequencesLengths.data(),
-            task.alignmentShifts.data(),
-            decodedSequencePitchInBytes,
+        task.subjectCorrection = task.multipleSequenceAlignment.getCorrectedSubject(
             task.msaProperties,
             correctionOptions->estimatedErrorrate,
             correctionOptions->estimatedCoverage,
@@ -1019,9 +1004,7 @@ private:
         auto& orig = task.decodedAnchor;
         auto& corr = task.subjectCorrection.correctedSequence;
         
-        task.msaProperties = getMSAProperties(
-            task.multipleSequenceAlignment.support.data(),
-            task.multipleSequenceAlignment.coverage.data(),
+        task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
             subject_b,
             subject_e,
             correctionOptions->estimatedErrorrate,
@@ -1056,9 +1039,7 @@ private:
         const auto& cons = task.multipleSequenceAlignment.consensus;
         const auto& orig = task.decodedAnchor;
 
-        task.msaProperties = getMSAProperties(
-            task.multipleSequenceAlignment.support.data(),
-            task.multipleSequenceAlignment.coverage.data(),
+        task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
             subject_b,
             subject_e,
             correctionOptions->estimatedErrorrate,
@@ -1121,9 +1102,7 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = getMSAProperties(
-                msa.support.data(),
-                msa.coverage.data(),
+            MSAProperties props = msa.getMSAProperties(
                 cand_begin,
                 cand_end,
                 correctionOptions->estimatedErrorrate,
@@ -1155,9 +1134,7 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = getMSAProperties(
-                msa.support.data(),
-                msa.coverage.data(),
+            MSAProperties props = msa.getMSAProperties(
                 cand_begin,
                 cand_end,
                 correctionOptions->estimatedErrorrate,
