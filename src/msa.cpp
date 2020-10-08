@@ -580,104 +580,25 @@ CorrectionResult MultipleSequenceAlignment::getCorrectedSubject(
 }
 
 
-std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct){
 
-    // const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    // const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    // const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    std::vector<CorrectedCandidate> result;
-    result.reserve(nCandidates);
-
-    for(int candidate_index = 0; candidate_index < nCandidates; ++candidate_index){
-
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + candidateShifts[candidate_index];
-        const int candidateLength = candidateLengths[candidate_index];
-        const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
-
-        //check range condition and length condition
-        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-            && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
-            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
-
-            // float newColMinSupport = 1.0f;
-            // int newColMinCov = std::numeric_limits<int>::max();
-
-            // //check new columns left of subject
-            // for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-            //     columnindex < subjectColumnsBegin_incl;
-            //     columnindex++){
-
-            //     assert(columnindex < nColumns);
-
-            //     if(queryColumnsBegin_incl <= columnindex){
-            //         newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-            //         newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-            //     }
-            // }
-            // //check new columns right of subject
-            // for(int columnindex = subjectColumnsEnd_excl;
-            //     columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-            //     && columnindex < nColumns;
-            //     columnindex++){
-
-            //     newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-            //     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-            // }
-
-            // if(fgeq(newColMinSupport, min_support_threshold)
-            //     && fgeq(newColMinCov, min_coverage_threshold)){
-
-                std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-
-                result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
-            //}
-        }
-    }
-
-    return result;
-}
-
-
-
-
-std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct){
+std::vector<CorrectedCandidate> MultipleSequenceAlignment::getCorrectedCandidates(
+    float estimatedErrorrate,
+    float estimatedCoverage,
+    float m_coverage,
+    int new_columns_to_correct
+) const {
 
     //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
     std::vector<CorrectedCandidate> result;
-    result.reserve(nCandidates);
+    result.reserve(inputData.nCandidates);
 
-    for(int candidate_index = 0; candidate_index < nCandidates; ++candidate_index){
+    for(int candidate_index = 0; candidate_index < inputData.nCandidates; ++candidate_index){
 
-        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + candidateShifts[candidate_index];
-        const int candidateLength = candidateLengths[candidate_index];
+        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + inputData.candidateShifts[candidate_index];
+        const int candidateLength = inputData.candidateLengths[candidate_index];
         const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
 
         bool candidateShouldBeCorrected = false;
@@ -720,7 +641,7 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
 
         if(candidateShouldBeCorrected){
             std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-            result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
+            result.emplace_back(candidate_index, inputData.candidateShifts[candidate_index], std::move(correctedString));
         }
     }
 

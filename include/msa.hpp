@@ -138,59 +138,16 @@ public:
         int neighborRegionSize,
         read_number readId
     ) const;
+
+    std::vector<CorrectedCandidate> getCorrectedCandidates(
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage,
+        int new_columns_to_correct
+    ) const;
 };
 
 
-
-CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    const int* originalCoverage,
-                                    int nColumns,
-                                    const char* subject,
-                                    int subjectColumnsBegin_incl,
-                                    const char* candidates,
-                                    int nCandidates,
-                                    const float* candidateAlignmentWeights,
-                                    const int* candidateLengths,
-                                    const int* candidateShifts,
-                                    size_t candidatesPitch,
-                                    MSAProperties msaProperties,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int neighborRegionSize,
-                                    read_number readId);                                    
-
-std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct);
-
-
-
-std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
-                                    const float* support,
-                                    const int* coverage,
-                                    int nColumns,
-                                    int subjectColumnsBegin_incl,
-                                    int subjectColumnsEnd_excl,
-                                    const int* candidateShifts,
-                                    const int* candidateLengths,
-                                    int nCandidates,
-                                    float estimatedErrorrate,
-                                    float estimatedCoverage,
-                                    float m_coverage,
-                                    int new_columns_to_correct);
 
 RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     int subjectLength,

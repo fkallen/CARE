@@ -1073,16 +1073,7 @@ private:
 
     void correctCandidatesClassic(Task& task) const{
 
-        task.candidateCorrections = getCorrectedCandidatesNew(
-            task.multipleSequenceAlignment.consensus.data(),
-            task.multipleSequenceAlignment.support.data(),
-            task.multipleSequenceAlignment.coverage.data(),
-            task.multipleSequenceAlignment.nColumns,
-            task.multipleSequenceAlignment.subjectColumnsBegin_incl,
-            task.multipleSequenceAlignment.subjectColumnsEnd_excl,
-            task.alignmentShifts.data(),
-            task.candidateSequencesLengths.data(),
-            task.multipleSequenceAlignment.nCandidates,
+        task.candidateCorrections = task.multipleSequenceAlignment.getCorrectedCandidates(
             correctionOptions->estimatedErrorrate,
             correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage,
