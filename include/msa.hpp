@@ -152,23 +152,6 @@ public:
 };
 
 
-
-std::pair<int,int> findGoodConsensusRegionOfSubject(const char* subject,
-                                                    int subjectLength,
-                                                    const char* consensus,
-                                                    const int* candidateShifts,
-                                                    const int* candidateLengths,
-                                                    int nCandidates);
-
-std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
-                                                    int subjectLength,
-                                                    const int* coverage,
-                                                    int nColumns,
-                                                    int subjectColumnsEnd_excl);
-
-
-
-
 extern cpu::QualityScoreConversion qualityConversion;
 
 
