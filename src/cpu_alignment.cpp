@@ -11,8 +11,7 @@ namespace care{
 namespace cpu{
 namespace shd{
 
-
-
+    
     AlignmentResult
     cpuShiftedHammingDistancePopcount2BitHiLo(
             CpuAlignmentHandle& handle,
@@ -153,6 +152,8 @@ namespace shd{
 
         return alignmentresult;
     }
+
+    
 
 
 

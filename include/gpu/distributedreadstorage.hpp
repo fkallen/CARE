@@ -252,6 +252,16 @@ public:
         bool showProgress
     );
 
+    void constructPaired(
+        std::vector<std::string> inputfiles,
+        bool useQualityScores,
+        read_number expectedNumberOfReads,
+        int expectedMinimumReadLength,
+        int expectedMaximumReadLength,
+        int threads,
+        bool showProgress
+    );
+
 	MemoryUsage getMemoryInfo() const;
     MemoryUsage getMemoryInfoOfGatherHandleSequences(const GatherHandleSequences& handle) const;
     MemoryUsage getMemoryInfoOfGatherHandleQualities(const GatherHandleQualities& handle) const;

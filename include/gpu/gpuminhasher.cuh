@@ -3,7 +3,6 @@
 
 #include <config.hpp>
 
-
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/minhashkernels.hpp>
@@ -365,8 +364,282 @@ namespace gpu{
         GpuMinhasher& operator=(GpuMinhasher&&) = default;
 
 
+
         template<class ParallelForLoop>
-        void getIdsOfSimilarReadsNormal(
+        void getIdsOfSimilarReads(
+            QueryHandle& handle,
+            const unsigned int* d_encodedSequences,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int deviceId, 
+            cudaStream_t stream,
+            ParallelForLoop parallelFor,
+            read_number* d_similarReadIds,
+            int* d_similarReadsPerSequence,
+            int* d_similarReadsPerSequencePrefixSum
+        ) const{
+
+            int currentDeviceId = 0;
+            cudaGetDevice(&currentDeviceId); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+
+            const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
+
+            handle.d_minhashSignatures.resize(getNumberOfMaps() * numSequences);
+            handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
+            handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
+            handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
+            handle.h_begin_offsets.resize(numSequences+1);
+            handle.d_begin_offsets.resize(numSequences+1);
+
+            std::vector<Range_t>& allRanges = handle.allRanges;
+            std::vector<int>& idsPerChunk = handle.idsPerChunk;   
+            std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
+            std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
+            std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
+
+            const int maxNumThreads = parallelFor.getNumThreads();
+
+            allRanges.resize(getNumberOfMaps() * numSequences);
+            idsPerChunk.resize(maxNumThreads, 0);   
+            numAnchorsPerChunk.resize(maxNumThreads, 0);
+            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+
+            const std::size_t hashValuesPitchInElements = getNumberOfMaps();
+
+            computeReadHashesOnGpu(
+                handle.d_minhashSignatures.get(),
+                hashValuesPitchInElements,
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                stream
+            );
+
+            cudaMemcpyAsync(
+                handle.h_minhashSignatures.get(),
+                handle.d_minhashSignatures.get(),
+                handle.h_minhashSignatures.sizeInBytes(),
+                H2D,
+                stream
+            ); CUERR;
+
+
+            std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
+            std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
+    
+            cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures anchor data
+    
+            auto querySignatures2 = [&, this](int begin, int end, int threadId){
+    
+                const int chunksize = end - begin;
+    
+                int totalNumResults = 0;
+    
+                nvtx::push_range("queryPrecalculatedSignatures", 6);
+                queryPrecalculatedSignatures(
+                    handle.h_minhashSignatures.get() + begin * getNumberOfMaps(),
+                    allRanges.data() + begin * getNumberOfMaps(),
+                    &totalNumResults, 
+                    chunksize
+                );
+    
+                idsPerChunk[threadId] = totalNumResults;
+                numAnchorsPerChunk[threadId] = chunksize;
+                nvtx::pop_range();
+            };
+    
+            const int numChunksRequired = parallelFor(
+                0, 
+                numSequences, 
+                [=](auto begin, auto end, auto threadId){
+                    querySignatures2(begin, end, threadId);
+                }
+            );
+
+            //exclusive prefix sum
+            idsPerChunkPrefixSum[0] = 0;
+            for(int i = 0; i < numChunksRequired; i++){
+                idsPerChunkPrefixSum[i+1] = idsPerChunkPrefixSum[i] + idsPerChunk[i];
+            }
+
+            numAnchorsPerChunkPrefixSum[0] = 0;
+            for(int i = 0; i < numChunksRequired; i++){
+                numAnchorsPerChunkPrefixSum[i+1] = numAnchorsPerChunkPrefixSum[i] + numAnchorsPerChunk[i];
+            }
+
+            const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
+
+            handle.h_begin_offsets[0] = 0;
+
+            //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
+            //then copy to the device
+
+            auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
+                nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
+                for(int chunkId = begin; chunkId < end; chunkId++){
+                    const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+
+                    //const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
+                    const auto devicedatabegin = d_similarReadIds + idsPerChunkPrefixSum[chunkId];
+
+                    
+                    const size_t elementsInChunk = idsPerChunk[chunkId];
+    
+                    const auto* ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * getNumberOfMaps();
+    
+                    auto* dest = hostdatabegin;
+    
+                    const int lmax = numAnchorsPerChunk[chunkId] * getNumberOfMaps();
+
+                    for(int sequenceIndex = 0; sequenceIndex < numAnchorsPerChunk[chunkId]; sequenceIndex++){
+
+                        const int globalSequenceIndex = sequenceIndex + numAnchorsPerChunkPrefixSum[chunkId];
+
+                        for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
+                            const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
+                            
+                            constexpr int nextprefetch = 2;
+    
+                            //prefetch first element of next range if the next range is not empty
+                            if(k+nextprefetch < lmax){
+                                if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
+                                    __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                                }
+                            }
+                            const auto& range = ranges[k];
+                            dest = std::copy(range.first, range.second, dest);
+
+                        }
+
+                        const auto endOfSequenceRange = dest;
+
+                        handle.h_begin_offsets[globalSequenceIndex+1] = std::distance(
+                            handle.h_candidate_read_ids_tmp.get(),
+                            endOfSequenceRange
+                        ); 
+
+                    }
+    
+                    // for(int k = 0; k < lmax; k++){
+                    //     constexpr int nextprefetch = 2;
+    
+                    //     //prefetch first element of next range if the next range is not empty
+                    //     if(k+nextprefetch < lmax){
+                    //         if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
+                    //             __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
+                    //         }
+                    //     }
+                    //     const auto& range = ranges[k];
+                    //     dest = std::copy(range.first, range.second, dest);
+                    // }
+    
+                    cudaMemcpyAsync(
+                        devicedatabegin,
+                        hostdatabegin,
+                        sizeof(read_number) * elementsInChunk,
+                        H2D,
+                        stream
+                    ); CUERR;
+                }
+                nvtx::pop_range();
+            };
+    
+            parallelFor(
+                0, 
+                numChunksRequired, 
+                [=](auto begin, auto end, auto threadId){
+                    copyCandidateIdsToContiguousMem(begin, end, threadId);
+                }
+            );
+
+            cudaMemcpyAsync(
+                handle.d_begin_offsets.get(),
+                handle.h_begin_offsets.get(),
+                sizeof(int) * (numSequences + 1),
+                H2D,
+                stream
+            ); CUERR;
+
+            nvtx::push_range("gpumakeUniqueQueryResults", 2);
+
+            GpuSegmentedUnique::unique(
+                handle.segmentedUniqueHandle,
+                d_similarReadIds, //input
+                totalNumIds,
+                handle.d_candidate_read_ids_tmp.get(), //output
+                d_similarReadsPerSequence,
+                numSequences,
+                handle.d_begin_offsets.get(),
+                handle.d_begin_offsets.get() + 1,
+                handle.h_begin_offsets.get(),
+                handle.h_begin_offsets.get() + 1,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+
+            CUERR;
+
+            std::size_t cubTempBytes = 0;
+
+            cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int), stream);
+
+            cub::DeviceScan::InclusiveSum(
+                nullptr, 
+                cubTempBytes, 
+                d_similarReadsPerSequence, 
+                d_similarReadsPerSequencePrefixSum + 1, 
+                numSequences,
+                stream
+            );
+
+            handle.d_cub_temp.resize(cubTempBytes);
+
+            cub::DeviceScan::InclusiveSum(
+                handle.d_cub_temp.get(), 
+                cubTempBytes, 
+                d_similarReadsPerSequence, 
+                d_similarReadsPerSequencePrefixSum + 1, 
+                numSequences,
+                stream
+            );
+
+            //compact copy elements of each segment into output buffer
+            helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
+                [=,
+                    d_begin_offsets = handle.d_begin_offsets.get(),
+                    input = handle.d_candidate_read_ids_tmp.get(),
+                    output = d_similarReadIds
+                ] __device__ (){
+
+                    for(int sequenceIndex = blockIdx.x; sequenceIndex < numSequences; sequenceIndex += gridDim.x){
+                       
+                        const read_number* const blockinput = input + d_begin_offsets[sequenceIndex];
+                        read_number* const blockoutput = output + d_similarReadsPerSequencePrefixSum[sequenceIndex];
+                        const int numElements = d_similarReadsPerSequence[sequenceIndex];
+
+                        for(int pos = threadIdx.x; pos < numElements; pos += blockDim.x){
+                            blockoutput[pos] = blockinput[pos];
+                        }
+                    }
+                }
+            );
+
+            nvtx::pop_range();
+
+            cudaSetDevice(currentDeviceId); CUERR;
+
+        }
+
+
+
+
+        template<class ParallelForLoop>
+        void getIdsOfSimilarReadsNormalExcludingSelf(
             QueryHandle& handle,
             const read_number* d_readIds,
             const read_number* h_readIds,
@@ -474,7 +747,7 @@ namespace gpu{
             }
 
             const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
-
+            
             handle.h_begin_offsets[0] = 0;
 
             //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
@@ -726,8 +999,10 @@ namespace gpu{
         }
 
 
+
+
         template<class ParallelForLoop>
-        void getIdsOfSimilarReadsUnique1(
+        void getIdsOfSimilarReadsUnique1ExcludingSelf(
             QueryHandle& handle,
             const read_number* d_readIds,
             const unsigned int* d_encodedSequences,
@@ -938,7 +1213,7 @@ namespace gpu{
 
 
         template<class ParallelForLoop>
-        void getIdsOfSimilarReadsUnique2(
+        void getIdsOfSimilarReadsUnique2ExcludingSelf(
             QueryHandle& handle,
             const read_number* d_readIds,
             const unsigned int* d_encodedSequences,
@@ -1140,8 +1415,9 @@ namespace gpu{
 
         }
 
+
         template<class ParallelForLoop>
-        void getIdsOfSimilarReads(
+        void getIdsOfSimilarReadsExcludingSelf(
             QueryHandle& handle,
             const read_number* d_readIds,
             const read_number* h_readIds,
@@ -1162,7 +1438,7 @@ namespace gpu{
             }
             
 #ifndef GPUMINHASHER_UNIQUE
-            getIdsOfSimilarReadsNormal(
+            getIdsOfSimilarReadsNormalExcludingSelf(
                 handle,
                 d_readIds, 
                 h_readIds,
@@ -1180,7 +1456,7 @@ namespace gpu{
 #else 
 
 #ifdef GPUMINHASHER_MAKEUNIQUEAFTERHASHING
-            getIdsOfSimilarReadsUnique(
+            getIdsOfSimilarReadsUniqueExcludingSelf(
                 handle,
                 d_readIds, 
                 d_encodedSequences,
@@ -1195,7 +1471,7 @@ namespace gpu{
                 d_similarReadsPerSequencePrefixSum
             );
 #else            
-            getIdsOfSimilarReadsUnique2(
+            getIdsOfSimilarReadsUnique2ExcludingSelf(
                 handle,
                 d_readIds, 
                 d_encodedSequences,
@@ -1241,7 +1517,7 @@ namespace gpu{
 
         void writeToStream(std::ostream& os) const;
     
-        void loadFromStream(std::ifstream& is);
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
 
         int calculateResultsPerMapThreshold(int coverage);
 

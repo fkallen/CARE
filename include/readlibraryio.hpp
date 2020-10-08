@@ -118,6 +118,78 @@ struct MultiInputReader{
     }
 };
 
+
+struct PairedInputReader{
+    std::int64_t readIdInFile{};
+    std::int64_t globalReadId{};
+    ReadWithId current1{};
+    ReadWithId current2{};
+    std::vector<kseqpp::KseqPP> readerVector{};
+    std::vector<std::string> filenames{};
+
+    PairedInputReader() = default;
+
+    PairedInputReader(std::vector<std::string> inputfilenames)
+        : filenames(std::move(inputfilenames))
+    {
+        assert(filenames.size() > 0);
+        assert(filenames.size() <= 2);
+
+        for(const auto& inputfile : filenames){
+            readerVector.emplace_back(std::move(kseqpp::KseqPP{inputfile}));
+        }
+    }
+
+    int next(){
+
+        const int status1 = readerVector[0].next();
+        if(status1 >= 0){
+            std::swap(current1.read.header, readerVector[0].getCurrentHeader());
+            std::swap(current1.read.sequence, readerVector[0].getCurrentSequence());
+            std::swap(current1.read.quality, readerVector[0].getCurrentQuality());
+            current1.fileId = 0;
+            current1.readIdInFile = readIdInFile;
+            current1.globalReadId = globalReadId;
+
+            globalReadId++;
+        }else{
+            return -1;
+        }
+
+        const int fileIdForMate = readerVector.size() > 1 ? 1 : 0;
+
+        if(fileIdForMate == 0){
+            readIdInFile++;
+        }
+
+        const int status2 = readerVector[fileIdForMate].next();
+        if(status2 >= 0){
+            std::swap(current2.read.header, readerVector[fileIdForMate].getCurrentHeader());
+            std::swap(current2.read.sequence, readerVector[fileIdForMate].getCurrentSequence());
+            std::swap(current2.read.quality, readerVector[fileIdForMate].getCurrentQuality());
+            current2.fileId = fileIdForMate;
+            current2.readIdInFile = readIdInFile;
+            current2.globalReadId = globalReadId;
+
+            globalReadId++;
+        }else{
+            return -1;
+        }
+
+        readIdInFile++;
+
+        return 0;
+    }
+
+    ReadWithId& getCurrent1(){
+        return current1;
+    }
+
+    ReadWithId& getCurrent2(){
+        return current2;
+    }
+};
+
 struct SequenceFileWriter{
 
     SequenceFileWriter(const std::string& filename_, FileFormat format_) : filename(filename_), format(format_)
@@ -256,6 +328,71 @@ void forEachReadInFile(const std::string& filename, Func f){
         success = getNextRead();
     }
 }
+
+
+
+template<class Func>
+void forEachReadInPairedFiles(const std::string& file1, const std::string& file2, Func f){
+
+    kseqpp::KseqPP reader1(file1);
+    kseqpp::KseqPP reader2(file2);
+
+    int which = 0;
+
+    Read read;
+
+    std::int64_t readNumber = 0;
+
+    auto getNextRead = [&](){
+        kseqpp::KseqPP* ptr = &reader1;
+        if(which == 1){
+            ptr = &reader2;
+        }
+
+        auto& reader = *ptr;
+        const int status = reader.next();
+        //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
+        if(status >= 0){
+            #if 0
+                read.name = reader.getCurrentName();
+                read.comment = reader.getCurrentComment();
+                read.sequence = reader.getCurrentSequence();
+                read.quality = reader.getCurrentQuality();
+            #else
+                std::swap(read.header, reader.getCurrentHeader());
+                std::swap(read.sequence, reader.getCurrentSequence());
+                std::swap(read.quality, reader.getCurrentQuality());
+            #endif
+        }else if(status < -1){
+            std::cerr << "parser error status " << status << " in file " << (which == 0 ? file1 : file2) << '\n';
+        }
+
+        bool success = (status >= 0);
+
+        if(which == 0){
+            which = 1;
+        }else{
+            which = 0;
+        }
+
+        return success;
+    };
+
+    bool success = getNextRead();
+
+    while(success){
+
+        f(readNumber, read);
+        
+        readNumber++;
+
+        success = getNextRead();
+    }
+}
+
+
+
+
 
 
 

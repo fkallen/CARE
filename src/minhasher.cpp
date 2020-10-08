@@ -74,17 +74,19 @@ namespace care{
             tableptr->writeToStream(outstream);
     }
 
-    void Minhasher::loadFromStream(std::ifstream& instream){
+    int Minhasher::loadFromStream(std::ifstream& instream, int numMapsUpperLimit){
 
         destroy();
 
         instream.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
         instream.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
 
-        int numTables = 0;
-        instream.read(reinterpret_cast<char*>(&numTables), sizeof(int));
+        int numMaps = 0;
+        instream.read(reinterpret_cast<char*>(&numMaps), sizeof(int));
 
-        for(int i = 0; i < numTables; i++){
+        const int mapsToLoad = std::min(numMaps, numMapsUpperLimit);
+
+        for(int i = 0; i < mapsToLoad; i++){
             try{
                 auto tmptableptr = std::make_unique<Minhasher::Map_t>();
                 tmptableptr->loadFromStream(instream);
@@ -95,6 +97,8 @@ namespace care{
                 throw std::runtime_error("Exception occurred while loading minhasher. Abort!");
             }
         }
+
+        return mapsToLoad;
     }
 
 
@@ -388,6 +392,30 @@ namespace care{
         auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges.data(), handle.ranges.size());
         handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
     }
+
+    // void Minhasher::getCandidatesOfMap(
+    //         Minhasher::Handle& handle,
+    //         const char* sequence,
+    //         int sequenceLength,
+    //         int map
+    // ) const noexcept{
+
+    //     assert(map < getNumberOfMaps());
+
+    //     // we do not consider reads which are shorter than k
+    //     if(sequenceLength < getKmerSize()){
+    //         handle.allUniqueResults.clear();
+    //         return;
+    //     }
+   
+    //     const auto hashValues = minhashfunc(sequence, sequenceLength);
+    //     const kmer_type key = hashValues[map] & key_mask;
+    //     const auto entries_range = queryMap(map, key);
+    //     const int n_entries = std::distance(entries_range.first, entries_range.second);
+        
+    //     handle.allUniqueResults.resize(n_entries);
+    //     std::copy(entries_range.first, entries_range.second, handle.allUniqueResults.begin());
+    // }
 
 
 

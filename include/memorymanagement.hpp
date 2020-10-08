@@ -14,10 +14,10 @@
 
     struct MemoryUsage{
         std::size_t host = 0;
-        std::map<int, std::size_t> device;
+        std::map<int, std::size_t> device{};
 
         MemoryUsage operator+(const MemoryUsage rhs) const{
-            MemoryUsage res;
+            MemoryUsage res{};
             res.host = host + rhs.host;
             res.device = device;
             for(auto pair : rhs.device){
