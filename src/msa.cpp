@@ -1,7 +1,8 @@
 #include <msa.hpp>
 #include <hostdevicefunctions.cuh>
-
 #include <bestalignment.hpp>
+
+#include <map>
 
 namespace care{
 
@@ -11,6 +12,7 @@ void MultipleSequenceAlignment::build(const InputData& args){
     assert(args.subject != nullptr);
 
     inputData = args;
+    addedSequences = 0;
 
     nCandidates = args.nCandidates;
 
@@ -105,6 +107,8 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
         }
         coverage[globalIndex]++;
     }
+
+    addedSequences++;
 }
 
 /*
@@ -721,6 +725,344 @@ RegionSelectionResult MultipleSequenceAlignment::findCandidatesOfDifferentRegion
 
         return result;
     }
+}
+
+
+MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn) const{
+    return inspectColumnsRegionSplit(firstColumn, nColumns);
+}
+
+
+
+
+MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const{
+    assert(lastColumnExcl >= 0);
+    assert(lastColumnExcl <= nColumns);
+
+    std::vector<PossibleSplitColumn> possibleColumns;
+
+    for(int col = firstColumn; col < lastColumnExcl; col++){
+        std::array<PossibleSplitColumn, 4> array{};
+        int numPossibleNucs = 0;
+
+        auto checkNuc = [&](const auto& counts, const char nuc){
+            const float ratio = float(counts[col]) / float(coverage[col]);
+            //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+            if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
+                array[numPossibleNucs] = {nuc, col, ratio};
+                numPossibleNucs++;
+            }
+        };
+
+        checkNuc(countsA, 'A');
+        checkNuc(countsC, 'C');
+        checkNuc(countsG, 'G');
+        checkNuc(countsT, 'T');
+
+        
+        if(numPossibleNucs == 2){
+            possibleColumns.insert(possibleColumns.end(), array.begin(), array.begin() + numPossibleNucs);
+        }
+    }
+
+    assert(possibleColumns.size() % 2 == 0);
+
+    if(possibleColumns.size() >= 2 && possibleColumns.size() <= 32){
+
+        PossibleMsaSplits result;
+
+        //calculate proper results
+        {
+            //std::map<unsigned int, std::pair<std::vector<PossibleSplitColumn>, std::vector<int>>> map;
+            std::map<unsigned int, std::vector<int>> map;
+
+            for(int l = 0; l < nCandidates; l++){
+                const int candidateRow = l;
+
+                constexpr std::size_t numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numPossibleColumns = std::min(numPossibleColumnsPerFlag, possibleColumns.size() / 2);
+                const char* const candidateString = &inputData.candidates[candidateRow * inputData.candidatesPitch];
+
+                for(int k = 0; k < numPossibleColumns; k++){
+                    flags <<= 2;
+
+                    const PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                map[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(map.begin(), map.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            for(auto& pair : finalMap){
+
+                std::vector<int> listOfCandidates = std::move(pair.second);
+                std::vector<PossibleSplitColumn> columnInfo;
+
+                const unsigned int flag = pair.first;
+                const int num = possibleColumns.size() / 2;
+                for(int i = 0; i < num; i++){
+                    const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                    const bool match = (cur & 0b10) == 0b10;
+                    if(match){
+                        const int which = cur & 1;
+                        columnInfo.emplace_back(possibleColumns[2*i + which]);
+                    }
+                }
+
+                result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));                
+            }
+        }
+
+#if 0
+        //calculate sorted and debug prints
+        {
+
+            std::map<unsigned int, std::vector<int>> debugprintmap;
+            std::vector<int> sortedindices(nCandidates);
+            std::iota(sortedindices.begin(), sortedindices.end(), 0);
+
+            auto get_shift_of_row = [&](int k){
+                return inputData.candidateShifts[k];
+            };
+
+            std::sort(sortedindices.begin(), sortedindices.end(),
+                    [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+            for(int l = 0; l < nCandidates; l++){
+                const int candidateRow = sortedindices[l];
+
+                constexpr std::size_t numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numPossibleColumns = std::min(numPossibleColumnsPerFlag, possibleColumns.size() / 2);
+                const char* const candidateString = &inputData.candidates[candidateRow * inputData.candidatesPitch];
+
+                for(int k = 0; k < numPossibleColumns; k++){
+                    flags <<= 2;
+
+                    const PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = inputData.candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = inputData.candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                debugprintmap[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(debugprintmap.begin(), debugprintmap.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            auto printMap = [&](const auto& map){
+                for(const auto& pair : map){
+                    const unsigned int flag = pair.first;
+                    //convert flag to position and nuc
+                    const int num = possibleColumns.size() / 2;
+
+                    std::cerr << "flag " << flag << " : ";
+                    for(int i = 0; i < num; i++){
+                        const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                        const bool match = (cur & 0b10) == 0b10;
+                        const int column = possibleColumns[2*i].column;
+                        char nuc = '-';
+                        if(match){
+                            int which = cur & 1;
+                            nuc = possibleColumns[2*i + which].letter;
+                        }
+                        std::cerr << "(" << nuc << ", " << column << ") ";
+                    }
+                    std::cerr << ": ";
+
+                    for(int c : pair.second){
+                        std::cerr << c << " ";
+                    }
+                    std::cerr << "\n";
+                }
+            };
+
+            if(possibleColumns.size() > 0){
+                std::cerr << possibleColumns.size() << "\n";
+                for(const auto& p : possibleColumns){
+                    std::cerr << "{" << p.letter << ", " << p.column << ", " << p.ratio << "} ";
+                }
+                std::cerr << "\n";
+                
+                printMap(debugprintmap);
+
+                std::cerr << "final map: \n";
+
+                printMap(finalMap);
+                std::cerr << "\n";
+
+                // print(std::cerr);
+                // std::cerr << "\n";
+            }
+        }
+#endif    
+        return result;
+    }else{
+        // single split with all candidates
+        std::vector<int> listOfCandidates(nCandidates);
+        std::iota(listOfCandidates.begin(), listOfCandidates.end(), 0);
+
+        PossibleMsaSplits result;
+
+        std::vector<PossibleSplitColumn> columnInfo;
+
+
+        result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));
+        
+        return result;
+    }
+    // for(int which = 0; which < 4; which++){
+
+    //     const std::vector<int>* vec = nullptr;
+    //     if(which == 0) vec = &countsMatrixA;
+    //     if(which == 1) vec = &countsMatrixC;
+    //     if(which == 2) vec = &countsMatrixG;
+    //     if(which == 3) vec = &countsMatrixT;
+
+
+    //     for(int row = 0; row < addedSequences; row++){
+    //         const int* const data = vec->data() + row * nColumns;
+    //         for(int col = 0; col < nColumns; col++){
+    //             os << data[col] << " ";
+    //         }
+    //         os << "\n";
+    //     }
+    // }
 }
 
 

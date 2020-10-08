@@ -51,7 +51,7 @@
 
 namespace cg = cooperative_groups;
 
-#include <gpu/forest_gpu.cuh>
+
 
 #define USE_MSA_MINIMIZATION
 
@@ -267,10 +267,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         PinnedBuffer<unsigned int> h_subject_sequences_data;
         PinnedBuffer<int> h_subject_sequences_lengths;
@@ -850,7 +850,7 @@ namespace gpu{
     
             ParallelForLoopExecutor parallelFor(nextData.threadPool, &nextData.pforHandle);
     
-            nextData.minhasher->getIdsOfSimilarReads(
+            nextData.minhasher->getIdsOfSimilarReadsExcludingSelf(
                 nextData.minhasherQueryHandle,
                 nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
@@ -880,7 +880,7 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         int n_subjects;
         int n_queries;
@@ -1033,10 +1033,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         Batch() = default;
         Batch(const Batch&) = delete;

@@ -74,6 +74,39 @@ void call_popcount_shifted_hamming_distance_kernel_async(
             KernelLaunchHandle& handle);
 
 
+void call_popcount_rightshifted_hamming_distance_kernel_async(
+            void* d_tempstorage,
+            size_t& tempstoragebytes,
+            int* d_alignment_overlaps,
+            int* d_alignment_shifts,
+            int* d_alignment_nOps,
+            bool* d_alignment_isValid,
+            BestAlignment_t* d_alignment_best_alignment_flags,
+            const unsigned int* d_subjectSequencesData,
+            const unsigned int* d_candidateSequencesData,
+            const int* d_subjectSequencesLength,
+            const int* d_candidateSequencesLength,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_candidates_per_subject,
+            const int* d_anchorIndicesOfCandidates,
+            const int* d_numAnchors,
+            const int* d_numCandidates,
+            const bool* d_anchorContainsN,
+            bool removeAmbiguousAnchors,
+            const bool* d_candidateContainsN,
+            bool removeAmbiguousCandidates,
+            int maxNumAnchors,
+            int maxNumCandidates,
+            int maximumSequenceLength,
+            int encodedSequencePitchInInts2Bit,
+            int min_overlap,
+            float maxErrorRate,
+            float min_overlap_ratio,
+            float estimatedNucleotideErrorRate,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
+
 void callSelectIndicesOfGoodCandidatesKernelAsync(
             int* d_indicesOfGoodCandidates,
             int* d_numIndicesPerAnchor,

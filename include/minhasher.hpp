@@ -124,7 +124,7 @@ struct Minhasher {
 
     void writeToStream(std::ostream& os) const;
 
-    void loadFromStream(std::ifstream& is);
+    int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
 
 	void clear();
 
@@ -144,6 +144,12 @@ struct Minhasher {
             const char* sequence,
             int sequenceLength,
             std::uint64_t) const noexcept;
+
+    // void getCandidatesOfMap(
+    //         Minhasher::Handle& handle,
+    //         const char* sequence,
+    //         int sequenceLength,
+    //         int map) const noexcept;
 
 private:
 

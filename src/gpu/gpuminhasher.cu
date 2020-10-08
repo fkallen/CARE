@@ -1,4 +1,5 @@
 #include <gpu/gpuminhasher.cuh>
+#include <hpc_helpers.cuh>
 
 namespace care{
     namespace gpu{
@@ -113,21 +114,25 @@ void GpuMinhasher::writeToStream(std::ostream& os) const{
     }
 }
 
-void GpuMinhasher::loadFromStream(std::ifstream& is){
+int GpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
     destroy();
 
     is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
     is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
 
-    int numTables = 0;
+    int numMaps = 0;
 
-    is.read(reinterpret_cast<char*>(&numTables), sizeof(int));
+    is.read(reinterpret_cast<char*>(&numMaps), sizeof(int));
 
-    for(int i = 0; i < numTables; i++){
+    const int mapsToLoad = std::min(numMapsUpperLimit, numMaps);
+
+    for(int i = 0; i < mapsToLoad; i++){
         HashTable table;
         table.loadFromStream(is);
         addHashTable(std::move(table));
     }
+
+    return mapsToLoad;
 }
 
 int GpuMinhasher::calculateResultsPerMapThreshold(int coverage){
@@ -743,14 +748,14 @@ GpuMinhasher::constructTablesWithGpuHashing(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;
@@ -922,19 +927,19 @@ GpuMinhasher::constructTablesWithGpuHashingUniquekmers1(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<int, 0> d_hashFuncIds(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationPinnedHost<int, 0> h_hashFuncIds(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<int, 0> d_signatureSizePerSequence(parallelReads);
-    SimpleAllocationPinnedHost<int, 0> h_signatureSizePerSequence(parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_temp(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_hashFuncIds(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<int, 0> h_hashFuncIds(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_signatureSizePerSequence(parallelReads);
+    helpers::SimpleAllocationPinnedHost<int, 0> h_signatureSizePerSequence(parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_temp(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;
@@ -1139,14 +1144,14 @@ GpuMinhasher::constructTablesWithGpuHashingUniquekmers2(
 
     ThreadPool threadPool(numThreads);
 
-    SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
-    SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
 
-    SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
-    SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
-    SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
-    SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures(signaturesRowPitchElements * parallelReads);
+    helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures(signaturesRowPitchElements * parallelReads);
 
     cudaStream_t stream;
     cudaStreamCreate(&stream); CUERR;

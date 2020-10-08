@@ -1,7 +1,6 @@
 #ifndef CARE_CUDA_UNIQUE_CUH
 #define CARE_CUDA_UNIQUE_CUH
 
-#include <gpu/simpleallocation.cuh>
 #include <hpc_helpers.cuh>
 #include <memorymanagement.hpp>
 
@@ -315,8 +314,8 @@ namespace cudauniquekernels{
 struct GpuSegmentedUnique{
     struct HandleData{
         int gpu;
-        SimpleAllocationDevice<char, 0> d_temp_storage;
-        SimpleAllocationDevice<int> d_end_offsets_tmp;
+        helpers::SimpleAllocationDevice<char, 0> d_temp_storage;
+        helpers::SimpleAllocationDevice<int> d_end_offsets_tmp;
 
         HandleData(){
             cudaGetDevice(&gpu); CUERR;
