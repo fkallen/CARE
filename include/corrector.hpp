@@ -1020,7 +1020,9 @@ private:
                 && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
             {
                 for (int i = 0; i < cand_length; ++i) {
-                    clfAgent->print_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage, task.input.anchorReadId, i);
+                    if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
+                        clfAgent->print_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage, task.input.anchorReadId, i);
+                    }
                 }
             }
         }
