@@ -1,6 +1,8 @@
 #include <readextender.hpp>
 #include <cpu_alignment.hpp>
 
+#include <stringglueing.hpp>
+
 #include <algorithm>
 #include <cassert>
 #include <numeric>
@@ -447,6 +449,51 @@ namespace care{
                 //cannot extend over fragment 
                 extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
 
+                auto makeAnchorForNextIteration = [&](){
+                    if(extendBy == 0){
+                        task.abort = true;
+                        task.abortReason = AbortReason::MsaNotExtended;
+                    }else{
+                        task.accumExtensionLengths += extendBy;
+
+                        //update data for next iteration of outer while loop                           
+
+                        std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
+
+                        const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
+
+                        task.currentAnchor.resize(numInts);
+
+                        encodeSequence2Bit(
+                            task.currentAnchor.data(), 
+                            decodedAnchor.data(), 
+                            task.currentAnchorLength
+                        );
+
+                        task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+                        task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                        // task.resultsequence.insert(
+                        //     task.resultsequence.end(), 
+                        //     msa.consensus.data() + task.currentAnchorLength, 
+                        //     msa.consensus.data() + task.currentAnchorLength + extendBy
+                        // );
+
+
+                        // std::string tmp(task.currentAnchorLength, '\0');
+
+                        // decode2BitSequence(
+                        //     &tmp[0],
+                        //     task.currentAnchor.data(),
+                        //     task.currentAnchorLength
+                        // );
+
+                        // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
+
+                        // assert(sub == tmp);
+                    }
+                };
+
                 constexpr int requiredOverlapMate = 70; //TODO relative overlap 
                 constexpr int numMismatchesUpperBound = 2;
 
@@ -471,6 +518,19 @@ namespace care{
 
 
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
+                        const int mateStartposInConsensus = flatMap[0].second.front();
+                        const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
+
+                        if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
+                            //bridge the gap between current anchor and mate
+                            task.totalDecodedAnchors.emplace_back(
+                                msa.consensus.data() + missingPositionsBetweenAnchorEndAndMateBegin,
+                                msa.consensus.data() + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
+                            );
+                            task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths + missingPositionsBetweenAnchorEndAndMateBegin);
+                        }
+
+
                         task.mateHasBeenFound = true;
 
                         //const int currentAccumExtensionLengths = task.accumExtensionLengths;
@@ -492,91 +552,10 @@ namespace care{
                         // );
 
                     }else{
-                        if(extendBy == 0){
-                            task.abort = true;
-                            task.abortReason = AbortReason::MsaNotExtended;
-                        }else{
-                            task.accumExtensionLengths += extendBy;
-
-                            //update data for next iteration of outer while loop                           
-
-                            std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
-
-                            const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
-
-                            task.currentAnchor.resize(numInts);
-
-                            encodeSequence2Bit(
-                                task.currentAnchor.data(), 
-                                decodedAnchor.data(), 
-                                task.currentAnchorLength
-                            );
-
-                            task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                            task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-
-                            // task.resultsequence.insert(
-                            //     task.resultsequence.end(), 
-                            //     msa.consensus.data() + task.currentAnchorLength, 
-                            //     msa.consensus.data() + task.currentAnchorLength + extendBy
-                            // );
-
-
-                            // std::string tmp(task.currentAnchorLength, '\0');
-
-                            // decode2BitSequence(
-                            //     &tmp[0],
-                            //     task.currentAnchor.data(),
-                            //     task.currentAnchorLength
-                            // );
-
-                            // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
-
-                            // assert(sub == tmp);
-                        }
+                        makeAnchorForNextIteration();
                     }
                 }else{
-                    if(extendBy == 0){
-                        task.abort = true;
-                        task.abortReason = AbortReason::MsaNotExtended;
-                    }else{
-                        task.accumExtensionLengths += extendBy;
-
-                        //update data for next iteration of outer while loop
-                        std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
-
-                        const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
-
-                        task.currentAnchor.resize(numInts);
-
-                        encodeSequence2Bit(
-                            task.currentAnchor.data(), 
-                            decodedAnchor.data(), 
-                            task.currentAnchorLength
-                        );
-
-                        task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                        task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-
-                        // task.resultsequence.insert(
-                        //     task.resultsequence.end(), 
-                        //     msa.consensus.data() + task.currentAnchorLength, 
-                        //     msa.consensus.data() + task.currentAnchorLength + extendBy
-                        // );
-
-                        // std::string tmp(task.currentAnchorLength, '\0');
-
-                        // decode2BitSequence(
-                        //     &tmp[0],
-                        //     task.currentAnchor.data(),
-                        //     task.currentAnchorLength
-                        // );
-
-                        // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
-
-                        // assert(sub == tmp);
-
-                    }
+                    makeAnchorForNextIteration();
                 }
             };
 
@@ -1013,8 +992,30 @@ namespace care{
                 }
             }
 
+            Gluer gluer(minimumOverlap, 0.05f);
+
             auto glue = [&](const std::string& lrString, const std::string& rlString){
                 std::vector<std::string> possibleResults;
+
+               
+
+                
+
+#if 1
+                const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+
+                for(int p = 0; p < maxNumberOfPossibilities; p++){
+                    auto res = gluer(
+                        lrString, 
+                        rlString, 
+                        insertSize - insertSizeStddev + p
+                    );
+
+                    if(res.has_value()){
+                        possibleResults.emplace_back(std::move(*res));
+                    }
+                }
+#else
 
                 const int lrLength = lrString.length();
                 const int rlLength = rlString.length();
@@ -1022,6 +1023,7 @@ namespace care{
                 const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
 
                 for(int p = 0; p < maxNumberOfPossibilities; p++){
+
                     //the last position of rlString should be at position x in the combined string
                     const int x = (insertSize-1) - insertSizeStddev + p;
 
@@ -1059,6 +1061,8 @@ namespace care{
                         }
                     }
                 }
+#endif                    
+                
 
                 return possibleResults;
             };
