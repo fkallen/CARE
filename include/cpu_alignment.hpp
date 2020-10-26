@@ -69,6 +69,39 @@ namespace cpu{
 
 
 
+    template<class Iter1, class Iter2, class Equal>
+    int longestMatch(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2, Equal isEqual){
+        int longest = 0;
+        int current = 0;
+
+        while(first1 != last1 && first2 != last2){
+            if(isEqual(*first1, *first2)){
+                current++;
+            }else{
+                longest = std::max(longest, current);
+                current = 0;
+            }
+
+            ++first1;
+            ++first2;
+        }
+
+        longest = std::max(longest, current);
+
+        return longest;
+    }
+
+    template<class Iter1, class Iter2>
+    int longestMatch(Iter1 first1, Iter1 last1, Iter2 first2, Iter2 last2){
+        auto isEqual = [](const auto& l, const auto& r){
+            return l == r;
+        };
+
+        return longestMatch(first1, last1, first2, last2, isEqual);
+    }
+
+
+
 
 
 namespace shd{
