@@ -72,7 +72,7 @@ public:
         bool success = false;
         bool aborted = false;
         int numIterations = 0;
-
+        int originalLength = 0;
         ExtensionDirection direction = ExtensionDirection::LR;
         AbortReason abortReason = AbortReason::None;
 
