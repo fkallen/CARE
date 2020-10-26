@@ -500,6 +500,7 @@ namespace care{
                 if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + task.mateLength >= insertSize - insertSizeStddev){
                     //check if mate can be overlapped with consensus 
                     std::map<int, std::vector<int>> hamMap; //map hamming distance to list start positions
+                    std::map<int, std::vector<int>> longmatchMap; //map length of longest match to list start positions
                     for(int startpos = 0; startpos < consensusLength - requiredOverlapMate; startpos++){
                         if(task.accumExtensionLengths + startpos + task.mateLength >= insertSize - insertSizeStddev 
                                 && task.accumExtensionLengths + startpos + task.mateLength <= insertSize + insertSizeStddev){
@@ -510,15 +511,28 @@ namespace care{
                             );
 
                             hamMap[ham].emplace_back(startpos);
+
+                            const int longest = cpu::longestMatch(
+                                msa.consensus.begin() + startpos, msa.consensus.end(), 
+                                task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                            );
+
+                            longmatchMap[longest].emplace_back(startpos);
                         }
                     }
 
                     std::vector<std::pair<int, std::vector<int>>> flatMap(hamMap.begin(), hamMap.end());
+                    //sort by hamming distance, ascending
                     std::sort(flatMap.begin(), flatMap.end(), [](const auto& p1, const auto& p2){return p1.first < p2.first;});
+
+                    std::vector<std::pair<int, std::vector<int>>> flatMap2(longmatchMap.begin(), longmatchMap.end());
+                    //sort by length of longest match, descending
+                    std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
 
 
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
-                        const int mateStartposInConsensus = flatMap[0].second.front();
+                    //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
+                        const int mateStartposInConsensus = flatMap2[0].second.front();
                         const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
 
                         if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
@@ -535,13 +549,13 @@ namespace care{
 
                         //const int currentAccumExtensionLengths = task.accumExtensionLengths;
                         
-                        task.accumExtensionLengths += flatMap[0].second.front();
+                        task.accumExtensionLengths += mateStartposInConsensus;
                         std::string decodedAnchor(task.decodedMateRevC);
 
                         task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
 
-                        // const int startpos = flatMap[0].second.front();
+                        // const int startpos = mateStartposInConsensus;
                         // task.resultsequence.resize(currentAccumExtensionLengths + startpos + task.decodedMateRevC.length());
                         // const auto replaceBegin = task.resultsequence.begin() + currentAccumExtensionLengths + startpos;
                         // task.resultsequence.replace(
@@ -812,6 +826,7 @@ namespace care{
             extendResult.abortReason = task.abortReason;
             extendResult.readId1 = task.myReadId;
             extendResult.readId2 = task.mateReadId;
+            extendResult.originalLength = task.myLength;
 
 #if 0
             //extendResult.extendedRead = std::move(task.resultsequence);
@@ -956,14 +971,33 @@ namespace care{
             idcomp
         );
 
-        auto combineWithSameIdFoundMate = [&](auto begin, auto end){
-            assert(std::distance(begin, end) > 0);
+        auto glue = [&](const std::string& lrString, const std::string& rlString, const auto& decider, const auto& gluer){
+            std::vector<std::string> possibleResults;
 
-            //return longest read
-            return *std::max_element(begin, end, lengthcomp);
+            const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+
+            for(int p = 0; p < maxNumberOfPossibilities; p++){
+                auto decision = decider(
+                    lrString, 
+                    rlString, 
+                    insertSize - insertSizeStddev + p
+                );
+
+                if(decision.has_value()){
+                    // auto aaa = gluer(*decision);
+                    // auto bbb = wgluer(*decision);
+                    // if(aaa != bbb){
+                    //     std::cerr << "glue\n" << lrString << " and\n" << rlString << "\n";
+                    //     std::cerr << aaa << "\n" << bbb << "\n\n";
+                    // }
+                    possibleResults.emplace_back(gluer(*decision));
+                }
+            }
+
+            return possibleResults;
         };
 
-        auto combineWithSameIdNoMate = [&](auto begin, auto end){
+        auto combineWithSameIdNoMate = [&](auto begin, auto end, auto func){
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
@@ -992,81 +1026,6 @@ namespace care{
                 }
             }
 
-            Gluer gluer(minimumOverlap, 0.05f);
-
-            auto glue = [&](const std::string& lrString, const std::string& rlString){
-                std::vector<std::string> possibleResults;
-
-               
-
-                
-
-#if 1
-                const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
-
-                for(int p = 0; p < maxNumberOfPossibilities; p++){
-                    auto res = gluer(
-                        lrString, 
-                        rlString, 
-                        insertSize - insertSizeStddev + p
-                    );
-
-                    if(res.has_value()){
-                        possibleResults.emplace_back(std::move(*res));
-                    }
-                }
-#else
-
-                const int lrLength = lrString.length();
-                const int rlLength = rlString.length();
-
-                const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
-
-                for(int p = 0; p < maxNumberOfPossibilities; p++){
-
-                    //the last position of rlString should be at position x in the combined string
-                    const int x = (insertSize-1) - insertSizeStddev + p;
-
-                    const int rlBeginInCombined = x - rlLength + 1; //theoretical position of first character of rl in the combined string
-                    const int lrEndInCombined = std::min(x, lrLength - 1);
-                    const int overlapSize = std::min(
-                        std::max(0, lrEndInCombined - rlBeginInCombined + 1), // overlap can be at most the positions between begin of rl and end of lr
-                        std::min(
-                            std::min(lrLength, rlLength), // overlap cannot be longer than any of both strings
-                            x+1 //overlap cannot be longer than specified segment length
-                        )
-                    );
-
-                    if(overlapSize >= minimumOverlap){
-                        const int rlStart = std::max(0, -rlBeginInCombined);
-                        const int ham = cpu::hammingDistanceOverlap(
-                            lrString.begin() + (lrEndInCombined+1) - overlapSize, lrString.end(), 
-                            rlString.begin() + rlStart, rlString.end()
-                        );
-                        const float mismatchRatio = float(ham) / float(overlapSize);
-
-                        if(fleq(mismatchRatio, 0.05f)){
-                            const int newLength = x+1;
-                            const int lr1remaining = newLength - (rlLength - rlStart);
-                            std::string sequence(newLength, 'F');
-                            //assert(newLength == lr1remaining + rlLength - rlStart);
-                            const auto it = std::copy_n(lrString.begin(), lr1remaining, sequence.begin());
-                            std::copy(rlString.begin() + rlStart, rlString.end(), it);
-
-                            // std::cerr << "alignment:\n";
-                            // std::cerr << "ham = " << ham << ", overlap = " << overlapSize << "\n";
-                            // std::cerr << lrString << "\n\n" << rlString << "\n";
-
-                            possibleResults.emplace_back(std::move(sequence));
-                        }
-                    }
-                }
-#endif                    
-                
-
-                return possibleResults;
-            };
-
             std::vector<std::string> possibleResults;
 
             for(const auto& pair : pairsToCheck){
@@ -1086,7 +1045,7 @@ namespace care{
 
                 // std::cerr << sstream.rdbuf();
 
-                auto strings = glue(lr.extendedRead, revcRLSeq);
+                auto strings = func(lr.extendedRead, revcRLSeq);
                 possibleResults.insert(possibleResults.end(), std::make_move_iterator(strings.begin()), std::make_move_iterator(strings.end()));
             }
 
@@ -1143,17 +1102,40 @@ namespace care{
             }
         };
 
+        auto combineWithSameIdFoundMate = [&](auto begin, auto end){
+            assert(std::distance(begin, end) > 0);
+
+            //return longest read
+            return *std::max_element(begin, end, lengthcomp);
+        };
+
         auto combineWithSameId = [&](auto begin, auto end){
             assert(std::distance(begin, end) > 0);
 
             auto partitionPoint = std::partition(begin, end, [](const auto& x){ return x.mateHasBeenFound;});
 
-            //if there are results which found mate, choose longest
             if(std::distance(begin, partitionPoint) > 0){
+
                 return combineWithSameIdFoundMate(begin, partitionPoint);
+                //MismatchRatioGlueDecider decider(40, 0.01f);
+                // MatchLengthGlueDecider decider(insertSize - insertSizeStddev, 50);
+                // WeightedGapGluer gluer(begin->originalLength);
+                // auto func = [&](const auto& lr, const auto& rl){
+                //     return glue(lr, rl, decider, gluer);
+                // };
+
+                // return combineWithSameIdNoMate(begin, partitionPoint, func);
+
             }else{
 #if 1                
-                return combineWithSameIdNoMate(partitionPoint, end);
+                MismatchRatioGlueDecider decider(40, 0.05f);
+                //NaiveGluer gluer{};
+                WeightedGapGluer gluer(begin->originalLength);
+                auto func = [&](const auto& lr, const auto& rl){
+                    return glue(lr, rl, decider, gluer);
+                };
+
+                return combineWithSameIdNoMate(partitionPoint, end, func);
 #else
                 //from results which did not find mate, choose longest
                 return *std::max_element(partitionPoint, end, lengthcomp);
