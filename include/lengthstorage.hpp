@@ -146,7 +146,7 @@ struct LengthStore{
         setBits(first, second, begin, endExcl, Data_t(diff));
     }
 
-    void readFromStream(std::ifstream& stream){
+    void readFromStream(std::istream& stream){
         stream.read(reinterpret_cast<char*>(&DataTBits), sizeof(int));
 
         assert(DataTBits == sizeof(Data_t) * 8);
@@ -166,7 +166,7 @@ struct LengthStore{
         stream.read(reinterpret_cast<char*>(data.data()), rawSizeBytes);
     }
 
-    void writeToStream(std::ofstream& stream) const{
+    std::size_t writeToStream(std::ostream& stream) const{
 
         stream.write(reinterpret_cast<const char*>(&DataTBits), sizeof(int));
         stream.write(reinterpret_cast<const char*>(&bitsPerLength), sizeof(int));
@@ -180,6 +180,12 @@ struct LengthStore{
         stream.write(reinterpret_cast<const char*>(&rawSizeElements), sizeof(std::size_t));
         stream.write(reinterpret_cast<const char*>(&rawSizeBytes), sizeof(std::size_t));
         stream.write(reinterpret_cast<const char*>(data.data()), rawSizeBytes);
+
+        std::size_t writtenBytes = sizeof(int) + sizeof(int) + sizeof(int) + sizeof(int);
+        writtenBytes += sizeof(Data_t) + sizeof(std::int64_t);
+        writtenBytes += sizeof(std::size_t) + sizeof(std::size_t) + rawSizeBytes;
+
+        return writtenBytes;
     }
 
     MemoryUsage getMemoryInfo() const{

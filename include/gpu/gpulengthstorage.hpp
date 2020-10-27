@@ -189,8 +189,8 @@ struct GPULengthStore{
         init(std::move(tmpstore), deviceIds_);
     }
 
-    void writeCpuLengthStoreToStream(std::ofstream& stream) const{
-        lengthStore.writeToStream(stream);
+    std::size_t writeCpuLengthStoreToStream(std::ofstream& stream) const{
+        return lengthStore.writeToStream(stream);
     }
 
     MemoryUsage getMemoryInfo() const{

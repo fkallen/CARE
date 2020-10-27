@@ -673,16 +673,32 @@ public:
             stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
             stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
 
-            lengthStorage.writeToStream(stream);
+            auto pos = stream.tellp();
 
+            stream.seekp(sizeof(std::size_t) * 4, std::ios_base::cur);
+
+            std::size_t lengthsBytes = lengthStorage.writeToStream(stream);
+            std::size_t sequencesBytes = sequence_data_bytes + sizeof(std::size_t);      
+            std::size_t qualitiesBytes = quality_data_bytes + sizeof(std::size_t);
+
+            //sequence data
             stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes); 
+            //quality data
             stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&h_quality_data[0]), quality_data_bytes);
 
             std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
             stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
             stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
+
+            std::size_t ambigBytes = sizeof(std::size_t) * numUndeterminedReads * sizeof(read_number);
+
+            stream.seekp(pos);
+            stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&sequencesBytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&qualitiesBytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&ambigBytes), sizeof(std::size_t));
 
         }
 
@@ -696,7 +712,7 @@ public:
             read_number loaded_inserted = 0;
             int loaded_sequenceLengthLowerBound = 0;
             int loaded_sequenceLengthUpperBound = 0;
-            bool loaded_useQualityScores = false;
+            bool loaded_hasQualityScores = false;
 
             std::size_t loaded_sequence_data_bytes = 0;
             std::size_t loaded_quality_data_bytes = 0;            
@@ -704,20 +720,45 @@ public:
             stream.read(reinterpret_cast<char*>(&loaded_inserted), sizeof(read_number));
             stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
-            stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
+            stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
 
-            init(loaded_inserted, loaded_useQualityScores, loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
+            init(loaded_inserted, canUseQualityScores(), loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
 
             numberOfInsertedReads = loaded_inserted;
 
             stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
+            std::size_t lengthsBytes = 0;
+            std::size_t sequencesBytes = 0;      
+            std::size_t qualitiesBytes = 0;       
+            std::size_t ambigBytes = 0;
+
+            stream.read(reinterpret_cast<char*>(&lengthsBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&sequencesBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&qualitiesBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&ambigBytes), sizeof(std::size_t));
+
             lengthStorage.readFromStream(stream);
 
             stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&h_sequence_data[0]), loaded_sequence_data_bytes);
-            stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));            
-            stream.read(reinterpret_cast<char*>(&h_quality_data[0]), loaded_quality_data_bytes);
+
+            if(canUseQualityScores() && loaded_hasQualityScores){
+                //std::cerr << "load qualities\n";
+
+                stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));            
+                stream.read(reinterpret_cast<char*>(&h_quality_data[0]), loaded_quality_data_bytes);
+            }else if(canUseQualityScores() && !loaded_hasQualityScores){
+                    //std::cerr << "no q in bin file\n";
+                    throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
+            }else if(!canUseQualityScores() && loaded_hasQualityScores){
+                    //std::cerr << "skip qualities\n";
+                    stream.ignore(qualitiesBytes);
+            }else{
+                //!canUseQualityScores() && !loaded_hasQualityScores
+                //std::cerr << "no q in file, and no q required. Ok\n";
+            }
+            
 
             std::size_t numUndeterminedReads = 0;
             stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));

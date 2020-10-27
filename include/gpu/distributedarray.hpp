@@ -2182,19 +2182,21 @@ public:
         return elementsPerLocation;
     }
 
-    void writeHostPartitionToStream(std::ofstream& stream) const{
+    std::size_t writeHostPartitionToStream(std::ostream& stream) const{
         const auto begin = dataPtrPerLocation[hostLocation];
         const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
         stream.write(reinterpret_cast<const char*>(begin), size);
+
+        return size;
     }
 
-    void readHostPartitionFromStream(std::ifstream& stream) const{
+    void readHostPartitionFromStream(std::istream& stream) const{
         auto begin = dataPtrPerLocation[hostLocation];
         const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
         stream.read(reinterpret_cast<char*>(begin), size);
     }
 
-    void writeGpuPartitionToStream(int partition, std::ofstream& stream) const{
+    std::size_t writeGpuPartitionToStream(int partition, std::ostream& stream) const{
         assert(0 <= partition);
         assert(partition < numGpus);
 
@@ -2219,6 +2221,8 @@ public:
         Value_t* buffer = nullptr;
         cudaMallocHost(&buffer, buffersize); CUERR;
 
+        std::size_t writtenBytes = 0;
+
         const std::int64_t batchsize = buffersize / bytesPerElement;
         const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
         for(std::int64_t batch = 0; batch < numBatches; batch++){
@@ -2234,14 +2238,18 @@ public:
             //TIMERSTARTCPU(writeGpuPartitionToStream_file);
             stream.write(reinterpret_cast<const char*>(buffer), sizeOfElement * numElements);
             //TIMERSTOPCPU(writeGpuPartitionToStream_file);
+
+            writtenBytes += sizeOfElement * numElements;
         }
 
         cudaFreeHost(buffer); CUERR;
 
         wrapperCudaSetDevice(currentId); CUERR;
+
+        return writtenBytes;
     }
 
-    void readGpuPartitionFromStream(int partition, std::ifstream& stream){
+    void readGpuPartitionFromStream(int partition, std::istream& stream){
         constexpr std::int64_t MB = std::int64_t(1024) * 1024;
         constexpr std::int64_t safety = std::int64_t(64) * MB;
         constexpr std::int64_t maxBytes = std::int64_t(64) * MB;
@@ -2342,13 +2350,17 @@ public:
         wrapperCudaSetDevice(currentId); CUERR;
     }
 
-    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+    std::size_t writeGpuPartitionsToStream(std::ostream& stream) const{
+        std::size_t bytes = 0;
+
         for(int gpu = 0; gpu < numGpus; gpu++){
-            writeGpuPartitionToStream(gpu, stream);
+            bytes += writeGpuPartitionToStream(gpu, stream);
         }
+
+        return bytes;
     }
 
-    void readGpuPartitionsFromStream(std::ifstream& stream){
+    void readGpuPartitionsFromStream(std::istream& stream){
         for(int gpu = 0; gpu < numGpus; gpu++){
             readGpuPartitionFromStream(gpu, stream);
         }
@@ -2374,17 +2386,19 @@ public:
         }
     }
 
-    void writeToStream(std::ofstream& stream) const{
-        const size_t totalMemory = numRows * sizeOfElement;
-        stream.write(reinterpret_cast<const char*>(&totalMemory), sizeof(size_t));
+    std::size_t writeToStream(std::ostream& stream) const{
+        const std::size_t totalMemory = numRows * sizeOfElement;
+        stream.write(reinterpret_cast<const char*>(&totalMemory), sizeof(std::size_t));
 
-        writeGpuPartitionsToStream(stream);
-        writeHostPartitionToStream(stream);
+        std::size_t bytes = writeGpuPartitionsToStream(stream);
+        bytes += writeHostPartitionToStream(stream);
+
+        return totalMemory + bytes;
     }
 
-    void readFromStream(std::ifstream& stream){
-        size_t totalMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalMemory), sizeof(size_t));
+    void readFromStream(std::istream& stream){
+        std::size_t totalMemory = 1;
+        stream.read(reinterpret_cast<char*>(&totalMemory), sizeof(std::size_t));
         
         readGpuPartitionsFromStream(stream);
         readHostPartitionFromStream(stream);
