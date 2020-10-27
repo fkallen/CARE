@@ -292,7 +292,7 @@ void DistributedReadStorage::construct(
 
     auto makeInserterFunc = [&](){return makeReadInserter();};
     auto makeReadContainsNFunc = [this](){
-        return [&](read_number readId, bool contains){
+        return [=](read_number readId, bool contains){
             this->setReadContainsN(readId, contains);
         };
     };
@@ -739,17 +739,14 @@ void DistributedReadStorage::setReadContainsN(read_number readId, bool contains)
                                         readId);
 
     if(contains){
-        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
-            ; //already marked
-        }else{
+        //if readId is not already in the vector, insert it
+        if((pos == readIdsOfReadsWithUndeterminedBase.end()) || (pos != readIdsOfReadsWithUndeterminedBase.end() && *pos != readId)){
             readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
         }
     }else{
-        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+        if(pos != readIdsOfReadsWithUndeterminedBase.end() && *pos == readId){
             //remove mark
             readIdsOfReadsWithUndeterminedBase.erase(pos);
-        }else{
-            ; //already unmarked
         }
     }
 }
