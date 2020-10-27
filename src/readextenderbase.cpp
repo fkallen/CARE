@@ -532,7 +532,7 @@ namespace care{
 
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
                     //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
-                        const int mateStartposInConsensus = flatMap2[0].second.front();
+                        const int mateStartposInConsensus = flatMap[0].second.front();
                         const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
 
                         if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
