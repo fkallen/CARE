@@ -392,15 +392,12 @@ private:
         //exclude anchors with ambiguous bases
         if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
-            const int length = task.input.anchorLength;
-            char* const decodedBegin = task.decodedAnchor.data();
-
-            //TODO modify minhasher to work with char ptr + size instead of string
-            std::string sequence(decodedBegin, length);
+            assert(task.input.anchorLength == int(task.decodedAnchor.size()));
 
             minhasher->getCandidates_any_map(
                 minhashHandle,
-                sequence,
+                task.decodedAnchor.data(),
+                task.decodedAnchor.size(),
                 0
             );
 
