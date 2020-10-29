@@ -25,10 +25,6 @@
 #include <fstream>
 #include <algorithm>
 
-//#define GPUMINHASHER_UNIQUE
-
-//#define GPUMINHASHER_MAKEUNIQUEAFTERHASHING
-
 
 namespace care{
 namespace gpu{
