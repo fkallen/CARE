@@ -115,6 +115,11 @@ namespace care{
 
         if(fileOptions.load_binary_reads_from == ""){
 
+            if(maximumNumberOfReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
+                std::cout << "Error. " << maximumNumberOfReads << " reads cannot be processed with the current config.hpp" << std::endl;
+                std::exit(1);
+            }
+
             if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
                 std::cout << "STEP 0: Determine input size" << std::endl;
                 
@@ -143,6 +148,11 @@ namespace care{
                 scanned = true;
             }else{
                 //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
+            }
+
+            if(maximumNumberOfReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
+                std::cout << "Error. " << maximumNumberOfReads << " reads cannot be processed with the current config.hpp" << std::endl;
+                std::exit(1);
             }
         }
 
@@ -213,6 +223,11 @@ namespace care{
             std::cout << "Minimum sequence length: " << totalInputFileProperties.minSequenceLength << "\n";
             std::cout << "Maximum sequence length: " << totalInputFileProperties.maxSequenceLength << "\n";
             std::cout << "----------------------------------------\n";
+
+            if(totalInputFileProperties.nReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
+                std::cout << "Error. " << totalInputFileProperties.nReads << " reads cannot be processed with the current config.hpp" << std::endl;
+                std::exit(1);
+            }
         }
 
         if(correctionOptions.autodetectKmerlength){

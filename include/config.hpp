@@ -7,7 +7,7 @@
 
 namespace care{
 
-    //unsigned integral type large enough to enumerate all reads
+    //unsigned integral type large enough to enumerate all reads. Number of reads must be < numeric_limits<read_number>::max().
     using read_number = std::uint32_t;
 
     static_assert(std::is_integral<read_number>::value, "read_number must be integral.");
