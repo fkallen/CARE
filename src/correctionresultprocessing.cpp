@@ -1521,21 +1521,13 @@ void constructOutputFileFromCorrectionResults(
     }
 
     bool TempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
-        if(tmpresultfileformat == 0){
-            os << readId << ' ';
-        }else if(tmpresultfileformat == 1){
-            os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
-        }
+        os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
         
         std::uint8_t data = bool(hq);
         data = (data << 1) | bool(useEdits);
         data = (data << 6) | std::uint8_t(int(type));
-        
-        if(tmpresultfileformat == 0){
-            os << data << ' ';
-        }else if(tmpresultfileformat == 1){
-            os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
-        }
+
+        os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
 
         if(useEdits){
             os << edits.size() << ' ';
@@ -1564,22 +1556,14 @@ void constructOutputFileFromCorrectionResults(
     bool TempCorrectedSequence::readFromBinaryStream(std::istream& is){
         std::uint8_t data = 0;
 
-        if(tmpresultfileformat == 0){
-            is >> readId;
-        }else if(tmpresultfileformat == 1){
-            is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
-            is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
-        }
+        is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
+        is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
 
         std::string line;
         if(std::getline(is, line)){
             std::stringstream sstream(line);
             auto& stream = sstream;
 
-            if(tmpresultfileformat == 0){
-                stream >> data; 
-            }
-            
             hq = (data >> 7) & 1;
             useEdits = (data >> 6) & 1;
             type = TempCorrectedSequence::Type(int(data & 0x3F));

@@ -1073,7 +1073,9 @@ namespace cpuhashtabledetail{
 
         using ValueIndex = std::pair<read_number, BucketSize>;
 
-        std::vector<Value> values;
+        // values with the same key are stored in contiguous memory locations
+        // a single-value hashmap maps keys to the range of the corresponding values
+        std::vector<Value> values; 
         NaiveCpuSingleValueHashTable<Key, ValueIndex> lookup;
     };
 
