@@ -195,6 +195,24 @@ namespace care{
 
 namespace cpuhashtabledetail{
 
+        struct AllocCounter{
+            std::size_t maxbytes = 0;
+            std::size_t bytes = 0;
+
+            template<class T>
+            void alloc(std::size_t elements){
+                bytes += sizeof(T) * elements;
+                maxbytes = std::max(maxbytes, bytes);
+            }
+
+            template<class T>
+            void dealloc(std::size_t elements){
+                auto size = sizeof(T) * elements;
+                assert(size <= bytes);
+                bytes -= size;
+            }
+        };
+
         struct TransformResult{
             std::uint64_t numberOfUniqueKeys = 0;
             std::uint64_t numberOfRemovedKeys = 0;
@@ -243,8 +261,8 @@ namespace cpuhashtabledetail{
                             }
                             return keys[lhs] < keys[rhs];
                         });
-
             //TIMERSTOPCPU(sortindices);
+
 
             //TIMERSTARTCPU(sortvalues);
             std::vector<Value_t> sortedValues(size);
@@ -312,14 +330,12 @@ namespace cpuhashtabledetail{
             keys.swap(histogram_keys);
 
             return nUniqueKeys;
-
         }
 
         template<class Key_t, class Value_t, class Index_t>
         TransformRemoveKeysResult transformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
                                                             std::vector<Value_t>& values, 
                                                             std::vector<Index_t>& countsPrefixSum,
-                                                            std::vector<Key_t>& keysWithoutValues,
                                                             int maxValuesPerKey_){
             auto deallocVector = [](auto& vec){
                 using T = typename std::remove_reference<decltype(vec)>::type;
@@ -440,12 +456,10 @@ namespace cpuhashtabledetail{
             return result;
         }
 
-        template<class Key_t, class Value_t, class Index_t, class Count_t>
+        template<class Key_t, class Value_t, class Index_t>
         TransformResult cpu_transformation(std::vector<Key_t>& keys,
                                 std::vector<Value_t>& values,
-                                std::vector<Count_t>& counts,
                                 std::vector<Index_t>& countsPrefixSum,
-                                std::vector<Key_t>& keysWithoutValues,
                                 int maxValuesPerKey){
 
             std::uint64_t uniqueKeys = transformCPUCompactKeys(
@@ -458,7 +472,6 @@ namespace cpuhashtabledetail{
                 keys, 
                 values, 
                 countsPrefixSum, 
-                keysWithoutValues, 
                 maxValuesPerKey
             );
 
@@ -622,7 +635,6 @@ namespace cpuhashtabledetail{
             static TransformRemoveKeysResult execute(std::vector<Key_t>& keys, 
                                 std::vector<Value_t>& values, 
                                 std::vector<Index_t>& countsPrefixSum,
-                                std::vector<Key_t>& keysWithoutValues,
                                 int maxValuesPerKey_,
                                 const std::vector<int>& /*deviceIds*/){
 
@@ -771,12 +783,10 @@ namespace cpuhashtabledetail{
             template<class T>
             using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
 
-            template<class Key_t, class Value_t, class Index_t, class Count_t>
+            template<class Key_t, class Value_t, class Index_t>
             static std::pair<bool, TransformResult> execute(std::vector<Key_t>& keys, 
                                 std::vector<Value_t>& values, 
-                                std::vector<Count_t>& counts,
                                 std::vector<Index_t>& countsPrefixSum, 
-                                std::vector<Key_t>& keysWithoutValues,
                                 const std::vector<int>& deviceIds,
                                 int maxValuesPerKey){
 
@@ -811,7 +821,7 @@ namespace cpuhashtabledetail{
                             ::execute(keys, values, countsPrefixSum, deviceIds);
 
                     auto removeresult = TransformGPURemoveKeysWithToManyValues<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey, deviceIds);  
+                            ::execute(keys, values, countsPrefixSum, maxValuesPerKey, deviceIds);  
 
                     transformresult.numberOfRemovedKeys = removeresult.numberOfRemovedKeys;
                     transformresult.numberOfRemovedValues = removeresult.numberOfRemovedValues;
@@ -913,8 +923,6 @@ namespace cpuhashtabledetail{
         ){
             assert(keys.size() == vals.size());
 
-            std::vector<Key> tmpunused;
-            std::vector<read_number> counts;
             std::vector<read_number> countsPrefixSum;
             values = std::move(vals);
 
@@ -926,9 +934,7 @@ namespace cpuhashtabledetail{
                 cpuhashtabledetail::cpu_transformation(
                     keys, 
                     values, 
-                    counts, 
                     countsPrefixSum, 
-                    tmpunused, 
                     maxValuesPerKey
                 );
             #ifdef __NVCC__
@@ -937,9 +943,7 @@ namespace cpuhashtabledetail{
                 auto pair = cpuhashtabledetail::GPUTransformation<false>::execute(
                     keys, 
                     values, 
-                    counts, 
                     countsPrefixSum, 
-                    tmpunused, 
                     gpuIds, 
                     maxValuesPerKey
                 );
@@ -952,9 +956,7 @@ namespace cpuhashtabledetail{
                     pair = cpuhashtabledetail::GPUTransformation<true>::execute(
                         keys, 
                         values, 
-                        counts, 
                         countsPrefixSum, 
-                        tmpunused, 
                         gpuIds, 
                         maxValuesPerKey
                     );
@@ -968,9 +970,7 @@ namespace cpuhashtabledetail{
                     cpuhashtabledetail::cpu_transformation(
                         keys, 
                         values, 
-                        counts, 
                         countsPrefixSum, 
-                        tmpunused, 
                         maxValuesPerKey
                     );
                 }
