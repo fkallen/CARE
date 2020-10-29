@@ -305,17 +305,6 @@ void GpuMinhasher::construct(
                 readStorage
             );
 
-            //check free gpu mem for transformation
-            std::size_t estRequiredFreeGpuMem = 0;
-            for(int i = 0; i < currentIterNumTables; i++){
-                std::size_t est = HashTable::estimateGpuMemoryRequiredForInit(numReads); 
-
-                estRequiredFreeGpuMem = std::max(estRequiredFreeGpuMem, est);
-            }
-                
-            std::size_t freeGpuMem, totalGpuMem;
-            cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
-
             std::size_t availableMemoryToSaveGpuPartitions = totalLimit;
             // account for the currently calculated minhash signatures
             for(const auto& vec : initialMinhashes.first){
@@ -341,10 +330,10 @@ void GpuMinhasher::construct(
                 availableMemoryToSaveGpuPartitions = 0;
             }
 
-            //TODO fix this. signatures are already being accounted for. determine memory required for transformation
             for(int i = 0; i < 2 + int(minhashTables.size()); i++){
-                const std::size_t requiredMemPerTable = nReads * sizeof(Key_t)
-                                                        + nReads * sizeof(Value_t)
+                const std::size_t requiredMemPerTable = nReads * sizeof(Key_t) //keys
+                                                        + nReads * sizeof(Value_t) // values
+                                                        + nReads * sizeof(Value_t) // counts prefix sum
                                                         + 4 * 1024;
                 if(availableMemoryToSaveGpuPartitions > requiredMemPerTable){
                     availableMemoryToSaveGpuPartitions -= requiredMemPerTable;
@@ -352,24 +341,16 @@ void GpuMinhasher::construct(
                     availableMemoryToSaveGpuPartitions = 0;
                     break;
                 }
-            }               
-            
+            }         
+
             // std::cerr << "availableMemoryToSaveGpuPartitions: " << availableMemoryToSaveGpuPartitions << "\n";
 
             DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
             const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
-            bool didSaveGpudata = false;
+            const bool didSaveGpudata = true;
 
-            //if there is more than 10% gpu memory missing, make room for it
-            //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
-            {
-                //always make room
-                std::ofstream rstempostream(rstempfile, std::ios::binary);
-                savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, availableMemoryToSaveGpuPartitions));
-
-                didSaveGpudata = true;
-            }
-
+            std::ofstream rstempostream(rstempfile, std::ios::binary);
+            savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, availableMemoryToSaveGpuPartitions));
             
             
             //if all tables could be constructed at once, no need to save them to temporary file
