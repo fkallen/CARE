@@ -53,6 +53,30 @@ namespace care{
             }
         }
 
+        //check gpu restrictions of remaining gpus
+        invalidIds.clear();
+
+        for(int id : deviceIds){
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, id);
+
+            if(prop.major < 6){
+                invalidIds.emplace_back(id);
+                std::cerr << "Warning. Removing gpu id " << id << " because its not arch 6 or greater.\n";
+            }
+
+            if(prop.managedMemory != 1){
+                invalidIds.emplace_back(id);
+                std::cerr << "Warning. Removing gpu id " << id << " because it does not support managed memory. (may be required for hash table construction).\n";
+            }
+        }
+
+        if(invalidIds.size() > 0) {
+            for(int invalidid : invalidIds) {
+                deviceIds.erase(std::find(deviceIds.begin(), deviceIds.end(), invalidid));
+            }
+        }
+
         return deviceIds;
     }
 
