@@ -37,7 +37,7 @@ namespace care{
             int firstHashFunc){
                 
         //constexpr int blocksize = 128;
-        constexpr int maximum_kmer_length = 32;
+        constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
 
         auto murmur3_fmix = [](std::uint64_t x) {
             x ^= x >> 33;
