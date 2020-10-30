@@ -5,7 +5,6 @@
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
-#include <gpu/minhashkernels.hpp>
 #include <gpu/gpumsa.cuh>
 
 #include <correctionresultprocessing.hpp>
@@ -323,8 +322,6 @@ namespace gpu{
 
         cpu::RangeGenerator<read_number>* readIdGenerator;
 
-        MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
-
         SyncFlag syncFlag;
 
         struct Pointers{
@@ -377,7 +374,6 @@ namespace gpu{
             cudaStreamCreate(&nextData.stream); CUERR;
             cudaEventCreate(&nextData.event); CUERR;
     
-            nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
             nextData.minhasherQueryHandle = GpuMinhasher::makeQueryHandle();
 
             nextData.minhasherQueryHandle.resize(minhasher, batchsize, maxNumThreads);
@@ -470,7 +466,6 @@ namespace gpu{
             nextData.h_leftoverAnchorReadIds.destroy();
             nextData.d_cubTemp.destroy();
     
-            destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
             GpuMinhasher::destroyQueryHandle(nextData.minhasherQueryHandle);
         }
 
