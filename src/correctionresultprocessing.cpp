@@ -1,4 +1,5 @@
 #include <correctionresultprocessing.hpp>
+#include <programoutputprocessing.hpp>
 
 #include <config.hpp>
 #include <hpc_helpers.cuh>
@@ -321,6 +322,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     constexpr bool outputLQOnlyAnchor = true;
     // constexpr bool outputOnlyCand = false;
 
+    auto isValidSequence = [](const std::string& s){
+        return std::all_of(s.begin(), s.end(), [](char c){
+            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+        });
+    };
+
     auto isAnchor = [](const auto& tcs){
         return tcs.type == TempCorrectedSequence::Type::Anchor;
     };
@@ -337,6 +344,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                     }
                 }else{
                     std::swap(readWithId.read.sequence, anchorIter->sequence);
+                }
+
+                if(!isValidSequence(readWithId.read.sequence)){
+                    std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                            << " with header " << readWithId.read.header
+                            << "does contain an invalid DNA base!\n"
+                            << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                 }
 
                 //assert(anchorIter->sequence.size() == originalSequence.size());
@@ -454,6 +468,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                             std::swap(readWithId.read.sequence, tmpresults[0].sequence);
                         }
 
+                        if(!isValidSequence(readWithId.read.sequence)){
+                            std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                                    << " with header " << readWithId.read.header
+                                    << "does contain an invalid DNA base!\n"
+                                    << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
+                        }
+
                         
                         return result;
                     }else{
@@ -474,6 +495,13 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                         }
                     }else{
                         std::swap(readWithId.read.sequence, anchorIter->sequence);
+                    }
+
+                    if(!isValidSequence(readWithId.read.sequence)){
+                        std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                                << " with header " << readWithId.read.header
+                                << "does contain an invalid DNA base!\n"
+                                << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                     }
                     
                     CombinedCorrectionResult result;
@@ -704,7 +732,7 @@ void constructOutputFileFromCorrectionResults_impl(
         if(combinedresult.corrected){
             if(!isValidSequence(combinedresult.correctedSequence)){
                 std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                        << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                        << " with header " << readWithId.read.header
                         << "does contain an invalid DNA base!\n"
                         << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
             }
@@ -713,7 +741,7 @@ void constructOutputFileFromCorrectionResults_impl(
 
         std::swap(readWithId.read.sequence, combinedresult.correctedSequence);        
 
-        writerVector[readWithId.fileId]->writeRead(readWithId.read.name, readWithId.read.comment, readWithId.read.sequence, readWithId.read.quality);
+        writerVector[readWithId.fileId]->writeRead(readWithId.read.header, readWithId.read.sequence, readWithId.read.quality);
 
         timeend = std::chrono::system_clock::now();
         durationConstruction += timeend - timebegin;
@@ -867,7 +895,7 @@ void constructOutputFileFromCorrectionResults2_impl(
             if(combinedresult.corrected){
                 if(!isValidSequence(combinedresult.correctedSequence)){
                     std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                            << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                            << " with header " << readWithId.read.header
                             << "does contain an invalid DNA base!\n"
                             << "Corrected sequence is: "  << combinedresult.correctedSequence << '\n';
                 }
@@ -1216,7 +1244,7 @@ void constructOutputFileFromCorrectionResults_multithreading_impl(
                     if(combinedresult.corrected){
                         if(!isValidSequence(readWithId.read.sequence)){
                             std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                                    << " with header " << readWithId.read.name << " " << readWithId.read.comment
+                                    << " with header " << readWithId.read.header
                                     << "does contain an invalid DNA base!\n"
                                     << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
                         }
@@ -1276,14 +1304,25 @@ void constructOutputFileFromCorrectionResults(
 ){
                         
     //constructOutputFileFromCorrectionResults2_impl(
-    constructOutputFileFromCorrectionResults_multithreading_impl(
-        tempdir, 
-        originalReadFiles, 
+    // constructOutputFileFromCorrectionResults_multithreading_impl(
+    //     tempdir, 
+    //     originalReadFiles, 
+    //     partialResults, 
+    //     memoryForSorting, 
+    //     outputFormat,
+    //     outputfiles, 
+    //     isSorted
+    // );
+
+    mergeResultsWithOriginalReads_multithreaded<TempCorrectedSequence>(
+        tempdir,
+        originalReadFiles,
         partialResults, 
-        memoryForSorting, 
+        memoryForSorting,
         outputFormat,
-        outputfiles, 
-        isSorted
+        outputfiles,
+        isSorted,
+        combineMultipleCorrectionResults1_rawtcs2
     );
 }
 
@@ -1422,12 +1461,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            // const auto& vec = uncorrectedPositionsNoConsensus;
-            // sstream << vec.size();
-            // if(!vec.empty()){
-            //     sstream << ' ';
-            //     std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(sstream, " "));
-            // }
+            ; //nothing
         }else{
             std::memcpy(ptr, &shift, sizeof(int));
             ptr += sizeof(int);
@@ -1479,15 +1513,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            // size_t vecsize;
-            // sstream >> vecsize;
-            // if(vecsize > 0){
-            //     auto& vec = uncorrectedPositionsNoConsensus;
-            //     vec.resize(vecsize);
-            //     for(size_t i = 0; i < vecsize; i++){
-            //         sstream >> vec[i];
-            //     }
-            // }
+            ; //nothing
         }else{
             std::memcpy(&shift, ptr, sizeof(int));
             ptr += sizeof(int);
@@ -1495,21 +1521,13 @@ void constructOutputFileFromCorrectionResults(
     }
 
     bool TempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
-        if(tmpresultfileformat == 0){
-            os << readId << ' ';
-        }else if(tmpresultfileformat == 1){
-            os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
-        }
+        os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
         
         std::uint8_t data = bool(hq);
         data = (data << 1) | bool(useEdits);
         data = (data << 6) | std::uint8_t(int(type));
-        
-        if(tmpresultfileformat == 0){
-            os << data << ' ';
-        }else if(tmpresultfileformat == 1){
-            os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
-        }
+
+        os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
 
         if(useEdits){
             os << edits.size() << ' ';
@@ -1527,12 +1545,7 @@ void constructOutputFileFromCorrectionResults(
         }
 
         if(type == TempCorrectedSequence::Type::Anchor){
-            const auto& vec = uncorrectedPositionsNoConsensus;
-            os << vec.size();
-            if(!vec.empty()){
-                os << ' ';
-                std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
-            }
+            ; // nothing
         }else{
             os << shift;
         }
@@ -1543,22 +1556,14 @@ void constructOutputFileFromCorrectionResults(
     bool TempCorrectedSequence::readFromBinaryStream(std::istream& is){
         std::uint8_t data = 0;
 
-        if(tmpresultfileformat == 0){
-            is >> readId;
-        }else if(tmpresultfileformat == 1){
-            is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
-            is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
-        }
+        is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
+        is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
 
         std::string line;
         if(std::getline(is, line)){
             std::stringstream sstream(line);
             auto& stream = sstream;
 
-            if(tmpresultfileformat == 0){
-                stream >> data; 
-            }
-            
             hq = (data >> 7) & 1;
             useEdits = (data >> 6) & 1;
             type = TempCorrectedSequence::Type(int(data & 0x3F));
@@ -1579,15 +1584,7 @@ void constructOutputFileFromCorrectionResults(
             }
 
             if(type == TempCorrectedSequence::Type::Anchor){
-                size_t vecsize;
-                stream >> vecsize;
-                if(vecsize > 0){
-                    auto& vec = uncorrectedPositionsNoConsensus;
-                    vec.resize(vecsize);
-                    for(size_t i = 0; i < vecsize; i++){
-                        stream >> vec[i];
-                    }
-                }
+                ; //nothing
             }else{
                 stream >> shift;
                 shift = std::abs(shift);

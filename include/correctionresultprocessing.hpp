@@ -72,6 +72,17 @@ namespace care{
             constexpr std::uint32_t mask = (std::uint32_t(1) << 29)-1;
             return (encodedflags & mask);
         }
+
+        //from serialized object beginning at ptr, return the read id of this object
+        static read_number parseReadId(const std::uint8_t* ptr){
+            read_number id;
+            std::memcpy(&id, ptr, sizeof(read_number));
+            return id;
+        }
+
+        read_number getReadId() const noexcept{
+            return readId;
+        }
     };
 
     // represents a sequence produced by the correction of a read.
@@ -241,11 +252,10 @@ namespace care{
 
         std::string sequence = "";
         std::vector<Edit> edits;
-        std::vector<int> uncorrectedPositionsNoConsensus{}; //if anchor
 
         bool operator==(const TempCorrectedSequence& rhs) const{
             return hq == rhs.hq && useEdits == rhs.useEdits && type == rhs.type && shift == rhs.shift && readId == rhs.readId
-                && sequence == rhs.sequence && edits == rhs.edits && uncorrectedPositionsNoConsensus == rhs.uncorrectedPositionsNoConsensus;
+                && sequence == rhs.sequence && edits == rhs.edits;
         }
 
         bool operator!=(const TempCorrectedSequence& rhs) const{

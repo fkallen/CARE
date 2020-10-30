@@ -878,7 +878,6 @@ namespace gpu{
                 const unsigned int* const encodedUncorrectedSequence = d_uncorrectedSubjects + encodedSequencePitchInInts * indexOfCorrectedSubject;
                 const char* const decodedCorrectedSequence = d_correctedSubjects + decodedSequencePitchInBytes * indexOfCorrectedSubject;
     
-                //TODO Tranpose ?
                 TempCorrectedSequence::EncodedEdit* const myEdits = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedSubject) + editsPitchInBytes * tid);
 
                 const int maxEdits = min(length / 7, numEditsThreshold);

@@ -4,7 +4,6 @@
 
 #ifdef __NVCC__
 
-#include <gpu/simpleallocation.cuh>
 #include <hpc_helpers.cuh>
 #include <threadpool.hpp>
 //#include <util.hpp>
@@ -360,44 +359,44 @@ public:
         std::mutex mutex;
         care::ThreadPool::ParallelForHandle pforHandle;
 
-        SimpleAllocationPinnedHost<Index_t> pinnedIndicesOfHostLocation;
-        SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Index_t> pinnedIndicesOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Index_t> numIndicesOfHostLocation;
 
-        SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostLocation;
-        SimpleAllocationPinnedHost<Value_t> pinnedGatheredElementsOfHostLocation; 
+        helpers::SimpleAllocationPinnedHost<Index_t> pinnedDestinationPositionsOfHostLocation;
+        helpers::SimpleAllocationPinnedHost<Value_t> pinnedGatheredElementsOfHostLocation; 
 
-        std::vector<SimpleAllocationDevice<Value_t>> d_gatheredElementsOfGpuLocation; //numGpus
+        std::vector<helpers::SimpleAllocationDevice<Value_t>> d_gatheredElementsOfGpuLocation; //numGpus
 
-        std::map<int, SimpleAllocationDevice<Value_t>> map_d_tmpResults; //tmp buffers to store all gathered elements on the destination gpu
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_destinationPositionsOfGpu;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_elementsPerLocationPS;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocation;
-        std::map<int, SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocationPS;
-        std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_indicesForLocationsVector;
-        std::map<int, std::vector<SimpleAllocationDevice<Index_t>>> map_d_destinationPositionsForLocationsVector;
+        std::map<int, helpers::SimpleAllocationDevice<Value_t>> map_d_tmpResults; //tmp buffers to store all gathered elements on the destination gpu
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_destinationPositionsOfGpu;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_elementsPerLocationPS;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocation;
+        std::map<int, helpers::SimpleAllocationDevice<Index_t>> map_d_numIndicesPerLocationPS;
+        std::map<int, std::vector<helpers::SimpleAllocationDevice<Index_t>>> map_d_indicesForLocationsVector;
+        std::map<int, std::vector<helpers::SimpleAllocationDevice<Index_t>>> map_d_destinationPositionsForLocationsVector;
 
 
         //kernel parameters per device id
-        std::map<int, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_d_splitkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>> map_h_splitkernelparams;
 
-        std::map<int, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>> map_d_prefixsumkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>> map_h_prefixsumkernelparams;
 
-        std::map<int, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
-        std::map<int, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
+        std::map<int, helpers::SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>> map_d_gatherkernelparams;
+        std::map<int, helpers::SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>> map_h_gatherkernelparams;
 
-        using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
-        using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        using hscatvec_t = std::vector<helpers::SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+        using dscatvec_t = std::vector<helpers::SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
         std::map<int, dscatvec_t> map_d_scatterkernelparams;
         std::map<int, hscatvec_t> map_h_scatterkernelparams;
 
 
-        std::map<int, SimpleAllocationDevice<char>> map_d_packedpointersAndNumIndicesArg;
-        SimpleAllocationPinnedHost<char> h_packedpointersAndNumIndicesArg;
+        std::map<int, helpers::SimpleAllocationDevice<char>> map_d_packedpointersAndNumIndicesArg;
+        helpers::SimpleAllocationPinnedHost<char> h_packedpointersAndNumIndicesArg;
 
-        std::map<int, SimpleAllocationDevice<char>> map_d_packedKernelParamsPartPref;
-        SimpleAllocationPinnedHost<char> h_packedKernelParamsPartPref;
+        std::map<int, helpers::SimpleAllocationDevice<char>> map_d_packedKernelParamsPartPref;
+        helpers::SimpleAllocationPinnedHost<char> h_packedKernelParamsPartPref;
 
         //
         std::map<int, cudaGraphExec_t> map_nohostExecutionGraph;
@@ -990,18 +989,18 @@ public:
             handle->map_d2hevents[deviceId] = std::move(event2); 
              
 
-            handle->map_d_tmpResults.emplace(deviceId, SimpleAllocationDevice<Value_t>{});
-            handle->map_d_destinationPositionsOfGpu.emplace(deviceId, SimpleAllocationDevice<Index_t>{});
-            handle->map_d_elementsPerLocationPS.emplace(deviceId, SimpleAllocationDevice<Index_t>(numLocations + 1));
+            handle->map_d_tmpResults.emplace(deviceId, helpers::SimpleAllocationDevice<Value_t>{});
+            handle->map_d_destinationPositionsOfGpu.emplace(deviceId, helpers::SimpleAllocationDevice<Index_t>{});
+            handle->map_d_elementsPerLocationPS.emplace(deviceId, helpers::SimpleAllocationDevice<Index_t>(numLocations + 1));
 
-            SimpleAllocationDevice<Index_t> aaa1(numLocations);
+            helpers::SimpleAllocationDevice<Index_t> aaa1(numLocations);
             handle->map_d_numIndicesPerLocation.emplace(deviceId, std::move(aaa1));
-            SimpleAllocationDevice<Index_t> aaa2(numLocations+1);
+            helpers::SimpleAllocationDevice<Index_t> aaa2(numLocations+1);
             handle->map_d_numIndicesPerLocationPS.emplace(deviceId, std::move(aaa2));
 
-            std::vector<SimpleAllocationDevice<Index_t>> vec1(numLocations + 1);
+            std::vector<helpers::SimpleAllocationDevice<Index_t>> vec1(numLocations + 1);
             handle->map_d_indicesForLocationsVector.emplace(deviceId, std::move(vec1));
-            std::vector<SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
+            std::vector<helpers::SimpleAllocationDevice<Index_t>> vec2(numLocations + 1);
             handle->map_d_destinationPositionsForLocationsVector.emplace(deviceId, std::move(vec2));
 
             cudaMemcpyAsync(
@@ -1013,17 +1012,17 @@ public:
             ); CUERR; 
             cudaStreamSynchronize(handle->map_streams[deviceId]); CUERR;
 
-            handle->map_d_splitkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
-            handle->map_h_splitkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
+            handle->map_d_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
+            handle->map_h_splitkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::PartitionSplitKernelParams<Index_t>>(1));
 
-            handle->map_d_prefixsumkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
-            handle->map_h_prefixsumkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_d_prefixsumkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
+            handle->map_h_prefixsumkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::PrefixSumKernelParams<Index_t>>(1));
 
-            handle->map_d_gatherkernelparams.emplace(deviceId, SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
-            handle->map_h_gatherkernelparams.emplace(deviceId, SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+            handle->map_d_gatherkernelparams.emplace(deviceId, helpers::SimpleAllocationDevice<distarraykernels::GatherParams<Index_t,Value_t>>(1));
+            handle->map_h_gatherkernelparams.emplace(deviceId, helpers::SimpleAllocationPinnedHost<distarraykernels::GatherParams<Index_t,Value_t>>(1));
 
-            using hscatvec_t = std::vector<SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
-            using dscatvec_t = std::vector<SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+            using hscatvec_t = std::vector<helpers::SimpleAllocationPinnedHost<distarraykernels::ScatterParams<Index_t,Value_t>>>;
+            using dscatvec_t = std::vector<helpers::SimpleAllocationDevice<distarraykernels::ScatterParams<Index_t,Value_t>>>;
 
             hscatvec_t hscatvec(numGpus);
             for(int k = 0; k < numGpus; k++){
@@ -1036,10 +1035,10 @@ public:
             }
             handle->map_d_scatterkernelparams.emplace(deviceId, std::move(dscatvec));
 
-            handle->map_d_packedpointersAndNumIndicesArg.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedpointersAndNumIndicesArg.emplace(deviceId, helpers::SimpleAllocationDevice<char>());
             handle->map_d_packedpointersAndNumIndicesArg[deviceId].resize(handle->h_packedpointersAndNumIndicesArg.size());
 
-            handle->map_d_packedKernelParamsPartPref.emplace(deviceId, SimpleAllocationDevice<char>());
+            handle->map_d_packedKernelParamsPartPref.emplace(deviceId, helpers::SimpleAllocationDevice<char>());
             handle->map_d_packedKernelParamsPartPref[deviceId].resize(handle->h_packedKernelParamsPartPref.size());
 
      
@@ -2183,19 +2182,21 @@ public:
         return elementsPerLocation;
     }
 
-    void writeHostPartitionToStream(std::ofstream& stream) const{
+    std::size_t writeHostPartitionToStream(std::ostream& stream) const{
         const auto begin = dataPtrPerLocation[hostLocation];
         const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
         stream.write(reinterpret_cast<const char*>(begin), size);
+
+        return size;
     }
 
-    void readHostPartitionFromStream(std::ifstream& stream) const{
+    void readHostPartitionFromStream(std::istream& stream) const{
         auto begin = dataPtrPerLocation[hostLocation];
         const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
         stream.read(reinterpret_cast<char*>(begin), size);
     }
 
-    void writeGpuPartitionToStream(int partition, std::ofstream& stream) const{
+    std::size_t writeGpuPartitionToStream(int partition, std::ostream& stream) const{
         assert(0 <= partition);
         assert(partition < numGpus);
 
@@ -2220,6 +2221,8 @@ public:
         Value_t* buffer = nullptr;
         cudaMallocHost(&buffer, buffersize); CUERR;
 
+        std::size_t writtenBytes = 0;
+
         const std::int64_t batchsize = buffersize / bytesPerElement;
         const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
         for(std::int64_t batch = 0; batch < numBatches; batch++){
@@ -2235,14 +2238,18 @@ public:
             //TIMERSTARTCPU(writeGpuPartitionToStream_file);
             stream.write(reinterpret_cast<const char*>(buffer), sizeOfElement * numElements);
             //TIMERSTOPCPU(writeGpuPartitionToStream_file);
+
+            writtenBytes += sizeOfElement * numElements;
         }
 
         cudaFreeHost(buffer); CUERR;
 
         wrapperCudaSetDevice(currentId); CUERR;
+
+        return writtenBytes;
     }
 
-    void readGpuPartitionFromStream(int partition, std::ifstream& stream){
+    void readGpuPartitionFromStream(int partition, std::istream& stream){
         constexpr std::int64_t MB = std::int64_t(1024) * 1024;
         constexpr std::int64_t safety = std::int64_t(64) * MB;
         constexpr std::int64_t maxBytes = std::int64_t(64) * MB;
@@ -2343,13 +2350,17 @@ public:
         wrapperCudaSetDevice(currentId); CUERR;
     }
 
-    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+    std::size_t writeGpuPartitionsToStream(std::ostream& stream) const{
+        std::size_t bytes = 0;
+
         for(int gpu = 0; gpu < numGpus; gpu++){
-            writeGpuPartitionToStream(gpu, stream);
+            bytes += writeGpuPartitionToStream(gpu, stream);
         }
+
+        return bytes;
     }
 
-    void readGpuPartitionsFromStream(std::ifstream& stream){
+    void readGpuPartitionsFromStream(std::istream& stream){
         for(int gpu = 0; gpu < numGpus; gpu++){
             readGpuPartitionFromStream(gpu, stream);
         }
@@ -2375,17 +2386,19 @@ public:
         }
     }
 
-    void writeToStream(std::ofstream& stream) const{
-        const size_t totalMemory = numRows * sizeOfElement;
-        stream.write(reinterpret_cast<const char*>(&totalMemory), sizeof(size_t));
+    std::size_t writeToStream(std::ostream& stream) const{
+        const std::size_t totalMemory = numRows * sizeOfElement;
+        stream.write(reinterpret_cast<const char*>(&totalMemory), sizeof(std::size_t));
 
-        writeGpuPartitionsToStream(stream);
-        writeHostPartitionToStream(stream);
+        std::size_t bytes = writeGpuPartitionsToStream(stream);
+        bytes += writeHostPartitionToStream(stream);
+
+        return totalMemory + bytes;
     }
 
-    void readFromStream(std::ifstream& stream){
-        size_t totalMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalMemory), sizeof(size_t));
+    void readFromStream(std::istream& stream){
+        std::size_t totalMemory = 1;
+        stream.read(reinterpret_cast<char*>(&totalMemory), sizeof(std::size_t));
         
         readGpuPartitionsFromStream(stream);
         readHostPartitionFromStream(stream);

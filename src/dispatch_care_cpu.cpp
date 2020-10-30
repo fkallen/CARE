@@ -202,9 +202,9 @@ namespace care{
             std::ifstream is(fileOptions.load_hashtables_from);
             assert((bool)is);
 
-            minhasher.loadFromStream(is);
+            const int loadedMaps = minhasher.loadFromStream(is, correctionOptions.numHashFunctions);
 
-            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+            std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
         }else{
             minhasher.construct(
                 fileOptions,

@@ -20,15 +20,13 @@ using namespace kseqpp;
 
 struct Read {
     std::int64_t readNumber = -1;
-    std::string name = "";
-    std::string comment = "";
-    std::string sequence = "";
-    std::string quality = "";
+	std::string header = "";
+	std::string sequence = "";
+	std::string quality = "";
 
     bool operator==(const Read& other) const{
         return (readNumber == other.readNumber 
-                && name == other.name 
-                && comment == other.comment 
+                && header == other.header 
                 && sequence == other.sequence 
                 && quality == other.quality);
     }
@@ -39,8 +37,7 @@ struct Read {
 
     void reset(){
         readNumber = -1;
-        name.clear();
-        comment.clear();
+        header.clear();
         sequence.clear();
         quality.clear();
     }
@@ -70,10 +67,9 @@ void forEachReadVectorInFiles(const std::vector<std::string>& filenames, Func&& 
             //std::cerr << "parser status = 0 in file " << filenames[i] << '\n';
             if(status >= 0){
                 reads[i].readNumber = readNumber;
-                reads[i].name = readers[i]->getCurrentName();
-                reads[i].comment = readers[i]->getCurrentComment();
-                reads[i].sequence = readers[i]->getCurrentSequence();
-                reads[i].quality = readers[i]->getCurrentQuality();
+                std::swap(reads[i].header, readers[i]->getCurrentHeader());
+                std::swap(reads[i].sequence, readers[i]->getCurrentSequence());
+                std::swap(reads[i].quality, readers[i]->getCurrentQuality());
             }else if(status < -1){
                 std::cerr << "parser error status " << status << " in file " << filenames[i] << '\n';
             }

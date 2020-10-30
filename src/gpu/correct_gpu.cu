@@ -5,7 +5,6 @@
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
-#include <gpu/minhashkernels.hpp>
 #include <gpu/gpumsa.cuh>
 
 #include <correctionresultprocessing.hpp>
@@ -267,10 +266,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         PinnedBuffer<unsigned int> h_subject_sequences_data;
         PinnedBuffer<int> h_subject_sequences_lengths;
@@ -322,8 +321,6 @@ namespace gpu{
         ThreadPool::ParallelForHandle pforHandle;
 
         cpu::RangeGenerator<read_number>* readIdGenerator;
-
-        MergeRangesGpuHandle<read_number> mergeRangesGpuHandle;
 
         SyncFlag syncFlag;
 
@@ -377,7 +374,6 @@ namespace gpu{
             cudaStreamCreate(&nextData.stream); CUERR;
             cudaEventCreate(&nextData.event); CUERR;
     
-            nextData.mergeRangesGpuHandle = makeMergeRangesGpuHandle<read_number>();
             nextData.minhasherQueryHandle = GpuMinhasher::makeQueryHandle();
 
             nextData.minhasherQueryHandle.resize(minhasher, batchsize, maxNumThreads);
@@ -470,7 +466,6 @@ namespace gpu{
             nextData.h_leftoverAnchorReadIds.destroy();
             nextData.d_cubTemp.destroy();
     
-            destroyMergeRangesGpuHandle(nextData.mergeRangesGpuHandle);
             GpuMinhasher::destroyQueryHandle(nextData.minhasherQueryHandle);
         }
 
@@ -850,7 +845,7 @@ namespace gpu{
     
             ParallelForLoopExecutor parallelFor(nextData.threadPool, &nextData.pforHandle);
     
-            nextData.minhasher->getIdsOfSimilarReads(
+            nextData.minhasher->getIdsOfSimilarReadsExcludingSelf(
                 nextData.minhasherQueryHandle,
                 nextData.d_leftoverAnchorReadIds.get() + numLeftoverAnchors,
                 nextData.h_leftoverAnchorReadIds.get() + numLeftoverAnchors,
@@ -880,7 +875,7 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         int n_subjects;
         int n_queries;
@@ -1033,10 +1028,10 @@ namespace gpu{
         static constexpr int overprovisioningPercent = 0;
 
         template<class T>
-        using DeviceBuffer = SimpleAllocationDevice<T, overprovisioningPercent>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T, overprovisioningPercent>;
         
         template<class T>
-        using PinnedBuffer = SimpleAllocationPinnedHost<T, overprovisioningPercent>;
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
         Batch() = default;
         Batch(const Batch&) = delete;

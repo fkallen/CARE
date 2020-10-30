@@ -40,8 +40,6 @@ struct Minhasher {
 
     using Range_t = std::pair<const Value_t*, const Value_t*>;
 
-    static constexpr int bits_key = sizeof(Key_t) * 8;
-	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
     struct Handle{        
@@ -70,12 +68,11 @@ struct Minhasher {
         //     assert(i < int(numResultsPerSequence.size()));
         //     return numResultsPerSequence[i];
         // }
-	};
+    };
 
     int kmerSize;
     int resultsPerMapThreshold;
-    read_number nReads;
-	std::vector<std::unique_ptr<Map_t>> minhashTables;
+    std::vector<std::unique_ptr<Map_t>> minhashTables;
 
     // Minhasher();
 
@@ -121,11 +118,17 @@ struct Minhasher {
         return resultsPerMapThreshold;
     }
 
+    std::uint64_t getKmerMask() const{
+        constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+
+        return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
+    }
+
     MemoryUsage getMemoryInfo() const;
 
     void writeToStream(std::ostream& os) const;
 
-    void loadFromStream(std::ifstream& is);
+    int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
 
 	void clear();
 
@@ -133,12 +136,6 @@ struct Minhasher {
 
     std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
                                                         Key_t key) const noexcept;                               
-
-
-    void getCandidates_any_map(
-            Minhasher::Handle& handle,
-            const std::string& sequence,
-            std::uint64_t) const noexcept;
 
     void getCandidates_any_map(
             Minhasher::Handle& handle,
@@ -148,19 +145,10 @@ struct Minhasher {
 
 private:
 
-    std::array<std::uint64_t, maximum_number_of_maps>
-    minhashfunc(const std::string& sequence) const noexcept{
-        return minhashfunc(sequence, getNumberOfMaps());
-    }
-
     std::array<std::uint64_t, maximum_number_of_maps> 
     minhashfunc(const char* sequence, int sequenceLength) const noexcept{
         return minhashfunc(sequence, sequenceLength, getNumberOfMaps());
     }
-
-
-	std::array<std::uint64_t, maximum_number_of_maps>
-    minhashfunc(const std::string& sequence, int numHashfuncs) const noexcept;
 
     std::array<std::uint64_t, maximum_number_of_maps> 
     minhashfunc(const char* sequence, int sequenceLength, int numHashfuncs) const noexcept;

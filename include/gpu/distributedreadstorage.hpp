@@ -68,12 +68,12 @@ public:
 
         cudaStream_t stream1 = nullptr;
         cudaStream_t stream2 = nullptr;
-        SimpleAllocationPinnedHost<char> h_decodedSequences;
-        SimpleAllocationDevice<char> d_decodedSequences;
-        SimpleAllocationPinnedHost<unsigned int> h_encodedSequences;
-        SimpleAllocationDevice<unsigned int> d_encodedSequences;
-        SimpleAllocationPinnedHost<int> h_lengths;
-        SimpleAllocationDevice<int> d_lengths;
+        helpers::SimpleAllocationPinnedHost<char> h_decodedSequences;
+        helpers::SimpleAllocationDevice<char> d_decodedSequences;
+        helpers::SimpleAllocationPinnedHost<unsigned int> h_encodedSequences;
+        helpers::SimpleAllocationDevice<unsigned int> d_encodedSequences;
+        helpers::SimpleAllocationPinnedHost<int> h_lengths;
+        helpers::SimpleAllocationDevice<int> d_lengths;
         std::vector<char> sequenceData;
         std::vector<int> sequenceLengths;
         std::vector<char> qualityData;
@@ -151,12 +151,12 @@ public:
 
     //         cudaStream_t stream1 = nullptr;
     //         cudaStream_t stream2 = nullptr;
-    //         SimpleAllocationPinnedHost<char> h_decodedSequences;
-    //         SimpleAllocationDevice<char> d_decodedSequences;
-    //         SimpleAllocationPinnedHost<char> h_encodedSequences;
-    //         SimpleAllocationDevice<char> d_encodedSequences;
-    //         SimpleAllocationPinnedHost<char> h_lengths;
-    //         SimpleAllocationDevice<char> d_lengths;
+    //         helpers::SimpleAllocationPinnedHost<char> h_decodedSequences;
+    //         helpers::SimpleAllocationDevice<char> d_decodedSequences;
+    //         helpers::SimpleAllocationPinnedHost<char> h_encodedSequences;
+    //         helpers::SimpleAllocationDevice<char> d_encodedSequences;
+    //         helpers::SimpleAllocationPinnedHost<char> h_lengths;
+    //         helpers::SimpleAllocationDevice<char> d_lengths;
 
     //         ReadInserterHandle(){
     //             cudaGetDevice(&deviceId); CUERR;
@@ -243,6 +243,16 @@ public:
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
     void construct(
+        std::vector<std::string> inputfiles,
+        bool useQualityScores,
+        read_number expectedNumberOfReads,
+        int expectedMinimumReadLength,
+        int expectedMaximumReadLength,
+        int threads,
+        bool showProgress
+    );
+
+    void constructPaired(
         std::vector<std::string> inputfiles,
         bool useQualityScores,
         read_number expectedNumberOfReads,

@@ -7,10 +7,7 @@
 
 namespace care{
 
-
-
-
-    //unsigned integral type large enough to enumerate all reads
+    //unsigned integral type large enough to enumerate all reads. Number of reads must be < numeric_limits<read_number>::max().
     using read_number = std::uint32_t;
 
     static_assert(std::is_integral<read_number>::value, "read_number must be integral.");
@@ -35,18 +32,6 @@ namespace care{
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
     constexpr std::size_t gpuReadStorageHeadroomPerGPU = std::size_t(1) << 30;
 
-    //During construction of minhasher, minhasherConstructionNumMaps maps will be constructed before each of those is transformed into
-    //a space efficient format.
-    //greater number means faster construction time and greater memory usage during construction.
-    //smaller number means slower construction time and less memory usage during construction.
-    constexpr int minhasherConstructionNumMaps = 16;
-
-
-    //Controls file size of temporary results.
-    //tmpresultfileformat = 0 -> use a plain text file. use gnu sort for sorting
-    //tmpresultfileformat = 1 -> use space efficient format. use custom sort function
-    constexpr int tmpresultfileformat = 1;
-    static_assert(0 <= tmpresultfileformat && tmpresultfileformat <= 1, "");
 
 //##################################################
 

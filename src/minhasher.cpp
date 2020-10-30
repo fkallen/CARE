@@ -26,7 +26,6 @@ namespace care{
 
     Minhasher& Minhasher::operator=(Minhasher&& rhs){
         minhashTables = std::move(rhs.minhashTables);
-        nReads = std::move(rhs.nReads);
         kmerSize = std::move(rhs.kmerSize);
         resultsPerMapThreshold = std::move(rhs.resultsPerMapThreshold);
 
@@ -37,8 +36,6 @@ namespace care{
         if(kmerSize != rhs.kmerSize)
             return false;
         if(resultsPerMapThreshold != rhs.resultsPerMapThreshold)
-            return false;
-        if(nReads != rhs.nReads)
             return false;
         if(minhashTables.size() != rhs.minhashTables.size())
             return false;
@@ -66,20 +63,9 @@ namespace care{
 
 
     void Minhasher::writeToStream(std::ostream& outstream) const{
-        int bits_key_tosave = bits_key;
-        std::uint64_t key_mask_tosave = key_mask;
-        int maximum_number_of_maps_tosave = maximum_number_of_maps;
-        int maximum_kmer_length_tosave = maximum_kmer_length;
-
-        outstream.write(reinterpret_cast<const char*>(&bits_key_tosave), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&key_mask_tosave), sizeof(std::uint64_t));
-        outstream.write(reinterpret_cast<const char*>(&maximum_number_of_maps_tosave), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
-
 
         outstream.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
         outstream.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
-        outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(read_number));
 
         const int numTables = getNumberOfMaps();
         outstream.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
@@ -88,33 +74,19 @@ namespace care{
             tableptr->writeToStream(outstream);
     }
 
-    void Minhasher::loadFromStream(std::ifstream& instream){
+    int Minhasher::loadFromStream(std::ifstream& instream, int numMapsUpperLimit){
 
         destroy();
 
-        int bits_key_loaded;
-    	std::uint64_t key_mask_loaded;
-        int maximum_number_of_maps_loaded;
-        int maximum_kmer_length_loaded;
-
-        instream.read(reinterpret_cast<char*>(&bits_key_loaded), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&key_mask_loaded), sizeof(std::uint64_t));
-        instream.read(reinterpret_cast<char*>(&maximum_number_of_maps_loaded), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&maximum_kmer_length_loaded), sizeof(int));
-
-        assert(bits_key == bits_key_loaded);
-        assert(key_mask == key_mask_loaded);
-        assert(maximum_number_of_maps == maximum_number_of_maps_loaded);
-        assert(maximum_kmer_length == maximum_kmer_length_loaded);
-
         instream.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
         instream.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
-        instream.read(reinterpret_cast<char*>(&nReads), sizeof(read_number));
 
-        int numTables = 0;
-        instream.read(reinterpret_cast<char*>(&numTables), sizeof(int));
+        int numMaps = 0;
+        instream.read(reinterpret_cast<char*>(&numMaps), sizeof(int));
 
-        for(int i = 0; i < numTables; i++){
+        const int mapsToLoad = std::min(numMaps, numMapsUpperLimit);
+
+        for(int i = 0; i < mapsToLoad; i++){
             try{
                 auto tmptableptr = std::make_unique<Minhasher::Map_t>();
                 tmptableptr->loadFromStream(instream);
@@ -125,6 +97,8 @@ namespace care{
                 throw std::runtime_error("Exception occurred while loading minhasher. Abort!");
             }
         }
+
+        return mapsToLoad;
     }
 
 
@@ -138,8 +112,8 @@ namespace care{
     ){
 
         const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
+        const std::uint64_t kmer_mask = getKmerMask();
 
-        this->nReads = nReads;
         minhashTables.clear();
 
         ThreadPool threadPool(runtimeOptions.threads);
@@ -229,9 +203,9 @@ namespace care{
                 for (read_number readId = begin; readId < end; readId++){
                     const read_number localId = readId - readIdBegin;
 
-                    const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
+                    const unsigned int* sequenceptr = readStorage.fetchSequenceData_ptr(localId);
                     const int sequencelength = readStorage.fetchSequenceLength(readId);
-                    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+                    std::string sequencestring = get2BitString(sequenceptr, sequencelength);
 
                     if(readId >= nReads)
                         throw std::runtime_error("Minhasher::insertSequence: read number too large. "
@@ -239,11 +213,11 @@ namespace care{
 
                     
                     if(sequencelength >= getKmerSize()){
-                        auto hashValues = minhashfunc(sequencestring, requestedNumberOfMaps);
+                        auto hashValues = minhashfunc(sequencestring.c_str(), sequencelength, requestedNumberOfMaps);
 
                         for(int i = 0; i < int(hashIds.size()); i++){
                             const auto hashValue = hashValues[hashIds[i]];
-                            const kmer_type key = hashValue & key_mask;
+                            const kmer_type key = hashValue & kmer_mask;
 
                             hashesPerTable[i][readId] = key;
                             readIdsPerTable[i][readId] = readId;
@@ -356,7 +330,6 @@ namespace care{
 
 	void Minhasher::clear(){
 		minhashTables.clear();
-		nReads = 0;
 	}
 
 	void Minhasher::destroy(){
@@ -382,13 +355,6 @@ namespace care{
 
     void Minhasher::getCandidates_any_map(
             Minhasher::Handle& handle,
-            const std::string& sequence,
-            std::uint64_t) const noexcept{
-        getCandidates_any_map(handle, sequence.c_str(), sequence.length(), 0);
-    }
-
-    void Minhasher::getCandidates_any_map(
-            Minhasher::Handle& handle,
             const char* sequence,
             int sequenceLength,
             std::uint64_t) const noexcept{
@@ -398,6 +364,8 @@ namespace care{
             handle.allUniqueResults.clear();
             return;
         }
+
+        const std::uint64_t kmer_mask = getKmerMask();
    
         auto hashValues = minhashfunc(sequence, sequenceLength);
 
@@ -406,7 +374,7 @@ namespace care{
         int maximumResultSize = 0;
 
         for(int map = 0; map < getNumberOfMaps(); ++map){
-            kmer_type key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & kmer_mask;
             auto entries_range = queryMap(map, key);
             int n_entries = std::distance(entries_range.first, entries_range.second);
             if(n_entries > 0){
@@ -423,7 +391,6 @@ namespace care{
 
 
 
-
     std::array<std::uint64_t, maximum_number_of_maps> 
     minhashfunction(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) noexcept{
 
@@ -434,8 +401,9 @@ namespace care{
 
         if(length < kmerLength) return minhashSignature;
 
-        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((Minhasher::maximum_kmer_length - kmerLength) * 2);
-        const int rcshiftamount = (Minhasher::maximum_kmer_length - kmerLength) * 2;
+        constexpr int maximum_kmer_length = max_k<kmer_type>::value;
+        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+        const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
         
 
         auto murmur3_fmix = [](std::uint64_t x) {
@@ -447,27 +415,12 @@ namespace care{
             return x;
         };
 
-        
-#if 0
-        auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
-            const auto fwdhash = murmur3_fmix(fwd + numhashfunc);
-            const auto rchash = murmur3_fmix(rc + numhashfunc);
-            const auto smallest = std::min(fwdhash, rchash);
-            // if(numhashfunc == 1){
-            //     std::cerr << fwd << ' ' << rc << ' ' << fwdhash << ' ' << rchash << ' '  << minhashSignature[numhashfunc] << '\n';
-            // }
-            minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], smallest);
-        };
-#else 
-
         auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
             const auto smallest = std::min(fwd, rc);
             const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
             minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
         };
 
-
-#endif
         kmer_type kmer_encoded = 0;
         kmer_type rc_kmer_encoded = std::numeric_limits<kmer_type>::max();
 
@@ -510,12 +463,6 @@ namespace care{
         }
 
         return minhashSignature;
-	}
-
-
-    std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence, int numHashfuncs) const noexcept{
-        return minhashfunc(sequence.c_str(), sequence.length(), numHashfuncs);
 	}
 
     std::array<std::uint64_t, maximum_number_of_maps> 

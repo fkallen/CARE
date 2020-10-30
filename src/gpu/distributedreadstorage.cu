@@ -292,12 +292,44 @@ void DistributedReadStorage::construct(
 
     auto makeInserterFunc = [&](){return makeReadInserter();};
     auto makeReadContainsNFunc = [this](){
-        return [&](read_number readId, bool contains){
+        return [=](read_number readId, bool contains){
             this->setReadContainsN(readId, contains);
         };
     };
 
     constructReadStorageFromFiles(
+        inputfiles,
+        useQualityScores,
+        expectedNumberOfReads,
+        expectedMinimumReadLength,
+        expectedMaximumReadLength,
+        threads,
+        showProgress,
+        makeInserterFunc,
+        makeReadContainsNFunc
+    );
+
+    constructionIsComplete();
+}
+
+void DistributedReadStorage::constructPaired(
+    std::vector<std::string> inputfiles,
+    bool useQualityScores,
+    read_number expectedNumberOfReads,
+    int expectedMinimumReadLength,
+    int expectedMaximumReadLength,
+    int threads,
+    bool showProgress
+){
+
+    auto makeInserterFunc = [&](){return makeReadInserter();};
+    auto makeReadContainsNFunc = [this](){
+        return [&](read_number readId, bool contains){
+            this->setReadContainsN(readId, contains);
+        };
+    };
+
+    constructReadStorageFromPairedEndFiles(
         inputfiles,
         useQualityScores,
         expectedNumberOfReads,
@@ -334,7 +366,10 @@ MemoryUsage DistributedReadStorage::getMemoryInfo() const{
     };
 
     handlearray(distributedSequenceData);
-    handlearray(distributedQualities);
+
+    if(canUseQualityScores()){
+        handlearray(distributedQualities);
+    }
 
     auto lengthstorageMem = gpulengthStorage.getMemoryInfo();
 
@@ -704,17 +739,14 @@ void DistributedReadStorage::setReadContainsN(read_number readId, bool contains)
                                         readId);
 
     if(contains){
-        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
-            ; //already marked
-        }else{
+        //if readId is not already in the vector, insert it
+        if((pos == readIdsOfReadsWithUndeterminedBase.end()) || (pos != readIdsOfReadsWithUndeterminedBase.end() && *pos != readId)){
             readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
         }
     }else{
-        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+        if(pos != readIdsOfReadsWithUndeterminedBase.end() && *pos == readId){
             //remove mark
             readIdsOfReadsWithUndeterminedBase.erase(pos);
-        }else{
-            ; //already unmarked
         }
     }
 }
@@ -890,17 +922,33 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream) const{
 
-    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+    if(threadPool != nullptr){
 
-    distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
-                                                        handle,
-                                                        h_readIds,
-                                                        d_readIds,
-                                                        nReadIds,
-                                                        deviceId,
-                                                        d_sequence_data,
-                                                        outSequencePitchInInts * sizeof(unsigned int),
-                                                        stream);
+        ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+        distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_sequence_data,
+            outSequencePitchInInts * sizeof(unsigned int),
+            stream);
+    }else{
+        SequentialForLoopExecutor forLoop;
+
+        distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_sequence_data,
+            outSequencePitchInInts * sizeof(unsigned int),
+            stream);
+    }
+    
 
 }
 
@@ -916,17 +964,32 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream) const{
 
-    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+    if(threadPool != nullptr){
 
-    distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
-                                                        handle,
-                                                        h_readIds,
-                                                        d_readIds,
-                                                        nReadIds,
-                                                        deviceId,
-                                                        d_quality_data,
-                                                        out_quality_pitch,
-                                                        stream);
+        ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+        distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
+                                                            handle,
+                                                            h_readIds,
+                                                            d_readIds,
+                                                            nReadIds,
+                                                            deviceId,
+                                                            d_quality_data,
+                                                            out_quality_pitch,
+                                                            stream);
+    }else{
+        SequentialForLoopExecutor forLoop;
+
+        distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
+            handle,
+            h_readIds,
+            d_readIds,
+            nReadIds,
+            deviceId,
+            d_quality_data,
+            out_quality_pitch,
+            stream);
+    }
 
 }
 
@@ -963,14 +1026,8 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBuffer(
 }
 
 
-#if 0
-
 void DistributedReadStorage::saveToFile(const std::string& filename) const{
     std::ofstream stream(filename, std::ios::binary);
-
-    //int ser_id = serialization_id;
-    //std::size_t lengthsize = sizeof(Length_t);
-    //stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
 
     read_number inserted = getNumberOfReads();
 
@@ -980,148 +1037,35 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
     stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
     stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
 
-    gpulengthStorage.writeCpuLengthStoreToStream(stream);
+    auto pos = stream.tellp();
 
-    constexpr read_number batchsize = 10000000;
-    int numBatches = SDIV(getNumberOfReads(), batchsize);
+    stream.seekp(sizeof(std::size_t) * 4, std::ios_base::cur);
 
-    {
-        auto sequencehandle = makeGatherHandleSequences();
-        size_t outputpitch = getEncodedNumInts2Bit(sequenceLengthUpperBound) * sizeof(int);
+    std::size_t lengthsBytes = gpulengthStorage.writeCpuLengthStoreToStream(stream);
 
-        size_t totalSequenceMemory = outputpitch * getNumberOfReads();
-        stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
-
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
-
-            std::vector<read_number> indices(end-begin);
-            std::iota(indices.begin(), indices.end(), begin);
-
-            size_t databytes = outputpitch * indices.size();
-            std::vector<char> data(databytes, 0);
-
-            auto future = gatherSequenceDataToHostBufferAsync(
-                                        sequencehandle,
-                                        data.data(),
-                                        outputpitch,
-                                        indices.data(),
-                                        indices.size(),
-                                        1);
-
-            future.wait();
-
-            stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
-        }
-    }
-
-    // {
-    //     auto lengthhandle = makeGatherHandleLengths();
-    //     size_t outputpitch = sizeof(Length_t);
-
-    //     size_t totalLengthMemory = outputpitch * getNumberOfReads();
-    //     stream.write(reinterpret_cast<const char*>(&totalLengthMemory), sizeof(size_t));
-
-    //     for(int batch = 0; batch < numBatches; batch++){
-    //         read_number begin = batch * batchsize;
-    //         read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
-
-    //         std::vector<read_number> indices(end-begin);
-    //         std::iota(indices.begin(), indices.end(), begin);
-
-    //         size_t databytes = outputpitch * indices.size();
-    //         std::vector<Length_t> data(indices.size(), 0);
-
-    //         auto future = gatherSequenceLengthsToHostBufferAsync(
-    //                                     lengthhandle,
-    //                                     data.data(),
-    //                                     indices.data(),
-    //                                     indices.size(),
-    //                                     1);
-
-    //         future.wait();
-
-    //         stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
-    //     }
-    // }
-
-    if(useQualityScores){
-        auto qualityhandle = makeGatherHandleQualities();
-        size_t outputpitch = sequenceLengthUpperBound;
-
-        size_t totalqualityMemory = outputpitch * getNumberOfReads();
-        stream.write(reinterpret_cast<const char*>(&totalqualityMemory), sizeof(size_t));
-
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
-
-            std::vector<read_number> indices(end-begin);
-            std::iota(indices.begin(), indices.end(), begin);
-
-            size_t databytes = outputpitch * indices.size();
-            std::vector<char> data(databytes, 0);
-
-            auto future = gatherQualitiesToHostBufferAsync(
-                                        qualityhandle,
-                                        data.data(),
-                                        outputpitch,
-                                        indices.data(),
-                                        indices.size(),
-                                        1);
-
-            future.wait();
-
-            stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
-        }
-    }
+    std::size_t sequencesBytes = distributedSequenceData.writeToStream(stream);      
+    std::size_t qualitiesBytes = distributedQualities.writeToStream(stream);       
 
     //read ids with N
     std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
-    stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
+    stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(std::size_t));
     stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
-}
 
-#else 
+    std::size_t ambigBytes = sizeof(std::size_t) * numUndeterminedReads * sizeof(read_number);
 
-void DistributedReadStorage::saveToFile(const std::string& filename) const{
-    std::ofstream stream(filename, std::ios::binary);
-
-    //int ser_id = serialization_id;
-    //std::size_t lengthsize = sizeof(Length_t);
-    //stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
-
-    read_number inserted = getNumberOfReads();
-
-    stream.write(reinterpret_cast<const char*>(&inserted), sizeof(read_number));
-    stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
-    stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
-    stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-    stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
-
-    gpulengthStorage.writeCpuLengthStoreToStream(stream);
-
-    distributedSequenceData.writeToStream(stream);      
-    distributedQualities.writeToStream(stream);       
-
-    //read ids with N
-    std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
-    stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
-    stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
+    stream.seekp(pos);
+    stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
+    stream.write(reinterpret_cast<const char*>(&sequencesBytes), sizeof(std::size_t));
+    stream.write(reinterpret_cast<const char*>(&qualitiesBytes), sizeof(std::size_t));
+    stream.write(reinterpret_cast<const char*>(&ambigBytes), sizeof(std::size_t));
 }
 
 
-
-#endif
 
 void DistributedReadStorage::loadFromFile(const std::string& filename){
     loadFromFile(filename, deviceIds);
 }
 
-
-#if 0
-
 void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
     std::ifstream stream(filename, std::ios::binary);
     if(!stream)
@@ -1140,156 +1084,47 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     read_number loaded_numberOfReads;
     int loaded_sequenceLengthLowerBound;
     int loaded_sequenceLengthUpperBound;
-    bool loaded_useQualityScores;
+    bool loaded_hasQualityScores;
 
     stream.read(reinterpret_cast<char*>(&loaded_numberOfReads), sizeof(read_number));
     stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
     stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
-    stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
+    stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
 
-    init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, 
+    init(deviceIds_, loaded_numberOfReads, canUseQualityScores(), 
         loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
 
     numberOfInsertedReads = loaded_numberOfReads;
 
     stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
-    lengthStorage.readFromStream(stream);
+    std::size_t lengthsBytes = 0;
+    std::size_t sequencesBytes = 0;      
+    std::size_t qualitiesBytes = 0;       
+    std::size_t ambigBytes = 0;
 
-    constexpr read_number batchsize = 10000000;
-    int numBatches = SDIV(loaded_numberOfReads, batchsize);
-
-    {
-        size_t seqpitch = getEncodedNumInts2Bit(sequenceLengthUpperBound) * sizeof(int);
-
-        size_t totalSequenceMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));
-
-        size_t totalMemoryRead = 0;
-
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
-
-            size_t databytes = seqpitch * (end-begin);
-            std::vector<char> data(databytes, 0);
-
-            stream.read(reinterpret_cast<char*>(&data[0]), databytes);
-            totalMemoryRead += stream.gcount();
-
-            assert(totalMemoryRead <= totalSequenceMemory);
-
-            setSequences(begin, end, data.data());
-        }
-
-        assert(totalMemoryRead == totalSequenceMemory);
-    }
-
-    // {
-    //     size_t lengthpitch = sizeof(Length_t);
-
-    //     size_t totalLengthMemory = 1;
-    //     stream.read(reinterpret_cast<char*>(&totalLengthMemory), sizeof(size_t));
-
-    //     size_t totalMemoryRead = 0;
-
-    //     for(int batch = 0; batch < numBatches; batch++){
-    //         read_number begin = batch * batchsize;
-    //         read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
-
-    //         std::vector<Length_t> data((end-begin), 0);
-
-    //         size_t databytes = lengthpitch * (end-begin);
-    //         stream.read(reinterpret_cast<char*>(&data[0]), databytes);
-    //         totalMemoryRead += stream.gcount();
-
-    //         assert(totalMemoryRead <= totalLengthMemory);
-
-    //         setSequenceLengths(begin, end, data.data());
-
-    //         // auto minmax = std::minmax_element(data.begin(), data.end(), [](const auto& l1, const auto& l2){
-    //         //     return l1 < l2;
-    //         // });
-
-    //         // statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(*minmax.first));
-    //         // statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(*minmax.second));
-    //     }
-
-    //     assert(totalMemoryRead == totalLengthMemory);
-    // }
-
-    if(useQualityScores){
-        size_t qualitypitch = sequenceLengthUpperBound;
-
-        size_t totalqualityMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalqualityMemory), sizeof(size_t));
-
-        size_t totalMemoryRead = 0;
-
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
-
-            size_t databytes = qualitypitch * (end-begin);
-            std::vector<char> data(databytes, 0);
-
-            stream.read(reinterpret_cast<char*>(&data[0]), databytes);
-            totalMemoryRead += stream.gcount();
-
-            assert(totalMemoryRead <= totalqualityMemory);
-
-            setQualities(begin, end, data.data());
-        }
-
-        assert(totalMemoryRead == totalqualityMemory);
-    }
-
-    //read ids with N
-    std::size_t numUndeterminedReads = 0;
-    stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
-    readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
-    stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
-
-}
-
-#else 
-
-void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
-    std::ifstream stream(filename, std::ios::binary);
-    if(!stream)
-        throw std::runtime_error("Cannot open file " + filename);
-
-    destroy();
-
-    // std::size_t lengthsize = sizeof(Length_t);
-    // std::size_t loaded_lengthsize;
-    // stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
-
-    // if(loaded_lengthsize != lengthsize)
-    //     throw std::runtime_error("Wrong size of length type!");
-
-
-    read_number loaded_numberOfReads;
-    int loaded_sequenceLengthLowerBound;
-    int loaded_sequenceLengthUpperBound;
-    bool loaded_useQualityScores;
-
-    stream.read(reinterpret_cast<char*>(&loaded_numberOfReads), sizeof(read_number));
-    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
-    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
-    stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-
-    init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, 
-        loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
-
-    numberOfInsertedReads = loaded_numberOfReads;
-
-    stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
+    stream.read(reinterpret_cast<char*>(&lengthsBytes), sizeof(std::size_t));
+    stream.read(reinterpret_cast<char*>(&sequencesBytes), sizeof(std::size_t));
+    stream.read(reinterpret_cast<char*>(&qualitiesBytes), sizeof(std::size_t));
+    stream.read(reinterpret_cast<char*>(&ambigBytes), sizeof(std::size_t));
 
     lengthStorage.readFromStream(stream);
 
     distributedSequenceData.readFromStream(stream);
-    distributedQualities.readFromStream(stream);
+
+    if(canUseQualityScores() && loaded_hasQualityScores){
+        //std::cerr << "load qualities\n";
+        distributedQualities.readFromStream(stream);
+    }else if(canUseQualityScores() && !loaded_hasQualityScores){
+            //std::cerr << "no q in bin file\n";
+            throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
+    }else if(!canUseQualityScores() && loaded_hasQualityScores){
+            //std::cerr << "skip qualities\n";
+            stream.ignore(qualitiesBytes);
+    }else{
+        //!canUseQualityScores() && !loaded_hasQualityScores
+        //std::cerr << "no q in file, and no q required. Ok\n";
+    }
 
     //read ids with N
     std::size_t numUndeterminedReads = 0;
@@ -1303,9 +1138,6 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
 }
 
-
-
-#endif
 
 
 void DistributedReadStorage::setGpuBitArraysFromVector(){
