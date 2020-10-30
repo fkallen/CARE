@@ -112,6 +112,7 @@ namespace care{
     ){
 
         const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
+        const std::uint64_t kmer_mask = getKmerMask();
 
         minhashTables.clear();
 
@@ -202,9 +203,9 @@ namespace care{
                 for (read_number readId = begin; readId < end; readId++){
                     const read_number localId = readId - readIdBegin;
 
-                    const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
+                    const unsigned int* sequenceptr = readStorage.fetchSequenceData_ptr(localId);
                     const int sequencelength = readStorage.fetchSequenceLength(readId);
-                    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+                    std::string sequencestring = get2BitString(sequenceptr, sequencelength);
 
                     if(readId >= nReads)
                         throw std::runtime_error("Minhasher::insertSequence: read number too large. "
@@ -212,11 +213,11 @@ namespace care{
 
                     
                     if(sequencelength >= getKmerSize()){
-                        auto hashValues = minhashfunc(sequencestring, requestedNumberOfMaps);
+                        auto hashValues = minhashfunc(sequencestring.c_str(), sequencelength, requestedNumberOfMaps);
 
                         for(int i = 0; i < int(hashIds.size()); i++){
                             const auto hashValue = hashValues[hashIds[i]];
-                            const kmer_type key = hashValue & key_mask;
+                            const kmer_type key = hashValue & kmer_mask;
 
                             hashesPerTable[i][readId] = key;
                             readIdsPerTable[i][readId] = readId;
@@ -354,13 +355,6 @@ namespace care{
 
     void Minhasher::getCandidates_any_map(
             Minhasher::Handle& handle,
-            const std::string& sequence,
-            std::uint64_t) const noexcept{
-        getCandidates_any_map(handle, sequence.c_str(), sequence.length(), 0);
-    }
-
-    void Minhasher::getCandidates_any_map(
-            Minhasher::Handle& handle,
             const char* sequence,
             int sequenceLength,
             std::uint64_t) const noexcept{
@@ -370,6 +364,8 @@ namespace care{
             handle.allUniqueResults.clear();
             return;
         }
+
+        const std::uint64_t kmer_mask = getKmerMask();
    
         auto hashValues = minhashfunc(sequence, sequenceLength);
 
@@ -378,7 +374,7 @@ namespace care{
         int maximumResultSize = 0;
 
         for(int map = 0; map < getNumberOfMaps(); ++map){
-            kmer_type key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & kmer_mask;
             auto entries_range = queryMap(map, key);
             int n_entries = std::distance(entries_range.first, entries_range.second);
             if(n_entries > 0){
@@ -393,31 +389,6 @@ namespace care{
         handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
     }
 
-    // void Minhasher::getCandidatesOfMap(
-    //         Minhasher::Handle& handle,
-    //         const char* sequence,
-    //         int sequenceLength,
-    //         int map
-    // ) const noexcept{
-
-    //     assert(map < getNumberOfMaps());
-
-    //     // we do not consider reads which are shorter than k
-    //     if(sequenceLength < getKmerSize()){
-    //         handle.allUniqueResults.clear();
-    //         return;
-    //     }
-   
-    //     const auto hashValues = minhashfunc(sequence, sequenceLength);
-    //     const kmer_type key = hashValues[map] & key_mask;
-    //     const auto entries_range = queryMap(map, key);
-    //     const int n_entries = std::distance(entries_range.first, entries_range.second);
-        
-    //     handle.allUniqueResults.resize(n_entries);
-    //     std::copy(entries_range.first, entries_range.second, handle.allUniqueResults.begin());
-    // }
-
-
 
 
     std::array<std::uint64_t, maximum_number_of_maps> 
@@ -430,8 +401,9 @@ namespace care{
 
         if(length < kmerLength) return minhashSignature;
 
-        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((Minhasher::maximum_kmer_length - kmerLength) * 2);
-        const int rcshiftamount = (Minhasher::maximum_kmer_length - kmerLength) * 2;
+        constexpr int maximum_kmer_length = max_k<kmer_type>::value;
+        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+        const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
         
 
         auto murmur3_fmix = [](std::uint64_t x) {
@@ -443,27 +415,12 @@ namespace care{
             return x;
         };
 
-        
-#if 0
-        auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
-            const auto fwdhash = murmur3_fmix(fwd + numhashfunc);
-            const auto rchash = murmur3_fmix(rc + numhashfunc);
-            const auto smallest = std::min(fwdhash, rchash);
-            // if(numhashfunc == 1){
-            //     std::cerr << fwd << ' ' << rc << ' ' << fwdhash << ' ' << rchash << ' '  << minhashSignature[numhashfunc] << '\n';
-            // }
-            minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], smallest);
-        };
-#else 
-
         auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
             const auto smallest = std::min(fwd, rc);
             const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
             minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
         };
 
-
-#endif
         kmer_type kmer_encoded = 0;
         kmer_type rc_kmer_encoded = std::numeric_limits<kmer_type>::max();
 
@@ -506,12 +463,6 @@ namespace care{
         }
 
         return minhashSignature;
-	}
-
-
-    std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence, int numHashfuncs) const noexcept{
-        return minhashfunc(sequence.c_str(), sequence.length(), numHashfuncs);
 	}
 
     std::array<std::uint64_t, maximum_number_of_maps> 

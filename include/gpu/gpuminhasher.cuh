@@ -29,150 +29,6 @@
 namespace care{
 namespace gpu{
 
-    struct GpuReadStorageHasher{
-        int totalNumHashFuncs; 
-        int kmerSize;
-        int deviceId;
-        cudaStream_t stream;
-        const DistributedReadStorage* readStorage;
-        ThreadPool* threadPool;
-
-        helpers::SimpleAllocationDevice<unsigned int, 0> d_sequenceData;
-        helpers::SimpleAllocationDevice<int, 0> d_lengths;
-
-        helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices;
-        helpers::SimpleAllocationDevice<read_number, 0> d_indices;
-
-        helpers::SimpleAllocationPinnedHost<std::uint64_t, 0> h_signatures;
-        helpers::SimpleAllocationDevice<std::uint64_t, 0> d_signatures;
-        
-        ThreadPool::ParallelForHandle pforHandle;
-        DistributedReadStorage::GatherHandleSequences gatherHandle;
-
-        GpuReadStorageHasher(int totalNumHashFuncs, int kmerSize, const DistributedReadStorage* readStorage, ThreadPool* threadPool) 
-            : 
-            totalNumHashFuncs(totalNumHashFuncs),
-            kmerSize(kmerSize),
-            readStorage(readStorage), 
-            threadPool(threadPool), 
-            pforHandle(),
-            gatherHandle(readStorage->makeGatherHandleSequences()){
-
-            cudaStreamCreate(&stream); CUERR;
-            cudaGetDevice(&deviceId); CUERR;
-
-        }
-
-        ~GpuReadStorageHasher(){
-            cudaStreamDestroy(stream); CUERR;
-        }
-
-        template<class StoreResultFunc, class AddProgressFunc>
-        void hash(
-            const read_number readIdBegin, 
-            const read_number readIdEnd,
-            int numHashFuncs,
-            int firstHashFunc,
-            StoreResultFunc storeResult, // storeResult(hashfunc, kmer, readid)
-            AddProgressFunc addProgress
-        ){
-            const int upperBoundSequenceLength = readStorage->getSequenceLengthUpperBound();
-            const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
-            const std::size_t signaturesRowPitchElements = numHashFuncs;
-
-            const std::size_t curBatchsize = readIdEnd - readIdBegin;
-
-            d_sequenceData.resize(encodedSequencePitchInInts * curBatchsize);
-            d_lengths.resize(curBatchsize);
-            h_indices.resize(curBatchsize);
-            d_indices.resize(curBatchsize);
-            h_signatures.resize(signaturesRowPitchElements * curBatchsize);
-            d_signatures.resize(signaturesRowPitchElements * curBatchsize);
-
-            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
-
-            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
-
-            readStorage->gatherSequenceDataToGpuBufferAsync(
-                threadPool,
-                gatherHandle,
-                d_sequenceData,
-                encodedSequencePitchInInts,
-                h_indices,
-                d_indices,
-                curBatchsize,
-                deviceId,
-                stream
-            );
-        
-            readStorage->gatherSequenceLengthsToGpuBufferAsync(
-                d_lengths,
-                deviceId,
-                d_indices,
-                curBatchsize,
-                stream
-            );
-
-            callMinhashSignaturesKernel_async(
-                d_signatures,
-                signaturesRowPitchElements,
-                d_sequenceData,
-                encodedSequencePitchInInts,
-                curBatchsize,
-                d_lengths,
-                kmerSize,
-                numHashFuncs,
-                firstHashFunc,
-                stream
-            );
-
-            CUERR;
-
-            cudaMemcpyAsync(
-                h_signatures, 
-                d_signatures, 
-                signaturesRowPitchElements * sizeof(std::uint64_t) * curBatchsize, 
-                D2H, 
-                stream
-            ); CUERR;
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
-                constexpr int bits_kmer = sizeof(kmer_type) * 8;
-                constexpr std::uint64_t kmer_mask = (std::uint64_t(1) << (bits_kmer - 1)) 
-                                                    | ((std::uint64_t(1) << (bits_kmer - 1)) - 1);
-
-                std::uint64_t countlimit = 10000;
-                std::uint64_t count = 0;
-
-                for (read_number readId = begin; readId < end; readId++){
-                    read_number localId = readId - readIdBegin;
-
-                    for(int i = 0; i < numHashFuncs; i++){
-                        const kmer_type kmer = kmer_mask & h_signatures[signaturesRowPitchElements * localId + i];
-                        storeResult(i, kmer, readId);
-                    }
-                    
-                    count++;
-                    if(count == countlimit){
-                        addProgress(count);
-                        count = 0;                                                         
-                    }
-                }
-                if(count > 0){
-                    addProgress(count);
-                }
-            };
-
-            threadPool->parallelFor(
-                pforHandle,
-                readIdBegin,
-                readIdEnd,
-                std::move(lambda));
-        }
-    };
-
     class GpuMinhasher{
     private:
         using HashTable = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
@@ -181,10 +37,6 @@ namespace gpu{
         using Value_t = read_number;
 
         using Range_t = std::pair<const Value_t*, const Value_t*>;
-
-        static constexpr int bits_kmer = sizeof(kmer_type) * 8;
-        static constexpr std::uint64_t kmer_mask = (std::uint64_t(1) << (bits_kmer - 1)) 
-                                                    | ((std::uint64_t(1) << (bits_kmer - 1)) - 1);
 
         struct QueryHandle{
             static constexpr int overprovisioningPercent = 0;
@@ -993,424 +845,6 @@ namespace gpu{
 
         }
 
-
-
-
-        template<class ParallelForLoop>
-        void getIdsOfSimilarReadsUnique1ExcludingSelf(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            ParallelForLoop parallelFor,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const{
-
-            int currentDeviceId = 0;
-            cudaGetDevice(&currentDeviceId); CUERR;
-            cudaSetDevice(deviceId); CUERR;
-
-            const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
-
-            handle.d_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
-            handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
-
-            handle.d_temp.resize(getNumberOfMaps() * numSequences);
-            handle.d_signatureSizePerSequence.resize(numSequences);
-            handle.h_signatureSizePerSequence.resize(numSequences);
-            handle.d_hashFuncIds.resize(getNumberOfMaps() * numSequences);
-            handle.h_hashFuncIds.resize(getNumberOfMaps() * numSequences);
-
-            std::vector<Range_t>& allRanges = handle.allRanges;
-            std::vector<int>& idsPerChunk = handle.idsPerChunk;   
-            std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
-            std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
-            std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
-
-            const int maxNumThreads = parallelFor.getNumThreads();
-
-            allRanges.resize(getNumberOfMaps() * numSequences);
-            idsPerChunk.resize(maxNumThreads, 0);   
-            numAnchorsPerChunk.resize(maxNumThreads, 0);
-            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
-
-            const std::size_t hashValuesPitchInElements = getNumberOfMaps();
-            const std::size_t hashFuncIdsRowPitchElements = getNumberOfMaps();
-
-            callUniqueMinhashSignaturesKernel_async(
-                handle.d_temp,
-                handle.d_minhashSignatures,
-                hashValuesPitchInElements,
-                handle.d_hashFuncIds,
-                hashFuncIdsRowPitchElements,
-                handle.d_signatureSizePerSequence,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                numSequences,
-                d_sequenceLengths,
-                getKmerSize(),
-                getNumberOfMaps(),
-                stream
-            );
-
-            cudaMemcpyAsync(
-                handle.h_minhashSignatures.get(),
-                handle.d_minhashSignatures.get(),
-                handle.h_minhashSignatures.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                handle.h_hashFuncIds.get(),
-                handle.d_hashFuncIds.get(),
-                handle.h_hashFuncIds.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                handle.h_signatureSizePerSequence.get(),
-                handle.d_signatureSizePerSequence.get(),
-                handle.h_signatureSizePerSequence.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-
-            std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
-            std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
-    
-            cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures anchor data
-    
-            auto querySignatures2 = [&, this](int begin, int end, int threadId){
-    
-                const int chunksize = end - begin;
-    
-                int totalNumResults = 0;
-    
-                nvtx::push_range("queryPrecalculatedSignatures", 6);
-
-                queryPrecalculatedSignatures(
-                    handle.h_minhashSignatures.get() + begin * getNumberOfMaps(),
-                    handle.h_hashFuncIds.get() + begin * getNumberOfMaps(),
-                    handle.h_signatureSizePerSequence.get() + begin,
-                    allRanges.data() + begin * getNumberOfMaps(),
-                    &totalNumResults, 
-                    chunksize
-                );
-    
-                idsPerChunk[threadId] = totalNumResults;
-                numAnchorsPerChunk[threadId] = chunksize;
-                nvtx::pop_range();
-            };
-    
-            const int numChunksRequired = parallelFor(
-                0, 
-                numSequences, 
-                [=](auto begin, auto end, auto threadId){
-                    querySignatures2(begin, end, threadId);
-                }
-            );
-
-            //exclusive prefix sum
-            idsPerChunkPrefixSum[0] = 0;
-            for(int i = 0; i < numChunksRequired; i++){
-                idsPerChunkPrefixSum[i+1] = idsPerChunkPrefixSum[i] + idsPerChunk[i];
-            }
-
-            numAnchorsPerChunkPrefixSum[0] = 0;
-            for(int i = 0; i < numChunksRequired; i++){
-                numAnchorsPerChunkPrefixSum[i+1] = numAnchorsPerChunkPrefixSum[i] + numAnchorsPerChunk[i];
-            }
-
-            const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
-
-            //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
-            //then copy to the device
-
-            auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
-                nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
-                for(int chunkId = begin; chunkId < end; chunkId++){
-                    const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const size_t elementsInChunk = idsPerChunk[chunkId];
-    
-                    const auto* ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * getNumberOfMaps();
-    
-                    auto* dest = hostdatabegin;
-    
-                    const int lmax = numAnchorsPerChunk[chunkId] * getNumberOfMaps();
-    
-                    for(int k = 0; k < lmax; k++){
-                        constexpr int nextprefetch = 2;
-    
-                        //prefetch first element of next range if the next range is not empty
-                        if(k+nextprefetch < lmax){
-                            if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
-                                __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
-                            }
-                        }
-                        const auto& range = ranges[k];
-                        dest = std::copy(range.first, range.second, dest);
-                    }
-    
-                    cudaMemcpyAsync(
-                        devicedatabegin,
-                        hostdatabegin,
-                        sizeof(read_number) * elementsInChunk,
-                        H2D,
-                        stream
-                    ); CUERR;
-                }
-                nvtx::pop_range();
-            };
-    
-            parallelFor(
-                0, 
-                numChunksRequired, 
-                [=](auto begin, auto end, auto threadId){
-                    copyCandidateIdsToContiguousMem(begin, end, threadId);
-                }
-            );
-
-            nvtx::push_range("gpumakeUniqueQueryResults", 2);
-            mergeRangesGpuAsync(
-                handle.mergeHandle, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum,
-                handle.d_candidate_read_ids_tmp.get(),
-                allRanges.data(), 
-                getNumberOfMaps() * numSequences, 
-                d_readIds,
-                getNumberOfMaps(), 
-                stream,
-                MergeRangesKernelType::allcub
-            );
-    
-            nvtx::pop_range();
-
-
-            cudaSetDevice(currentDeviceId); CUERR;
-
-        }
-
-
-
-        template<class ParallelForLoop>
-        void getIdsOfSimilarReadsUnique2ExcludingSelf(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            ParallelForLoop parallelFor,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const{
-
-            int currentDeviceId = 0;
-            cudaGetDevice(&currentDeviceId); CUERR;
-            cudaSetDevice(deviceId); CUERR;
-
-            const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
-
-            handle.d_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
-            handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
-
-            handle.d_temp.resize(getNumberOfMaps() * numSequences);
-            handle.d_signatureSizePerSequence.resize(numSequences);
-            handle.h_signatureSizePerSequence.resize(numSequences);
-            handle.d_hashFuncIds.resize(getNumberOfMaps() * numSequences);
-            handle.h_hashFuncIds.resize(getNumberOfMaps() * numSequences);
-
-            std::vector<Range_t>& allRanges = handle.allRanges;
-            std::vector<int>& idsPerChunk = handle.idsPerChunk;   
-            std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
-            std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
-            std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
-
-            const int maxNumThreads = parallelFor.getNumThreads();
-
-            allRanges.resize(getNumberOfMaps() * numSequences);
-            idsPerChunk.resize(maxNumThreads, 0);   
-            numAnchorsPerChunk.resize(maxNumThreads, 0);
-            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
-
-            const std::size_t hashValuesPitchInElements = getNumberOfMaps();
-            const std::size_t hashFuncIdsRowPitchElements = getNumberOfMaps();
-
-            callMinhashSignaturesOfUniqueKmersKernel128_async(
-                handle.d_minhashSignatures,
-                hashValuesPitchInElements,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                numSequences,
-                d_sequenceLengths,
-                getKmerSize(),
-                getNumberOfMaps(),
-                stream
-            );
-
-            cudaMemcpyAsync(
-                handle.h_minhashSignatures.get(),
-                handle.d_minhashSignatures.get(),
-                handle.h_minhashSignatures.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                handle.h_hashFuncIds.get(),
-                handle.d_hashFuncIds.get(),
-                handle.h_hashFuncIds.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                handle.h_signatureSizePerSequence.get(),
-                handle.d_signatureSizePerSequence.get(),
-                handle.h_signatureSizePerSequence.sizeInBytes(),
-                H2D,
-                stream
-            ); CUERR;
-
-
-            std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
-            std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
-    
-            cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures anchor data
-    
-            auto querySignatures2 = [&, this](int begin, int end, int threadId){
-    
-                const int chunksize = end - begin;
-    
-                int totalNumResults = 0;
-    
-                nvtx::push_range("queryPrecalculatedSignatures", 6);
-
-                queryPrecalculatedSignatures(
-                    handle.h_minhashSignatures.get() + begin * getNumberOfMaps(),
-                    allRanges.data() + begin * getNumberOfMaps(),
-                    &totalNumResults, 
-                    chunksize
-                );
-    
-                idsPerChunk[threadId] = totalNumResults;
-                numAnchorsPerChunk[threadId] = chunksize;
-                nvtx::pop_range();
-            };
-    
-            const int numChunksRequired = parallelFor(
-                0, 
-                numSequences, 
-                [=](auto begin, auto end, auto threadId){
-                    querySignatures2(begin, end, threadId);
-                }
-            );
-
-            //exclusive prefix sum
-            idsPerChunkPrefixSum[0] = 0;
-            for(int i = 0; i < numChunksRequired; i++){
-                idsPerChunkPrefixSum[i+1] = idsPerChunkPrefixSum[i] + idsPerChunk[i];
-            }
-
-            numAnchorsPerChunkPrefixSum[0] = 0;
-            for(int i = 0; i < numChunksRequired; i++){
-                numAnchorsPerChunkPrefixSum[i+1] = numAnchorsPerChunkPrefixSum[i] + numAnchorsPerChunk[i];
-            }
-
-            const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
-
-            //map queries return pointers to value ranges. copy all value ranges into a single contiguous pinned buffer,
-            //then copy to the device
-
-            auto copyCandidateIdsToContiguousMem = [&](int begin, int end, int threadId){
-                nvtx::push_range("copyCandidateIdsToContiguousMem", 1);
-                for(int chunkId = begin; chunkId < end; chunkId++){
-                    const auto hostdatabegin = handle.h_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const auto devicedatabegin = handle.d_candidate_read_ids_tmp.get() + idsPerChunkPrefixSum[chunkId];
-                    const size_t elementsInChunk = idsPerChunk[chunkId];
-    
-                    const auto* ranges = allRanges.data() + numAnchorsPerChunkPrefixSum[chunkId] * getNumberOfMaps();
-    
-                    auto* dest = hostdatabegin;
-    
-                    const int lmax = numAnchorsPerChunk[chunkId] * getNumberOfMaps();
-    
-                    for(int k = 0; k < lmax; k++){
-                        constexpr int nextprefetch = 2;
-    
-                        //prefetch first element of next range if the next range is not empty
-                        if(k+nextprefetch < lmax){
-                            if(ranges[k+nextprefetch].first != ranges[k+nextprefetch].second){
-                                __builtin_prefetch(ranges[k+nextprefetch].first, 0, 0);
-                            }
-                        }
-                        const auto& range = ranges[k];
-                        dest = std::copy(range.first, range.second, dest);
-                    }
-    
-                    cudaMemcpyAsync(
-                        devicedatabegin,
-                        hostdatabegin,
-                        sizeof(read_number) * elementsInChunk,
-                        H2D,
-                        stream
-                    ); CUERR;
-                }
-                nvtx::pop_range();
-            };
-    
-            parallelFor(
-                0, 
-                numChunksRequired, 
-                [=](auto begin, auto end, auto threadId){
-                    copyCandidateIdsToContiguousMem(begin, end, threadId);
-                }
-            );
-
-            nvtx::push_range("gpumakeUniqueQueryResults", 2);
-            mergeRangesGpuAsync(
-                handle.mergeHandle, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum,
-                handle.d_candidate_read_ids_tmp.get(),
-                allRanges.data(), 
-                getNumberOfMaps() * numSequences, 
-                d_readIds,
-                getNumberOfMaps(), 
-                stream,
-                MergeRangesKernelType::allcub
-            );
-    
-            nvtx::pop_range();
-
-
-            cudaSetDevice(currentDeviceId); CUERR;
-
-        }
-
-
         template<class ParallelForLoop>
         void getIdsOfSimilarReadsExcludingSelf(
             QueryHandle& handle,
@@ -1431,8 +865,7 @@ namespace gpu{
             if(numSequences == 0){
                 return;
             }
-            
-#ifndef GPUMINHASHER_UNIQUE
+
             getIdsOfSimilarReadsNormalExcludingSelf(
                 handle,
                 d_readIds, 
@@ -1448,40 +881,6 @@ namespace gpu{
                 d_similarReadsPerSequence,
                 d_similarReadsPerSequencePrefixSum
             );
-#else 
-
-#ifdef GPUMINHASHER_MAKEUNIQUEAFTERHASHING
-            getIdsOfSimilarReadsUniqueExcludingSelf(
-                handle,
-                d_readIds, 
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream,
-                parallelFor,
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-#else            
-            getIdsOfSimilarReadsUnique2ExcludingSelf(
-                handle,
-                d_readIds, 
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream,
-                parallelFor,
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-#endif
-#endif
         }
                                                     
 
@@ -1491,20 +890,24 @@ namespace gpu{
             int* totalNumResultsInRanges, 
             int numSequences) const;
 
-        void queryPrecalculatedSignatures(
-            const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-            const int* hashFuncIds,  //getNumberOfMaps() elements per sequence
-            const int* signatureSizesPerSequence,
-            GpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
-            int* totalNumResultsInRanges, 
-            int numSequences
-        ) const;
 
-        int getNumberOfMaps() const;
+        int getNumberOfMaps() const{
+            return minhashTables.size();
+        }
 
-        int getKmerSize() const;
+        int getKmerSize() const{
+            return kmerSize;
+        }
 
-        int getNumResultsPerMapThreshold() const;
+        int getNumResultsPerMapThreshold() const{
+            return resultsPerMapThreshold;
+        }
+
+        std::uint64_t getKmerMask() const{
+            constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
+
+            return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
+        }
 
         MemoryUsage getMemoryInfo() const;
 
@@ -1583,36 +986,14 @@ namespace gpu{
         );
 
         std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-        constructTablesWithGpuHashing(
+        computeKeyValuePairsForHashtableUsingGpu(
             int numTables, 
             int firstTableId,
             std::int64_t numberOfReads,
             int upperBoundSequenceLength,
             const RuntimeOptions& runtimeOptions,
             const DistributedReadStorage& readStorage
-        );
-
-        
-        std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-        constructTablesWithGpuHashingUniquekmers1(
-            int numTables, 
-            int firstTableId,
-            std::int64_t numberOfReads,
-            int upperBoundSequenceLength,
-            const RuntimeOptions& runtimeOptions,
-            const DistributedReadStorage& readStorage
-        );
-
-        std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-        constructTablesWithGpuHashingUniquekmers2(
-            int numTables, 
-            int firstTableId,
-            std::int64_t numberOfReads,
-            int upperBoundSequenceLength,
-            const RuntimeOptions& runtimeOptions,
-            const DistributedReadStorage& readStorage
-        );
-        
+        );      
 
         int loadConstructedTablesFromFile(
             const std::string& filename,
