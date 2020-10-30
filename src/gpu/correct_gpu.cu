@@ -11,7 +11,7 @@
 #include <memorymanagement.hpp>
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 //#include <minhasher.hpp>
 #include <options.hpp>
@@ -1102,7 +1102,7 @@ namespace gpu{
         PinnedBuffer<int> h_alignment_nOps;
         PinnedBuffer<bool> h_alignment_isValid;
         PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;    
-        PinnedBuffer<char> h_consensus;
+        PinnedBuffer<std::uint8_t> h_consensus;
         PinnedBuffer<float> h_support;
         PinnedBuffer<int> h_coverage;
         PinnedBuffer<float> h_origWeights;
@@ -1159,7 +1159,7 @@ namespace gpu{
         DeviceBuffer<bool> d_alignment_isValid;
         DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags;    
         DeviceBuffer<bool> d_canExecute; 
-        DeviceBuffer<char> d_consensus;
+        DeviceBuffer<std::uint8_t> d_consensus;
         DeviceBuffer<float> d_support;
         DeviceBuffer<int> d_coverage;
         DeviceBuffer<float> d_origWeights;
@@ -3746,7 +3746,7 @@ correct_gpu(
             batchData.unpackWorker = nullptr;
             batchData.threadPool = &threadPool;
             batchData.threadsInThreadPool = threadPoolSize;
-            batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+            batchData.encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
             batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
             batchData.maxNumEditsPerSequence = std::max(1,sequenceFileProperties.maxSequenceLength / 7);

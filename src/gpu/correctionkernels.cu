@@ -7,7 +7,7 @@
 
 #include <bestalignment.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <correctionresultprocessing.hpp>
 
 #include <hpc_helpers.cuh>
@@ -69,10 +69,6 @@ namespace gpu{
 
         const int n_subjects = *numAnchorsPtr;
 
-        auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
-        };
-
         auto isGoodAvgSupport = [&](float avgsupport){
             return fgeq(avgsupport, avg_support_threshold);
         };
@@ -83,19 +79,8 @@ namespace gpu{
             return fgeq(mincoverage, min_coverage_threshold);
         };
 
-        constexpr char A_enc = 0x00;
-        constexpr char C_enc = 0x01;
-        constexpr char G_enc = 0x02;
-        constexpr char T_enc = 0x03;
-
-        auto to_nuc = [](char c){
-            switch(c){
-            case A_enc: return 'A';
-            case C_enc: return 'C';
-            case G_enc: return 'G';
-            case T_enc: return 'T';
-            default: return 'F';
-            }
+        auto to_nuc = [](std::uint8_t c){
+            return SequenceHelpers::decodeBase(c);
         };
 
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
@@ -195,9 +180,9 @@ namespace gpu{
                             i < subjectColumnsEnd_excl; 
                             i += tbGroup.size()){
 
-                        const char nuc = msa.consensus[i];
+                        const std::uint8_t nuc = msa.consensus[i];
                         //assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
-                        assert(0 <= nuc && nuc < 4);
+                        assert(0 == nuc || nuc < 4);
 
                         my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(nuc);
                     }
@@ -212,7 +197,7 @@ namespace gpu{
                             my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(msa.consensus[i]);
                         }else{
                             const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                            const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
+                            const std::uint8_t encodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
                             const char base = to_nuc(encodedBase);
                             assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
                             my_corrected_subject[i - subjectColumnsBegin_incl] = base;
@@ -503,9 +488,9 @@ namespace gpu{
                         tmp = sequenceAsChar4[index2];
                     }
                     #if __CUDACC_VER_MAJOR__ < 11
-		    //CUDA < 11 does not have shuffle api for char4
-		    *((int*)(&right)) = group.shfl_down(*((const int*)(&left)), 1);
-		    *((int*)(&tmp)) = group.shfl(*((const int*)(&tmp)), 0);
+                    //CUDA < 11 does not have shuffle api for char4
+                    *((int*)(&right)) = group.shfl_down(*((const int*)(&left)), 1);
+                    *((int*)(&tmp)) = group.shfl(*((const int*)(&tmp)), 0);
                     #else
                     right = group.shfl_down(left, 1);
                     tmp = group.shfl(tmp, 0);
@@ -547,25 +532,8 @@ namespace gpu{
             }
         };
 
-        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
-            return ((data >> (30 - 2*pos)) & 0x00000003);
-        };
-
-        auto to_nuc = [](char c){
-            // constexpr char A_enc = 0x00;
-            // constexpr char C_enc = 0x01;
-            // constexpr char G_enc = 0x02;
-            // constexpr char T_enc = 0x03;
-
-            // switch(c){
-            // case A_enc: return 'A';
-            // case C_enc: return 'C';
-            // case G_enc: return 'G';
-            // case T_enc: return 'T';
-            // default: return 'F';
-            // }
-
-            return convertIntToDNACharNoIf(c);
+        auto to_nuc = [](std::uint8_t c){
+            return SequenceHelpers::convertIntToDNACharNoIf(c);
         };
 
         __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
@@ -618,34 +586,14 @@ namespace gpu{
             
             
 
-            const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
-            const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+            const int copyposbegin = queryColumnsBegin_incl;
+            const int copyposend = queryColumnsEnd_excl;
             assert(copyposend - copyposbegin == candidate_length);
-
-            // const int consChar4Begin = copyposbegin / 4;
-            // const int consChar4End = (copyposend-1) / 4;
-
-            // for(int i = consChar4Begin + tgroup.thread_rank(); i <= consChar4End; i += tgroup.size()){
-            //     char data[4];
-            //     memcpy(data, msa.consensus + 4 * i, sizeof(char4));
-
-            //     #pragma unroll
-            //     for(int k = 0; k < 4; k++){
-            //         const int column = i * 4 + k;
-            //         if(copyposbegin <= column && column < copyposend){
-            //             shared_correctedCandidate[column - copyposbegin] = to_nuc(data[k]);
-            //         }
-            //     }
-            // }
-
-            // for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
-            //     shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(msa.consensus[i]);
-            // }           
 
             //the forward strand will be returned -> make reverse complement again
             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
                 for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
-                    shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(3-msa.consensus[i]);
+                    shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(SequenceHelpers::complementBase2Bit(msa.consensus[i]));
                 }
                 tgroup.sync(); // threads may access elements in shared memory which were written by another thread
                 reverseWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
@@ -737,17 +685,18 @@ namespace gpu{
                     }
                 };
 
-                const int fullInts = candidate_length / 16;                
+                constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+                const int fullInts = candidate_length / basesPerInt;                
 
                 for(int i = 0; i < fullInts; i++){
                     const unsigned int encodedDataInt = encUncorrectedCandidate[i];
 
-                    //compare with 16 bases of corrected sequence
+                    //compare with basesPerInt bases of corrected sequence
 
-                    for(int k = tgroup.thread_rank(); k < 16; k += tgroup.size()){
+                    for(int k = tgroup.thread_rank(); k < basesPerInt; k += tgroup.size()){
                         const int posInInt = k;
-                        const int posInSequence = i * 16 + posInInt;
-                        const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                        const int posInSequence = i * basesPerInt + posInInt;
+                        const std::uint8_t encodedUncorrectedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
                         const char correctedNuc = shared_correctedCandidate[posInSequence];
 
                         if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
@@ -764,12 +713,12 @@ namespace gpu{
 
                 //process remaining positions
                 if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
-                    const int remainingPositions = candidate_length - 16 * fullInts;
+                    const int remainingPositions = candidate_length - basesPerInt * fullInts;
                     if(remainingPositions > 0){
                         const unsigned int encodedDataInt = encUncorrectedCandidate[fullInts];
                         for(int posInInt = tgroup.thread_rank(); posInInt < remainingPositions; posInInt += tgroup.size()){
-                            const int posInSequence = fullInts * 16 + posInInt;
-                            const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                            const int posInSequence = fullInts * basesPerInt + posInInt;
+                            const std::uint8_t encodedUncorrectedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
                             const char correctedNuc = shared_correctedCandidate[posInSequence];
 
                             if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
@@ -838,27 +787,8 @@ namespace gpu{
         size_t editsPitchInBytes
     ){
 
-        auto get = [] (const unsigned int* data, int length, int index, auto trafo){
-            return getEncodedNuc2Bit(data, length, index, trafo);
-        };
-        
-        // auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
-        //     return ((data >> (30 - 2*pos)) & 0x00000003);
-        // };
-
-        auto to_nuc = [](char c){
-            constexpr char A_enc = 0x00;
-            constexpr char C_enc = 0x01;
-            constexpr char G_enc = 0x02;
-            constexpr char T_enc = 0x03;
-            
-            switch(c){
-            case A_enc: return 'A';
-            case C_enc: return 'C';
-            case G_enc: return 'G';
-            case T_enc: return 'T';
-            default: return 'F';
-            }
+        auto to_nuc = [](std::uint8_t enc){
+            return SequenceHelpers::decodeBase(enc);
         };
 
         const int numIndicesToProcess = *d_numIndicesOfCorrectedSubjects;
@@ -885,7 +815,7 @@ namespace gpu{
                 
                 for(int i = 0; i < length && edits <= maxEdits; i++){
                     const char correctedNuc = decodedCorrectedSequence[i];
-                    const char uncorrectedNuc = to_nuc(get(encodedUncorrectedSequence, length, i, [](auto i){return i;}));
+                    const char uncorrectedNuc = to_nuc(SequenceHelpers::getEncodedNuc2Bit(encodedUncorrectedSequence, length, i));
 
                     if(correctedNuc != uncorrectedNuc){
                         if(edits < maxEdits){

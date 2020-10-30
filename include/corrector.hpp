@@ -365,7 +365,7 @@ private:
 
         //decode anchor
         task.decodedAnchor.resize(length);
-        decode2BitSequence(task.decodedAnchor.data(), input.encodedAnchor, length);
+        SequenceHelpers::decode2BitSequence(task.decodedAnchor.data(), input.encodedAnchor, length);
 
         return task;
     }
@@ -454,7 +454,7 @@ private:
             unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
                                                 + std::size_t(encodedSequencePitchInInts) * i;
 
-            reverseComplement2Bit(
+            SequenceHelpers::reverseComplementSequence2Bit(
                 seqrevcPtr,  
                 seqPtr,
                 task.candidateSequencesLengths[i]
@@ -709,7 +709,7 @@ private:
             char* const destptr = task.decodedCandidateSequences.data() + i * decodedSequencePitchInBytes;
             const int length = task.candidateSequencesLengths[i];
 
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 destptr,
                 srcptr,
                 length
@@ -973,7 +973,7 @@ private:
                     //get forward sequence
                     std::string fwd;
                     fwd.resize(correctedCandidate.sequence.length());
-                    reverseComplementString(
+                    SequenceHelpers::reverseComplementSequenceDecoded(
                         &fwd[0], 
                         correctedCandidate.sequence.c_str(), 
                                             correctedCandidate.sequence.length()
@@ -1004,7 +1004,7 @@ private:
                         //tmp.sequence is forward sequence, but uncorrectedCandidate is reverse complement
                         std::string fwduncorrected;
                         fwduncorrected.resize(uncorrectedCandidateLength);
-                        reverseComplementString(
+                        SequenceHelpers::reverseComplementSequenceDecoded(
                             &fwduncorrected[0], 
                             uncorrectedCandidate, 
                             uncorrectedCandidateLength

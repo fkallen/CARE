@@ -12,7 +12,7 @@
 #include <hpc_helpers.cuh>
 #include <filehelpers.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
 

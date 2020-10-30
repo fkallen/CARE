@@ -1,7 +1,7 @@
 #include <readlibraryio.hpp>
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <util.hpp>
 
 #include <iterator>

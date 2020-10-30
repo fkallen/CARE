@@ -5,7 +5,7 @@
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <cstring>
 #include <fstream>
@@ -101,7 +101,7 @@ namespace care{
             explicit EncodedEdit(int p, char b){
                 data = p;
                 data = data << 2;
-                std::uint16_t enc = convertDNACharToIntNoIf(b);
+                std::uint16_t enc = SequenceHelpers::convertDNACharToIntNoIf(b);
                 data |= enc;
 
                 // this->p = p;
@@ -137,7 +137,7 @@ namespace care{
             HOSTDEVICEQUALIFIER
             char base() const{
                 std::uint8_t enc = data & 0x03;
-                return convertIntToDNACharNoIf(enc);
+                return SequenceHelpers::convertIntToDNACharNoIf(enc);
                 //return b;
             }
 
@@ -150,7 +150,7 @@ namespace care{
 
             HOSTDEVICEQUALIFIER
             void base(char b){
-                std::uint16_t enc = convertDNACharToIntNoIf(b);
+                std::uint16_t enc = SequenceHelpers::convertDNACharToIntNoIf(b);
                 data = (data & ~0x03) | enc;
                 //this->b = b;
             }

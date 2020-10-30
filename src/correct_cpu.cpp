@@ -142,7 +142,7 @@ correct_cpu(
     {
         //const int threadId = omp_get_thread_num();
 
-        const std::size_t encodedSequencePitchInInts2Bit = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
         const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 

@@ -23,8 +23,9 @@
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
-#include <hpc_helpers.cuh>
 #endif
+
+#include <hpc_helpers.cuh>
 
 namespace care{
 
@@ -87,8 +88,10 @@ namespace care{
         }
 
         void insert(const Key& key, const Value& value){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
+            std::size_t pos = hasher::hash(key) % capacity;
             while(storage[pos] != emptySlot){
                 pos++;
                 //wrap-around
@@ -104,8 +107,10 @@ namespace care{
         }
 
         QueryResult query(const Key& key) const{
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
+            std::size_t pos = hasher::hash(key) % capacity;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
                     return {false, Value{}};
@@ -167,15 +172,6 @@ namespace care{
         }
 
     private:
-        std::uint64_t hashfunc(std::uint64_t x) const{
-            //murmur64
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccd;
-            x ^= x >> 33;
-            x *= 0xc4ceb9fe1a85ec53;
-            x ^= x >> 33;
-            return x;
-        }
 
         using Data = std::pair<Key,Value>;
 

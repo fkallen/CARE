@@ -3,7 +3,7 @@
 
 
 #include <hostdevicefunctions.cuh>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <config.hpp>
 
@@ -157,8 +157,8 @@ namespace shd{
 
         auto& shiftbuffer = handle.shiftbuffer;
 
-        const int subjectInts = getEncodedNumInts2BitHiLo(subjectLength);
-        const int candidateInts = getEncodedNumInts2BitHiLo(candidateLength);
+        const int subjectInts = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
+        const int candidateInts = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
         const int maxInts = std::max(subjectInts, candidateInts);
 
 
@@ -333,12 +333,12 @@ namespace shd{
             float maxErrorRate,
             float min_overlap_ratio) noexcept{
 
-        const int newsubjectInts = getEncodedNumInts2BitHiLo(subjectLength);
+        const int newsubjectInts = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
 
         handle.anchorConversionBuffer.resize(newsubjectInts);
         handle.candidateConversionBuffer.resize(candidatePitchInInts);
 
-        convert2BitNewTo2BitHiLo(
+        SequenceHelpers::convert2BitTo2BitHiLo(
             handle.anchorConversionBuffer.data(),
             subject2Bit,
             subjectLength
@@ -350,7 +350,7 @@ namespace shd{
             const unsigned int* candidate2Bit = candidates2Bit + candidatePitchInInts * candidateIndex;
             const int candidateLength = candidateLengths[candidateIndex];
 
-            convert2BitNewTo2BitHiLo(
+            SequenceHelpers::convert2BitTo2BitHiLo(
                 handle.candidateConversionBuffer.data(),
                 candidate2Bit,
                 candidateLength
@@ -388,12 +388,12 @@ namespace shd{
             float maxErrorRate,
             float min_overlap_ratio) noexcept{
 
-        const int newsubjectInts = getEncodedNumInts2BitHiLo(subjectLength);
+        const int newsubjectInts = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
 
         handle.anchorConversionBuffer.resize(newsubjectInts);
         handle.candidateConversionBuffer.resize(candidatePitchInInts);
 
-        convert2BitNewTo2BitHiLo(
+        SequenceHelpers::convert2BitTo2BitHiLo(
             handle.anchorConversionBuffer.data(),
             subject2Bit,
             subjectLength
@@ -405,7 +405,7 @@ namespace shd{
             const unsigned int* candidate2Bit = candidates2Bit + candidatePitchInInts * candidateIndex;
             const int candidateLength = candidateLengths[candidateIndex];
 
-            convert2BitNewTo2BitHiLo(
+            SequenceHelpers::convert2BitTo2BitHiLo(
                 handle.candidateConversionBuffer.data(),
                 candidate2Bit,
                 candidateLength
@@ -480,7 +480,7 @@ namespace shd{
         Iter destination = destinationbegin;
 
         const unsigned int* const subject = subjectHiLo;
-        const int subjectints = getEncodedNumInts2BitHiLo(subjectLength);
+        const int subjectints = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
 
         std::vector<unsigned int> shiftbuffer(pitchIntsPerSequence);
 
@@ -491,7 +491,7 @@ namespace shd{
             const unsigned int* const query = querydata.data() + pitchIntsPerSequence * index;
             const int queryLength = queryLengths[index];
 
-            const int queryints = getEncodedNumInts2BitHiLo(queryLength);
+            const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(queryLength);
             const unsigned int* const queryBackup_hi = query;
             const unsigned int* const queryBackup_lo = query + queryints / 2;
 

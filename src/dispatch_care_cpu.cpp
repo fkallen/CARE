@@ -10,7 +10,7 @@
 #include <minhasher.hpp>
 
 #include <correctionresultprocessing.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <vector>
 #include <iostream>
