@@ -13,6 +13,7 @@ void GpuMinhasher::queryPrecalculatedSignatures(
     int numSequences) const{ 
     
     int numResults = 0;
+    const std::uint64_t kmer_mask = getKmerMask();
 
     for(int i = 0; i < numSequences; i++){
         const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
@@ -29,56 +30,6 @@ void GpuMinhasher::queryPrecalculatedSignatures(
     *totalNumResultsInRanges = numResults;   
 }
 
-
-void GpuMinhasher::queryPrecalculatedSignatures(
-    const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-    const int* hashFuncIds,  //getNumberOfMaps() elements per sequence
-    const int* signatureSizesPerSequence,
-    GpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
-    int* totalNumResultsInRanges, 
-    int numSequences
-) const { 
-    int numResults = 0;
-
-    for(int i = 0; i < numSequences; i++){
-        const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
-        const int* hashFuncIdsForSequence = &hashFuncIds[i * getNumberOfMaps()];
-        GpuMinhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];
-        
-        const int signatureSize = signatureSizesPerSequence[i];
-
-        int cur = 0;
-
-        for(int map = 0; map < getNumberOfMaps(); ++map){
-            if(cur < signatureSize && hashFuncIdsForSequence[cur] == map){
-                kmer_type key = signature[map] & kmer_mask;
-                auto entries_range = queryMap(map, key);
-                numResults += std::distance(entries_range.first, entries_range.second);
-                range[map] = entries_range;
-
-                cur++;
-            }else{
-                range[map].first = nullptr;
-                range[map].second = nullptr;
-            }                    
-        }
-    }   
-
-    *totalNumResultsInRanges = numResults;
-}
-
-
-int GpuMinhasher::getNumberOfMaps() const{
-    return minhashTables.size();
-}
-
-int GpuMinhasher::getKmerSize() const{
-    return kmerSize;
-}
-
-int GpuMinhasher::getNumResultsPerMapThreshold() const{
-    return resultsPerMapThreshold;
-}
 
 MemoryUsage GpuMinhasher::getMemoryInfo() const{
     MemoryUsage result;
@@ -286,7 +237,7 @@ void GpuMinhasher::construct(
             const int currentIterNumTables = std::min(requestedNumberOfMaps - numConstructedTables, maxNumTables);
 
             std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> >              
-            initialMinhashes = constructTablesWithGpuHashing(                      
+            initialMinhashes = computeKeyValuePairsForHashtableUsingGpu(                      
                 currentIterNumTables, 
                 numConstructedTables,
                 readStorage.getNumberOfReads(),
@@ -553,107 +504,9 @@ void GpuMinhasher::computeReadHashesOnGpu(
     );
 }
 
-std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-GpuMinhasher::constructTablesAAA(
-    int numTables, 
-    int firstTableId,
-    std::int64_t numberOfReads,
-    int upperBoundSequenceLength,
-    const RuntimeOptions& runtimeOptions,
-    const DistributedReadStorage& readStorage
-){
-    constexpr read_number parallelReads = 1000000;
-    read_number numReads = numberOfReads;
-    const int numIters = SDIV(numReads, parallelReads);
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
-    
-    const auto& deviceIds = runtimeOptions.deviceIds;
-    const int numThreads = runtimeOptions.threads;
-
-    assert(deviceIds.size() > 0);
-
-    const int deviceId = deviceIds[0];
-
-    cudaSetDevice(deviceId); CUERR;
-
-    const int numHashFuncs = numTables;
-    const int firstHashFunc = firstTableId;
-
-    ThreadPool::ParallelForHandle pforHandle;
-
-    std::vector<std::vector<kmer_type>> kmersPerFunc(numTables);
-    std::vector<std::vector<read_number>> readIdsPerFunc(numTables);
-
-    for(auto& v : kmersPerFunc){
-        v.resize(numberOfReads);
-    }
-
-    for(auto& v : readIdsPerFunc){
-        v.resize(numberOfReads);
-    }
-
-    std::vector<int> tableIds(numTables);                
-    std::vector<int> hashIds(numTables);
-    
-    std::iota(tableIds.begin(), tableIds.end(), 0);
-
-    std::cout << "Constructing maps: ";
-    for(int i = 0; i < numTables; i++){
-        std::cout << (firstTableId + i) << ' ';
-    }
-    std::cout << '\n';
-
-    auto showProgress = [&](auto totalCount, auto seconds){
-        if(runtimeOptions.showProgress){
-            std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
-                    << seconds << " seconds.\n";
-        }
-    };
-
-    auto updateShowProgressInterval = [](auto duration){
-        return duration * 2;
-    };
-
-    ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
-
-    ThreadPool threadPool(numThreads);
-
-
-    GpuReadStorageHasher readHasher(numTables, getKmerSize(), &readStorage, &threadPool);
-
-    for (int iter = 0; iter < numIters; iter++){
-        read_number readIdBegin = iter * parallelReads;
-        read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
-
-        readHasher.hash(
-            readIdBegin, 
-            readIdEnd,
-            numHashFuncs,
-            firstHashFunc,
-            [&](int hashfunc, kmer_type kmer, read_number readId){
-                kmersPerFunc[hashfunc][readId] = kmer;
-                readIdsPerFunc[hashfunc][readId] = readId;
-            },
-            [&](auto p){
-                progressThread.addProgress(p);
-            }
-        );
-    }
-
-    progressThread.finished();
-
-    return {std::move(kmersPerFunc), std::move(readIdsPerFunc)};
-}
-
-
-
-
-
-
-
 
 std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-GpuMinhasher::constructTablesWithGpuHashing(
+GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
     int numTables, 
     int firstTableId,
     std::int64_t numberOfReads,
@@ -669,6 +522,8 @@ GpuMinhasher::constructTablesWithGpuHashing(
 
     const auto& deviceIds = runtimeOptions.deviceIds;
     const int numThreads = runtimeOptions.threads;
+
+    const std::uint64_t kmer_mask = getKmerMask();
 
     assert(deviceIds.size() > 0);
 
