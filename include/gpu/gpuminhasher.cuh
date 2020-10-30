@@ -4,7 +4,6 @@
 #include <config.hpp>
 
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/minhashkernels.hpp>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
 
@@ -28,6 +27,35 @@
 
 namespace care{
 namespace gpu{
+
+
+    void callMinhashSignaturesKernel_async(
+        std::uint64_t* d_signatures,
+        std::size_t signaturesRowPitchElements,
+        const unsigned int* d_sequences2Bit,
+        std::size_t sequenceRowPitchElements,
+        int numSequences,
+        const int* d_sequenceLengths,
+        int k,
+        int numHashFuncs,
+        int firstHashFunc,
+        cudaStream_t stream
+    );
+
+    void callMinhashSignaturesKernel_async(
+        std::uint64_t* d_signatures,
+        std::size_t signaturesRowPitchElements,
+        const unsigned int* d_sequences2Bit,
+        std::size_t sequenceRowPitchElements,
+        int numSequences,
+        const int* d_sequenceLengths,
+        int k,
+        int numHashFuncs,
+        cudaStream_t stream
+    );
+
+
+
 
     class GpuMinhasher{
     private:
@@ -65,8 +93,6 @@ namespace gpu{
             std::vector<int> numAnchorsPerChunk;
             std::vector<int> idsPerChunkPrefixSum;
             std::vector<int> numAnchorsPerChunkPrefixSum;
-
-            MergeRangesGpuHandle<read_number> mergeHandle;
 
             DeviceBuffer<std::uint64_t> d_temp;
             DeviceBuffer<int> d_signatureSizePerSequence;
@@ -153,8 +179,6 @@ namespace gpu{
                 cudaGetDevice(&cur); CUERR;
                 cudaSetDevice(deviceId); CUERR;
 
-                destroyMergeRangesGpuHandle(mergeHandle);
-
                 d_minhashSignatures.destroy();
                 h_minhashSignatures.destroy();
                 h_candidate_read_ids_tmp.destroy();
@@ -182,8 +206,6 @@ namespace gpu{
 
         static QueryHandle makeQueryHandle(){
             QueryHandle handle;
-
-            handle.mergeHandle = makeMergeRangesGpuHandle<read_number>();
             handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
 
             cudaGetDevice(&handle.deviceId); CUERR;
@@ -687,7 +709,7 @@ namespace gpu{
             ); CUERR;
 
             nvtx::push_range("gpumakeUniqueQueryResults", 2);
-#if 1
+
             GpuSegmentedUnique::unique(
                 handle.segmentedUniqueHandle,
                 d_similarReadIds, //input
@@ -818,26 +840,6 @@ namespace gpu{
             );
 
             CUERR;
-
-
-#else 
-
-        mergeRangesGpuAsync(
-            handle.mergeHandle, 
-            d_similarReadIds,
-            d_similarReadsPerSequence,
-            d_similarReadsPerSequencePrefixSum,
-            handle.d_candidate_read_ids_tmp.get(),
-            allRanges.data(), 
-            getNumberOfMaps() * numSequences, 
-            d_readIds,
-            getNumberOfMaps(), 
-            stream,
-            MergeRangesKernelType::allcub
-        );
-
-#endif     
-
 
             nvtx::pop_range();
 
