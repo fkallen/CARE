@@ -1,5 +1,7 @@
 
 
+
+
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/kernels.hpp>
@@ -3585,7 +3587,7 @@ namespace gpu{
 	}
 
 
-
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
@@ -4266,7 +4268,7 @@ correct_gpu(
 }
 
 
-
+#endif
 
 
 
@@ -4274,3 +4276,218 @@ correct_gpu(
 }
 }
 
+
+#if 1
+#include <gpu/gpucorrector.cuh>
+
+namespace care{
+namespace gpu{
+
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        GpuMinhasher& minhasher,
+        DistributedReadStorage& readStorage){
+
+    assert(runtimeOptions.canUseGpu);
+    //assert(runtimeOptions.max_candidates > 0);
+    assert(runtimeOptions.deviceIds.size() > 0);
+    std::cerr << "PANIC MODE\n";
+    const auto& deviceIds = runtimeOptions.deviceIds;
+
+    const auto rsMemInfo = readStorage.getMemoryInfo();
+    const auto mhMemInfo = minhasher.getMemoryInfo();
+
+    std::size_t memoryAvailableBytesHost = memoryOptions.memoryTotalLimit;
+
+    if(memoryAvailableBytesHost > rsMemInfo.host){
+        memoryAvailableBytesHost -= rsMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    if(memoryAvailableBytesHost > mhMemInfo.host){
+        memoryAvailableBytesHost -= mhMemInfo.host;
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    GpuErrorCorrector::ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+
+    std::cerr << "Status flags per reads require " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
+
+    if(memoryAvailableBytesHost > correctionFlags.sizeInBytes()){
+        memoryAvailableBytesHost -= correctionFlags.sizeInBytes();
+    }else{
+        memoryAvailableBytesHost = 0;
+    }
+
+    const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
+    std::size_t memoryForPartialResultsInBytes = 0;
+
+    if(availableMemoryInBytes > 2*(std::size_t(1) << 30)){
+        memoryForPartialResultsInBytes = availableMemoryInBytes - 2*(std::size_t(1) << 30);
+    }
+
+    std::cerr << "Partial results may occupy " << (memoryForPartialResultsInBytes /1024. / 1024. / 1024.) 
+        << " GB in memory. Remaining partial results will be stored in temp directory. \n";
+
+    const std::string tmpfilename{fileOptions.tempdirectory + "/" + "MemoryFileFixedSizetmp"};
+    MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
+
+    //std::mutex outputstreamlock;
+
+    BackgroundThread outputThread;
+
+    auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
+        //useEditsCountMap[tmp.useEdits]++;
+        //std::cerr << tmp << "\n";
+        //std::unique_lock<std::mutex> l(outputstreammutex);
+        if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
+            //outputstream << tmp << '\n';
+            partialResults.storeElement(encoded);
+            //useEditsSavedCountMap[tmp.useEdits]++;
+            //numEditsHistogram[tmp.edits.size()]++;
+
+        // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
+        }
+    };
+
+    const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));
+    std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
+    ThreadPool threadPool(threadPoolSize);
+
+    auto showProgress = [&](std::int64_t totalCount, int seconds){
+        if(runtimeOptions.showProgress){
+
+            int hours = seconds / 3600;
+            seconds = seconds % 3600;
+            int minutes = seconds / 60;
+            seconds = seconds % 60;
+            
+            printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+            totalCount, sequenceFileProperties.nReads,
+            hours, minutes, seconds);
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration;
+    };
+
+    ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+
+
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
+
+    std::vector<std::future<void>> futures;
+
+    for(int deviceId : deviceIds){
+        futures.emplace_back(std::async(
+            std::launch::async,
+            [&, deviceId](){
+
+                cudaSetDevice(deviceId);
+
+                GpuErrorCorrector gpuErrorCorrector{
+                    readStorage,
+                    minhasher,
+                    correctionFlags,
+                    correctionOptions,
+                    goodAlignmentProperties,
+                    sequenceFileProperties,
+                    &threadPool
+                };
+
+                CudaStream stream;
+                ThreadPool::ParallelForHandle pforHandle;
+
+                while(!readIdGenerator.empty()){
+                    GpuErrorCorrector::CorrectionInput input;
+                    input.readIds.resize(correctionOptions.batchsize);
+
+                    auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, input.readIds.begin());
+                    input.readIds.erase(readIdsEnd, input.readIds.end());
+
+                    auto correctionOutput = gpuErrorCorrector.correct(input, stream);
+
+                    std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+                    std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+
+                    if(correctionOutput.anchorCorrections.size() > 0){
+                        encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
+
+                        threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.anchorCorrections.size(), 
+                            [&](auto begin, auto end, auto /*threadId*/){
+                                for(auto i = begin; i < end; i++){
+                                    correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
+                                }
+                            }
+                        );
+                    }
+
+                    if(correctionOutput.candidateCorrections.size() > 0){
+                        encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
+
+                        threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.candidateCorrections.size(), 
+                            [&](auto begin, auto end, auto /*threadId*/){
+                                for(auto i = begin; i < end; i++){
+                                    correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
+                                }
+                            }
+                        );
+                    }
+
+
+                    auto function = [
+                        &,
+                        correctionOutput = std::move(correctionOutput),
+                        encodedAnchorCorrections = std::move(encodedAnchorCorrections),
+                        encodedCandidateCorrections = std::move(encodedCandidateCorrections)
+                    ](){
+
+                        const int numA = encodedAnchorCorrections.size();
+                        const int numC = encodedCandidateCorrections.size();
+
+                        for(int i = 0; i < numA; i++){
+                            saveCorrectedSequence(
+                                &correctionOutput.anchorCorrections[i], 
+                                &encodedAnchorCorrections[i]
+                            );
+                        }
+
+                        for(int i = 0; i < numC; i++){
+                            saveCorrectedSequence(
+                                &correctionOutput.candidateCorrections[i], 
+                                &encodedCandidateCorrections[i]
+                            );
+                        }
+                    };
+
+                    if(correctionOutput.anchorCorrections.size() > 0 || correctionOutput.candidateCorrections.size() > 0){
+                        outputThread.enqueue(std::move(function));
+                    }
+
+                    progressThread.addProgress(input.readIds.size());
+                }
+            }
+        ));
+    }
+
+    for(auto& future : futures){
+        future.wait();
+    }
+
+    return partialResults;
+}
+
+}
+}
+#endif
