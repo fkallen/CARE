@@ -4446,12 +4446,14 @@ correct_gpu(
 
             GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
 
+            nvtx::push_range("makeErrorCorrectorInput", 0);
             gpuAnchorHasher.makeErrorCorrectorInput(
                 anchorIds.data(),
                 anchorIds.size(),
                 *inputPtr,
                 hasherStream
             );
+            nvtx::pop_range();
 
             inputPtr->event.synchronize();
 
@@ -4492,11 +4494,15 @@ correct_gpu(
         );
 
         while(inputPtr != nullptr){
+            nvtx::push_range("correct", 0);
             gpuErrorCorrector.correct(*inputPtr, rawOutput, stream);
+            nvtx::pop_range();
 
             rawOutput.event.synchronize();
 
+            nvtx::push_range("constructResults", 0);
             auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
+            nvtx::pop_range();
 
             std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
             std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
@@ -4595,12 +4601,13 @@ correct_gpu(
         while(inputPtr != nullptr){
             GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputs.pop();
 
+            nvtx::push_range("correct", 0);
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
-
-            freeInputs.push(inputPtr);
+            nvtx::pop_range();
 
             rawOutputPtr->event.synchronize();
 
+            freeInputs.push(inputPtr);
             unprocessedRawOutputs.push(rawOutputPtr);
 
             inputPtr = unprocessedInputs.popOrDefault(
@@ -4614,7 +4621,7 @@ correct_gpu(
         noMoreRawOutputs = true;
     };
 
-    auto correctorThreadFunction = correctorThreadFunctionWithoutConstructorThread;
+    auto correctorThreadFunction = correctorThreadFunctionWithConstructorThread;
 
     auto outputConstructorThreadFunction = [&](){
 
@@ -4634,7 +4641,9 @@ correct_gpu(
         );
 
         while(rawOutputPtr != nullptr){
+            nvtx::push_range("constructResults", 0);
             auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
+            nvtx::pop_range();
 
             std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
             std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
@@ -4727,20 +4736,20 @@ correct_gpu(
         )
     );
 
-    futures.emplace_back(
-        std::async(
-            std::launch::async,
-            correctorThreadFunction,
-            deviceIds[0]
-        )
-    );
-
     // futures.emplace_back(
     //     std::async(
     //         std::launch::async,
-    //         outputConstructorThreadFunction
+    //         correctorThreadFunction,
+    //         deviceIds[0]
     //     )
     // );
+
+    futures.emplace_back(
+        std::async(
+            std::launch::async,
+            outputConstructorThreadFunction
+        )
+    );
 
 #if 0    
     for(int deviceId : deviceIds){
