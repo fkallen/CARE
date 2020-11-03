@@ -4626,6 +4626,7 @@ correct_gpu(
                         input.event.synchronize();
 
                         auto correctionOutput = gpuErrorCorrector.correct(input, stream);
+                        //std::cerr << correctionOutput.rawResults.size() << "\n";
 
                         std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
                         std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
