@@ -177,7 +177,7 @@ namespace gpucorrectorkernels{
         template<class T>
         using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
 
-        CudaEvent event;
+        CudaEvent event{cudaEventDisableTiming};
 
         PinnedBuffer<int> h_numAnchors;
         PinnedBuffer<int> h_numCandidates;
@@ -196,21 +196,6 @@ namespace gpucorrectorkernels{
 
 
     class GpuAnchorHasher{
-        int deviceId;
-        CudaStream backgroundStream;
-
-        std::size_t encodedSequencePitchInInts;
-
-        int maxCandidatesPerRead;
-
-        const DistributedReadStorage* gpuReadStorage;
-        const GpuMinhasher* gpuMinhasher;
-        const SequenceFileProperties* sequenceFileProperties;
-
-        ThreadPool* threadPool;
-        ThreadPool::ParallelForHandle pforHandle;
-        DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
-        GpuMinhasher::QueryHandle minhashHandle;
     public:
 
         GpuAnchorHasher(
@@ -248,7 +233,7 @@ namespace gpucorrectorkernels{
             resizeBuffers(ecinput, numIds);
     
             //copy input to pinned memory
-            *ecinput.h_numAnchors = numIds;
+            *ecinput.h_numAnchors.get() = numIds;
             std::copy_n(anchorIds, numIds, ecinput.h_subject_read_ids.get());
 
             cudaMemcpyAsync(
@@ -267,9 +252,15 @@ namespace gpucorrectorkernels{
                 stream
             ); CUERR;
 
+            nvtx::push_range("getAnchorReads", 0);
             getAnchorReads(ecinput, stream);
+            nvtx::pop_range();
 
+            nvtx::push_range("getCandidateReadIdsWithMinhashing", 0);
             getCandidateReadIdsWithMinhashing(ecinput, stream);
+            nvtx::pop_range();
+
+            ecinput.event.record(stream);
 
             cudaSetDevice(curId); CUERR;
         }
@@ -282,10 +273,11 @@ namespace gpucorrectorkernels{
             ecinput.d_candidate_read_ids.resize(maxCandidates); 
 
             ecinput.h_numAnchors.resize(1);
-            ecinput.h_subject_read_ids.resize(numAnchors);
             ecinput.h_numCandidates.resize(1);
+            ecinput.h_subject_read_ids.resize(numAnchors);
 
             ecinput.d_numAnchors.resize(1);
+            ecinput.d_numCandidates.resize(1);
             ecinput.d_subject_read_ids.resize(numAnchors);
             ecinput.d_subject_sequences_data.resize(encodedSequencePitchInInts * numAnchors);
             ecinput.d_subject_sequences_lengths.resize(numAnchors);
@@ -313,20 +305,6 @@ namespace gpucorrectorkernels{
                 (*ecinput.h_numAnchors.get()),
                 stream
             );
-
-            // cudaEventRecord(ecinput.event, stream); CUERR;
-            // cudaStreamWaitEvent(backgroundStream, ecinput.event, 0); CUERR;
-
-            // //TODO
-            // cudaMemcpyAsync(
-            //     ecinput.h_subject_sequences_lengths,
-            //     ecinput.d_subject_sequences_lengths,
-            //     sizeof(int) * (*ecinput.h_numAnchors.get()),
-            //     D2H,
-            //     backgroundStream
-            // ); CUERR;
-
-            // //cudaEventRecord(ecinput.event, backgroundStream); CUERR;
         }
 
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -354,10 +332,46 @@ namespace gpucorrectorkernels{
                 ecinput.h_candidate_read_ids.get(),
                 ecinput.d_candidates_per_subject_prefixsum.get(),
                 ecinput.d_candidate_read_ids.get(),
-                *ecinput.h_numAnchors
+                *ecinput.h_numAnchors.get()
             ); CUERR;
         }
+    
+        int deviceId;
+        int maxCandidatesPerRead;
+        std::size_t encodedSequencePitchInInts;
+        CudaStream backgroundStream;
+        const DistributedReadStorage* gpuReadStorage;
+        const GpuMinhasher* gpuMinhasher;
+        const SequenceFileProperties* sequenceFileProperties;
+        ThreadPool* threadPool;
+        ThreadPool::ParallelForHandle pforHandle;
+        DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
+        GpuMinhasher::QueryHandle minhashHandle;
     };
+
+
+
+    struct RawCorrectionOutput{
+        int numAnchors;
+        int numCandidates;
+        std::vector<read_number> anchorReadIds;
+        std::vector<read_number> candidateReadIds;
+        std::vector<bool> anchorIsCorrected;
+        std::vector<bool> anchorIsHighQuality;
+        std::vector<int> h_num_corrected_candidates_per_anchor;
+        std::vector<int> h_num_corrected_candidates_per_anchor_prefixsum;
+        std::vector<int> h_indices_of_corrected_candidates;
+
+        std::vector<int> h_numEditsPerCorrectedSubject;
+        std::vector<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedSubject;
+        std::vector<char> h_corrected_subjects;
+        std::vector<int> h_subject_sequences_lengths;
+        std::vector<char> h_corrected_candidates;
+        std::vector<int> h_alignment_shifts;
+        std::vector<int> h_numEditsPerCorrectedCandidate;
+        std::vector<TempCorrectedSequence::EncodedEdit> h_numEditsPerCorrectedCandidate;
+    };
+
 
     class GpuErrorCorrector{
 
@@ -415,6 +429,7 @@ namespace gpucorrectorkernels{
         struct CorrectionOutput{
             std::vector<TempCorrectedSequence> anchorCorrections;
             std::vector<TempCorrectedSequence> candidateCorrections;
+            RawCorrectionOutput rawOutput;
         };
 
         static constexpr int getNumRefinementIterations() noexcept{
@@ -479,9 +494,10 @@ namespace gpucorrectorkernels{
             candidateQualitiesGatherHandle = gpuReadStorage->makeGatherHandleQualities();
         }
 
-        CorrectionOutput correct(const CorrectionInput& input, cudaStream_t stream){
-            const std::size_t inputSize = input.readIds.size();
-            if(inputSize == 0){
+        CorrectionOutput correct(GpuErrorCorrectorInput& input, cudaStream_t stream){
+            currentInput = &input;
+
+            if(*currentInput->h_numCandidates.get() == 0){
                 return CorrectionOutput{};
             }
 
@@ -489,32 +505,20 @@ namespace gpucorrectorkernels{
             cudaGetDevice(&curId); CUERR;
             cudaSetDevice(deviceId); CUERR;
 
-            resizeBuffers(inputSize);
-    
-            //copy input to pinned memory
-            h_numAnchors[0] = inputSize;
-            std::copy(input.readIds.begin(), input.readIds.end(), h_subject_read_ids.get());
+            resizeBuffers(*currentInput->h_numAnchors.get());            
 
-            nvtx::push_range("copyInputDataToDevice", 0);
-            copyInputDataToDevice(stream);
-            nvtx::pop_range();
+            resizeBuffersAfterMinhashing(
+                *currentInput->h_numAnchors.get(), 
+                *currentInput->h_numCandidates.get()
+            );
 
-            nvtx::push_range("getAnchorReads", 1);
-            getAnchorReads(stream);
-            nvtx::pop_range();
-
-            nvtx::push_range("getCandidateReadIdsWithMinhashing", 2);
-            getCandidateReadIdsWithMinhashing(stream);
-            nvtx::pop_range();
-
-            cudaStreamSynchronize(stream); CUERR; // wait for h_numCandidates, required to transpose candidate sequence data
-            if(*h_numCandidates == 0){
-                return CorrectionOutput{};
-            }
-
-            //std::cerr << "numAnchors: " << *h_numAnchors << ", numCandidates: " << *h_numCandidates << "\n";
-
-            resizeBuffersAfterMinhashing(inputSize, *h_numCandidates);
+            cudaMemcpyAsync(
+                h_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_lengths.get(),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
+                D2H,
+                backgroundStream
+            ); CUERR;
 
             nvtx::push_range("getCandidateSequenceData", 3);
             getCandidateSequenceData(stream); 
@@ -623,15 +627,15 @@ namespace gpucorrectorkernels{
                 d_alignment_nOps.get(),
                 d_alignment_isValid.get(),
                 d_alignment_best_alignment_flags.get(),
-                d_subject_sequences_data.get(),
+                currentInput->d_subject_sequences_data.get(),
                 d_candidate_sequences_data.get(),
-                d_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_lengths.get(),
                 d_candidate_sequences_lengths.get(),
-                d_candidates_per_subject_prefixsum.get(),
-                d_candidates_per_subject.get(),
+                currentInput->d_candidates_per_subject_prefixsum.get(),
+                currentInput->d_candidates_per_subject.get(),
                 d_anchorIndicesOfCandidates.get(),
-                d_numAnchors.get(),
-                d_numCandidates.get(),
+                currentInput->d_numAnchors.get(),
+                currentInput->d_numCandidates.get(),
                 d_anchorContainsN.get(),
                 removeAmbiguousAnchors,
                 d_candidateContainsN.get(),
@@ -659,9 +663,6 @@ namespace gpucorrectorkernels{
 
             //does not depend on number of candidates
             h_subject_sequences_lengths.resize(numReads);
-            h_subject_read_ids.resize(numReads);
-            h_numAnchors.resize(1);
-            h_numCandidates.resize(1);
             h_indices_per_subject.resize(numReads);
             h_corrected_subjects.resize(numReads * decodedSequencePitchInBytes);            
             h_subject_is_corrected.resize(numReads);
@@ -675,14 +676,7 @@ namespace gpucorrectorkernels{
             h_num_corrected_candidates_per_anchor_prefixsum.resize(numReads + 1);            
 
             //does not depend on number of candidates
-            d_subject_sequences_data.resize(encodedSequencePitchInInts * numReads);
-            d_subject_sequences_lengths.resize(numReads);
-            d_subject_read_ids.resize(numReads);
-            d_candidates_per_subject.resize(numReads);
             d_candidates_per_subject_tmp.resize(numReads);
-            d_candidates_per_subject_prefixsum.resize(numReads + 1);
-            d_numAnchors.resize(1);
-            d_numCandidates.resize(1);
             d_anchorContainsN.resize(numReads);
 
             if(correctionOptions->useQualityScores){
@@ -714,136 +708,37 @@ namespace gpucorrectorkernels{
             d_indices_of_corrected_subjects.resize(numReads);
             d_num_indices_of_corrected_subjects.resize(1);
 
-            const std::size_t maxCandidates = maxCandidatesPerRead * numReads;
-            // large enough to store all minhash results
-            h_candidate_read_ids.resize(maxCandidates);
-            d_candidate_read_ids.resize(maxCandidates); 
         }
 
-        /*
-            h_numAnchors
-            d_numAnchors
-            h_subject_read_ids
-            d_subject_read_ids
-            d_subject_sequences_data
-            h_subject_sequences_lengths
-            d_subject_sequences_lengths
-            d_subject_read_ids.get(),
-            d_candidate_read_ids.get(),
-            d_candidates_per_subject.get(),
-            d_candidates_per_subject_prefixsum.get()
-            d_numCandidates.get(),
-            h_numCandidates.get(),
-            h_candidate_read_ids.get(),
-        */
 
-        void copyInputDataToDevice(cudaStream_t stream){
-            cudaMemcpyAsync(
-                d_numAnchors.get(),
-                h_numAnchors.get(),
-                sizeof(int),
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_subject_read_ids.get(),
-                h_subject_read_ids.get(),
-                sizeof(read_number) * (*h_numAnchors.get()),
-                H2D,
-                stream
-            ); CUERR;
-        }
-
-        void getAnchorReads(cudaStream_t stream){
-            gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
-                threadPool,
-                subjectSequenceGatherHandle,
-                d_subject_sequences_data.get(),
-                encodedSequencePitchInInts,
-                d_subject_read_ids.get(),
-                h_subject_read_ids.get(),
-                (*h_numAnchors.get()),
-                deviceId,
-                stream
-            );
-
-            gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
-                d_subject_sequences_lengths.get(),
-                deviceId,
-                d_subject_read_ids.get(),
-                (*h_numAnchors.get()),
-                stream
-            );
-
-            cudaEventRecord(events[0], stream); CUERR;
-            cudaStreamWaitEvent(backgroundStream, events[0], 0); CUERR;
-
-            cudaMemcpyAsync(
-                h_subject_sequences_lengths,
-                d_subject_sequences_lengths,
-                sizeof(int) * (*h_numAnchors.get()),
-                D2H,
-                backgroundStream
-            ); CUERR;
-        }
-
-        void getCandidateReadIdsWithMinhashing(cudaStream_t stream){
-            ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
-
-            gpuMinhasher->getIdsOfSimilarReadsExcludingSelf(
-                minhashHandle,
-                d_subject_read_ids.get(),
-                h_subject_read_ids.get(),
-                d_subject_sequences_data.get(),
-                encodedSequencePitchInInts,
-                d_subject_sequences_lengths.get(),
-                (*h_numAnchors.get()),
-                deviceId, 
-                stream,
-                forLoopExecutor,
-                d_candidate_read_ids.get(),
-                d_candidates_per_subject.get(),
-                d_candidates_per_subject_prefixsum.get()
-            );
-
-            gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
-                d_numCandidates.get(),
-                h_numCandidates.get(),
-                h_candidate_read_ids.get(),
-                d_candidates_per_subject_prefixsum.get(),
-                d_candidate_read_ids.get(),
-                *h_numAnchors
-            ); CUERR;
-        }
 
         void getCandidateSequenceData(cudaStream_t stream){
 
-            const auto maxCandidates = maxCandidatesPerRead * (*h_numAnchors.get());
+            const auto maxCandidates = maxCandidatesPerRead * (*currentInput->h_numAnchors.get());
 
             gpuReadStorage->readsContainN_async(
                 deviceId,
                 d_anchorContainsN.get(), 
-                d_subject_read_ids.get(), 
-                d_numAnchors,
-                (*h_numAnchors.get()), 
+                currentInput->d_subject_read_ids.get(), 
+                currentInput->d_numAnchors,
+                (*currentInput->h_numAnchors.get()), 
                 stream
             );
 
             gpuReadStorage->readsContainN_async(
                 deviceId,
                 d_candidateContainsN.get(), 
-                d_candidate_read_ids.get(), 
-                d_numCandidates,
-                (*h_numCandidates.get()), 
+                currentInput->d_candidate_read_ids.get(), 
+                currentInput->d_numCandidates,
+                (*currentInput->h_numCandidates.get()), 
                 stream
             );  
 
             gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
                 d_candidate_sequences_lengths.get(),
                 deviceId,
-                d_candidate_read_ids.get(),
-                (*h_numCandidates.get()),            
+                currentInput->d_candidate_read_ids.get(),
+                (*currentInput->h_numCandidates.get()),            
                 stream
             );
 
@@ -852,9 +747,9 @@ namespace gpucorrectorkernels{
                 candidateSequenceGatherHandle,
                 d_candidate_sequences_data.get(),
                 encodedSequencePitchInInts,
-                h_candidate_read_ids,
-                d_candidate_read_ids,
-                (*h_numCandidates.get()),
+                currentInput->h_candidate_read_ids,
+                currentInput->d_candidate_read_ids,
+                (*currentInput->h_numCandidates.get()),
                 deviceId,
                 stream
             );
@@ -862,7 +757,7 @@ namespace gpucorrectorkernels{
             helpers::call_transpose_kernel(
                 d_transposedCandidateSequencesData.get(), 
                 d_candidate_sequences_data.get(), 
-                (*h_numCandidates.get()), 
+                (*currentInput->h_numCandidates.get()), 
                 encodedSequencePitchInInts, 
                 encodedSequencePitchInInts, 
                 stream
@@ -874,7 +769,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_candidate_sequences_lengths,
                 d_candidate_sequences_lengths,
-                sizeof(int) * (*h_numCandidates.get()),
+                sizeof(int) * (*currentInput->h_numCandidates.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -889,9 +784,9 @@ namespace gpucorrectorkernels{
                     subjectQualitiesGatherHandle,
                     d_subject_qualities,
                     qualityPitchInBytes,
-                    h_subject_read_ids,
-                    d_subject_read_ids,
-                    (*h_numAnchors.get()),
+                    currentInput->h_subject_read_ids,
+                    currentInput->d_subject_read_ids,
+                    (*currentInput->h_numAnchors.get()),
                     deviceId,
                     stream
                 );
@@ -902,9 +797,9 @@ namespace gpucorrectorkernels{
                     candidateQualitiesGatherHandle,
                     d_candidate_qualities,
                     qualityPitchInBytes,
-                    h_candidate_read_ids.get(),
-                    d_candidate_read_ids.get(),
-                    (*h_numCandidates.get()),
+                    currentInput->h_candidate_read_ids.get(),
+                    currentInput->d_candidate_read_ids.get(),
+                    (*currentInput->h_numCandidates.get()),
                     deviceId,
                     stream
                 );
@@ -915,16 +810,16 @@ namespace gpucorrectorkernels{
 
         void getCandidateAlignments(cudaStream_t stream){
 
-            const auto maxCandidates = maxCandidatesPerRead * (*h_numAnchors.get());
+            const auto maxCandidates = maxCandidatesPerRead * (*currentInput->h_numAnchors.get());
 
             {
                 
                 gpucorrectorkernels::setAnchorIndicesOfCandidateskernel<1024, 128>
                         <<<1024, 128, 0, stream>>>(
                     d_anchorIndicesOfCandidates.get(),
-                    d_numAnchors.get(),
-                    d_candidates_per_subject.get(),
-                    d_candidates_per_subject_prefixsum.get()
+                    currentInput->d_numAnchors.get(),
+                    currentInput->d_candidates_per_subject.get(),
+                    currentInput->d_candidates_per_subject_prefixsum.get()
                 ); CUERR;
             }
 
@@ -941,20 +836,20 @@ namespace gpucorrectorkernels{
                 d_alignment_nOps.get(),
                 d_alignment_isValid.get(),
                 d_alignment_best_alignment_flags.get(),
-                d_subject_sequences_data.get(),
+                currentInput->d_subject_sequences_data.get(),
                 d_candidate_sequences_data.get(),
-                d_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_lengths.get(),
                 d_candidate_sequences_lengths.get(),
-                d_candidates_per_subject_prefixsum.get(),
-                d_candidates_per_subject.get(),
+                currentInput->d_candidates_per_subject_prefixsum.get(),
+                currentInput->d_candidates_per_subject.get(),
                 d_anchorIndicesOfCandidates.get(),
-                d_numAnchors.get(),
-                d_numCandidates.get(),
+                currentInput->d_numAnchors.get(),
+                currentInput->d_numCandidates.get(),
                 d_anchorContainsN.get(),
                 removeAmbiguousAnchors,
                 d_candidateContainsN.get(),
                 removeAmbiguousCandidates,
-                (*h_numAnchors.get()),
+                (*currentInput->h_numAnchors.get()),
                 maxCandidates,
                 sequenceFileProperties->maxSequenceLength,
                 encodedSequencePitchInInts,
@@ -970,10 +865,10 @@ namespace gpucorrectorkernels{
                 d_alignment_best_alignment_flags.get(),
                 d_alignment_nOps.get(),
                 d_alignment_overlaps.get(),
-                d_candidates_per_subject_prefixsum.get(),
-                d_numAnchors.get(),
-                d_numCandidates.get(),
-                (*h_numAnchors.get()),
+                currentInput->d_candidates_per_subject_prefixsum.get(),
+                currentInput->d_numAnchors.get(),
+                currentInput->d_numCandidates.get(),
+                (*currentInput->h_numAnchors.get()),
                 maxCandidates,
                 correctionOptions->estimatedErrorrate,
                 correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
@@ -986,12 +881,12 @@ namespace gpucorrectorkernels{
                 d_indices_per_subject.get(),
                 d_num_indices.get(),
                 d_alignment_best_alignment_flags.get(),
-                d_candidates_per_subject.get(),
-                d_candidates_per_subject_prefixsum.get(),
+                currentInput->d_candidates_per_subject.get(),
+                currentInput->d_candidates_per_subject_prefixsum.get(),
                 d_anchorIndicesOfCandidates.get(),
-                d_numAnchors.get(),
-                d_numCandidates.get(),
-                (*h_numAnchors.get()),
+                currentInput->d_numAnchors.get(),
+                currentInput->d_numCandidates.get(),
+                (*currentInput->h_numAnchors.get()),
                 maxCandidates,
                 stream,
                 kernelLaunchHandle
@@ -1000,11 +895,11 @@ namespace gpucorrectorkernels{
 
         void buildMultipleSequenceAlignment(cudaStream_t stream){
 
-            const auto maxCandidates = maxCandidatesPerRead * (*h_numAnchors.get());
+            const auto maxCandidates = maxCandidatesPerRead * (*currentInput->h_numAnchors.get());
 
             GPUMultiMSA multiMSA;
 
-            multiMSA.numMSAs = (*h_numAnchors.get());
+            multiMSA.numMSAs = (*currentInput->h_numAnchors.get());
             multiMSA.columnPitchInElements = msaColumnPitchInElements;
             multiMSA.counts = d_counts.get();
             multiMSA.weights = d_weights.get();
@@ -1021,18 +916,18 @@ namespace gpucorrectorkernels{
                 d_alignment_shifts.get(),
                 d_alignment_nOps.get(),
                 d_alignment_best_alignment_flags.get(),
-                d_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_lengths.get(),
                 d_candidate_sequences_lengths.get(),
                 d_indices,
                 d_indices_per_subject,
-                d_candidates_per_subject_prefixsum,
-                d_subject_sequences_data.get(),
+                currentInput->d_candidates_per_subject_prefixsum,
+                currentInput->d_subject_sequences_data.get(),
                 d_candidate_sequences_data.get(),
                 d_subject_qualities.get(),
                 d_candidate_qualities.get(),
-                d_numAnchors.get(),
+                currentInput->d_numAnchors.get(),
                 goodAlignmentProperties->maxErrorRate,
-                (*h_numAnchors.get()),
+                (*currentInput->h_numAnchors.get()),
                 maxCandidates,
                 correctionOptions->useQualityScores,
                 encodedSequencePitchInInts,
@@ -1043,7 +938,7 @@ namespace gpucorrectorkernels{
         }
 
         void refineMultipleSequenceAlignment(cudaStream_t stream){
-            const auto maxCandidates = maxCandidatesPerRead * (*h_numAnchors.get());
+            const auto maxCandidates = maxCandidatesPerRead * (*currentInput->h_numAnchors.get());
 
             std::array<int*,2> d_indices_dblbuf{
                 d_indices.get(), 
@@ -1060,7 +955,7 @@ namespace gpucorrectorkernels{
 
             GPUMultiMSA multiMSA;
 
-            multiMSA.numMSAs = (*h_numAnchors.get());
+            multiMSA.numMSAs = (*currentInput->h_numAnchors.get());
             multiMSA.columnPitchInElements = msaColumnPitchInElements;
             multiMSA.counts = d_counts.get();
             multiMSA.weights = d_weights.get();
@@ -1076,8 +971,8 @@ namespace gpucorrectorkernels{
             static_assert(getNumRefinementIterations() % 2 == 1, "");
 
             const std::size_t requiredTempStorageBytes = 
-                SDIV(sizeof(bool) * (*h_numCandidates.get()), 128) * 128 // d_shouldBeKept + padding to align the next pointer
-                + (sizeof(bool) * (*h_numAnchors.get())); // d_anchorIsFinished
+                SDIV(sizeof(bool) * (*currentInput->h_numCandidates.get()), 128) * 128 // d_shouldBeKept + padding to align the next pointer
+                + (sizeof(bool) * (*currentInput->h_numAnchors.get())); // d_anchorIsFinished
             assert(d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
             
             bool* d_shouldBeKept = (bool*)d_tempstorage.get();
@@ -1096,17 +991,17 @@ namespace gpucorrectorkernels{
                     d_alignment_shifts.get(),
                     d_alignment_nOps.get(),
                     d_alignment_overlaps.get(),
-                    d_subject_sequences_data.get(),
+                    currentInput->d_subject_sequences_data.get(),
                     d_candidate_sequences_data.get(),
-                    d_subject_sequences_lengths.get(),
+                    currentInput->d_subject_sequences_lengths.get(),
                     d_candidate_sequences_lengths.get(),
                     d_subject_qualities.get(),
                     d_candidate_qualities.get(),
                     d_shouldBeKept,
                     d_candidates_per_subject_prefixsum,
-                    d_numAnchors.get(),
+                    currentInput->d_numAnchors.get(),
                     goodAlignmentProperties->maxErrorRate,
-                    (*h_numAnchors.get()),
+                    (*currentInput->h_numAnchors.get()),
                     maxCandidates,
                     correctionOptions->useQualityScores,
                     encodedSequencePitchInInts,
@@ -1125,7 +1020,7 @@ namespace gpucorrectorkernels{
 
     #else 
 
-            const std::size_t requiredTempStorageBytes = sizeof(bool) * (*h_numCandidates.get()); // d_shouldBeKept
+            const std::size_t requiredTempStorageBytes = sizeof(bool) * (*currentInput->h_numCandidates.get()); // d_shouldBeKept
                 
             assert(d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
 
@@ -1140,17 +1035,17 @@ namespace gpucorrectorkernels{
                 d_alignment_shifts.get(),
                 d_alignment_nOps.get(),
                 d_alignment_overlaps.get(),
-                d_subject_sequences_data.get(),
+                currentInput->d_subject_sequences_data.get(),
                 d_candidate_sequences_data.get(),
-                d_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_lengths.get(),
                 d_candidate_sequences_lengths.get(),
                 d_subject_qualities.get(),
                 d_candidate_qualities.get(),
                 d_shouldBeKept,
-                d_candidates_per_subject_prefixsum,
-                d_numAnchors.get(),
+                currentInput->d_candidates_per_subject_prefixsum,
+                currentInput->d_numAnchors.get(),
                 goodAlignmentProperties->maxErrorRate,
-                (*h_numAnchors.get()),
+                (*currentInput->h_numAnchors.get()),
                 maxCandidates,
                 correctionOptions->useQualityScores,
                 encodedSequencePitchInInts,
@@ -1191,7 +1086,7 @@ namespace gpucorrectorkernels{
 
             GPUMultiMSA multiMSA;
 
-            multiMSA.numMSAs = (*h_numAnchors.get());
+            multiMSA.numMSAs = (*currentInput->h_numAnchors.get());
             multiMSA.columnPitchInElements = msaColumnPitchInElements;
             multiMSA.counts = d_counts.get();
             multiMSA.weights = d_weights.get();
@@ -1208,12 +1103,12 @@ namespace gpucorrectorkernels{
                 d_subject_is_corrected.get(),
                 d_is_high_quality_subject.get(),
                 multiMSA,
-                d_subject_sequences_data.get(),
+                currentInput->d_subject_sequences_data.get(),
                 d_candidate_sequences_data.get(),
                 d_candidate_sequences_lengths.get(),
                 d_indices_per_subject,
-                d_numAnchors.get(),
-                (*h_numAnchors.get()),
+                currentInput->d_numAnchors.get(),
+                (*currentInput->h_numAnchors.get()),
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 sequenceFileProperties->maxSequenceLength,
@@ -1236,7 +1131,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_indices_per_subject,
                 d_indices_per_subject,
-                sizeof(int) * (*h_numAnchors.get()),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1244,21 +1139,21 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_corrected_subjects,
                 d_corrected_subjects,
-                decodedSequencePitchInBytes * (*h_numAnchors.get()),
+                decodedSequencePitchInBytes * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
             cudaMemcpyAsync(
                 h_subject_is_corrected,
                 d_subject_is_corrected,
-                sizeof(bool) * (*h_numAnchors.get()),
+                sizeof(bool) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
             cudaMemcpyAsync(
                 h_is_high_quality_subject,
                 d_is_high_quality_subject,
-                sizeof(AnchorHighQualityFlag) * (*h_numAnchors.get()),
+                sizeof(AnchorHighQualityFlag) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1279,7 +1174,7 @@ namespace gpucorrectorkernels{
                 d_indices_of_corrected_subjects.get(),
                 d_num_indices_of_corrected_subjects.get(),
                 d_subject_is_corrected.get(),
-                d_numAnchors.get()
+                currentInput->d_numAnchors.get()
             ); CUERR;
 
             callConstructAnchorResultsKernelAsync(
@@ -1289,15 +1184,15 @@ namespace gpucorrectorkernels{
                 d_indices_of_corrected_subjects.get(),
                 d_num_indices_of_corrected_subjects.get(),
                 d_anchorContainsN.get(),
-                d_subject_sequences_data.get(),
-                d_subject_sequences_lengths.get(),
+                currentInput->d_subject_sequences_data.get(),
+                currentInput->d_subject_sequences_lengths.get(),
                 d_corrected_subjects.get(),
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,
-                d_numAnchors.get(),
-                (*h_numAnchors.get()),
+                currentInput->d_numAnchors.get(),
+                (*currentInput->h_numAnchors.get()),
                 stream,
                 kernelLaunchHandle
             );
@@ -1308,7 +1203,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_editsPerCorrectedSubject,
                 d_editsPerCorrectedSubject,
-                editsPitchInBytes * (*h_numAnchors.get()),
+                editsPitchInBytes * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1316,7 +1211,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_numEditsPerCorrectedSubject,
                 d_numEditsPerCorrectedSubject,
-                sizeof(int) * (*h_numAnchors.get()),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1325,7 +1220,7 @@ namespace gpucorrectorkernels{
 
         void correctCandidates(cudaStream_t stream){
 
-            const auto maxCandidates = maxCandidatesPerRead * (*h_numAnchors.get());
+            const auto maxCandidates = maxCandidatesPerRead * (*currentInput->h_numAnchors.get());
 
             const float min_support_threshold = 1.0f-3.0f*correctionOptions->estimatedErrorrate;
             // coverage is always >= 1
@@ -1342,7 +1237,7 @@ namespace gpucorrectorkernels{
                 d_high_quality_subject_indices.get(),
                 d_num_high_quality_subject_indices.get(),
                 d_isHqSubject,
-                d_numAnchors.get()
+                currentInput->d_numAnchors.get()
             ); CUERR;
 
             cudaEventRecord(events[0], stream); CUERR;
@@ -1351,7 +1246,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_high_quality_subject_indices.get(),
                 d_high_quality_subject_indices.get(),
-                sizeof(int) * (*h_numAnchors.get()),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1365,8 +1260,8 @@ namespace gpucorrectorkernels{
             ); CUERR;
 
             gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<640, 128, 0, stream>>>(
-                d_numCandidates.get(),
-                d_numAnchors.get(),
+                currentInput->d_numCandidates.get(),
+                currentInput->d_numAnchors.get(),
                 d_num_corrected_candidates_per_anchor.get(),
                 d_candidateCanBeCorrected
             ); CUERR;
@@ -1386,7 +1281,7 @@ namespace gpucorrectorkernels{
 
             GPUMultiMSA multiMSA;
 
-            multiMSA.numMSAs = (*h_numAnchors.get());
+            multiMSA.numMSAs = (*currentInput->h_numAnchors.get());
             multiMSA.columnPitchInElements = msaColumnPitchInElements;
             multiMSA.counts = d_counts.get();
             multiMSA.weights = d_weights.get();
@@ -1405,11 +1300,11 @@ namespace gpucorrectorkernels{
                 d_candidate_sequences_lengths.get(),
                 d_anchorIndicesOfCandidates.get(),
                 d_is_high_quality_subject.get(),
-                d_candidates_per_subject_prefixsum,
+                currentInput->d_candidates_per_subject_prefixsum,
                 d_indices_dblbuf[/*getNumRefinementIterations() % 2*/1],
                 d_indices_per_subject_dblbuf[/*getNumRefinementIterations() % 2*/1],
-                d_numAnchors,
-                d_numCandidates,
+                currentInput->d_numAnchors,
+                currentInput->d_numCandidates,
                 min_support_threshold,
                 min_coverage_threshold,
                 new_columns_to_correct,
@@ -1426,7 +1321,7 @@ namespace gpucorrectorkernels{
                 d_candidateCanBeCorrected,
                 d_indices_of_corrected_candidates.get(),
                 d_num_total_corrected_candidates.get(),
-                *h_numCandidates,
+                *currentInput->h_numCandidates,
                 stream
             ); CUERR;
 
@@ -1451,14 +1346,14 @@ namespace gpucorrectorkernels{
                 cubTempSize, 
                 d_num_corrected_candidates_per_anchor.get(), 
                 d_num_corrected_candidates_per_anchor_prefixsum.get(), 
-                (*h_numAnchors.get()), 
+                (*currentInput->h_numAnchors.get()), 
                 backgroundStream
             );
 
             cudaMemcpyAsync(
                 h_num_corrected_candidates_per_anchor,
                 d_num_corrected_candidates_per_anchor,
-                sizeof(int) * (*h_numAnchors.get()),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1466,7 +1361,7 @@ namespace gpucorrectorkernels{
             cudaMemcpyAsync(
                 h_num_corrected_candidates_per_anchor_prefixsum.get(),
                 d_num_corrected_candidates_per_anchor_prefixsum.get(),
-                sizeof(int) * (*h_numAnchors.get()),
+                sizeof(int) * (*currentInput->h_numAnchors.get()),
                 D2H,
                 backgroundStream
             ); CUERR;
@@ -1477,7 +1372,7 @@ namespace gpucorrectorkernels{
             gpucorrectorkernels::copyShiftsAndCorrectedCandidateIndices<<<320, 256, 0, backgroundStream>>>(
                 h_alignment_shifts.get(),
                 h_indices_of_corrected_candidates.get(),
-                d_numCandidates.get(),
+                currentInput->d_numCandidates.get(),
                 d_alignment_shifts.get(),
                 d_indices_of_corrected_candidates.get()
             ); CUERR;
@@ -1495,8 +1390,8 @@ namespace gpucorrectorkernels{
                 d_indices_of_corrected_candidates.get(),
                 d_num_total_corrected_candidates.get(),
                 d_anchorIndicesOfCandidates.get(),
-                d_numAnchors,
-                d_numCandidates,
+                currentInput->d_numAnchors,
+                currentInput->d_numCandidates,
                 getDoNotUseEditsValue(),
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
@@ -1509,20 +1404,22 @@ namespace gpucorrectorkernels{
   
         }
 
+
+
         CorrectionOutput constructResults(){
 
             std::vector<int> subjectIndicesToProcess;
             std::vector<std::pair<int,int>> candidateIndicesToProcess;
 
-            subjectIndicesToProcess.reserve((*h_numAnchors.get()));
+            subjectIndicesToProcess.reserve((*currentInput->h_numAnchors.get()));
             if(correctionOptions->correctCandidates){
-                candidateIndicesToProcess.reserve(16 * (*h_numAnchors.get()));
+                candidateIndicesToProcess.reserve(16 * (*currentInput->h_numAnchors.get()));
             }
 
             nvtx::push_range("preprocess anchor results",0);
 
-            for(int subject_index = 0; subject_index < (*h_numAnchors.get()); subject_index++){
-                const read_number readId = h_subject_read_ids[subject_index];
+            for(int subject_index = 0; subject_index < (*currentInput->h_numAnchors.get()); subject_index++){
+                const read_number readId = currentInput->h_subject_read_ids[subject_index];
                 const bool isCorrected = h_subject_is_corrected[subject_index];
                 const bool isHQ = h_is_high_quality_subject[subject_index].hq();
 
@@ -1543,7 +1440,7 @@ namespace gpucorrectorkernels{
 
                 nvtx::push_range("preprocess candidate results",0);
 
-                for(int subject_index = 0; subject_index < (*h_numAnchors.get()); subject_index++){
+                for(int subject_index = 0; subject_index < (*currentInput->h_numAnchors.get()); subject_index++){
 
                     const int globalOffset = h_num_corrected_candidates_per_anchor_prefixsum[subject_index];
                     const int n_corrected_candidates = h_num_corrected_candidates_per_anchor[subject_index];
@@ -1553,7 +1450,7 @@ namespace gpucorrectorkernels{
 
                     for(int i = 0; i < n_corrected_candidates; ++i) {
                         const int global_candidate_index = my_indices_of_corrected_candidates[i];
-                        const read_number candidate_read_id = h_candidate_read_ids[global_candidate_index];
+                        const read_number candidate_read_id = currentInput->h_candidate_read_ids[global_candidate_index];
 
                         if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
                             candidateIndicesToProcess.emplace_back(std::make_pair(subject_index, i));
@@ -1586,7 +1483,7 @@ namespace gpucorrectorkernels{
 
                     auto& tmp = correctionOutput.anchorCorrections[positionInVector];
                     
-                    const read_number readId = h_subject_read_ids[subject_index];
+                    const read_number readId = currentInput->h_subject_read_ids[subject_index];
 
                     tmp.hq = h_is_high_quality_subject[subject_index].hq();                    
                     tmp.type = TempCorrectedSequence::Type::Anchor;
@@ -1620,7 +1517,7 @@ namespace gpucorrectorkernels{
                     //TIMERSTARTCPU(setup);
                     const int subject_index = candidateIndicesToProcess[positionInVector].first;
                     const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
-                    const read_number subjectReadId = h_subject_read_ids[subject_index];
+                    const read_number subjectReadId = currentInput->h_subject_read_ids[subject_index];
 
                     auto& tmp = correctionOutput.candidateCorrections[positionInVector];
 
@@ -1638,7 +1535,7 @@ namespace gpucorrectorkernels{
 
                     const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
                     //std::cerr << global_candidate_index << "\n";
-                    const read_number candidate_read_id = h_candidate_read_ids[global_candidate_index];
+                    const read_number candidate_read_id = currentInput->h_candidate_read_ids[global_candidate_index];
 
                     const int candidate_shift = h_alignment_shifts[global_candidate_index];
 
@@ -1744,6 +1641,8 @@ namespace gpucorrectorkernels{
         const GoodAlignmentProperties* goodAlignmentProperties;
         const SequenceFileProperties* sequenceFileProperties;
 
+        GpuErrorCorrectorInput* currentInput;
+
 
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
@@ -1754,12 +1653,14 @@ namespace gpucorrectorkernels{
         GpuMinhasher::QueryHandle minhashHandle;
         KernelLaunchHandle kernelLaunchHandle;  
 
+
+
         PinnedBuffer<int> h_subject_sequences_lengths;
-        PinnedBuffer<read_number> h_subject_read_ids;
-        PinnedBuffer<read_number> h_candidate_read_ids;
+        //PinnedBuffer<read_number> h_subject_read_ids;
+        //PinnedBuffer<read_number> h_candidate_read_ids;
         PinnedBuffer<int> h_candidate_sequences_lengths;
-        PinnedBuffer<int> h_numAnchors;
-        PinnedBuffer<int> h_numCandidates;
+        //PinnedBuffer<int> h_numAnchors;
+        //PinnedBuffer<int> h_numCandidates;
         PinnedBuffer<int> h_indices_per_subject;
         PinnedBuffer<char> h_corrected_subjects;
         PinnedBuffer<char> h_corrected_candidates;
@@ -1777,15 +1678,15 @@ namespace gpucorrectorkernels{
         PinnedBuffer<int> h_indices_of_corrected_candidates;
         PinnedBuffer<int> h_alignment_shifts;
 
-        DeviceBuffer<unsigned int> d_subject_sequences_data;
-        DeviceBuffer<int> d_subject_sequences_lengths;
-        DeviceBuffer<read_number> d_subject_read_ids;
-        DeviceBuffer<read_number> d_candidate_read_ids;
-        DeviceBuffer<int> d_candidates_per_subject;
+        //DeviceBuffer<unsigned int> d_subject_sequences_data;
+        //DeviceBuffer<int> d_subject_sequences_lengths;
+        //DeviceBuffer<read_number> d_subject_read_ids;
+        //DeviceBuffer<read_number> d_candidate_read_ids;
+        //DeviceBuffer<int> d_candidates_per_subject;
         DeviceBuffer<int> d_candidates_per_subject_tmp;
-        DeviceBuffer<int> d_candidates_per_subject_prefixsum;
-        DeviceBuffer<int> d_numAnchors;
-        DeviceBuffer<int> d_numCandidates;
+        //DeviceBuffer<int> d_candidates_per_subject_prefixsum;
+        //DeviceBuffer<int> d_numAnchors;
+        //DeviceBuffer<int> d_numCandidates;
         DeviceBuffer<bool> d_anchorContainsN;
         DeviceBuffer<bool> d_candidateContainsN;
         DeviceBuffer<int> d_candidate_sequences_lengths;
