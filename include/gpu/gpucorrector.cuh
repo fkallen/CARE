@@ -531,6 +531,16 @@ namespace gpucorrectorkernels{
             d_candidate_read_ids.resize(maxCandidates); 
         }
 
+        /*
+            h_numAnchors
+            d_numAnchors
+            h_subject_read_ids
+            d_subject_read_ids
+            d_subject_sequences_data
+            h_subject_sequences_lengths
+            d_subject_sequences_lengths
+        */
+
         void copyInputDataToDevice(cudaStream_t stream){
             cudaMemcpyAsync(
                 d_numAnchors.get(),
@@ -698,7 +708,7 @@ namespace gpucorrectorkernels{
                     qualityPitchInBytes,
                     h_candidate_read_ids.get(),
                     d_candidate_read_ids.get(),
-                    (*h_numAnchors.get()),
+                    (*h_numCandidates.get()),
                     deviceId,
                     stream
                 );
@@ -865,7 +875,7 @@ namespace gpucorrectorkernels{
             multiMSA.origCoverages = d_origCoverages.get();
             multiMSA.columnProperties = d_msa_column_properties.get();
 
-    #if 1        
+    #if 0        
 
             static_assert(getNumRefinementIterations() % 2 == 1, "");
 
@@ -1349,11 +1359,8 @@ namespace gpucorrectorkernels{
                         const int global_candidate_index = my_indices_of_corrected_candidates[i];
                         const read_number candidate_read_id = h_candidate_read_ids[global_candidate_index];
 
-                        if (correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
-                            //std::cerr << global_candidate_index << " will be corrected\n";
+                        if (!correctionFlags->isCorrectedAsHQAnchor(candidate_read_id)) {
                             candidateIndicesToProcess.emplace_back(std::make_pair(subject_index, i));
-                        }else{
-                            //std::cerr << global_candidate_index << " discarded\n";
                         }
                     }
                 }

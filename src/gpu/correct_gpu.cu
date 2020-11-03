@@ -1,5 +1,5 @@
 
-
+#if 0 // 1 old version, 0 refactored version
 
 
 #include <gpu/correct_gpu.hpp>
@@ -3587,8 +3587,6 @@ namespace gpu{
 	}
 
 
-#if 0
-
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
@@ -4268,17 +4266,33 @@ correct_gpu(
 }
 
 
-#endif
-
-
 
 
 }
 }
 
 
-#if 1
+#else 
+
+
+
 #include <gpu/gpucorrector.cuh>
+#include <gpu/gpuminhasher.cuh>
+#include <gpu/distributedreadstorage.hpp>
+
+#include <options.hpp>
+#include <readlibraryio.hpp>
+#include <memorymanagement.hpp>
+#include <memoryfile.hpp>
+#include <threadpool.hpp>
+#include <rangegenerator.hpp>
+
+#include <cassert>
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <future>
 
 namespace care{
 namespace gpu{
@@ -4355,9 +4369,11 @@ correct_gpu(
             //useEditsSavedCountMap[tmp.useEdits]++;
             //numEditsHistogram[tmp.edits.size()]++;
 
-        // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
+            // std::cerr << tmp.edits.size() << " " << encoded.data.capacity() << "\n";
         }
     };
+
+    outputThread.start();
 
     const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));
     std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
@@ -4390,100 +4406,119 @@ correct_gpu(
     std::vector<std::future<void>> futures;
 
     for(int deviceId : deviceIds){
-        futures.emplace_back(std::async(
-            std::launch::async,
-            [&, deviceId](){
+        for(int j = 0; j < 1; j++){
+            futures.emplace_back(std::async(
+                std::launch::async,
+                [&, deviceId](){
 
-                cudaSetDevice(deviceId);
+                    cudaSetDevice(deviceId);
 
-                GpuErrorCorrector gpuErrorCorrector{
-                    readStorage,
-                    minhasher,
-                    correctionFlags,
-                    correctionOptions,
-                    goodAlignmentProperties,
-                    sequenceFileProperties,
-                    &threadPool
-                };
+                    GpuErrorCorrector gpuErrorCorrector{
+                        readStorage,
+                        minhasher,
+                        correctionFlags,
+                        correctionOptions,
+                        goodAlignmentProperties,
+                        sequenceFileProperties,
+                        &threadPool
+                    };
 
-                CudaStream stream;
-                ThreadPool::ParallelForHandle pforHandle;
+                    CudaStream stream;
+                    ThreadPool::ParallelForHandle pforHandle;
 
-                while(!readIdGenerator.empty()){
-                    GpuErrorCorrector::CorrectionInput input;
-                    input.readIds.resize(correctionOptions.batchsize);
+                    while(!readIdGenerator.empty()){
+                        GpuErrorCorrector::CorrectionInput input;
+                        input.readIds.resize(correctionOptions.batchsize);
 
-                    auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, input.readIds.begin());
-                    input.readIds.erase(readIdsEnd, input.readIds.end());
+                        auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, input.readIds.begin());
+                        input.readIds.erase(readIdsEnd, input.readIds.end());
 
-                    auto correctionOutput = gpuErrorCorrector.correct(input, stream);
+                        auto correctionOutput = gpuErrorCorrector.correct(input, stream);
 
-                    std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-                    std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+                        std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+                        std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
 
-                    if(correctionOutput.anchorCorrections.size() > 0){
-                        encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
+                        if(correctionOutput.anchorCorrections.size() > 0){
+                            encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
 
-                        threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.anchorCorrections.size(), 
-                            [&](auto begin, auto end, auto /*threadId*/){
-                                for(auto i = begin; i < end; i++){
-                                    correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
+                            threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.anchorCorrections.size(), 
+                                [&](auto begin, auto end, auto /*threadId*/){
+                                    for(auto i = begin; i < end; i++){
+                                        correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
+                                    }
                                 }
-                            }
-                        );
-                    }
+                            );
+                        }
 
-                    if(correctionOutput.candidateCorrections.size() > 0){
-                        encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
+                        if(correctionOutput.candidateCorrections.size() > 0){
+                            encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
 
-                        threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.candidateCorrections.size(), 
-                            [&](auto begin, auto end, auto /*threadId*/){
-                                for(auto i = begin; i < end; i++){
-                                    correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
+                            threadPool.parallelFor(pforHandle, std::size_t(0), correctionOutput.candidateCorrections.size(), 
+                                [&](auto begin, auto end, auto /*threadId*/){
+                                    for(auto i = begin; i < end; i++){
+                                        correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
+                                    }
                                 }
-                            }
-                        );
-                    }
-
-
-                    auto function = [
-                        &,
-                        correctionOutput = std::move(correctionOutput),
-                        encodedAnchorCorrections = std::move(encodedAnchorCorrections),
-                        encodedCandidateCorrections = std::move(encodedCandidateCorrections)
-                    ](){
+                            );
+                        }
 
                         const int numA = encodedAnchorCorrections.size();
                         const int numC = encodedCandidateCorrections.size();
 
-                        for(int i = 0; i < numA; i++){
-                            saveCorrectedSequence(
-                                &correctionOutput.anchorCorrections[i], 
-                                &encodedAnchorCorrections[i]
-                            );
+                        auto function = [
+                            &,
+                            correctionOutput = std::move(correctionOutput),
+                            encodedAnchorCorrections = std::move(encodedAnchorCorrections),
+                            encodedCandidateCorrections = std::move(encodedCandidateCorrections)
+                        ](){
+
+                            const int numA = encodedAnchorCorrections.size();
+                            const int numC = encodedCandidateCorrections.size();
+
+                            for(int i = 0; i < numA; i++){
+                                saveCorrectedSequence(
+                                    &correctionOutput.anchorCorrections[i], 
+                                    &encodedAnchorCorrections[i]
+                                );
+                            }
+
+                            for(int i = 0; i < numC; i++){
+                                saveCorrectedSequence(
+                                    &correctionOutput.candidateCorrections[i], 
+                                    &encodedCandidateCorrections[i]
+                                );
+                            }
+                        };
+
+                        if(numA > 0 || numC > 0){
+                            outputThread.enqueue(std::move(function));
                         }
 
-                        for(int i = 0; i < numC; i++){
-                            saveCorrectedSequence(
-                                &correctionOutput.candidateCorrections[i], 
-                                &encodedCandidateCorrections[i]
-                            );
-                        }
-                    };
-
-                    if(correctionOutput.anchorCorrections.size() > 0 || correctionOutput.candidateCorrections.size() > 0){
-                        outputThread.enqueue(std::move(function));
+                        progressThread.addProgress(input.readIds.size());
                     }
-
-                    progressThread.addProgress(input.readIds.size());
                 }
-            }
-        ));
+            ));
+        }
     }
 
     for(auto& future : futures){
         future.wait();
     }
+
+    progressThread.finished(); 
+        
+    std::cout << std::endl;
+
+    threadPool.wait();
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+    assert(threadPool.empty());
+
+    partialResults.flush();
+
+
+    std::cerr << partialResults.getNumElementsInMemory() << ", " 
+        << partialResults.getNumElementsInFile() << "\n";
 
     return partialResults;
 }
