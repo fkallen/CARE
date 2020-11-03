@@ -169,6 +169,196 @@ namespace gpucorrectorkernels{
 
 } //namespace gpucorrectorkernels   
 
+    class GpuErrorCorrectorInput{
+    public:
+        template<class T>
+        using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
+
+        template<class T>
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+
+        CudaEvent event;
+
+        PinnedBuffer<int> h_numAnchors;
+        PinnedBuffer<int> h_numCandidates;
+        PinnedBuffer<read_number> h_subject_read_ids;
+        PinnedBuffer<read_number> h_candidate_read_ids;
+
+        DeviceBuffer<int> d_numAnchors;
+        DeviceBuffer<int> d_numCandidates;
+        DeviceBuffer<read_number> d_subject_read_ids;
+        DeviceBuffer<unsigned int> d_subject_sequences_data;
+        DeviceBuffer<int> d_subject_sequences_lengths;
+        DeviceBuffer<read_number> d_candidate_read_ids;
+        DeviceBuffer<int> d_candidates_per_subject;
+        DeviceBuffer<int> d_candidates_per_subject_prefixsum;        
+    };
+
+
+    class GpuAnchorHasher{
+        int deviceId;
+        CudaStream backgroundStream;
+
+        std::size_t encodedSequencePitchInInts;
+
+        int maxCandidatesPerRead;
+
+        const DistributedReadStorage* gpuReadStorage;
+        const GpuMinhasher* gpuMinhasher;
+        const SequenceFileProperties* sequenceFileProperties;
+
+        ThreadPool* threadPool;
+        ThreadPool::ParallelForHandle pforHandle;
+        DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
+        GpuMinhasher::QueryHandle minhashHandle;
+    public:
+
+        GpuAnchorHasher(
+            const DistributedReadStorage& gpuReadStorage_,
+            const GpuMinhasher& gpuMinhasher_,
+            const SequenceFileProperties& sequenceFileProperties_,
+            ThreadPool* threadPool_
+        ) : 
+            gpuReadStorage{&gpuReadStorage_},
+            gpuMinhasher{&gpuMinhasher_},
+            sequenceFileProperties{&sequenceFileProperties_},
+            threadPool{threadPool_}
+        {
+            cudaGetDevice(&deviceId); CUERR;
+
+            GpuMinhasher::QueryHandle minhashHandle = GpuMinhasher::makeQueryHandle();
+            maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
+
+            backgroundStream = CudaStream{};
+
+            encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties->maxSequenceLength);
+            subjectSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
+        }
+
+        void makeErrorCorrectorInput(
+            const read_number* anchorIds,
+            int numIds,
+            GpuErrorCorrectorInput& ecinput,
+            cudaStream_t stream
+        ){
+            int curId = 0;
+            cudaGetDevice(&curId); CUERR;
+            cudaSetDevice(deviceId); CUERR;
+
+            resizeBuffers(ecinput, numIds);
+    
+            //copy input to pinned memory
+            *ecinput.h_numAnchors = numIds;
+            std::copy_n(anchorIds, numIds, ecinput.h_subject_read_ids.get());
+
+            cudaMemcpyAsync(
+                ecinput.d_numAnchors.get(),
+                ecinput.h_numAnchors.get(),
+                sizeof(int),
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                ecinput.d_subject_read_ids.get(),
+                ecinput.h_subject_read_ids.get(),
+                sizeof(read_number) * (*ecinput.h_numAnchors.get()),
+                H2D,
+                stream
+            ); CUERR;
+
+            getAnchorReads(ecinput, stream);
+
+            getCandidateReadIdsWithMinhashing(ecinput, stream);
+
+            cudaSetDevice(curId); CUERR;
+        }
+
+    private:
+        void resizeBuffers(GpuErrorCorrectorInput& ecinput, int numAnchors){
+            const std::size_t maxCandidates = maxCandidatesPerRead * numAnchors;
+            // large enough to store all minhash results
+            ecinput.h_candidate_read_ids.resize(maxCandidates);
+            ecinput.d_candidate_read_ids.resize(maxCandidates); 
+
+            ecinput.h_numAnchors.resize(1);
+            ecinput.h_subject_read_ids.resize(numAnchors);
+            ecinput.h_numCandidates.resize(1);
+
+            ecinput.d_numAnchors.resize(1);
+            ecinput.d_subject_read_ids.resize(numAnchors);
+            ecinput.d_subject_sequences_data.resize(encodedSequencePitchInInts * numAnchors);
+            ecinput.d_subject_sequences_lengths.resize(numAnchors);
+            ecinput.d_candidates_per_subject.resize(numAnchors);
+            ecinput.d_candidates_per_subject_prefixsum.resize(numAnchors + 1);
+        }
+        
+        void getAnchorReads(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
+            gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
+                threadPool,
+                subjectSequenceGatherHandle,
+                ecinput.d_subject_sequences_data.get(),
+                encodedSequencePitchInInts,
+                ecinput.d_subject_read_ids.get(),
+                ecinput.h_subject_read_ids.get(),
+                (*ecinput.h_numAnchors.get()),
+                deviceId,
+                stream
+            );
+
+            gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
+                ecinput.d_subject_sequences_lengths.get(),
+                deviceId,
+                ecinput.d_subject_read_ids.get(),
+                (*ecinput.h_numAnchors.get()),
+                stream
+            );
+
+            // cudaEventRecord(ecinput.event, stream); CUERR;
+            // cudaStreamWaitEvent(backgroundStream, ecinput.event, 0); CUERR;
+
+            // //TODO
+            // cudaMemcpyAsync(
+            //     ecinput.h_subject_sequences_lengths,
+            //     ecinput.d_subject_sequences_lengths,
+            //     sizeof(int) * (*ecinput.h_numAnchors.get()),
+            //     D2H,
+            //     backgroundStream
+            // ); CUERR;
+
+            // //cudaEventRecord(ecinput.event, backgroundStream); CUERR;
+        }
+
+        void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
+            ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
+
+            gpuMinhasher->getIdsOfSimilarReadsExcludingSelf(
+                minhashHandle,
+                ecinput.d_subject_read_ids.get(),
+                ecinput.h_subject_read_ids.get(),
+                ecinput.d_subject_sequences_data.get(),
+                encodedSequencePitchInInts,
+                ecinput.d_subject_sequences_lengths.get(),
+                (*ecinput.h_numAnchors.get()),
+                deviceId, 
+                stream,
+                forLoopExecutor,
+                ecinput.d_candidate_read_ids.get(),
+                ecinput.d_candidates_per_subject.get(),
+                ecinput.d_candidates_per_subject_prefixsum.get()
+            );
+
+            gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
+                ecinput.d_numCandidates.get(),
+                ecinput.h_numCandidates.get(),
+                ecinput.h_candidate_read_ids.get(),
+                ecinput.d_candidates_per_subject_prefixsum.get(),
+                ecinput.d_candidate_read_ids.get(),
+                *ecinput.h_numAnchors
+            ); CUERR;
+        }
+    };
+
     class GpuErrorCorrector{
 
     public:
@@ -468,7 +658,6 @@ namespace gpucorrectorkernels{
             const std::size_t numEditsAnchors = SDIV(editsPitchInBytes * numReads, sizeof(TempCorrectedSequence::EncodedEdit));          
 
             //does not depend on number of candidates
-            h_subject_sequences_data.resize(encodedSequencePitchInInts * numReads);
             h_subject_sequences_lengths.resize(numReads);
             h_subject_read_ids.resize(numReads);
             h_numAnchors.resize(1);
@@ -539,6 +728,13 @@ namespace gpucorrectorkernels{
             d_subject_sequences_data
             h_subject_sequences_lengths
             d_subject_sequences_lengths
+            d_subject_read_ids.get(),
+            d_candidate_read_ids.get(),
+            d_candidates_per_subject.get(),
+            d_candidates_per_subject_prefixsum.get()
+            d_numCandidates.get(),
+            h_numCandidates.get(),
+            h_candidate_read_ids.get(),
         */
 
         void copyInputDataToDevice(cudaStream_t stream){
@@ -1558,7 +1754,6 @@ namespace gpucorrectorkernels{
         GpuMinhasher::QueryHandle minhashHandle;
         KernelLaunchHandle kernelLaunchHandle;  
 
-        PinnedBuffer<unsigned int> h_subject_sequences_data;
         PinnedBuffer<int> h_subject_sequences_lengths;
         PinnedBuffer<read_number> h_subject_read_ids;
         PinnedBuffer<read_number> h_candidate_read_ids;
