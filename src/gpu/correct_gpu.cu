@@ -4554,7 +4554,8 @@ correct_gpu(
         );
 
         ThreadPool::ParallelForHandle pforHandle;
-        ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
+        //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
+        SequentialForLoopExecutor forLoopExecutor;
 
         GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
             [&](){

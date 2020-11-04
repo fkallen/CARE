@@ -403,6 +403,11 @@ namespace gpucorrectorkernels{
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
 
+            // helpers::SimpleAllocationPinnedHost<read_number> d_candidate_read_idsAAAA(ecinput.d_candidate_read_ids.size());
+            // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_subjectAAAA(ecinput.d_candidates_per_subject.size());
+            // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_subject_prefixsumAAAA(ecinput.d_candidates_per_subject_prefixsum.size());
+
+            //gpuMinhasher->getIdsOfSimilarReadsNormalExcludingSelfNew(
             gpuMinhasher->getIdsOfSimilarReadsExcludingSelf(
                 minhashHandle,
                 ecinput.d_subject_read_ids.get(),
@@ -419,6 +424,26 @@ namespace gpucorrectorkernels{
                 ecinput.d_candidates_per_subject_prefixsum.get()
             );
 
+            // cudaMemset(d_candidate_read_idsAAAA.get(), 0, d_candidate_read_idsAAAA.sizeInBytes());
+            // cudaMemset(d_candidates_per_subjectAAAA.get(), 0, d_candidates_per_subjectAAAA.sizeInBytes());
+            // cudaMemset(d_candidates_per_subject_prefixsumAAAA.get(), 0, d_candidates_per_subject_prefixsumAAAA.sizeInBytes());
+
+            // gpuMinhasher->getIdsOfSimilarReadsNormalExcludingSelfNew(
+            //     minhashHandle,
+            //     ecinput.d_subject_read_ids.get(),
+            //     ecinput.h_subject_read_ids.get(),
+            //     ecinput.d_subject_sequences_data.get(),
+            //     encodedSequencePitchInInts,
+            //     ecinput.d_subject_sequences_lengths.get(),
+            //     (*ecinput.h_numAnchors.get()),
+            //     deviceId, 
+            //     stream,
+            //     forLoopExecutor,
+            //     d_candidate_read_idsAAAA.get(),
+            //     d_candidates_per_subjectAAAA.get(),
+            //     d_candidates_per_subject_prefixsumAAAA.get()
+            // );
+
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.get(),
                 ecinput.h_numCandidates.get(),
@@ -427,6 +452,77 @@ namespace gpucorrectorkernels{
                 ecinput.d_candidate_read_ids.get(),
                 *ecinput.h_numAnchors.get()
             ); CUERR;
+
+            // cudaStreamSynchronize(stream); CUERR;
+
+            // bool error = false;
+
+            // for(int i = 0; i < *ecinput.h_numAnchors.get() && !error; i++){
+            //     if(ecinput.d_candidates_per_subject[i] != d_candidates_per_subjectAAAA[i]){
+            //         error = true;
+            //         std::cerr << "error A " << i << "\n";
+            //         break;
+            //     }
+            // }
+
+            // for(int i = 0; i < (*ecinput.h_numAnchors.get()) + 1 && !error; i++){
+            //     if(ecinput.d_candidates_per_subject_prefixsum[i] != d_candidates_per_subject_prefixsumAAAA[i]){
+            //         error = true;
+            //         std::cerr << "error B " << i << "\n";
+            //         break;
+            //     }
+            // }
+
+            // for(int i = 0; i < ecinput.d_candidates_per_subject_prefixsum[(*ecinput.h_numAnchors.get())] && !error; i++){
+            //     if(ecinput.h_candidate_read_ids[i] != d_candidate_read_idsAAAA[i]){
+            //         error = true;
+            //         std::cerr << "error C " << i << "\n";
+            //         break;
+            //     }
+            // }
+
+            // if(error){
+
+            //     std::cerr << "d_candidates_per_subject orig\n";
+            //     for(int i = 0; i < *ecinput.h_numAnchors.get(); i++){
+            //         std::cerr << ecinput.d_candidates_per_subject[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidates_per_subject new\n";
+            //     for(int i = 0; i < *ecinput.h_numAnchors.get(); i++){
+            //         std::cerr << d_candidates_per_subjectAAAA[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidates_per_subject_prefixsum orig\n";
+            //     for(int i = 0; i < (*ecinput.h_numAnchors.get())+1; i++){
+            //         std::cerr << ecinput.d_candidates_per_subject_prefixsum[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidates_per_subject_prefixsum new\n";
+            //     for(int i = 0; i < (*ecinput.h_numAnchors.get())+1; i++){
+            //         std::cerr << d_candidates_per_subject_prefixsumAAAA[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidates orig\n";
+            //     for(int i = 0; i < ecinput.d_candidates_per_subject_prefixsum[(*ecinput.h_numAnchors.get())]; i++){
+            //         std::cerr << ecinput.h_candidate_read_ids[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidates new\n";
+            //     for(int i = 0; i < d_candidates_per_subject_prefixsumAAAA[(*ecinput.h_numAnchors.get())]; i++){
+            //         std::cerr << d_candidate_read_idsAAAA[i] << ",";
+            //     }
+            //     std::cerr << "\n";
+
+            //     assert(false);
+            // }
+
+            
         }
     
         int deviceId;
