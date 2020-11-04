@@ -8,6 +8,8 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpumsa.cuh>
+#include <gpu/cudagraphhelpers.cuh>
+
 
 #include <correctionresultprocessing.hpp>
 #include <memorymanagement.hpp>
@@ -171,97 +173,6 @@ namespace gpu{
     constexpr int nEventsPerBatch = 3;
 
     constexpr int doNotUseEditsValue = -1;
-
-
-
-
-
-    struct CudaGraph{
-        bool valid = false;
-        cudaGraphExec_t execgraph = nullptr;
-
-        CudaGraph() = default;
-        
-        CudaGraph(const CudaGraph&) = delete;
-        CudaGraph& operator=(const CudaGraph&) = delete;
-
-        CudaGraph(CudaGraph&& rhs){
-            *this = std::move(rhs);
-        }
-
-        CudaGraph& operator=(CudaGraph&& rhs){
-            destroy();
-
-            valid = std::exchange(rhs.valid, false);
-            execgraph = std::exchange(rhs.execgraph, nullptr);
-
-            return *this;
-        }
-
-        ~CudaGraph(){
-            destroy();
-        }
-
-        void destroy(){
-            if(execgraph != nullptr){
-                cudaGraphExecDestroy(execgraph); CUERR;
-            }
-            execgraph = nullptr;
-            valid = false;
-        }
-
-        template<class Func>
-        void capture(Func&& func){
-            if(execgraph != nullptr){
-                cudaGraphExecDestroy(execgraph); CUERR;
-            }
-
-            cudaStream_t stream;
-            cudaStreamCreate(&stream); CUERR;
-            
-            cudaStreamBeginCapture(stream, cudaStreamCaptureModeRelaxed); CUERR;
-
-            func(stream);
-
-            cudaGraph_t graph;
-            cudaStreamEndCapture(stream, &graph); CUERR;
-            
-            cudaGraphExec_t execGraph;
-            cudaGraphNode_t errorNode;
-            auto logBuffer = std::make_unique<char[]>(1025);
-            std::fill_n(logBuffer.get(), 1025, 0);
-            cudaError_t status = cudaGraphInstantiate(&execGraph, graph, &errorNode, logBuffer.get(), 1025);
-            if(status != cudaSuccess){
-                if(logBuffer[1024] != '\0'){
-                    std::cerr << "cudaGraphInstantiate: truncated error message: ";
-                    std::copy_n(logBuffer.get(), 1025, std::ostream_iterator<char>(std::cerr, ""));
-                    std::cerr << "\n";
-                }else{
-                    std::cerr << "cudaGraphInstantiate: error message: ";
-                    std::cerr << logBuffer.get();
-                    std::cerr << "\n";
-                }
-                CUERR;
-            }            
-
-            cudaGraphDestroy(graph); CUERR;
-
-            execgraph = execGraph;
-            valid = true;
-
-            cudaStreamDestroy(stream); CUERR;
-        }
-
-        void execute(cudaStream_t stream){
-            assert(valid);
-            
-            cudaGraphLaunch(execgraph, stream); CUERR;
-        }
-    };
-
-
-
-
 
 
     struct NextIterationData{
@@ -4444,7 +4355,9 @@ correct_gpu(
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
+            nvtx::push_range("getFreeInput",1);
             GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
+            nvtx::pop_range();
 
             nvtx::push_range("makeErrorCorrectorInput", 0);
             gpuAnchorHasher.makeErrorCorrectorInput(
@@ -4472,6 +4385,7 @@ correct_gpu(
             correctionOptions,
             goodAlignmentProperties,
             sequenceFileProperties,
+            correctionOptions.batchsize,
             &threadPool
         };
 
@@ -4497,6 +4411,8 @@ correct_gpu(
             nvtx::push_range("correct", 0);
             gpuErrorCorrector.correct(*inputPtr, rawOutput, stream);
             nvtx::pop_range();
+
+            freeInputs.push(inputPtr);
 
             rawOutput.event.synchronize();
 
@@ -4565,14 +4481,16 @@ correct_gpu(
 
             progressThread.addProgress(*inputPtr->h_numAnchors.get());
 
-            freeInputs.push(inputPtr);
+            
 
+            nvtx::push_range("getUnprocessedInput",1);
             inputPtr = unprocessedInputs.popOrDefault(
                 [&](){
                     return !noMoreInputs;  //if noMoreInputs, return nullptr
                 },
                 nullptr
             ); 
+            nvtx::pop_range();
         };
 
     };
@@ -4586,6 +4504,7 @@ correct_gpu(
             correctionOptions,
             goodAlignmentProperties,
             sequenceFileProperties,
+            correctionOptions.batchsize,
             &threadPool
         };
 
@@ -4599,23 +4518,27 @@ correct_gpu(
         ); 
 
         while(inputPtr != nullptr){
+            nvtx::push_range("getFreeRawOutput",1);
             GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputs.pop();
+            nvtx::pop_range();
 
             nvtx::push_range("correct", 0);
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
-            rawOutputPtr->event.synchronize();
-
             freeInputs.push(inputPtr);
+
+            rawOutputPtr->event.synchronize();
             unprocessedRawOutputs.push(rawOutputPtr);
 
+            nvtx::push_range("getUnprocessedInput",2);
             inputPtr = unprocessedInputs.popOrDefault(
                 [&](){
                     return !noMoreInputs;  //if noMoreInputs, return nullptr
                 },
                 nullptr
             ); 
+            nvtx::pop_range();
         };
 
         noMoreRawOutputs = true;
@@ -4645,6 +4568,7 @@ correct_gpu(
             auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
             nvtx::pop_range();
 
+            nvtx::push_range("encodeResults", 1);
             std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
             std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
 
@@ -4671,6 +4595,8 @@ correct_gpu(
                     }
                 );
             }
+
+            nvtx::pop_range();
 
             const int numA = encodedAnchorCorrections.size();
             const int numC = encodedCandidateCorrections.size();
@@ -4709,12 +4635,15 @@ correct_gpu(
 
             freeRawOutputs.push(rawOutputPtr);
 
+            nvtx::push_range("getUnprocessedRawOutput", 2);
             rawOutputPtr = unprocessedRawOutputs.popOrDefault(
                 [&](){
                     return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
                 },
                 nullptr
             );  
+
+            nvtx::pop_range();
         }
     };
 
