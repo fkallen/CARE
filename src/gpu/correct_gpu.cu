@@ -4315,19 +4315,24 @@ correct_gpu(
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
-    
+    const int numHasherThreads = 2;
+
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> unprocessedInputs;
     std::atomic<bool> noMoreInputs{false};
+    std::atomic<int> activeHasherThreads{numHasherThreads};
 
     std::array<GpuErrorCorrectorInput, 3> inputs;
     for(auto& i : inputs){
         freeInputs.push(&i);
     }
 
+    const int numCorrectorThreads = 2;
+
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> freeRawOutputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorRawOutput*> unprocessedRawOutputs;
     std::atomic<bool> noMoreRawOutputs{false};
+    std::atomic<int> activeCorrectorThreads{numCorrectorThreads};
 
     std::array<GpuErrorCorrectorRawOutput, 3> rawOutputs;
     for(auto& i : rawOutputs){
@@ -4373,7 +4378,11 @@ correct_gpu(
             unprocessedInputs.push(inputPtr);
         }
 
-        noMoreInputs = true;
+        activeHasherThreads--;
+
+        if(activeHasherThreads == 0){
+            noMoreInputs = true;
+        }
     };
 
     auto correctorThreadFunctionWithoutConstructorThread = [&](int deviceId){
@@ -4541,7 +4550,11 @@ correct_gpu(
             nvtx::pop_range();
         };
 
-        noMoreRawOutputs = true;
+        activeCorrectorThreads--;
+
+        if(activeCorrectorThreads == 0){
+            noMoreRawOutputs = true;
+        }
     };
 
     auto correctorThreadFunction = correctorThreadFunctionWithConstructorThread;
@@ -4650,29 +4663,25 @@ correct_gpu(
 
     std::vector<std::future<void>> futures;
 
-    futures.emplace_back(
-        std::async(
-            std::launch::async,
-            hasherThreadFunction,
-            deviceIds[0]
-        )
-    );
+    for(int i = 0; i < numHasherThreads; i++){
+        futures.emplace_back(
+            std::async(
+                std::launch::async,
+                hasherThreadFunction,
+                deviceIds[0]
+            )
+        );
+    }
 
-    futures.emplace_back(
-        std::async(
-            std::launch::async,
-            correctorThreadFunction,
-            deviceIds[0]
-        )
-    );
-
-    // futures.emplace_back(
-    //     std::async(
-    //         std::launch::async,
-    //         correctorThreadFunction,
-    //         deviceIds[0]
-    //     )
-    // );
+    for(int i = 0; i < numCorrectorThreads; i++){
+        futures.emplace_back(
+            std::async(
+                std::launch::async,
+                correctorThreadFunction,
+                deviceIds[0]
+            )
+        );
+    }
 
     futures.emplace_back(
         std::async(

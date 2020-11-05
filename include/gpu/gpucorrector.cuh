@@ -995,8 +995,8 @@ namespace gpucorrectorkernels{
                 nvtx::pop_range();
             }
 
-            //execute(stream);
-            graphMap[currentOutput].execute(stream);
+            execute(stream);
+            //graphMap[currentOutput].execute(stream);
 
             cudaEventRecord(currentOutput->event, stream); CUERR;
 
@@ -1170,14 +1170,16 @@ namespace gpucorrectorkernels{
                 std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
             }
 
-            if(outputBuffersReallocated){
-                std::cerr << "outputBuffersReallocated " << currentOutput << "\n";
+            if(outputBuffersReallocated || !graphMap[currentOutput].valid){
+                if(outputBuffersReallocated){
+                    std::cerr << "outputBuffersReallocated " << currentOutput << "\n";
+                }
 
-                graphMap[currentOutput].capture(
-                    [&](cudaStream_t capstream){
-                        execute(capstream);
-                    }
-                );
+                // graphMap[currentOutput].capture(
+                //     [&](cudaStream_t capstream){
+                //         execute(capstream);
+                //     }
+                // );
             }
         }
 
