@@ -4837,29 +4837,15 @@ correct_gpu(
 
     std::vector<std::future<void>> futures;
 
-    futures.emplace_back(
-        std::async(
-            std::launch::async,
-            runPipeline,
-            deviceIds[0]
-        )
-    );
-
-    // futures.emplace_back(
-    //     std::async(
-    //         std::launch::async,
-    //         runPipeline,
-    //         deviceIds[0]
-    //     )
-    // );
-
-    // futures.emplace_back(
-    //     std::async(
-    //         std::launch::async,
-    //         runPipeline,
-    //         deviceIds[0]
-    //     )
-    // );
+    for(int deviceId : deviceIds){
+        for(int i = 0; i < 1; i++){
+            futures.emplace_back(std::async(
+                std::launch::async,
+                runPipeline,
+                deviceId
+            ));
+        }
+    }
 
     for(auto& f : futures){
         f.wait();
@@ -4892,7 +4878,19 @@ correct_gpu(
     pipelineConfig.numCorrectors = 2;
     pipelineConfig.numOutputConstructors = 1;
 
-    runPipeline(deviceIds[0], pipelineConfig);
+    std::vector<std::future<void>> futures;
+
+    for(int deviceId : deviceIds){
+        futures.emplace_back(std::async(
+            std::launch::async,
+            runPipeline,
+            deviceId, pipelineConfig
+        ));
+    }
+
+    for(auto& f : futures){
+        f.wait();
+    }
 
 #endif
    
