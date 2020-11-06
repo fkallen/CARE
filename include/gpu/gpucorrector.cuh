@@ -15,6 +15,7 @@
 #include <minhasher.hpp>
 #include <options.hpp>
 #include <correctionresultprocessing.hpp>
+#include <memorymanagement.hpp>
 
 #include <algorithm>
 #include <array>
@@ -236,6 +237,7 @@ namespace gpucorrectorkernels{
         template<class T>
         using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
 
+
         CudaEvent event{cudaEventDisableTiming};
 
         PinnedBuffer<int> h_numAnchors;
@@ -250,7 +252,33 @@ namespace gpucorrectorkernels{
         DeviceBuffer<int> d_anchor_sequences_lengths;
         DeviceBuffer<read_number> d_candidate_read_ids;
         DeviceBuffer<int> d_candidates_per_anchor;
-        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;        
+        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;    
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info{};
+            auto handleHost = [&](const auto& h){
+                info.host += h.sizeInBytes();
+            };
+            auto handleDevice = [&](const auto& d){
+                info.device[event.getDeviceId()] += d.sizeInBytes();
+            };
+
+            handleHost(h_numAnchors);
+            handleHost(h_numCandidates);
+            handleHost(h_anchorReadIds);
+            handleHost(h_candidate_read_ids);
+
+            handleDevice(d_numAnchors);
+            handleDevice(d_numCandidates);
+            handleDevice(d_anchorReadIds);
+            handleDevice(d_anchor_sequences_data);
+            handleDevice(d_anchor_sequences_lengths);
+            handleDevice(d_candidate_read_ids);
+            handleDevice(d_candidates_per_anchor);
+            handleDevice(d_candidates_per_anchor_prefixsum);
+
+            return info;
+        }  
     };
 
     class GpuErrorCorrectorRawOutput{
@@ -285,6 +313,32 @@ namespace gpucorrectorkernels{
         PinnedBuffer<int> h_alignment_shifts;
         PinnedBuffer<int> h_numEditsPerCorrectedCandidate;
         PinnedBuffer<TempCorrectedSequence::EncodedEdit> h_editsPerCorrectedCandidate;
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info{};
+            auto handleHost = [&](const auto& h){
+                info.host += h.sizeInBytes();
+            };
+
+            handleHost(h_anchorReadIds);
+            handleHost(h_candidate_read_ids);
+            handleHost(h_anchor_is_corrected);
+            handleHost(h_is_high_quality_anchor);
+            handleHost(h_num_corrected_candidates_per_anchor);
+            handleHost(h_num_corrected_candidates_per_anchor_prefixsum);
+            handleHost(h_indices_of_corrected_candidates);
+            handleHost(h_candidate_sequences_lengths);
+            handleHost(h_numEditsPerCorrectedanchor);
+            handleHost(h_editsPerCorrectedanchor);
+            handleHost(h_corrected_anchors);
+            handleHost(h_anchor_sequences_lengths);
+            handleHost(h_corrected_candidates);
+            handleHost(h_alignment_shifts);
+            handleHost(h_numEditsPerCorrectedCandidate);
+            handleHost(h_editsPerCorrectedCandidate);
+
+            return info;
+        }  
     };
 
 
@@ -306,7 +360,7 @@ namespace gpucorrectorkernels{
         {
             cudaGetDevice(&deviceId); CUERR;
 
-            GpuMinhasher::QueryHandle minhashHandle = GpuMinhasher::makeQueryHandle();
+            minhashHandle = GpuMinhasher::makeQueryHandle();
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
             backgroundStream = CudaStream{};
@@ -361,6 +415,13 @@ namespace gpucorrectorkernels{
 
             cudaSetDevice(curId); CUERR;
         }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info{};
+            info += minhashHandle.getMemoryInfo();
+            info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(anchorSequenceGatherHandle);
+            return info;
+        } 
 
     private:
         void resizeBuffers(GpuErrorCorrectorInput& ecinput, int numAnchors){
@@ -1014,8 +1075,8 @@ namespace gpucorrectorkernels{
                 nvtx::pop_range();
             }
 
-            execute(stream);
-            //graphMap[currentOutput].execute(stream);
+            //execute(stream);
+            graphMap[currentOutput].execute(stream);
 
             //fill missing output arrays. This may overlap with gpu execution
             std::copy_n(currentInput->h_anchorReadIds.get(), currentNumAnchors, currentOutput->h_anchorReadIds.get());
@@ -1252,11 +1313,11 @@ namespace gpucorrectorkernels{
                     std::cerr << "outputBuffersReallocated " << currentOutput << "\n";
                 }
 
-                // graphMap[currentOutput].capture(
-                //     [&](cudaStream_t capstream){
-                //         execute(capstream);
-                //     }
-                // );
+                graphMap[currentOutput].capture(
+                    [&](cudaStream_t capstream){
+                        execute(capstream);
+                    }
+                );
             }
         }
 
