@@ -75,6 +75,7 @@ namespace gpu{
             template<class T>
             using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
+            bool isInitialized = false;
             int deviceId;
 
             DeviceBuffer<std::uint64_t> d_minhashSignatures;
@@ -225,14 +226,17 @@ namespace gpu{
                 }
 
                 cudaSetDevice(cur); CUERR;
+                isInitialized = false;
             }
         };
 
         static QueryHandle makeQueryHandle(){
             QueryHandle handle;
-            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
+            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();            
 
             cudaGetDevice(&handle.deviceId); CUERR;
+
+            handle.isInitialized = true;
 
             return handle;
         }
@@ -272,6 +276,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+            assert(handle.isInitialized);
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
@@ -546,6 +551,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+            assert(handle.isInitialized);
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
@@ -919,6 +925,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+            assert(handle.isInitialized);
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
@@ -1347,7 +1354,8 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
-
+            assert(handle.isInitialized);
+            
             if(numSequences == 0){
                 return;
             }
