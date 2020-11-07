@@ -931,12 +931,12 @@ namespace gpu{
             cudaGetDevice(&currentDeviceId); CUERR;
             cudaSetDevice(deviceId); CUERR;
 
-            const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
+            //const std::size_t maximumResultSize = getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences;
 
             handle.d_minhashSignatures.resize(getNumberOfMaps() * numSequences);
             handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
-            handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
+            // handle.h_candidate_read_ids_tmp.resize(maximumResultSize);
+            // handle.d_candidate_read_ids_tmp.resize(maximumResultSize);
             handle.h_begin_offsets.resize(numSequences+1);
             handle.d_begin_offsets.resize(numSequences+1);
             handle.h_end_offsets.resize(numSequences+1);
@@ -950,17 +950,17 @@ namespace gpu{
             std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
             std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
 
-            const int maxNumThreads = parallelFor.getNumThreads();
+            // const int maxNumThreads = parallelFor.getNumThreads();
 
-            while(handle.segmentedUniqueHandles.size() < std::size_t(maxNumThreads)){
-                handle.segmentedUniqueHandles.emplace_back(GpuSegmentedUnique::makeHandle());
-            }
+            // while(handle.segmentedUniqueHandles.size() < std::size_t(maxNumThreads)){
+            //     handle.segmentedUniqueHandles.emplace_back(GpuSegmentedUnique::makeHandle());
+            // }
 
             allRanges.resize(getNumberOfMaps() * numSequences);
-            idsPerChunk.resize(maxNumThreads, 0);   
-            numAnchorsPerChunk.resize(maxNumThreads, 0);
-            idsPerChunkPrefixSum.resize(maxNumThreads, 0);
-            numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            // idsPerChunk.resize(maxNumThreads, 0);   
+            // numAnchorsPerChunk.resize(maxNumThreads, 0);
+            // idsPerChunkPrefixSum.resize(maxNumThreads, 0);
+            // numAnchorsPerChunkPrefixSum.resize(maxNumThreads, 0);
 
             const std::size_t hashValuesPitchInElements = getNumberOfMaps();
 
@@ -983,25 +983,25 @@ namespace gpu{
             ); CUERR;
 
 
-            std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
-            std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
+            // std::fill(idsPerChunk.begin(), idsPerChunk.end(), 0);
+            // std::fill(numAnchorsPerChunk.begin(), numAnchorsPerChunk.end(), 0);
     
             cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures anchor data
 
-            std::vector<int> numSequencesPerPartition(maxNumThreads, 0);
-            std::vector<int> numSequencesPerPartitionPrefixSum(maxNumThreads, 0);
+            // std::vector<int> numSequencesPerPartition(maxNumThreads, 0);
+            // std::vector<int> numSequencesPerPartitionPrefixSum(maxNumThreads, 0);
 
-            for(int i = 0; i < maxNumThreads; i++){
-                int defaultNum = numSequences / maxNumThreads;
-                const int remainder = numSequences % maxNumThreads;
-                if(i < remainder){
-                    defaultNum++;
-                }
-                numSequencesPerPartition[i] = defaultNum;
-                if(i != maxNumThreads-1){
-                    numSequencesPerPartitionPrefixSum[i+1] = numSequencesPerPartitionPrefixSum[i] + defaultNum;
-                }
-            }
+            // for(int i = 0; i < maxNumThreads; i++){
+            //     int defaultNum = numSequences / maxNumThreads;
+            //     const int remainder = numSequences % maxNumThreads;
+            //     if(i < remainder){
+            //         defaultNum++;
+            //     }
+            //     numSequencesPerPartition[i] = defaultNum;
+            //     if(i != maxNumThreads-1){
+            //         numSequencesPerPartitionPrefixSum[i+1] = numSequencesPerPartitionPrefixSum[i] + defaultNum;
+            //     }
+            // }
 
             // std::cerr << "numSequencesPerPartition\n";
             // for(int i = 0; i < maxNumThreads; i++){
@@ -1015,6 +1015,138 @@ namespace gpu{
             // }
             // std::cerr << "\n";
 
+#if 1
+
+            
+
+            int myTotalNumberOfPossibleCandidates = 0;
+
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            queryPrecalculatedSignatures(
+                handle.h_minhashSignatures.get(),
+                allRanges.data(),
+                &myTotalNumberOfPossibleCandidates, 
+                numSequences
+            );
+            nvtx::pop_range();
+
+            constexpr int roundUpTo = 10000;
+            const int roundedTotalNum = SDIV(myTotalNumberOfPossibleCandidates, roundUpTo) * roundUpTo;
+            handle.h_candidate_read_ids_tmp.resize(roundedTotalNum);
+            handle.d_candidate_read_ids_tmp.resize(roundedTotalNum);
+
+            const int myNumSequences = numSequences;
+            const int myNumSequencesOffset = 0;
+
+            const int candidateIdsOffset = 0;
+            read_number* hostdatabegin = handle.h_candidate_read_ids_tmp.get();
+            read_number* devicedatabegin = d_similarReadIds;
+            Range_t* const myRanges = allRanges.data();
+            const std::uint64_t* const mySignatures = handle.h_minhashSignatures;
+            int* const h_my_begin_offsets = handle.h_begin_offsets;
+            int* const h_my_end_offsets = handle.h_end_offsets;
+            int* const d_my_begin_offsets = handle.d_begin_offsets;
+            int* const d_my_end_offsets = handle.d_end_offsets;
+
+            //copy hits from hash tables to pinned memory
+            auto* dest = hostdatabegin;    
+            const int lmax = myNumSequences * getNumberOfMaps();
+
+            for(int sequenceIndex = 0; sequenceIndex < myNumSequences; sequenceIndex++){
+
+                h_my_begin_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
+                handle.h_global_begin_offsets[myNumSequencesOffset + sequenceIndex] = std::distance(handle.h_candidate_read_ids_tmp.get(), dest);
+
+                for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
+                    const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
+                    
+                    constexpr int nextprefetch = 2;
+
+                    //prefetch first element of next range if the next range is not empty
+                    if(k+nextprefetch < lmax){
+                        if(myRanges[k+nextprefetch].first != myRanges[k+nextprefetch].second){
+                            __builtin_prefetch(myRanges[k+nextprefetch].first, 0, 0);
+                        }
+                    }
+                    const auto& range = myRanges[k];
+                    dest = std::copy(range.first, range.second, dest);
+                }
+
+                h_my_end_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
+            }
+
+            // std::cerr << "h_my_begin_offsets partition "<< partitionId << "\n";
+            // for(int i = 0; i < myNumSequences; i++){
+            //     std::cerr << h_my_begin_offsets[i] << "," ;
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "h_my_end_offsets partition "<< partitionId << "\n";
+            // for(int i = 0; i < myNumSequences; i++){
+            //     std::cerr << h_my_end_offsets[i] << "," ;
+            // }
+            // std::cerr << "\n";
+
+            cudaMemcpyAsync(
+                devicedatabegin,
+                hostdatabegin,
+                sizeof(read_number) * myTotalNumberOfPossibleCandidates,
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_my_begin_offsets,
+                h_my_begin_offsets,
+                sizeof(int) * myNumSequences,
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_my_end_offsets,
+                h_my_end_offsets,
+                sizeof(int) * myNumSequences,
+                H2D,
+                stream
+            ); CUERR;
+
+            //copy-kernel to device for read ids and offsets
+            // helpers::lambda_kernel<<<SDIV(myTotalNumberOfPossibleCandidates, 256), 256, 0, stream>>>(
+            //     [=] __device__ (){
+            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            //         const int stride = blockDim.x * gridDim.x;
+
+            //         for(int i = tid; i < myTotalNumberOfPossibleCandidates; i += stride){
+            //             devicedatabegin[i] = hostdatabegin[i];
+            //         }
+
+            //         for(int i = tid; i < myNumSequences; i += stride){
+            //             d_my_begin_offsets[i] = h_my_begin_offsets[i];
+            //         }
+
+            //         for(int i = tid; i < myNumSequences; i += stride){
+            //             d_my_end_offsets[i] = h_my_end_offsets[i];
+            //         }
+            //     }
+            // ); CUERR;
+
+            GpuSegmentedUnique::unique(
+                handle.segmentedUniqueHandle,
+                devicedatabegin, //input
+                myTotalNumberOfPossibleCandidates,
+                handle.d_candidate_read_ids_tmp.get() + candidateIdsOffset, //output
+                d_similarReadsPerSequence + myNumSequencesOffset,
+                myNumSequences,
+                d_my_begin_offsets, //device accessible
+                d_my_end_offsets, //device accessible
+                h_my_begin_offsets,
+                h_my_end_offsets,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+#else
             auto processHashes = [&, this](int partitionBegin, int partitionEnd, int threadId){
                 for(int partitionId = partitionBegin; partitionId < partitionEnd; partitionId++){
                     const int myNumSequences = numSequencesPerPartition[partitionId];
@@ -1152,7 +1284,7 @@ namespace gpu{
                 maxNumThreads, 
                 processHashes
             );
-
+#endif
             // handle.h_global_begin_offsets[0] = 0;
 
             // std::cerr << "h_global_begin_offsets\n";
