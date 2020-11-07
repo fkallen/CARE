@@ -3,19 +3,15 @@
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-
 import sys
-
 from collections import defaultdict
-
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn import metrics
 from sklearn import tree
-
 import numpy as np
-
 import struct
+import json
 
 
 def onehot(base):
@@ -34,22 +30,27 @@ def onehot(base):
 def onehot_(enc):
     return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
 
-def retrieve_data(xpath, ypath, outpath):
+def read_data(size, paths):
+    row_t = np.dtype([("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(size))+',)f4'), ('class', bool)])
+    
     ### get X
-    row_t = np.dtype([("readId", "u4"), ("col", "i2"), ('atts', '(36,)f4'), ('class', bool)])
+    linecounts = [sum(1 for line in open(path["X"], "r")) if len(path)>1 else np.load(path["np"]).shape[0] for path in paths]
+    offset = 0
+    samples = np.zeros(sum(linecounts), row_t)
+    for linecount, path in zip(linecounts, paths):
+        if len(path)==1:
+            samples[offset:offset+linecount] = np.load(path["np"])
+        else:
+            for i, line in enumerate(open(path["X"], "r")):
+                i += offset
+                if (i%1000000==0):
+                    print(i, "/", linecount)
+                splt = line.split()
+                samples[i]['readId'] = splt[0]
+                samples[i]['col'] = splt[1]
+                samples[i]['atts'] = tuple(splt[2:])
+        offset += linecount
 
-    linecount = sum(1 for line in open(xpath, "r"))
-    # linecount = 1000000
-    samples = np.zeros(linecount, row_t)
-    for i, line in enumerate(open(xpath, "r")):
-        # if i==1000000:
-        #     break
-        if (i%1000000==0):
-            print(i, "/", linecount)
-        splt = line.split()
-        samples[i]['readId'] = splt[0]
-        samples[i]['col'] = splt[1]
-        samples[i]['atts'] = tuple(splt[2:])
 
     print(samples[0:10])
     print(samples.shape)
@@ -61,53 +62,60 @@ def retrieve_data(xpath, ypath, outpath):
     print(samples[0:10])
 
     ### get y
-    with open(ypath, "r") as truthfile:
-        filepos = 0
-        for i, s in enumerate(samples):
-            if (i%1000000==0):
-                print(i, "/", linecount)
-            if filepos != int(s['readId'])*4+2:
-                while filepos<int(s['readId'])*4+1:
-                    truthfile.readline()
-                    filepos += 1
-                trueseq = truthfile.readline()
-                filepos += 1
-            if s['col']>=0:
-                s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
-            else:
-                s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
-
+    offset = 0
+    for linecount, path in zip(linecounts, paths):
+        if len(path)>1:
+            with open(path["y"], "r") as truthfile:
+                filepos = 0
+                for i in range(linecount):
+                    s = samples[i+offset]
+                    if (i%1000000==0):
+                        print(i, "/", linecount)
+                    if filepos != int(s['readId'])*4+2:
+                        while filepos<int(s['readId'])*4+1:
+                            truthfile.readline()
+                            filepos += 1
+                        trueseq = truthfile.readline()
+                        filepos += 1
+                    if s['col']>=0:
+                        s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
+                    else:
+                        s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
+        offset+=linecount
 
     print(samples[0:10])
-    np.save(outpath, samples)
+    return samples
 
-
-def train(train_data, test_data):
-    #np.random.shuffle(train)
-
+def train(train_data, clf="rf"):
     X_train, y_train = train_data['atts'], train_data['class']
-    X_test, y_test = test_data['atts'], test_data['class']
 
-    print("\nTest Ratio:")
-    print(y_test.shape[0], "/", y_test.shape[0]+y_train.shape[0], "=" , 100*y_test.shape[0]/(y_train.shape[0]+y_test.shape[0]), "%\n")
+    # print("\nTest Ratio:")
+    # print(y_test.shape[0], "/", y_test.shape[0]+y_train.shape[0], "=" , 100*y_test.shape[0]/(y_train.shape[0]+y_test.shape[0]), "%\n")
 
-    print("Class Balance:")
-    print(np.sum(y_train)+np.sum(y_test), "/", y_train.shape[0]+y_test.shape[0], "=" , 100*(np.sum(y_train)+np.sum(y_test))/(y_train.shape[0]+y_test.shape[0]), "%\n")
+    # print("Class Balance:")
+    # print(np.sum(y_train)+np.sum(y_test), "/", y_train.shape[0]+y_test.shape[0], "=" , 100*(np.sum(y_train)+np.sum(y_test))/(y_train.shape[0]+y_test.shape[0]), "%\n")
 
-    print("Stratification:")
-    print(np.sum(y_train), "/", y_train.shape[0], "=" , 100*np.sum(y_train)/y_train.shape[0], "%")
-    print(np.sum(y_test), "/", y_test.shape[0], "=" , 100*np.sum(y_test)/y_test.shape[0], "%\n")
+    # print("Stratification:")
+    # print(np.sum(y_train), "/", y_train.shape[0], "=" , 100*np.sum(y_train)/y_train.shape[0], "%")
+    # print(np.sum(y_test), "/", y_test.shape[0], "=" , 100*np.sum(y_test)/y_test.shape[0], "%\n")
 
     print("training...")
-    # clf = LogisticRegression(solver='saga', penalty='l1').fit(X_train, y_train)
 
-    clf = RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
+    if clf == "rf":
+        return RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
+    elif clf == "lr":
+        return LogisticRegression(n_jobs=44).fit(X_train, y_train)
+        # return LogisticRegression(solver='saga', penalty='l1').fit(X_train, y_train)
+
+
     # clf = tree.DecisionTreeClassifier(max_depth=3).fit(X_train, y_train) 
-    extract_forest(clf, out_file='ml/forest.bin')
-    tree.export_graphviz(clf.estimators_[0], out_file='ml/tree.dot')
+    # extract_forest(clf, out_file='ml/forest.bin')
+    # tree.export_graphviz(clf.estimators_[0], out_file='ml/tree.dot')
 
+def test(test_data, clf):
     print("predicting...")
 
+    X_test, y_test = test_data['atts'], test_data['class']
     probs = clf.predict_proba(X_test)
     
     fpr, tpr, thresholds = metrics.roc_curve(y_test, probs[:,1], pos_label=True)
@@ -151,17 +159,21 @@ def extract_forest(clf, out_file):
             print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
             extract_node(tree.tree_, 0, out_file)
 
-
 ### main ###
-
-if len(sys.argv)==5 and sys.argv[1] == "read":
-    retrieve_data(*sys.argv[2:5])
-
-if len(sys.argv)==4 and sys.argv[1] == "train":
-    train_data = np.load(sys.argv[2])
-    test_data = np.load(sys.argv[3])
-    train(train_data, test_data)
-
+# def main():
+#     plans = json.load(open(sys.argv[1]))
+#     for plan in plans:
+#         data = {}
+#         disp = {
+#             "load": read_data,
+#             "save": lambda d, f: np.save(f,data[d]),
+#             "extract": lambda clf, f: extract_forest(data[clf], f),
+#             "train": lambda trn, *args: train(data[trn], *args),
+#             "test": lambda tst, clf: test(data[tst], clf)
+#         }
+#         for ins in plan:
+#             ret, cmd, args = ins[0], ins[1], ins[2:]
+#             data[ret] = disp[cmd](*args)
 
 ### stuff ###
 

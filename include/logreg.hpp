@@ -9,7 +9,7 @@ namespace care {
 template<size_t num_features>
 class LogRegClf {
 
-    constexpr float logit(float p) {
+    constexpr float logit(float p) const {
         return std::log(p/(1-p));
     }
 
@@ -37,7 +37,7 @@ public:
         thresh_ = logit(t);
     }
 
-    float threshold() {
+    float threshold() const {
         return thresh_;
     }
 

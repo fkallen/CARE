@@ -1,6 +1,7 @@
 #ifndef CARE_DESERIALIZE_HPP
 #define CARE_DESERIALIZE_HPP
 
+#include <iostream>
 
 namespace care {
 
