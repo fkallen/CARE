@@ -56,11 +56,11 @@ namespace gpucorrectorkernels{
         const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
         const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
         for(int i = tid; i < copyInts; i += stride){
-            ((int*)out_corrected_candidates)[i] = ((const int*)in_corrected_candidates)[i];
+            ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
         }
         if(tid < remainingBytes){
-            ((char*)(((int*)out_corrected_candidates) + copyInts))[tid]
-                = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
+            ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
+                = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
         }
     }
     
@@ -904,7 +904,7 @@ namespace gpucorrectorkernels{
 
     class GpuErrorCorrector{
         static constexpr bool useGraph() noexcept{
-            return false;
+            return true;
         }
 
     public:
@@ -1370,7 +1370,7 @@ namespace gpucorrectorkernels{
             }
 
             if(useGraph()){
-                if(outputBuffersReallocated || !graphMap[currentOutput].valid){
+                if(!graphMap[currentOutput].valid){
                     if(outputBuffersReallocated){
                         std::cerr << "outputBuffersReallocated " << currentOutput << "\n";
                     }
@@ -2062,12 +2062,9 @@ namespace gpucorrectorkernels{
             ); CUERR;
 
             callCorrectCandidatesKernel_async(
-                /*currentOutput->h_corrected_candidates.get(),
-                currentOutput->h_editsPerCorrectedCandidate.get(),
-                currentOutput->h_numEditsPerCorrectedCandidate.get(),*/
                 d_corrected_candidates.get(),
                 d_editsPerCorrectedCandidate.get(),
-                d_numEditsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate.get(),              
                 multiMSA,
                 d_alignment_shifts.get(),
                 d_alignment_best_alignment_flags.get(),
@@ -2087,7 +2084,7 @@ namespace gpucorrectorkernels{
                 sequenceFileProperties->maxSequenceLength,
                 stream,
                 kernelLaunchHandle
-            );
+            );         
  
         }
 

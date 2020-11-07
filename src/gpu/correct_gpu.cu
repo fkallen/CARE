@@ -4997,8 +4997,8 @@ correct_gpu(
 
     ComplexCorrectionPipeline::Config pipelineConfig;
 
-    pipelineConfig.numHashers = 4;
-    pipelineConfig.numCorrectors = 1;
+    pipelineConfig.numHashers = 8;
+    pipelineConfig.numCorrectors = 2;
     pipelineConfig.numOutputConstructors = 1;
 
     std::vector<std::future<void>> futures;
