@@ -4218,6 +4218,17 @@ class SimpleCorrectionPipeline{
         Threadpool may be used for internal parallelization.
     */
 public:
+    struct RunStatistics{
+        double hasherTimeAverage{};
+        double correctorTimeAverage{};
+        double outputconstructorTimeAverage{};
+        MemoryUsage memoryInputData{};
+        MemoryUsage memoryRawOutputData{};
+        MemoryUsage memoryHasher{};
+        MemoryUsage memoryCorrector{};
+        MemoryUsage memoryOutputConstructor{};
+    };
+
     SimpleCorrectionPipeline(
         const DistributedReadStorage& readStorage_,
         const GpuMinhasher& minhasher_,
@@ -4231,7 +4242,7 @@ public:
     }
 
     template<class ResultProcessor, class BatchCompletion>
-    void run(
+    RunStatistics runToCompletion(
         int deviceId,
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
@@ -4241,6 +4252,62 @@ public:
         ResultProcessor processResults,
         BatchCompletion batchCompleted
     ) const {
+
+        auto continueCondition = [&](){ return !readIdGenerator.empty(); };
+
+        return run_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            sequenceFileProperties,
+            correctionFlags,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion>
+    RunStatistics runSomeBatches(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const SequenceFileProperties& sequenceFileProperties,
+        OutputConstructor::ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted,
+        int numBatches
+    ) const {
+
+        auto continueCondition = [&](){ bool success = !readIdGenerator.empty() && numBatches > 0; numBatches--; return success;};
+
+        return run_impl(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            sequenceFileProperties,
+            correctionFlags,
+            processResults,
+            batchCompleted,
+            continueCondition
+        );
+    }
+
+    template<class ResultProcessor, class BatchCompletion, class ContinueCondition>
+    RunStatistics run_impl(
+        int deviceId,
+        cpu::RangeGenerator<read_number>& readIdGenerator,
+        const CorrectionOptions& correctionOptions,
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const SequenceFileProperties& sequenceFileProperties,
+        OutputConstructor::ReadCorrectionFlags& correctionFlags,
+        ResultProcessor processResults,
+        BatchCompletion batchCompleted,
+        ContinueCondition continueCondition
+    ) const {
         int cur = 0;
         cudaGetDevice(&cur); CUERR;
         cudaSetDevice(deviceId);
@@ -4249,7 +4316,7 @@ public:
         GpuErrorCorrectorInput input;
         GpuErrorCorrectorRawOutput rawOutput;
 
-        ThreadPool::ParallelForHandle pforHandle;
+        //ThreadPool::ParallelForHandle pforHandle;
         //ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
@@ -4275,9 +4342,22 @@ public:
             correctionOptions
         );
 
+        RunStatistics runStatistics;
+
         std::vector<read_number> anchorIds(correctionOptions.batchsize);
 
-        while(!readIdGenerator.empty()){
+        int iterations = 0;
+        std::vector<double> elapsedHashingTimes;
+        std::vector<double> elapsedCorrectionTimes;
+        std::vector<double> elapsedOutputTimes;
+
+        double elapsedHashingTime = 0.0;
+        double elapsedCorrectionTime = 0.0;
+        double elapsedOutputTime = 0.0;
+
+        while(continueCondition()){
+
+            helpers::CpuTimer hashingTimer;
             
             anchorIds.resize(correctionOptions.batchsize);
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
@@ -4294,11 +4374,25 @@ public:
 
             input.event.synchronize();
 
+            hashingTimer.stop();
+            //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
+            elapsedHashingTime += hashingTimer.elapsed();
+
+
+            helpers::CpuTimer correctionTimer;
+
             nvtx::push_range("correct", 1);
             gpuErrorCorrector.correct(input, rawOutput, stream);
             nvtx::pop_range();
 
             rawOutput.event.synchronize();
+
+            correctionTimer.stop();
+            //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
+            elapsedCorrectionTime += correctionTimer.elapsed();
+
+
+            helpers::CpuTimer outputTimer;
 
             nvtx::push_range("constructResults", 2);
             auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
@@ -4313,7 +4407,7 @@ public:
             if(correctionOutput.anchorCorrections.size() > 0){
                 encodedAnchorCorrections.resize(correctionOutput.anchorCorrections.size());
 
-                threadPool->parallelFor(pforHandle, std::size_t(0), correctionOutput.anchorCorrections.size(), 
+                forLoopExecutor(std::size_t(0), correctionOutput.anchorCorrections.size(), 
                     [&](auto begin, auto end, auto /*threadId*/){
                         for(auto i = begin; i < end; i++){
                             correctionOutput.anchorCorrections[i].encodeInto(encodedAnchorCorrections[i]);
@@ -4325,7 +4419,7 @@ public:
             if(correctionOutput.candidateCorrections.size() > 0){
                 encodedCandidateCorrections.resize(correctionOutput.candidateCorrections.size());
 
-                threadPool->parallelFor(pforHandle, std::size_t(0), correctionOutput.candidateCorrections.size(), 
+                forLoopExecutor(std::size_t(0), correctionOutput.candidateCorrections.size(), 
                     [&](auto begin, auto end, auto /*threadId*/){
                         for(auto i = begin; i < end; i++){
                             correctionOutput.candidateCorrections[i].encodeInto(encodedCandidateCorrections[i]);
@@ -4336,6 +4430,10 @@ public:
 
             nvtx::pop_range();
 
+            outputTimer.stop();
+            //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+            elapsedOutputTime += outputTimer.elapsed();
+
             processResults(
                 std::move(correctionOutput.anchorCorrections),
                 std::move(correctionOutput.candidateCorrections),
@@ -4344,9 +4442,40 @@ public:
             );
 
             batchCompleted(*input.h_numAnchors.get());
+
+            iterations++;
         }
 
         cudaSetDevice(cur); CUERR;
+
+        runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
+        runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
+        runStatistics.outputconstructorTimeAverage = elapsedOutputTime / iterations;
+        runStatistics.memoryHasher = gpuAnchorHasher.getMemoryInfo();
+        runStatistics.memoryCorrector = gpuErrorCorrector.getMemoryInfo();
+        runStatistics.memoryOutputConstructor = outputConstructor.getMemoryInfo();
+        runStatistics.memoryInputData = input.getMemoryInfo();
+        runStatistics.memoryRawOutputData = rawOutput.getMemoryInfo();
+
+        return runStatistics;
+
+        // std::cerr << "hashing times: ";
+        // for(auto d : elapsedHashingTimes) std::cerr << d << ", ";
+        // std::cerr << "\n";
+        // //std::cerr << "Average: " << std::accumulate(elapsedHashingTimes.begin(), elapsedHashingTimes.end(), 0.0) / iterations << "\n";
+        // std::cerr << "Average: " << elapsedHashingTime / iterations << "\n";
+
+        // std::cerr << "correction times: ";
+        // for(auto d : elapsedCorrectionTimes) std::cerr << d << ", ";
+        // std::cerr << "\n";
+        // //std::cerr << "Average: " << std::accumulate(elapsedCorrectionTimes.begin(), elapsedCorrectionTimes.end(), 0.0) / iterations << "\n";
+        // std::cerr << "Average: " << elapsedCorrectionTime / iterations << "\n";
+
+        // std::cerr << "output times: ";
+        // for(auto d : elapsedOutputTimes) std::cerr << d << ", ";
+        // std::cerr << "\n";
+        // //std::cerr << "Average: " << std::accumulate(elapsedOutputTimes.begin(), elapsedOutputTimes.end(), 0.0) / iterations << "\n";
+        // std::cerr << "Average: " << elapsedOutputTime / iterations << "\n";
     }
 
 private:
@@ -4630,7 +4759,7 @@ public:
             gpuErrorCorrector.correct(*inputPtr, *rawOutputPtr, stream);
             nvtx::pop_range();
 
-#if 1
+        #if 1
             inputPtr->event.synchronize();
             freeInputs.push(inputPtr);
 
@@ -4639,7 +4768,7 @@ public:
             rawOutputPtr->event.synchronize();
             //std::cerr << "Synchronized output " << rawOutputPtr << "\n";
             unprocessedRawOutputs.push(rawOutputPtr);
-#else
+        #else
             dataInFlight.emplace(inputPtr, rawOutputPtr);
 
             if(!dataInFlight.empty()){
@@ -4653,7 +4782,7 @@ public:
                 //std::cerr << "Synchronized output " << pointers.second << "\n";
                 unprocessedRawOutputs.push(pointers.second);
             }            
-#endif
+        #endif
 
             nvtx::push_range("getUnprocessedInput",2);
             inputPtr = unprocessedInputs.popOrDefault(
@@ -4900,14 +5029,15 @@ correct_gpu(
 
         if(numA > 0 || numC > 0){
             outputThread.enqueue(std::move(outputFunction));
+            //outputFunction();
         }
     };
 
     outputThread.start();
 
-    const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));
-    std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
-    ThreadPool threadPool(threadPoolSize);
+    //const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));
+    //std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
+    //ThreadPool threadPool(threadPoolSize);
 
     auto showProgress = [&](std::int64_t totalCount, int seconds){
         if(runtimeOptions.showProgress){
@@ -4937,16 +5067,201 @@ correct_gpu(
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
+    if(runtimeOptions.threads <= 3){
+        //execute a single thread pipeline with each available thread
+
+        auto runPipeline = [&](int deviceId){    
+            SimpleCorrectionPipeline pipeline(
+                readStorage,
+                minhasher,
+                nullptr //&threadPool         
+            );
+    
+            pipeline.runToCompletion(
+                deviceId,
+                readIdGenerator,
+                correctionOptions,
+                goodAlignmentProperties,
+                sequenceFileProperties,
+                correctionFlags,
+                processResults,
+                batchCompleted
+            );
+        };
+    
+        std::vector<std::future<void>> futures;
+    
+        for(int i = 0; i < runtimeOptions.threads; i++){
+            const int deviceId = deviceIds[i % deviceIds.size()];
+
+            futures.emplace_back(std::async(
+                std::launch::async,
+                runPipeline,
+                deviceId
+            ));
+        }
+    
+        for(auto& f : futures){
+            f.wait();
+        }
+    }else{
+
+        //Process a few batches on the first gpu to estimate runtime per step
+        //These estimates will be used to spawn an appropriate number of threads for each gpu (assuming all gpus are similar)
+
+
+        SimpleCorrectionPipeline::RunStatistics runStatistics;
+
+        {
+            SimpleCorrectionPipeline pipeline(
+                readStorage,
+                minhasher,
+                nullptr //&threadPool         
+            );
+
+            constexpr int numBatches = 50;
+
+            runStatistics = pipeline.runSomeBatches(
+                deviceIds[0],
+                readIdGenerator,
+                correctionOptions,
+                goodAlignmentProperties,
+                sequenceFileProperties,
+                correctionFlags,
+                processResults,
+                batchCompleted,
+                numBatches
+            );   
+                
+        }
+
+        const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
+
+        auto runPipeline = [&](int deviceId, ComplexCorrectionPipeline::Config config){
+            
+            ComplexCorrectionPipeline pipeline(readStorage, minhasher, nullptr); //&threadPool);
+
+            pipeline.run(
+                deviceId,
+                config,
+                readIdGenerator,
+                correctionOptions,
+                goodAlignmentProperties,
+                sequenceFileProperties,
+                correctionFlags,
+                processResults,
+                batchCompleted
+            );
+        };
+
+        const int numDevices = deviceIds.size();
+
+        std::vector<ComplexCorrectionPipeline::Config> pipelineConfigs(numDevices);
+
+        for(int i = 0; i < numDevices; i++){
+            pipelineConfigs[i].numHashers = 0;
+            pipelineConfigs[i].numCorrectors = 1;
+            pipelineConfigs[i].numOutputConstructors = 1;
+        }
+        
+        int availableThreadsForHashers = std::max(1, runtimeOptions.threads - 2 * numDevices);
+        
+
+        int numHashersPerDevice = SDIV(availableThreadsForHashers, numDevices);
+
+        ComplexCorrectionPipeline::Config pipelineConfig;
+        pipelineConfig.numHashers = numHashersPerCorrectorByTime;
+        pipelineConfig.numCorrectors = 1;
+        pipelineConfig.numOutputConstructors = 1;
+
+        std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+        << pipelineConfig.numCorrectors << " corrector(s), " 
+        << pipelineConfig.numOutputConstructors << " output constructor(s) "
+        << "per device\n";
+
+        std::vector<std::future<void>> futures;
+
+        for(int deviceId : deviceIds){
+            futures.emplace_back(std::async(
+                std::launch::async,
+                runPipeline,
+                deviceId, pipelineConfig
+            ));
+        }
+
+        // use remaining threads for correctino on the cpu
+
+
+        for(auto& f : futures){
+            f.wait();
+        }
+    }
+
 #if 0
 
     auto runPipeline = [&](int deviceId){
+        auto printRunStats = [](const auto& runStatistics){
+            std::cerr << "hashing time average: " << runStatistics.hasherTimeAverage << "\n";
+            std::cerr << "corrector time average: " << runStatistics.correctorTimeAverage << "\n";
+            std::cerr << "output constructor time average: " << runStatistics.outputconstructorTimeAverage << "\n";
+    
+            std::cerr << "input size: ";
+            std::cerr << "host: " << runStatistics.memoryInputData.host << ", ";
+            for(const auto& d : runStatistics.memoryInputData.device){
+                std::cerr << "device " << d.first << ": " << d.second << " ";
+            }
+            std::cerr << "\n";
+    
+            std::cerr << "raw output size ";
+            std::cerr << "host: " << runStatistics.memoryRawOutputData.host << ", ";
+            for(const auto& d : runStatistics.memoryRawOutputData.device){
+                std::cerr << "device " << d.first << ": " << d.second << " ";
+            }
+            std::cerr << "\n";
+    
+            std::cerr << "hasher size ";
+            std::cerr << "host: " << runStatistics.memoryHasher.host << ", ";
+            for(const auto& d : runStatistics.memoryHasher.device){
+                std::cerr << "device " << d.first << ": " << d.second << " ";
+            }
+            std::cerr << "\n";
+    
+            std::cerr << "corrector size ";
+            std::cerr << "host: " << runStatistics.memoryCorrector.host << ", ";
+            for(const auto& d : runStatistics.memoryCorrector.device){
+                std::cerr << "device " << d.first << ": " << d.second << " ";
+            }
+            std::cerr << "\n";
+    
+            std::cerr << "output constructor size ";
+            std::cerr << "host: " << runStatistics.memoryOutputConstructor.host << ", ";
+            for(const auto& d : runStatistics.memoryOutputConstructor.device){
+                std::cerr << "device " << d.first << ": " << d.second << " ";
+            }
+            std::cerr << "\n";
+        };
+
         SimpleCorrectionPipeline pipeline(
             readStorage,
             minhasher,
-            &threadPool         
+            nullptr //&threadPool         
         );
 
-        pipeline.run(
+        auto runStatistics = pipeline.runSomeBatches(
+            deviceId,
+            readIdGenerator,
+            correctionOptions,
+            goodAlignmentProperties,
+            sequenceFileProperties,
+            correctionFlags,
+            processResults,
+            batchCompleted,
+            50
+        );
+
+        printRunStats(runStatistics);
+
+        runStatistics = pipeline.runToCompletion(
             deviceId,
             readIdGenerator,
             correctionOptions,
@@ -4956,6 +5271,8 @@ correct_gpu(
             processResults,
             batchCompleted
         );
+
+        printRunStats(runStatistics);
     };
 
     std::vector<std::future<void>> futures;
@@ -4976,11 +5293,11 @@ correct_gpu(
 
 
     
-#else
+//#else
 
     auto runPipeline = [&](int deviceId, ComplexCorrectionPipeline::Config config){
         
-        ComplexCorrectionPipeline pipeline(readStorage, minhasher, &threadPool);
+        ComplexCorrectionPipeline pipeline(readStorage, minhasher, nullptr); //&threadPool);
 
         pipeline.run(
             deviceId,
@@ -4997,7 +5314,7 @@ correct_gpu(
 
     ComplexCorrectionPipeline::Config pipelineConfig;
 
-    pipelineConfig.numHashers = 8;
+    pipelineConfig.numHashers = 6;
     pipelineConfig.numCorrectors = 2;
     pipelineConfig.numOutputConstructors = 1;
 
@@ -5022,10 +5339,10 @@ correct_gpu(
         
     std::cout << std::endl;
 
-    threadPool.wait();
+    //threadPool.wait();
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-    assert(threadPool.empty());
+    //assert(threadPool.empty());
 
     partialResults.flush();
 

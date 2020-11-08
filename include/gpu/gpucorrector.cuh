@@ -897,6 +897,10 @@ namespace gpucorrectorkernels{
             return correctionOutput;
         }
     
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info{};
+            return info;
+        }
     private:
         ReadCorrectionFlags* correctionFlags;
         const CorrectionOptions* correctionOptions;
@@ -904,7 +908,7 @@ namespace gpucorrectorkernels{
 
     class GpuErrorCorrector{
         static constexpr bool useGraph() noexcept{
-            return true;
+            return false;
         }
 
     public:
@@ -975,7 +979,7 @@ namespace gpucorrectorkernels{
             //round up to 32 elements
             msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
-            anchorSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
+            //anchorSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
             candidateSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
             anchorQualitiesGatherHandle = gpuReadStorage->makeGatherHandleQualities();
             candidateQualitiesGatherHandle = gpuReadStorage->makeGatherHandleQualities();
@@ -1018,72 +1022,6 @@ namespace gpucorrectorkernels{
 
             //gpuMemsetZero(stream);
 
-#if 0
-            cudaMemcpyAsync(
-                d_numAnchors.get(),
-                currentInput->d_numAnchors.get(),
-                sizeof(int),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_numCandidates.get(),
-                currentInput->d_numCandidates.get(),
-                sizeof(int),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_anchorReadIds.get(),
-                currentInput->d_anchorReadIds.get(),
-                sizeof(read_number) * (*currentInput->h_numAnchors.get()),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidate_read_ids.get(),
-                currentInput->d_candidate_read_ids.get(),
-                sizeof(read_number) * (*currentInput->h_numCandidates.get()),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_anchor_sequences_data.get(),
-                currentInput->d_anchor_sequences_data.get(),
-                encodedSequencePitchInInts* (*currentInput->h_numAnchors.get()),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_anchor_sequences_lengths.get(),
-                currentInput->d_anchor_sequences_lengths.get(),
-                sizeof(int) * (*currentInput->h_numAnchors.get()),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidates_per_anchor.get(),
-                currentInput->d_candidates_per_anchor.get(),
-                sizeof(int) * (*currentInput->h_numAnchors.get()),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidates_per_anchor_prefixsum.get(),
-                currentInput->d_candidates_per_anchor_prefixsum.get(),
-                sizeof(int) * ((*currentInput->h_numAnchors.get()) + 1),
-                D2D,
-                stream
-            ); CUERR;
-#else 
-
             gpucorrectorkernels::copyCorrectionInputDeviceData<<<32768,256, 0, stream>>>(
                 d_numAnchors,
                 d_numCandidates,
@@ -1103,8 +1041,6 @@ namespace gpucorrectorkernels{
                 currentInput->d_candidates_per_anchor,
                 currentInput->d_candidates_per_anchor_prefixsum
             ); CUERR;
-
-#endif
 
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             currentInput->event.record(stream);
@@ -1140,6 +1076,82 @@ namespace gpucorrectorkernels{
 
             cudaEventRecord(previousBatchFinishedEvent, stream); CUERR;
         }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage info{};
+            auto handleHost = [&](const auto& h){
+                info.host += h.sizeInBytes();
+            };
+            auto handleDevice = [&](const auto& d){
+                info.device[deviceId] += d.sizeInBytes();
+            };
+
+            info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(candidateSequenceGatherHandle);
+            info += gpuReadStorage->getMemoryInfoOfGatherHandleQualities(anchorQualitiesGatherHandle);
+            info += gpuReadStorage->getMemoryInfoOfGatherHandleQualities(candidateQualitiesGatherHandle);
+
+            handleHost(h_high_quality_anchor_indices);
+            handleHost(h_num_high_quality_anchor_indices);
+            handleHost(h_num_total_corrected_candidates);
+
+            handleDevice(d_candidates_per_anchor_tmp);
+            handleDevice(d_anchorContainsN);
+            handleDevice(d_candidateContainsN);
+            handleDevice(d_candidate_sequences_lengths);
+            handleDevice(d_anchor_sequences_lengths);
+            handleDevice(d_candidate_sequences_data);
+            handleDevice(d_transposedCandidateSequencesData);
+            handleDevice(d_anchor_qualities);
+            handleDevice(d_candidate_qualities);
+            handleDevice(d_anchorIndicesOfCandidates);
+            handleDevice(d_tempstorage);
+            handleDevice(d_alignment_overlaps);
+            handleDevice(d_alignment_shifts);
+            handleDevice(d_alignment_nOps);
+            handleDevice(d_alignment_isValid);
+            handleDevice(d_alignment_best_alignment_flags);
+            handleDevice(d_indices);
+            handleDevice(d_indices_per_anchor);
+            handleDevice(d_num_indices);
+            handleDevice(d_indices_tmp);
+            handleDevice(d_indices_per_anchor_tmp);
+            handleDevice(d_num_indices_tmp);
+            handleDevice(d_consensus);
+            handleDevice(d_support);
+            handleDevice(d_coverage);
+            handleDevice(d_origWeights);
+            handleDevice(d_origCoverages);
+            handleDevice(d_msa_column_properties);
+            handleDevice(d_counts);
+            handleDevice(d_weights);
+            handleDevice(d_corrected_anchors);
+            handleDevice(d_corrected_candidates);
+            handleDevice(d_num_corrected_candidates_per_anchor);
+            handleDevice(d_num_corrected_candidates_per_anchor_prefixsum);
+            handleDevice(d_num_total_corrected_candidates);
+            handleDevice(d_anchor_is_corrected);
+            handleDevice(d_is_high_quality_anchor);
+            handleDevice(d_high_quality_anchor_indices);
+            handleDevice(d_num_high_quality_anchor_indices);
+            handleDevice(d_editsPerCorrectedanchor);
+            handleDevice(d_numEditsPerCorrectedanchor);
+            handleDevice(d_editsPerCorrectedCandidate);
+            handleDevice(d_numEditsPerCorrectedCandidate);
+            handleDevice(d_indices_of_corrected_anchors);
+            handleDevice(d_num_indices_of_corrected_anchors);
+            handleDevice(d_indices_of_corrected_candidates);
+            handleDevice(d_numEditsPerCorrectedanchor);
+            handleDevice(d_numAnchors);
+            handleDevice(d_numCandidates);
+            handleDevice(d_anchorReadIds);
+            handleDevice(d_anchor_sequences_data);
+            handleDevice(d_anchor_sequences_lengths);
+            handleDevice(d_candidate_read_ids);
+            handleDevice(d_candidates_per_anchor);
+            handleDevice(d_candidates_per_anchor_prefixsum);
+
+            return info;
+        } 
 
         
 
@@ -2128,7 +2140,7 @@ namespace gpucorrectorkernels{
 
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
-        DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
+        //DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
         DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
         DistributedReadStorage::GatherHandleQualities anchorQualitiesGatherHandle;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;

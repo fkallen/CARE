@@ -945,10 +945,6 @@ namespace gpu{
             handle.d_global_begin_offsets.resize(numSequences);
 
             std::vector<Range_t>& allRanges = handle.allRanges;
-            std::vector<int>& idsPerChunk = handle.idsPerChunk;   
-            std::vector<int>& numAnchorsPerChunk = handle.numAnchorsPerChunk;
-            std::vector<int>& idsPerChunkPrefixSum = handle.idsPerChunkPrefixSum;
-            std::vector<int>& numAnchorsPerChunkPrefixSum = handle.numAnchorsPerChunkPrefixSum;
 
             // const int maxNumThreads = parallelFor.getNumThreads();
 

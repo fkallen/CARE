@@ -94,7 +94,9 @@ struct MemoryFileFixedSize{
         Reader& operator=(const Reader& rhs) = delete;
         Reader& operator=(Reader&& rhs) = default;
 
-        ~Reader(){}
+        ~Reader(){
+            filehelpers::removeFile(filename);
+        }
 
         bool hasNext() const{
             return (elementIndexInMemory != numElementsInMemory) || (fileiterator != fileend);
