@@ -5067,7 +5067,7 @@ correct_gpu(
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
-    if(runtimeOptions.threads <= 3){
+    if(false/* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
 
         auto runPipeline = [&](int deviceId){    
@@ -5137,7 +5137,26 @@ correct_gpu(
 
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
 
-        auto runPipeline = [&](int deviceId, ComplexCorrectionPipeline::Config config){
+        auto runSimplePipeline = [&](int deviceId){
+            SimpleCorrectionPipeline pipeline(
+                readStorage,
+                minhasher,
+                nullptr //&threadPool         
+            );
+
+            pipeline.runToCompletion(
+                deviceIds[0],
+                readIdGenerator,
+                correctionOptions,
+                goodAlignmentProperties,
+                sequenceFileProperties,
+                correctionFlags,
+                processResults,
+                batchCompleted
+            );  
+        };
+
+        auto runComplexPipeline = [&](int deviceId, ComplexCorrectionPipeline::Config config){
             
             ComplexCorrectionPipeline pipeline(readStorage, minhasher, nullptr); //&threadPool);
 
@@ -5154,40 +5173,145 @@ correct_gpu(
             );
         };
 
-        const int numDevices = deviceIds.size();
-
-        std::vector<ComplexCorrectionPipeline::Config> pipelineConfigs(numDevices);
-
-        for(int i = 0; i < numDevices; i++){
-            pipelineConfigs[i].numHashers = 0;
-            pipelineConfigs[i].numCorrectors = 1;
-            pipelineConfigs[i].numOutputConstructors = 1;
-        }
-        
-        int availableThreadsForHashers = std::max(1, runtimeOptions.threads - 2 * numDevices);
-        
-
-        int numHashersPerDevice = SDIV(availableThreadsForHashers, numDevices);
-
-        ComplexCorrectionPipeline::Config pipelineConfig;
-        pipelineConfig.numHashers = numHashersPerCorrectorByTime;
-        pipelineConfig.numCorrectors = 1;
-        pipelineConfig.numOutputConstructors = 1;
-
-        std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
-        << pipelineConfig.numCorrectors << " corrector(s), " 
-        << pipelineConfig.numOutputConstructors << " output constructor(s) "
-        << "per device\n";
-
         std::vector<std::future<void>> futures;
 
-        for(int deviceId : deviceIds){
-            futures.emplace_back(std::async(
-                std::launch::async,
-                runPipeline,
-                deviceId, pipelineConfig
-            ));
+        const int numDevices = deviceIds.size();
+        const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + 1;
+        int availableThreads = runtimeOptions.threads;
+
+        //std::cerr << "numDevice " << numDevices << ", requiredNumThreadsForComplex " << requiredNumThreadsForComplex << ", availableThreads " << availableThreads << "\n";
+
+        auto launchSimplePipelines = [&](int firstIdIndex, int lastIdIndex){
+            constexpr int maxNumThreadsPerDevice = 3;
+            assert(lastIdIndex <= numDevices);
+
+            std::vector<int> numThreadsPerDevice(numDevices, 0);
+
+            for(int i = 0; i < maxNumThreadsPerDevice; i++){
+                for(int d = firstIdIndex; d < lastIdIndex; d++){
+                    if(availableThreads > 0){
+                        futures.emplace_back(std::async(
+                            std::launch::async,
+                            runSimplePipeline,
+                            deviceIds[d]
+                        ));
+
+                        availableThreads--;
+
+                        numThreadsPerDevice[d]++;
+                    }
+                }
+            }
+
+            for(int d = firstIdIndex; d < lastIdIndex; d++){
+                if(numThreadsPerDevice[d] > 0){
+                    std::cerr << "Use " << numThreadsPerDevice[d] << " simple threads on device " << deviceIds[d] << "\n";
+                }else{
+                    std::cerr << "Device " << deviceIds[d] << " will be unused. (Not enough threads available.)\n";
+                }
+            }
+        };
+
+        //if there are not enough threads to run one complex pipeline and use each device, only use simple pipelines
+        if(requiredNumThreadsForComplex + (numDevices - 1) > availableThreads){
+            launchSimplePipelines(0, numDevices);
+
+        }else{
+
+            std::vector<ComplexCorrectionPipeline::Config> pipelineConfigs(numDevices);
+            std::vector<bool> useComplexPipeline(numDevices, false);
+            int numSimple = 0;
+            int firstSimpleDevice = numDevices;
+
+            for(int i = 0; i < numDevices; i++){            
+
+                if(availableThreads >= requiredNumThreadsForComplex){
+                    pipelineConfigs[i].numHashers = numHashersPerCorrectorByTime;
+                    pipelineConfigs[i].numCorrectors = 1;
+                    pipelineConfigs[i].numOutputConstructors = 1;
+                    useComplexPipeline[i] = true;
+    
+                    availableThreads -= requiredNumThreadsForComplex;
+                }else{
+                    numSimple++;
+
+                    if(firstSimpleDevice == numDevices){
+                        firstSimpleDevice = i;
+                    }
+                }
+            }
+
+            for(int i = 0; i < firstSimpleDevice; i++){
+                const int deviceId = deviceIds[i];
+
+                ComplexCorrectionPipeline::Config pipelineConfig;
+                pipelineConfig.numHashers = numHashersPerCorrectorByTime;
+                pipelineConfig.numCorrectors = 1;
+                pipelineConfig.numOutputConstructors = 1;
+
+                std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+                << pipelineConfig.numCorrectors << " corrector(s), " 
+                << pipelineConfig.numOutputConstructors << " output constructor(s) "
+                << "on device " << deviceId << "\n";                
+
+                futures.emplace_back(
+                    std::async(
+                        std::launch::async,
+                        runComplexPipeline,
+                        deviceId, pipelineConfig
+                    )
+                );
+            }
+
+            launchSimplePipelines(firstSimpleDevice, numDevices);
+
+            std::cerr << "Remaing threads after launching gpu pipelines: " << availableThreads << "\n";
         }
+
+
+
+        // std::vector<ComplexCorrectionPipeline::Config> pipelineConfigs(numDevices);
+
+        // for(int i = 0; i < numDevices; i++){
+        //     pipelineConfigs[i].numHashers = 0;
+        //     pipelineConfigs[i].numCorrectors = 1;
+        //     pipelineConfigs[i].numOutputConstructors = 1;
+        // }
+        
+        // int availableThreadsForHashers = runtimeOptions.threads - 2 * numDevices;
+        // for(int i = 0; i < availableThreadsForHashers; i++){
+        //     pipelineConfigs[i % numDevices].numHashers = std::min(pipelineConfigs[i % numDevices].numHashers + 1, numHashersPerCorrectorByTime);
+        // }
+
+        // int freeThreads = 0;
+        // for(int i = 0; i < numDevices; i++){
+        //     freeThreads += pipelineConfigs[i].numHashers;
+        //     freeThreads += pipelineConfigs[i].numCorrectors;
+        //     freeThreads += pipelineConfigs[i].numOutputConstructors;
+        // }
+
+
+        // int numHashersPerDevice = SDIV(availableThreadsForHashers, numHashersPerCorrectorByTime);
+
+        // ComplexCorrectionPipeline::Config pipelineConfig;
+        // pipelineConfig.numHashers = numHashersPerCorrectorByTime;
+        // pipelineConfig.numCorrectors = 1;
+        // pipelineConfig.numOutputConstructors = 1;
+
+        // std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+        // << pipelineConfig.numCorrectors << " corrector(s), " 
+        // << pipelineConfig.numOutputConstructors << " output constructor(s) "
+        // << "per device\n";
+
+        
+
+        // for(int deviceId : deviceIds){
+        //     futures.emplace_back(std::async(
+        //         std::launch::async,
+        //         runComplexPipeline,
+        //         deviceId, pipelineConfig
+        //     ));
+        // }
 
         // use remaining threads for correctino on the cpu
 
