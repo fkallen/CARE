@@ -95,7 +95,7 @@ struct MemoryFileFixedSize{
         Reader& operator=(Reader&& rhs) = default;
 
         ~Reader(){
-            filehelpers::removeFile(filename);
+            
         }
 
         bool hasNext() const{
