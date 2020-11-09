@@ -260,6 +260,121 @@ namespace gpu{
         GpuMinhasher& operator=(const GpuMinhasher&) = delete;
         GpuMinhasher& operator=(GpuMinhasher&&) = default;
 
+        std::array<std::uint64_t, maximum_number_of_maps> 
+        hostminhashfunction(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) const noexcept{
+
+            const int length = sequenceLength;
+
+            std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
+            std::fill_n(minhashSignature.begin(), numHashFuncs, std::numeric_limits<std::uint64_t>::max());
+
+            if(length < kmerLength) return minhashSignature;
+
+            constexpr int maximum_kmer_length = max_k<kmer_type>::value;
+            const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+            const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
+
+            auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+                using hasher = hashers::MurmurHash<std::uint64_t>;
+
+                const auto smallest = std::min(fwd, rc);
+                const auto hashvalue = hasher::hash(smallest + numhashfunc);
+                minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
+            };
+
+            kmer_type kmer_encoded = 0;
+            kmer_type rc_kmer_encoded = std::numeric_limits<kmer_type>::max();
+
+            auto addBase = [&](char c){
+                kmer_encoded <<= 2;
+                rc_kmer_encoded >>= 2;
+                switch(c) {
+                case 'A':
+                    kmer_encoded |= 0;
+                    rc_kmer_encoded |= kmer_type(3) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'C':
+                    kmer_encoded |= 1;
+                    rc_kmer_encoded |= kmer_type(2) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'G':
+                    kmer_encoded |= 2;
+                    rc_kmer_encoded |= kmer_type(1) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'T':
+                    kmer_encoded |= 3;
+                    rc_kmer_encoded |= kmer_type(0) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                default:break;
+                }
+            };
+
+            for(int i = 0; i < kmerLength - 1; i++){
+                addBase(sequence[i]);
+            }
+
+            for(int i = kmerLength - 1; i < length; i++){
+                addBase(sequence[i]);
+
+                for(int m = 0; m < numHashFuncs; m++){
+                    handlekmer(kmer_encoded & kmer_mask, 
+                                rc_kmer_encoded >> rcshiftamount, 
+                                m);
+                }
+            }
+
+            return minhashSignature;
+        }
+
+        //host version
+        void getCandidates(
+            QueryHandle& handle, 
+            std::vector<read_number>& ids,
+            const char* sequence,
+            int sequenceLength
+        ) const{
+
+            // we do not consider reads which are shorter than k
+            if(sequenceLength < getKmerSize()){
+                ids.clear();
+                return;
+            }
+
+            const std::uint64_t kmer_mask = getKmerMask();
+    
+            auto hashValues = hostminhashfunction(sequence, sequenceLength, getKmerSize(), getNumberOfMaps());
+
+            std::array<Range_t, maximum_number_of_maps> allRanges;
+
+            int totalNumResults = 0;
+    
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            queryPrecalculatedSignatures(
+                hashValues.data(),
+                allRanges.data(),
+                &totalNumResults, 
+                1
+            );
+            nvtx::pop_range();
+
+            auto handlesEnd = std::remove_if(
+                allRanges.begin(), 
+                allRanges.end(), 
+                [](const auto& range){return 0 == std::distance(range.first, range.second);}
+            );
+
+            const int numNonEmptyRanges = std::distance(allRanges.begin(), handlesEnd);
+
+            ids.resize(totalNumResults);
+
+            nvtx::push_range("k_way_set_union", 7);
+            SetUnionHandle suHandle;
+            auto resultEnd = k_way_set_union(suHandle, ids.data(), allRanges.data(), numNonEmptyRanges);
+            nvtx::pop_range();
+            const std::size_t resultSize = std::distance(ids.data(), resultEnd);
+            ids.erase(ids.begin() + resultSize, ids.end());
+        }
+
 
 
         template<class ParallelForLoop>

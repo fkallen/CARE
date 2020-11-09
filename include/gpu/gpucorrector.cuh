@@ -11,6 +11,7 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
 
+#include <corrector_common.hpp>
 #include <threadpool.hpp>
 #include <minhasher.hpp>
 #include <options.hpp>
@@ -265,6 +266,131 @@ namespace gpucorrectorkernels{
 
 } //namespace gpucorrectorkernels   
 
+    class GpuReadStorageReadProvider : public ReadProvider{
+    public:
+        GpuReadStorageReadProvider(const DistributedReadStorage& rs_) 
+            : rs{&rs_},
+            sequenceGatherHandle{rs_.makeGatherHandleSequences()},
+            qualityGatherHandle{rs_.makeGatherHandleQualities()}
+        {
+
+
+        }
+    private:
+        bool readContainsN_impl(read_number readId) const override{
+            return rs->readContainsN(readId);
+        }
+
+        void gatherSequenceLengths_impl(const read_number* h_readIds, int numIds, int* h_lengths) const override{
+            d_readIds.resize(numIds);
+            d_data.resize(numIds * sizeof(int));
+
+            int* d_lengths = (int*)d_data.get();
+
+            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
+
+            rs->gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                stream.getDeviceId(),
+                d_readIds.get(),
+                numIds,
+                stream
+            );
+
+            cudaMemcpyAsync(h_lengths, d_lengths, sizeof(int) * numIds, D2H, stream); CUERR;
+            cudaStreamSynchronize(stream); CUERR;
+        }
+
+        void gatherSequenceData_impl(
+            const read_number* h_readIds, 
+            int numIds, 
+            unsigned int* h_sequenceData, 
+            std::size_t encodedSequencePitchInInts
+        ) const{
+            d_readIds.resize(numIds);
+            d_data.resize(sizeof(unsigned int) * encodedSequencePitchInInts * numIds);
+
+            unsigned int* d_sequenceData = (unsigned int*)d_data.get();
+
+            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
+
+            rs->gatherSequenceDataToGpuBufferAsync(
+                nullptr, //threadPool,
+                sequenceGatherHandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_readIds,
+                d_readIds.get(),
+                numIds,
+                stream.getDeviceId(),
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_sequenceData, 
+                d_sequenceData, 
+                sizeof(unsigned int) * encodedSequencePitchInInts * numIds, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+        }
+
+        void gatherSequenceQualities_impl(const read_number* h_readIds, int numIds, char* h_qualities, std::size_t qualityPitchInBytes) const{
+            d_readIds.resize(numIds);
+            d_data.resize(sizeof(char) * qualityPitchInBytes * numIds);
+
+            char* d_qualities = (char*)d_data.get();
+
+            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
+
+            rs->gatherQualitiesToGpuBufferAsync(
+                nullptr, //threadPool,
+                qualityGatherHandle,
+                d_qualities,
+                qualityPitchInBytes,
+                h_readIds,
+                d_readIds.get(),
+                numIds,
+                stream.getDeviceId(),
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_qualities, 
+                d_qualities, 
+                sizeof(char) * qualityPitchInBytes * numIds, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+        }
+    
+        CudaStream stream;
+        mutable helpers::SimpleAllocationDevice<read_number> d_readIds;
+        mutable helpers::SimpleAllocationDevice<char> d_data;
+        const DistributedReadStorage* rs;
+        DistributedReadStorage::GatherHandleSequences sequenceGatherHandle;
+        DistributedReadStorage::GatherHandleQualities qualityGatherHandle;
+    };
+
+    class GpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
+    public: 
+        GpuMinhasherCandidateIdsProvider(const GpuMinhasher& minhasher_) 
+            : minhasher{&minhasher_}, minhashHandle{GpuMinhasher::makeQueryHandle()} {
+
+        }
+    private:
+        void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const override{
+            minhasher->getCandidates(minhashHandle, ids, anchor, size);
+        }
+
+        const GpuMinhasher* minhasher;
+        mutable GpuMinhasher::QueryHandle minhashHandle;
+    };
+
     class GpuErrorCorrectorInput{
     public:
         template<class T>
@@ -377,7 +503,6 @@ namespace gpucorrectorkernels{
         }  
     };
 
-
     class GpuAnchorHasher{
     public:
 
@@ -488,8 +613,8 @@ namespace gpucorrectorkernels{
                 anchorSequenceGatherHandle,
                 ecinput.d_anchor_sequences_data.get(),
                 encodedSequencePitchInInts,
-                ecinput.d_anchorReadIds.get(),
                 ecinput.h_anchorReadIds.get(),
+                ecinput.d_anchorReadIds.get(),
                 (*ecinput.h_numAnchors.get()),
                 deviceId,
                 stream
@@ -646,48 +771,6 @@ namespace gpucorrectorkernels{
 
     class OutputConstructor{
     public:
-        struct CorrectionOutput{
-            std::vector<TempCorrectedSequence> anchorCorrections;
-            std::vector<TempCorrectedSequence> candidateCorrections;
-        };
-
-        struct ReadCorrectionFlags{
-            friend class OutputConstructor;
-        public:
-            ReadCorrectionFlags() = default;
-
-            ReadCorrectionFlags(std::size_t numReads)
-                : size(numReads), flags(std::make_unique<std::uint8_t[]>(numReads)){
-                std::fill(flags.get(), flags.get() + size, 0);
-            }
-
-            std::size_t sizeInBytes() const noexcept{
-                return size * sizeof(std::uint8_t);
-            }
-
-            bool isCorrectedAsHQAnchor(std::int64_t position) const noexcept{
-                return (flags[position] & readCorrectedAsHQAnchor()) > 0;
-            }
-
-            bool isNotCorrectedAsAnchor(std::int64_t position) const noexcept{
-                return (flags[position] & readCouldNotBeCorrectedAsAnchor()) > 0;
-            }
-
-        private:
-            static constexpr std::uint8_t readCorrectedAsHQAnchor() noexcept{ return 1; };
-            static constexpr std::uint8_t readCouldNotBeCorrectedAsAnchor() noexcept{ return 2; };
-
-            void setCorrectedAsHqAnchor(std::int64_t position) const noexcept{
-                flags[position] = readCorrectedAsHQAnchor();
-            }
-
-            void setCouldNotBeCorrectedAsAnchor(std::int64_t position) const noexcept{
-                flags[position] = readCouldNotBeCorrectedAsAnchor();
-            }
-
-            std::size_t size;
-            std::unique_ptr<std::uint8_t[]> flags{};
-        };
 
         OutputConstructor() = default;
 
@@ -702,7 +785,7 @@ namespace gpucorrectorkernels{
         }
 
         template<class ForLoop>
-        CorrectionOutput constructResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor){
+        CorrectionOutput constructResults(const GpuErrorCorrectorRawOutput& currentOutput, ForLoop loopExecutor) const{
             //assert(cudaSuccess == currentOutput.event.query());
 
             if(currentOutput.nothingToDo){
@@ -896,7 +979,7 @@ namespace gpucorrectorkernels{
 
             return correctionOutput;
         }
-    
+
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
             return info;

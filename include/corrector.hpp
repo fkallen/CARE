@@ -13,6 +13,8 @@
 #include <qualityscoreweights.hpp>
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
+#include <corrector_common.hpp>
+
 
 #include <cstddef>
 #include <memory>
@@ -22,6 +24,52 @@
 #include <chrono>
 
 namespace care{
+
+    class CpuReadStorageReadProvider : public ReadProvider{
+    public:
+        CpuReadStorageReadProvider(const cpu::ContiguousReadStorage& rs_) : rs(&rs_){}
+
+    private:
+        bool readContainsN_impl(read_number readId) const override{
+            return rs->readContainsN(readId);
+        }
+
+        void gatherSequenceLengths_impl(const read_number* readIds, int numIds, int* lengths) const override{
+            rs->gatherSequenceLengths(gatherHandle, readIds, numIds, lengths);
+        }
+
+        void gatherSequenceData_impl(const read_number* readIds, int numIds, unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const override{
+            rs->gatherSequenceData(gatherHandle, readIds, numIds, sequenceData, encodedSequencePitchInInts);
+        }
+
+        void gatherSequenceQualities_impl(const read_number* readIds, int numIds, char* qualities, std::size_t qualityPitchInBytes) const override{
+            rs->gatherSequenceQualities(gatherHandle, readIds, numIds, qualities, qualityPitchInBytes);
+        }
+
+        const cpu::ContiguousReadStorage* rs{};
+        mutable cpu::ContiguousReadStorage::GatherHandle gatherHandle{};
+    };
+
+    class CpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
+    public: 
+        CpuMinhasherCandidateIdsProvider(const Minhasher& minhasher_) : minhasher{&minhasher_} {
+
+        }
+    private:
+        void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const override{
+            minhasher->getCandidates_any_map(
+                minhashHandle,
+                anchor,
+                size,
+                0
+            );
+
+            std::swap(ids, minhashHandle.allUniqueResults);
+        }
+
+        const Minhasher* minhasher;
+        mutable Minhasher::Handle minhashHandle;
+    };
 
 class CpuErrorCorrector{
 public:
@@ -36,44 +84,6 @@ public:
         bool hasAnchorCorrection{};
         TempCorrectedSequence anchorCorrection{};
         std::vector<TempCorrectedSequence> candidateCorrections{};
-    };
-
-    struct ReadCorrectionFlags{
-        friend class CpuErrorCorrector;
-    public:
-        ReadCorrectionFlags() = default;
-
-        ReadCorrectionFlags(std::size_t numReads)
-            : size(numReads), flags(std::make_unique<std::uint8_t[]>(numReads)){
-            std::fill(flags.get(), flags.get() + size, 0);
-        }
-
-        std::size_t sizeInBytes() const noexcept{
-            return size * sizeof(std::uint8_t);
-        }
-
-    private:
-        static constexpr std::uint8_t readCorrectedAsHQAnchor() noexcept{ return 1; };
-        static constexpr std::uint8_t readCouldNotBeCorrectedAsAnchor() noexcept{ return 2; };
-
-        void setCorrectedAsHqAnchor(std::int64_t position) const noexcept{
-            flags[position] = readCorrectedAsHQAnchor();
-        }
-
-        void setCouldNotBeCorrectedAsAnchor(std::int64_t position) const noexcept{
-            flags[position] = readCouldNotBeCorrectedAsAnchor();
-        }
-
-        bool isCorrectedAsHQAnchor(std::int64_t position) const noexcept{
-            return (flags[position] & readCorrectedAsHQAnchor()) > 0;
-        }
-
-        bool isNotCorrectedAsAnchor(std::int64_t position) const noexcept{
-            return (flags[position] & readCouldNotBeCorrectedAsAnchor()) > 0;
-        }
-
-        std::size_t size;
-        std::unique_ptr<std::uint8_t[]> flags{};
     };
 
     struct TimeMeasurements{
@@ -142,16 +152,16 @@ public:
         std::size_t qualityPitchInBytes_,
         const CorrectionOptions& correctionOptions_,
         const GoodAlignmentProperties& goodAlignmentProperties_,
-        const Minhasher& minhasher_,
-        const cpu::ContiguousReadStorage& readStorage_,
+        const CandidateIdsProvider& candidateIdsProvider_,
+        const ReadProvider& readProvider_,
         ReadCorrectionFlags& correctionFlags_
     ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
         decodedSequencePitchInBytes(decodedSequencePitchInBytes_),
         qualityPitchInBytes(qualityPitchInBytes_),
         correctionOptions(&correctionOptions_),
         goodAlignmentProperties(&goodAlignmentProperties_),
-        minhasher(&minhasher_),
-        readStorage(&readStorage_),
+        candidateIdsProvider(&candidateIdsProvider_),
+        readProvider(&readProvider_),
         correctionFlags(&correctionFlags_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
     {
@@ -376,47 +386,42 @@ private:
 
         const read_number readId = task.input.anchorReadId;
 
-        const bool containsN = readStorage->readContainsN(readId);
+        const bool containsN = readProvider->readContainsN(readId);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
             assert(task.input.anchorLength == int(task.decodedAnchor.size()));
 
-            minhasher->getCandidates_any_map(
-                minhashHandle,
+            candidateIdsProvider->getCandidates(
+                task.candidateReadIds,
                 task.decodedAnchor.data(),
-                task.decodedAnchor.size(),
-                0
+                task.decodedAnchor.size()
             );
 
-            auto readIdPos = std::lower_bound(minhashHandle.result().begin(),
-                                            minhashHandle.result().end(),
+            //remove self
+            auto readIdPos = std::lower_bound(task.candidateReadIds.begin(),
+                                            task.candidateReadIds.end(),
                                             readId);
 
-            if(readIdPos != minhashHandle.result().end() && *readIdPos == readId){
-                minhashHandle.result().erase(readIdPos);
+            if(readIdPos != task.candidateReadIds.end() && *readIdPos == readId){
+                task.candidateReadIds.erase(readIdPos);
             }
 
-            auto minhashResultsEnd = minhashHandle.result().end();
+            auto resultsEnd = task.candidateReadIds.end();
             //exclude candidates with ambiguous bases
 
             if(correctionOptions->excludeAmbiguousReads){
-                minhashResultsEnd = std::remove_if(
-                    minhashHandle.result().begin(),
-                    minhashHandle.result().end(),
+                resultsEnd = std::remove_if(
+                    task.candidateReadIds.begin(),
+                    task.candidateReadIds.end(),
                     [&](read_number readId){
-                        return readStorage->readContainsN(readId);
+                        return readProvider->readContainsN(readId);
                     }
                 );
             }
 
-            task.candidateReadIds.insert(
-                task.candidateReadIds.end(),
-                minhashHandle.result().begin(),
-                minhashResultsEnd
-            );
-
+            task.candidateReadIds.erase(resultsEnd, task.candidateReadIds.end());
         }
     }
 
@@ -433,15 +438,13 @@ private:
         task.candidateSequencesRevcData.clear();
         task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
-        readStorage->gatherSequenceLengths(
-            readStorageGatherHandle,
+        readProvider->gatherSequenceLengths(
             task.candidateReadIds.data(),
             numCandidates,
             task.candidateSequencesLengths.data()
         );
 
-        readStorage->gatherSequenceData(
-            readStorageGatherHandle,
+        readProvider->gatherSequenceData(
             task.candidateReadIds.data(),
             numCandidates,
             task.candidateSequencesData.data(),
@@ -679,8 +682,7 @@ private:
 
         task.candidateQualities.resize(qualityPitchInBytes * numCandidates);
 
-        readStorage->gatherSequenceQualities(
-            readStorageGatherHandle,
+        readProvider->gatherSequenceQualities(
             task.candidateReadIds.data(),
             task.candidateReadIds.size(),
             task.candidateQualities.data(),
@@ -922,7 +924,7 @@ private:
         if(result.hasAnchorCorrection){
             auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
             const int correctedlength = correctedSequenceString.length();
-            const bool originalReadContainsN = readStorage->readContainsN(task.input.anchorReadId);
+            const bool originalReadContainsN = readProvider->readContainsN(task.input.anchorReadId);
             
             TempCorrectedSequence tmp;
             
@@ -981,7 +983,7 @@ private:
                     tmp.sequence = std::move(fwd);
                 }
                 
-                const bool originalCandidateReadContainsN = readStorage->readContainsN(candidateId);
+                const bool originalCandidateReadContainsN = readProvider->readContainsN(candidateId);
                 
                 if(!originalCandidateReadContainsN){
                     const std::size_t offset = correctedCandidate.index * decodedSequencePitchInBytes;
@@ -1040,13 +1042,11 @@ private:
 
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
-    const Minhasher* minhasher{};
-    const cpu::ContiguousReadStorage* readStorage{};
+    const CandidateIdsProvider* candidateIdsProvider{};
+    const ReadProvider* readProvider{};
 
     ReadCorrectionFlags* correctionFlags{};
-
-    mutable cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle{};    
-    mutable Minhasher::Handle minhashHandle{};
+  
     mutable cpu::shd::CpuAlignmentHandle alignmentHandle{};
 
     std::unique_ptr<cpu::QualityScoreConversion> qualityCoversion;
