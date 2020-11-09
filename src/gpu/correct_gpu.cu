@@ -4775,6 +4775,8 @@ public:
             noMoreInputs = true;
         }
 
+        cudaStreamSynchronize(hasherStream);
+
         std::cerr << "Hasher memory usage\n";
         {
             auto meminfo = gpuAnchorHasher.getMemoryInfo();
@@ -4931,6 +4933,8 @@ public:
         if(activeCorrectorThreads == 0){
             noMoreRawOutputs = true;
         }
+
+        cudaStreamSynchronize(stream); CUERR;
     };
 
     template<class ResultProcessor, class BatchCompletion>
