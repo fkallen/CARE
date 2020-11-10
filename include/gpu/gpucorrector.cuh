@@ -282,12 +282,10 @@ namespace gpucorrectorkernels{
         }
 
         void gatherSequenceLengths_impl(const read_number* h_readIds, int numIds, int* h_lengths) const override{
-            d_readIds.resize(numIds);
+            copyReadIdsToDeviceAsync(h_readIds, numIds);
+
             d_data.resize(numIds * sizeof(int));
-
             int* d_lengths = (int*)d_data.get();
-
-            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
 
             rs->gatherSequenceLengthsToGpuBufferAsync(
                 d_lengths,
@@ -307,12 +305,10 @@ namespace gpucorrectorkernels{
             unsigned int* h_sequenceData, 
             std::size_t encodedSequencePitchInInts
         ) const{
-            d_readIds.resize(numIds);
+            copyReadIdsToDeviceAsync(h_readIds, numIds);
+
             d_data.resize(sizeof(unsigned int) * encodedSequencePitchInInts * numIds);
-
             unsigned int* d_sequenceData = (unsigned int*)d_data.get();
-
-            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
 
             rs->gatherSequenceDataToGpuBufferAsync(
                 nullptr, //threadPool,
@@ -338,12 +334,10 @@ namespace gpucorrectorkernels{
         }
 
         void gatherSequenceQualities_impl(const read_number* h_readIds, int numIds, char* h_qualities, std::size_t qualityPitchInBytes) const{
-            d_readIds.resize(numIds);
+            copyReadIdsToDeviceAsync(h_readIds, numIds);
+
             d_data.resize(sizeof(char) * qualityPitchInBytes * numIds);
-
             char* d_qualities = (char*)d_data.get();
-
-            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
 
             rs->gatherQualitiesToGpuBufferAsync(
                 nullptr, //threadPool,
@@ -367,8 +361,92 @@ namespace gpucorrectorkernels{
 
             cudaStreamSynchronize(stream); CUERR;
         }
+
+        void setReadIds_impl(const read_number* h_readIds, int numIds) override{
+            selectedIds = h_readIds;
+            numSelectedIds = numIds;
+            copyReadIdsToDeviceAsync(h_readIds, numIds);
+        }
+
+        void gatherSequenceLengths_impl(int* h_lengths) const override{
+            d_data.resize(numSelectedIds * sizeof(int));
+
+            int* d_lengths = (int*)d_data.get();
+            rs->gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                stream.getDeviceId(),
+                d_readIds.get(),
+                numSelectedIds,
+                stream
+            );
+
+            cudaMemcpyAsync(h_lengths, d_lengths, sizeof(int) * numSelectedIds, D2H, stream); CUERR;
+            cudaStreamSynchronize(stream); CUERR;
+        }
+
+        void gatherSequenceData_impl(unsigned int* h_sequenceData, std::size_t encodedSequencePitchInInts) const override{
+            d_data.resize(sizeof(unsigned int) * encodedSequencePitchInInts * numSelectedIds);
+
+            unsigned int* d_sequenceData = (unsigned int*)d_data.get();
+
+            rs->gatherSequenceDataToGpuBufferAsync(
+                nullptr, //threadPool,
+                sequenceGatherHandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                selectedIds,
+                d_readIds.get(),
+                numSelectedIds,
+                stream.getDeviceId(),
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_sequenceData, 
+                d_sequenceData, 
+                sizeof(unsigned int) * encodedSequencePitchInInts * numSelectedIds, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+        }
+
+        void gatherSequenceQualities_impl(char* h_qualities, std::size_t qualityPitchInBytes) const override{
+            d_data.resize(sizeof(char) * qualityPitchInBytes * numSelectedIds);
+            char* d_qualities = (char*)d_data.get();
+
+            rs->gatherQualitiesToGpuBufferAsync(
+                nullptr, //threadPool,
+                qualityGatherHandle,
+                d_qualities,
+                qualityPitchInBytes,
+                selectedIds,
+                d_readIds.get(),
+                numSelectedIds,
+                stream.getDeviceId(),
+                stream
+            );
+
+            cudaMemcpyAsync(
+                h_qualities, 
+                d_qualities, 
+                sizeof(char) * qualityPitchInBytes * numSelectedIds, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+        }
+
+        void copyReadIdsToDeviceAsync(const read_number* h_readIds, int numIds) const {
+            d_readIds.resize(numIds);
+            cudaMemcpyAsync(d_readIds.get(), h_readIds, sizeof(read_number) * numIds, H2D, stream); CUERR;
+        }
     
         CudaStream stream;
+        const read_number* selectedIds{};
+        int numSelectedIds{};
         mutable helpers::SimpleAllocationDevice<read_number> d_readIds;
         mutable helpers::SimpleAllocationDevice<char> d_data;
         const DistributedReadStorage* rs;

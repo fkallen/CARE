@@ -88,6 +88,22 @@ namespace care{
             gatherSequenceQualities_impl(readIds, numIds, qualities, qualityPitchInBytes);
         }
 
+        void gatherSequenceLengths(int* lengths) const{
+            gatherSequenceLengths_impl(lengths);
+        }
+
+        void gatherSequenceData(unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const{
+            gatherSequenceData_impl(sequenceData, encodedSequencePitchInInts);
+        }
+
+        void gatherSequenceQualities(char* qualities, std::size_t qualityPitchInBytes) const{
+            gatherSequenceQualities_impl(qualities, qualityPitchInBytes);
+        }
+
+        void setReadIds(const read_number* readIds, int numIds){
+            setReadIds_impl(readIds, numIds);
+        }
+
     private:
         virtual bool readContainsN_impl(read_number readId) const = 0;
 
@@ -96,6 +112,14 @@ namespace care{
         virtual void gatherSequenceData_impl(const read_number* readIds, int numIds, unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const = 0;
 
         virtual void gatherSequenceQualities_impl(const read_number* readIds, int numIds, char* qualities, std::size_t qualityPitchInBytes) const = 0;
+
+        virtual void setReadIds_impl(const read_number* readIds, int numIds) = 0;
+
+        virtual void gatherSequenceLengths_impl(int* lengths) const = 0;
+
+        virtual void gatherSequenceData_impl(unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const = 0;
+
+        virtual void gatherSequenceQualities_impl(char* qualities, std::size_t qualityPitchInBytes) const = 0;
     };
 
     class CandidateIdsProvider{
