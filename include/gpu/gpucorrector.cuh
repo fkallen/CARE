@@ -223,7 +223,7 @@ namespace gpucorrectorkernels{
 
     __global__ 
     void initArraysBeforeCandidateCorrectionKernel(
-        const int* __restrict__ d_numCandidates,
+        int maxNumCandidates,
         const int* __restrict__ d_numAnchors,
         int* __restrict__ d_num_corrected_candidates_per_anchor,
         bool* __restrict__ d_candidateCanBeCorrected
@@ -232,13 +232,12 @@ namespace gpucorrectorkernels{
         const int stride = blockDim.x * gridDim.x;
 
         const int numAnchors = *d_numAnchors;
-        const int numCandidates = *d_numCandidates;
 
         for(int i = tid; i < numAnchors; i += stride){
             d_num_corrected_candidates_per_anchor[i] = 0;
         }
 
-        for(int i = tid; i < numCandidates; i += stride){
+        for(int i = tid; i < maxNumCandidates; i += stride){
             d_candidateCanBeCorrected[i] = 0;
         }
     }
@@ -1150,6 +1149,7 @@ namespace gpucorrectorkernels{
 
         void correct(GpuErrorCorrectorInput& input, GpuErrorCorrectorRawOutput& output, cudaStream_t stream){
             previousBatchFinishedEvent.synchronize();
+            cudaStreamSynchronize(stream); CUERR;
 
             //assert(cudaSuccess == input.event.query());
             //assert(cudaSuccess == output.event.query());
@@ -1532,11 +1532,23 @@ namespace gpucorrectorkernels{
                 (cudaStream_t)0,
                 kernelLaunchHandle
             );
+
+            std::size_t cubtemp = 0;
+
+            cub::DeviceSelect::Flagged(
+                nullptr,
+                cubtemp,
+                cub::CountingInputIterator<int>(0),
+                (bool*) nullptr,
+                (int*) nullptr,
+                (int*) nullptr,
+                maxCandidates,
+                (cudaStream_t)0
+            ); CUERR;
             
-            // this buffer will also serve as temp storage for cub. The required memory for cub 
-            // is less than popcountShdTempBytes.
-            popcountShdTempBytes = std::max(flagTemp, popcountShdTempBytes);
-            d_tempstorage.resize(popcountShdTempBytes);
+            std::size_t tmpsize = std::max(cubtemp, flagTemp);
+            tmpsize = std::max(tmpsize, popcountShdTempBytes);
+            d_tempstorage.resize(tmpsize);
 
             if(maxCandidatesDidChange){
                 std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
@@ -2169,7 +2181,7 @@ namespace gpucorrectorkernels{
             ); CUERR;
 
             gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<640, 128, 0, stream>>>(
-                d_numCandidates.get(),
+                maxCandidates,
                 d_numAnchors.get(),
                 d_num_corrected_candidates_per_anchor.get(),
                 d_candidateCanBeCorrected
