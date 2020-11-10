@@ -46,22 +46,33 @@ namespace gpucorrectorkernels{
 
         const int numCand = *numCorrectedCandidates;
 
-        for(int i = tid; i < numCand * decodedSequencePitchInBytes; i += stride){
-            out_corrected_candidates[i] = in_corrected_candidates[i];
+        {
+            const int copyInts = (numCand * decodedSequencePitchInBytes) / sizeof(int);
+            const int remainingBytes = (numCand * decodedSequencePitchInBytes) - copyInts * sizeof(int);
+            for(int i = tid; i < copyInts; i += stride){
+                ((int*)out_corrected_candidates)[i] = ((const int*)in_corrected_candidates)[i];
+            }
+
+            if(tid < remainingBytes){
+                ((char*)(((int*)out_corrected_candidates) + copyInts))[tid]
+                    = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
+            }
         }
 
         for(int i = tid; i < numCand; i += stride){
             out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
         }
 
-        const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
-        const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
-        for(int i = tid; i < copyInts; i += stride){
-            ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
-        }
-        if(tid < remainingBytes){
-            ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
-                = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
+        {
+            const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
+            const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
+            for(int i = tid; i < copyInts; i += stride){
+                ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
+            }
+            if(tid < remainingBytes){
+                ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
+                    = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
+            }
         }
     }
     
@@ -1068,7 +1079,7 @@ namespace gpucorrectorkernels{
 
     class GpuErrorCorrector{
         static constexpr bool useGraph() noexcept{
-            return false;
+            return true;
         }
 
     public:
