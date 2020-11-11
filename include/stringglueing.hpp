@@ -229,9 +229,9 @@ public:
                     }else{
                         //linear interpolation
                         const int unoriginalpositions = s.size() - originalReadLength;
-                        const float f = 1.0f / unoriginalpositions;
+                        const float f = 1.0f / (unoriginalpositions + 1);
 
-                        return 1.0f - f * (pos - originalReadLength);
+                        return 1.0f - f * (pos + 1 - originalReadLength);
                     }
                 }
             };
