@@ -36,7 +36,8 @@ public:
     }
 
     // Given strings s1 and s2, check if it is possible to overlap them and glue them together to produce string of length resultlength
-    // If the overlap is bad, the result is empty
+    //Overlap must have a length of at least overlapLowerBound, and must contain at most mismatchRatioUpperBound * length mismatches
+    // If this is not possible, the result is empty
     std::optional<GlueDecision> operator()(std::string_view s1, std::string_view s2, int resultlength) const{
         const auto s1begin = s1.begin();
         const auto s1end = s1.end();
@@ -103,7 +104,8 @@ public:
     }
 
     // Given strings s1 and s2, check if it is possible to overlap them and glue them together to produce string of length resultlength
-    // If the longest match is not long enough, the result is empty
+    // overlap must have a length of at least overlapLowerBound, and must contain a match of at least matchLengthLowerBound consecutive bases
+    // If this is not possible, the result is empty
     std::optional<GlueDecision> operator()(std::string_view s1, std::string_view s2, int resultlength) const{
         const auto s1begin = s1.begin();
         const auto s1end = s1.end();
