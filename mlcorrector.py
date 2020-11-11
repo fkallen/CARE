@@ -12,6 +12,7 @@ from sklearn import tree
 import numpy as np
 import struct
 import json
+from itertools import accumulate 
 
 
 def onehot(base):
@@ -31,59 +32,72 @@ def onehot_(enc):
     return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
 
 def read_data(size, paths):
-    row_t = np.dtype([("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(size))+',)f4'), ('class', bool)])
+    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(size))+',)f4'), ('class', bool)])
     
     ### get X
     linecounts = [sum(1 for line in open(path["X"], "r")) if len(path)>1 else np.load(path["np"]).shape[0] for path in paths]
-    offset = 0
+    print("File lenghts:", linecounts)
+    offsets = list(accumulate(linecounts, initial=0))
     samples = np.zeros(sum(linecounts), row_t)
-    for linecount, path in zip(linecounts, paths):
+    for file_id, path in enumerate(paths):
         if len(path)==1:
-            samples[offset:offset+linecount] = np.load(path["np"])
+            samples[offsets[file_id]:offsets[file_id+1]] = np.load(path["np"])
         else:
+            print(path["X"])
+            print("offset:", offsets[file_id])
             for i, line in enumerate(open(path["X"], "r")):
-                i += offset
-                if (i%1000000==0):
-                    print(i, "/", linecount)
+                s = samples[i+offsets[file_id]]
+                # print("s: ", s, s.shape, s.dtype)
+                # print("i:", i)
+                if (i%100000==0):
+                    print(i, "/", linecounts[file_id])
                 splt = line.split()
-                samples[i]['readId'] = splt[0]
-                samples[i]['col'] = splt[1]
-                samples[i]['atts'] = tuple(splt[2:])
-        offset += linecount
+                s['fileId'] = file_id
+                s['readId'] = splt[0]
+                s['col'] = splt[1]
+                s['atts'] = tuple(splt[2:])
 
-
-    print(samples[0:10])
+    # print(samples[0:10])
     print(samples.shape)
 
     print("sorting...")
-    samples.sort(axis=0, order='readId')
+    samples.sort(axis=0, order=['fileId', 'readId'])
     print(samples.shape)
     print("done.")
-    print(samples[0:10])
+    # print(samples[0:10])
 
     ### get y
-    offset = 0
-    for linecount, path in zip(linecounts, paths):
-        if len(path)>1:
-            with open(path["y"], "r") as truthfile:
-                filepos = 0
-                for i in range(linecount):
-                    s = samples[i+offset]
-                    if (i%1000000==0):
-                        print(i, "/", linecount)
-                    if filepos != int(s['readId'])*4+2:
-                        while filepos<int(s['readId'])*4+1:
-                            truthfile.readline()
-                            filepos += 1
-                        trueseq = truthfile.readline()
+    print("reading classes...")
+    for file_id, path in enumerate(paths):
+        print(path["y"])
+        print("offset: ", offsets[file_id])
+        if len(path)==1:
+            continue
+        with open(path["y"], "r") as truthfile:
+            filepos = 0
+            for i in range(linecounts[file_id]):
+                s = samples[i+offsets[file_id]]
+                if (i%100000==0):
+                    print(i, "/", linecounts[file_id])
+                if filepos != int(s['readId'])*4+2:
+                    while filepos<int(s['readId'])*4+1:
+                        truthfile.readline()
                         filepos += 1
+                    trueseq = truthfile.readline()
+                    filepos += 1
+                try:
                     if s['col']>=0:
                         s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
                     else:
                         s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
-        offset+=linecount
-
-    print(samples[0:10])
+                except:
+                    print("!!!!##!#!#!#!#!#!#!")
+                    print(s, s.dtype)
+                    print(len(trueseq), trueseq)
+                    print()
+                    return
+    # print(samples[0:10])
+    print("done.")
     return samples
 
 def train(train_data, clf="rf"):

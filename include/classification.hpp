@@ -32,7 +32,7 @@ struct clf_agent
     std::stringstream anchor_stream, cands_stream;
     std::shared_ptr<std::ofstream> anchor_file, cands_file;
     std::mt19937 rng;
-    std::bernoulli_distribution coinflip;
+    std::bernoulli_distribution coinflip_anchor, coinflip_cands;
     AnchorExtractor extract_anchor;
     CandsExtractor extract_cands;
 
@@ -42,7 +42,8 @@ struct clf_agent
         anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
         cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
         rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count())),
-        coinflip(0.01)
+        coinflip_anchor(1.0/3.0),
+        coinflip_cands(0.01/3.0)
     {}
 
     clf_agent(const clf_agent& other) :
@@ -51,11 +52,15 @@ struct clf_agent
         anchor_file(other.anchor_file),
         cands_file(other.cands_file),
         rng(std::mt19937(std::chrono::system_clock::now().time_since_epoch().count() + std::hash<std::thread::id>{}(std::this_thread::get_id()))),
-        coinflip(other.coinflip)
+        coinflip_anchor(other.coinflip_anchor),
+        coinflip_cands(other.coinflip_cands)
     {}
 
     //TODO: if this could just get task as parameter, everthing would look much nicer, consider un-private-ing stuff?
     void print_anchor(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
+        if (!coinflip_anchor(rng)) return;
+
+
         anchor_stream << read_id << ' ' << read_pos << ' ';
         for (float j: extract_anchor(msa, props, orig, msa_pos, norm))
             anchor_stream << j << ' ';
@@ -63,7 +68,7 @@ struct clf_agent
     }
 
     void print_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
-        if (!coinflip(rng)) return;
+        if (!coinflip_cands(rng)) return;
 
         cands_stream << read_id << ' ' << read_pos << ' ';
         for (float j: extract_cands(msa, props, orig, msa_pos, norm))
