@@ -5449,42 +5449,65 @@ correct_gpu(
     }else{
 
 #if 0
-        auto runSimpleCpuPipeline = [&](int deviceId){
-            cudaSetDevice(deviceId); CUERR;
+        {
+            SimpleGpuCorrectionPipeline pipeline(
+                readStorage,
+                minhasher,
+                nullptr //&threadPool         
+            );
 
-            SimpleCpuCorrectionPipeline pipeline;
+            constexpr int numBatches = 2;
 
-            std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-            std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
-
-            pipeline.runToCompletion(
+            pipeline.runSomeBatches(
+                deviceIds[0],
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
                 sequenceFileProperties,
                 correctionFlags,
-                readProvider.get(),
-                candidateIdsProvider.get(),
                 processResults,
-                batchCompleted
-            ); 
-        };
-
-        std::vector<std::future<void>> futures;
-
-        for(int i = 0; i < runtimeOptions.threads; i++){
-            futures.emplace_back(
-                std::async(
-                    std::launch::async,
-                    runSimpleCpuPipeline,
-                    deviceIds[i % deviceIds.size()]
-                )
-            );                
+                batchCompleted,
+                numBatches
+            );   
+                
         }
 
-        for(auto& f : futures){
-            f.wait();
-        }
+        // auto runSimpleCpuPipeline = [&](int deviceId){
+        //     cudaSetDevice(deviceId); CUERR;
+
+        //     SimpleCpuCorrectionPipeline pipeline;
+
+        //     std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
+        //     std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
+
+        //     pipeline.runToCompletion(
+        //         readIdGenerator,
+        //         correctionOptions,
+        //         goodAlignmentProperties,
+        //         sequenceFileProperties,
+        //         correctionFlags,
+        //         readProvider.get(),
+        //         candidateIdsProvider.get(),
+        //         processResults,
+        //         batchCompleted
+        //     ); 
+        // };
+
+        // std::vector<std::future<void>> futures;
+
+        // for(int i = 0; i < runtimeOptions.threads; i++){
+        //     futures.emplace_back(
+        //         std::async(
+        //             std::launch::async,
+        //             runSimpleCpuPipeline,
+        //             deviceIds[i % deviceIds.size()]
+        //         )
+        //     );                
+        // }
+
+        // for(auto& f : futures){
+        //     f.wait();
+        // }
 
 
         // auto runPipeline = [&](int deviceId, ComplexGpuCorrectionPipeline::Config config){
@@ -5714,11 +5737,13 @@ correct_gpu(
         //     );                
         // }
 
-#endif
-
         for(auto& f : futures){
             f.wait();
         }
+
+#endif
+
+        
     }
 
 #if 0
