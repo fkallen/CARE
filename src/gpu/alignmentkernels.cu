@@ -2094,16 +2094,16 @@ namespace gpu{
             //     thread_data,
             //     numItems,
             //     0
-            // )	
+            // )    
 
             // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
 
             // cub::StoreDirectBlocked(
-            //     	int 	linear_tid,
-            //     OutputIteratorT 	block_itr,
-            //     T(&) 	items[ITEMS_PER_THREAD],
-            //     int 	valid_items 
-            //     )	
+            //         int     linear_tid,
+            //     OutputIteratorT     block_itr,
+            //     T(&)     items[ITEMS_PER_THREAD],
+            //     int     valid_items 
+            //     )    
         }); CUERR;
 
 
@@ -2356,16 +2356,16 @@ namespace gpu{
             //     thread_data,
             //     numItems,
             //     0
-            // )	
+            // )    
 
             // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
 
             // cub::StoreDirectBlocked(
-            //     	int 	linear_tid,
-            //     OutputIteratorT 	block_itr,
-            //     T(&) 	items[ITEMS_PER_THREAD],
-            //     int 	valid_items 
-            //     )	
+            //         int     linear_tid,
+            //     OutputIteratorT     block_itr,
+            //     T(&)     items[ITEMS_PER_THREAD],
+            //     int     valid_items 
+            //     )    
         }); CUERR;
 
 
@@ -2778,90 +2778,95 @@ namespace gpu{
                 BestAlignment_t* d_bestAlignmentFlags,
                 const int* d_nOps,
                 const int* d_overlaps,
-    			const int* d_candidates_per_subject_prefixsum,
-    			const int* d_numAnchors,
+                const int* d_candidates_per_subject_prefixsum,
+                const int* d_numAnchors,
                 const int* d_numCandidates,
                 int maxNumAnchors,
                 int maxNumCandidates,
-    			float mismatchratioBaseFactor,
-    			float goodAlignmentsCountThreshold,
-    			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+                float mismatchratioBaseFactor,
+                float goodAlignmentsCountThreshold,
+                cudaStream_t stream,
+                KernelLaunchHandle& handle){
 
-    	const int blocksize = 128;
-    	const std::size_t smem = 0;
+        constexpr int requestedBlocksize = 128;
+        const std::size_t smem = 0;
 
-    	int max_blocks_per_device = 1;
+        int max_blocks_per_device = 1;
 
-    	KernelLaunchConfig kernelLaunchConfig;
-    	kernelLaunchConfig.threads_per_block = blocksize;
-    	kernelLaunchConfig.smem = smem;
 
-    	auto iter = handle.kernelPropertiesMap.find(KernelId::FilterAlignmentsByMismatchRatio);
-    	if(iter == handle.kernelPropertiesMap.end()) {
+        auto iter = handle.kernelPropertiesMap.find(KernelId::FilterAlignmentsByMismatchRatio);
+        if(iter == handle.kernelPropertiesMap.end()) {
 
-    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
 
-    	    #define getProp(blocksize) { \
-                    KernelLaunchConfig kernelLaunchConfig; \
-                    kernelLaunchConfig.threads_per_block = (blocksize); \
-                    kernelLaunchConfig.smem = 0; \
+            #define getProp(blocksize) { \
+                    KernelLaunchConfig klc; \
+                    klc.threads_per_block = (blocksize); \
+                    klc.smem = 0; \
                     KernelProperties kernelProperties; \
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                                 cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                    mymap[kernelLaunchConfig] = kernelProperties; \
+                                klc.threads_per_block, klc.smem); CUERR; \
+                    mymap[klc] = kernelProperties; \
             }
 
-    		getProp(32);
-    		getProp(64);
-    		getProp(96);
-    		getProp(128);
-    		getProp(160);
-    		getProp(192);
-    		getProp(224);
-    		getProp(256);
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+            
+            KernelLaunchConfig kernelLaunchConfig;
+            kernelLaunchConfig.threads_per_block = requestedBlocksize;
+            kernelLaunchConfig.smem = smem;    
+            
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
-    		const auto& kernelProperties = mymap[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            handle.kernelPropertiesMap[KernelId::FilterAlignmentsByMismatchRatio] = std::move(mymap);
 
-    		handle.kernelPropertiesMap[KernelId::FilterAlignmentsByMismatchRatio] = std::move(mymap);
+            #undef getProp
+        }else{
+            KernelLaunchConfig kernelLaunchConfig;
+            kernelLaunchConfig.threads_per_block = requestedBlocksize;
+            kernelLaunchConfig.smem = smem;   
 
-    	    #undef getProp
-    	}else{
-    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    	}
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
-    	dim3 block(blocksize, 1, 1);
+        dim3 block(requestedBlocksize, 1, 1);
         //dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
         dim3 grid(max_blocks_per_device, 1, 1);
 
-    	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
-    	        <<<grid, block, smem, stream>>>( \
+        #define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
+                <<<grid, block, smem, stream>>>( \
             d_bestAlignmentFlags, \
             d_nOps, \
             d_overlaps, \
-    		d_candidates_per_subject_prefixsum, \
-    		d_numAnchors, \
-    		d_numCandidates, \
-    		mismatchratioBaseFactor, \
-    		goodAlignmentsCountThreshold); CUERR;
+            d_candidates_per_subject_prefixsum, \
+            d_numAnchors, \
+            d_numCandidates, \
+            mismatchratioBaseFactor, \
+            goodAlignmentsCountThreshold); CUERR;
 
-    	switch(blocksize) {
-    	case 32: mycall(32); break;
-    	case 64: mycall(64); break;
-    	case 96: mycall(96); break;
-    	case 128: mycall(128); break;
-    	case 160: mycall(160); break;
-    	case 192: mycall(192); break;
-    	case 224: mycall(224); break;
-    	case 256: mycall(256); break;
-    	default: mycall(256); break;
-    	}
+        switch(requestedBlocksize) {
+        case 32: mycall(32); break;
+        case 64: mycall(64); break;
+        case 96: mycall(96); break;
+        case 128: mycall(128); break;
+        case 160: mycall(160); break;
+        case 192: mycall(192); break;
+        case 224: mycall(224); break;
+        case 256: mycall(256); break;
+        default: mycall(256); break;
+        }
 
-    		#undef mycall
+            #undef mycall
     }
 
 
@@ -2934,7 +2939,7 @@ namespace gpu{
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
             const int stride = blockDim.x * gridDim.x;
 
-            for(int i = tid; i < *d_numAnchors; i += stride){
+            for(int i = tid; i < maxNumAnchors; i += stride){
                 d_numIndicesPerAnchor[i] = 0;
             }
 
