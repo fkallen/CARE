@@ -173,6 +173,13 @@ def extract_forest(clf, out_file):
             print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
             extract_node(tree.tree_, 0, out_file)
 
+def extract_lr(clf, out_file):
+    with open(out_file, "wb") as out_file:
+        out_file.write(struct.pack("I", clf.coef_.shape[-1]))
+        out_file.write(struct.pack("I", clf.intercept_[0]))
+        for coef in clf.coef_[0]:
+            out_file.write(struct.pack("I", coef))
+            
 ### main ###
 # def main():
 #     plans = json.load(open(sys.argv[1]))

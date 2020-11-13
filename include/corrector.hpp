@@ -25,19 +25,11 @@
 
 namespace care{
 
-struct CpuErrorCorrectorInput{
-    int anchorLength{};
-    read_number anchorReadId{};
-    const unsigned int* encodedAnchor{};
-    const char* anchorQualityscores{};
-};
-
-struct CpuErrorCorrectorOutput{
+struct CpuErrorCorrectorOutput {
     bool hasAnchorCorrection{};
     TempCorrectedSequence anchorCorrection{};
     std::vector<TempCorrectedSequence> candidateCorrections{};
 };
-
 
 class CpuErrorCorrector{
 public:
@@ -887,18 +879,22 @@ private:
 
     void correctAnchorClf(CpuErrorCorrectorTask& task) const
     {
-        const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
-        auto& cons = task.multipleSequenceAlignment.consensus;
+        auto& msa = task.multipleSequenceAlignment;
+        int subject_b = msa.subjectColumnsBegin_incl;
+        int subject_e = msa.subjectColumnsEnd_excl;
+        auto& cons = msa.consensus;
         auto& orig = task.decodedAnchor;
         auto& corr = task.subjectCorrection.correctedSequence;
+
+        task.msaProperties = msa.getMSAProperties(
+            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            correctionOptions->m_coverage);
 
         corr.insert(0, cons.data()+subject_b, task.input->anchorLength);
         if (!task.msaProperties.isHQ) {
             constexpr float THRESHOLD = 0.73f; //TODO: move into agent or somewhere else. runtime parameter?
             for (int i = 0; i < task.input->anchorLength; ++i) {
-                if (orig[i] != cons[subject_b+i] &&
-                    clfAgent->decide_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions)
-                        < THRESHOLD)
+                if (orig[i] != cons[subject_b+i] && clfAgent->decide_anchor(task, i, *correctionOptions) < THRESHOLD)
                 {
                     corr[i] = orig[i];
                 }
@@ -909,14 +905,20 @@ private:
     }
 
     void correctAnchorPrint(CpuErrorCorrectorTask& task) const{
-        const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
-        const auto& cons = task.multipleSequenceAlignment.consensus;
-        const auto& orig = task.decodedAnchor;
+        auto& msa = task.multipleSequenceAlignment;
+        int subject_b = msa.subjectColumnsBegin_incl;
+        int subject_e = msa.subjectColumnsEnd_excl;
+        auto& cons = msa.consensus;
+        auto& orig = task.decodedAnchor;
+
+        task.msaProperties = msa.getMSAProperties(
+            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            correctionOptions->m_coverage);
 
         if (!task.msaProperties.isHQ) {
             for (int i = 0; i < task.input->anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
-                    clfAgent->print_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions, task.input->anchorReadId);
+                    clfAgent->print_anchor(task, i, *correctionOptions);
                 }
             }
         }
@@ -959,7 +961,7 @@ private:
             {
                 for (int i = 0; i < cand_length; ++i) {
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
-                        clfAgent->print_cand(msa, task.decodedCandidateSequences[offset+i], i, *correctionOptions, task.alignmentShifts[cand], task.candidateSequencesLengths[cand], task.candidateReadIds[cand]);
+                        clfAgent->print_cand(task, i, *correctionOptions, cand, offset);
                     }
                 }
             }
@@ -992,7 +994,7 @@ private:
                 for (int i = 0; i < cand_length; ++i) {
                     constexpr float THRESHOLD = 0.73f;
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                        && clfAgent->decide_cand(msa, task.decodedCandidateSequences[offset+i], i, *correctionOptions, task.alignmentShifts[cand], task.candidateSequencesLengths[cand])
+                        && clfAgent->decide_cand(task, i, *correctionOptions, cand, offset)
                             < THRESHOLD)
                     {
                         task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];

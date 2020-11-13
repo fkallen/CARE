@@ -61,7 +61,7 @@ full_eval() {
 SCRIPTDIR=$(readlink -nf $0)
 
 MLCDIR=/home/jcascitt/errorcorrector/
-EVALDIR=/home/jcascitt/ec/mixdata
+EVALDIR=/home/jcascitt/ec/mixdata_new
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
 CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0"
@@ -132,12 +132,12 @@ import sys
 sys.path.append("$MLCDIR")
 from mlcorrector import *
 
-data = read_data(36, [{"X":"${PREFIX1}_anchor.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_anchor.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_anchor.samples", "y":"$FILE3EF"}])
+data = read_data(37, [{"X":"${PREFIX1}_anchor.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_anchor.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_anchor.samples", "y":"$FILE3EF"}])
 np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_anchor.npy", data)
 clf = train(data, "rf")
 extract_forest(clf, "${CLF1}_anchor.rf")
 
-data = read_data(36, [{"X":"${PREFIX1}_cands.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_cands.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_cands.samples", "y":"$FILE3EF"}])
+data = read_data(42, [{"X":"${PREFIX1}_cands.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_cands.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_cands.samples", "y":"$FILE3EF"}])
 np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_cands.npy", data)
 clf = train(data, "rf")
 extract_forest(clf, "${CLF1}_cands.rf")

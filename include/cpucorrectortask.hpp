@@ -11,7 +11,12 @@
 
 namespace care{
 
-    struct CpuErrorCorrectorInput; //forward declaration
+    struct CpuErrorCorrectorInput{
+        int anchorLength{};
+        read_number anchorReadId{};
+        const unsigned int* encodedAnchor{};
+        const char* anchorQualityscores{};
+    };
 
     struct CpuErrorCorrectorTask{
         bool active{};
