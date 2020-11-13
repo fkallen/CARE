@@ -912,31 +912,17 @@ private:
     void correctAnchorClf(Task& task) const
     {
         const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
-        const int subject_e = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
         auto& cons = task.multipleSequenceAlignment.consensus;
         auto& orig = task.decodedAnchor;
         auto& corr = task.subjectCorrection.correctedSequence;
-        
-        task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
-            subject_b,
-            subject_e,
-            correctionOptions->estimatedErrorrate,
-            correctionOptions->estimatedCoverage,
-            correctionOptions->m_coverage
-        );
 
         corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
         if (!task.msaProperties.isHQ) {
             constexpr float THRESHOLD = 0.73f; //TODO: move into agent or somewhere else. runtime parameter?
             for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i] &&
-                    clfAgent->decide_anchor(
-                            task.multipleSequenceAlignment,
-                            task.msaProperties,
-                            orig[i],
-                            subject_b+i,
-                            correctionOptions->estimatedCoverage
-                        ) < THRESHOLD)
+                    clfAgent->decide_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions)
+                        < THRESHOLD)
                 {
                     corr[i] = orig[i];
                 }
@@ -948,27 +934,13 @@ private:
 
     void correctAnchorPrint(Task& task) const{
         const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
-        const int subject_e = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
         const auto& cons = task.multipleSequenceAlignment.consensus;
         const auto& orig = task.decodedAnchor;
-
-        task.msaProperties = task.multipleSequenceAlignment.getMSAProperties(
-            subject_b,
-            subject_e,
-            correctionOptions->estimatedErrorrate,
-            correctionOptions->estimatedCoverage,
-            correctionOptions->m_coverage
-        );
 
         if (!task.msaProperties.isHQ) {
             for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
-                    clfAgent->print_anchor(task.multipleSequenceAlignment,
-                                          task.msaProperties,
-                                          orig[i],
-                                          subject_b+i,
-                                          correctionOptions->estimatedCoverage,
-                                          task.input.anchorReadId, i);
+                    clfAgent->print_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions, task.input.anchorReadId);
                 }
             }
         }
@@ -1006,19 +978,12 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = msa.getMSAProperties(
-                cand_begin,
-                cand_end,
-                correctionOptions->estimatedErrorrate,
-                correctionOptions->estimatedCoverage,
-                correctionOptions->m_coverage);
-            
             if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
                 && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
             {
                 for (int i = 0; i < cand_length; ++i) {
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
-                        clfAgent->print_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage, task.input.anchorReadId, i);
+                        clfAgent->print_cand(msa, task.decodedCandidateSequences[offset+i], i, *correctionOptions, task.alignmentShifts[cand], task.candidateSequencesLengths[cand], task.candidateReadIds[cand]);
                     }
                 }
             }
@@ -1040,13 +1005,6 @@ private:
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
             
-            MSAProperties props = msa.getMSAProperties(
-                cand_begin,
-                cand_end,
-                correctionOptions->estimatedErrorrate,
-                correctionOptions->estimatedCoverage,
-                correctionOptions->m_coverage);
-            
             if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
                 && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
             {
@@ -1058,7 +1016,7 @@ private:
                 for (int i = 0; i < cand_length; ++i) {
                     constexpr float THRESHOLD = 0.73f;
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                        && clfAgent->decide_cand(msa, props, task.decodedCandidateSequences[offset+i], cand_begin+i, correctionOptions->estimatedCoverage)
+                        && clfAgent->decide_cand(msa, task.decodedCandidateSequences[offset+i], i, *correctionOptions, task.alignmentShifts[cand], task.candidateSequencesLengths[cand])
                             < THRESHOLD)
                     {
                         task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];

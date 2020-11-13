@@ -19,7 +19,6 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
-#include <classification.hpp>
 #include <hostdevicefunctions.cuh>
 
 

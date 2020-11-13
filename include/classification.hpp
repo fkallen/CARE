@@ -57,31 +57,30 @@ struct clf_agent
     {}
 
     //TODO: if this could just get task as parameter, everthing would look much nicer, consider un-private-ing stuff?
-    void print_anchor(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
+    void print_anchor(const MultipleSequenceAlignment& msa, char orig, size_t i, const CorrectionOptions& opt, read_number read_id) {       
         if (!coinflip_anchor(rng)) return;
 
-
-        anchor_stream << read_id << ' ' << read_pos << ' ';
-        for (float j: extract_anchor(msa, props, orig, msa_pos, norm))
+        anchor_stream << read_id << ' ' << i << ' ';
+        for (float j: extract_anchor(msa, orig, i, opt))
             anchor_stream << j << ' ';
         anchor_stream << '\n';
     }
 
-    void print_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t msa_pos, float norm, read_number read_id, int read_pos) {       
+    void print_cand(const MultipleSequenceAlignment& msa, char orig, size_t i, const CorrectionOptions& opt, int shift, int cand_length, read_number read_id) {       
         if (!coinflip_cands(rng)) return;
 
-        cands_stream << read_id << ' ' << read_pos << ' ';
-        for (float j: extract_cands(msa, props, orig, msa_pos, norm))
+        cands_stream << read_id << ' ' << i << ' ';
+        for (float j: extract_cands(msa, orig, i, opt, shift, cand_length))
             cands_stream << j << ' ';
         cands_stream << '\n';
     }
 
-    float decide_anchor(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) {       
-        return classifier_anchor->decide(extract_anchor(msa, props, orig, pos, norm));
+    float decide_anchor(const MultipleSequenceAlignment& msa, char orig, size_t i, const CorrectionOptions& opt) {       
+        return classifier_anchor->decide(extract_anchor(msa, orig, i, opt));
     }
 
-    float decide_cand(const care::MultipleSequenceAlignment& msa, const care::MSAProperties& props, char orig, size_t pos, float norm) {       
-        return classifier_cands->decide(extract_cands(msa, props, orig, pos, norm));
+    float decide_cand(const MultipleSequenceAlignment& msa, char orig, size_t i, const CorrectionOptions& opt, int shift, int cand_length) {       
+        return classifier_cands->decide(extract_cands(msa, orig, i, opt, shift, cand_length));
     }
 
     void flush() {
@@ -99,10 +98,14 @@ struct clf_agent
 
 namespace detail {
 
-struct extract_anchor_linear_36 {
-    using features_t = std::array<float, 36>;
-    features_t operator()(const MultipleSequenceAlignment& msa, const MSAProperties& props, char orig, size_t pos, float norm) noexcept {   
+struct extract_anchor_linear_37 {
+    using features_t = std::array<float, 37>;
+    features_t operator()(const MultipleSequenceAlignment& msa, char orig, int i, const CorrectionOptions& opt) noexcept {   
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
+        int pos = a_begin + i;
         float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
+        MSAProperties props = msa.getMSAProperties(a_begin, a_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
         return {
             float(orig == 'A'),
             float(orig == 'C'),
@@ -138,8 +141,64 @@ struct extract_anchor_linear_36 {
             msa.countsT[pos]/countsACGT,
             props.avg_support,
             props.min_support,
-            float(props.max_coverage)/norm,
-            float(props.min_coverage)/norm
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::max(a_begin-pos, pos-a_end))
+        };
+    }
+};
+
+struct extract_cands_linear_40 {
+    using features_t = std::array<float, 40>;
+    features_t operator()(const MultipleSequenceAlignment& msa, char orig, int i, const CorrectionOptions& opt, int shift, int c_len) noexcept {   
+        int a_begin = msa.subjectColumnsBegin_incl;
+        int a_end = msa.subjectColumnsEnd_excl;
+        int c_begin = a_begin + shift;
+        int c_end = c_begin + c_len;
+        int pos = c_begin + i;
+        float countsACGT = msa.countsA[pos] + msa.countsC[pos] + msa.countsG[pos] + msa.countsT[pos];
+        MSAProperties props = msa.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(msa.consensus[pos] == 'A'),
+            float(msa.consensus[pos] == 'C'),
+            float(msa.consensus[pos] == 'G'),
+            float(msa.consensus[pos] == 'T'),
+            orig == 'A'?msa.countsA[pos]/countsACGT:0,
+            orig == 'C'?msa.countsC[pos]/countsACGT:0,
+            orig == 'G'?msa.countsG[pos]/countsACGT:0,
+            orig == 'T'?msa.countsT[pos]/countsACGT:0,
+            orig == 'A'?msa.weightsA[pos]:0,
+            orig == 'C'?msa.weightsC[pos]:0,
+            orig == 'G'?msa.weightsG[pos]:0,
+            orig == 'T'?msa.weightsT[pos]:0,
+            msa.consensus[pos] == 'A'?msa.countsA[pos]/countsACGT:0,
+            msa.consensus[pos] == 'C'?msa.countsC[pos]/countsACGT:0,
+            msa.consensus[pos] == 'G'?msa.countsG[pos]/countsACGT:0,
+            msa.consensus[pos] == 'T'?msa.countsT[pos]/countsACGT:0,
+            msa.consensus[pos] == 'A'?msa.weightsA[pos]:0,
+            msa.consensus[pos] == 'C'?msa.weightsC[pos]:0,
+            msa.consensus[pos] == 'G'?msa.weightsG[pos]:0,
+            msa.consensus[pos] == 'T'?msa.weightsT[pos]:0,
+            msa.weightsA[pos],
+            msa.weightsC[pos],
+            msa.weightsG[pos],
+            msa.weightsT[pos],
+            msa.countsA[pos]/countsACGT,
+            msa.countsC[pos]/countsACGT,
+            msa.countsG[pos]/countsACGT,
+            msa.countsT[pos]/countsACGT,
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::max(std::abs(shift), std::abs(a_end-c_end))), // absolute shift (compatible with differing read lengths)
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin), // relative overlap (ratio of a or c length in case of diff. read len)
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin),
+            float(std::max(a_begin-pos, pos-a_end))
         };
     }
 };
@@ -149,8 +208,8 @@ struct extract_anchor_linear_36 {
 
 //--------------------------------------------------------------------------------
 
-using anchor_extractor = detail::extract_anchor_linear_36;
-using cands_extractor = detail::extract_anchor_linear_36;
+using anchor_extractor = detail::extract_anchor_linear_37;
+using cands_extractor = detail::extract_cands_linear_40;
 
 using anchor_clf_t = ForestClf;
 using cands_clf_t = ForestClf;
