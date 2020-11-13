@@ -409,7 +409,7 @@ namespace gpu{
         
             auto shiftLeft3 = [](char4 data){
                 char4 s;
-                s.x = data.z;
+                s.x = data.w;
                 s.y = '\0';
                 s.z = '\0';
                 s.w = '\0';
