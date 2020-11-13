@@ -14,6 +14,7 @@
 #include <classification.hpp>
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
+#include <cpucorrectortask.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -24,20 +25,22 @@
 
 namespace care{
 
+struct CpuErrorCorrectorInput{
+    int anchorLength{};
+    read_number anchorReadId{};
+    const unsigned int* encodedAnchor{};
+    const char* anchorQualityscores{};
+};
+
+struct CpuErrorCorrectorOutput{
+    bool hasAnchorCorrection{};
+    TempCorrectedSequence anchorCorrection{};
+    std::vector<TempCorrectedSequence> candidateCorrections{};
+};
+
+
 class CpuErrorCorrector{
 public:
-    struct CorrectionInput{
-        int anchorLength{};
-        read_number anchorReadId{};
-        const unsigned int* encodedAnchor{};
-        const char* anchorQualityscores{};
-    };
-
-    struct CorrectionOutput{
-        bool hasAnchorCorrection{};
-        TempCorrectedSequence anchorCorrection{};
-        std::vector<TempCorrectedSequence> candidateCorrections{};
-    };
 
     struct ReadCorrectionFlags{
         friend class CpuErrorCorrector;
@@ -161,8 +164,8 @@ public:
 
     }
 
-    CorrectionOutput process(const CorrectionInput input){
-        Task task = makeTask(input);
+    CpuErrorCorrectorOutput process(const CpuErrorCorrectorInput input){
+        CpuErrorCorrectorTask task = makeTask(input);
 
         TimeMeasurements timings;
 
@@ -179,7 +182,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -217,7 +220,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -233,7 +236,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         if(correctionOptions->useQualityScores){
@@ -297,10 +300,10 @@ public:
 
         if(task.subjectCorrection.isCorrected){
             if(task.msaProperties.isHQ){
-                correctionFlags->setCorrectedAsHqAnchor(task.input.anchorReadId);
+                correctionFlags->setCorrectedAsHqAnchor(task.input->anchorReadId);
             }
         }else{
-            correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input.anchorReadId);
+            correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input->anchorReadId);
         }
 
 
@@ -318,7 +321,7 @@ public:
 
         }
 
-        CorrectionOutput correctionOutput = makeOutputOfTask(task);
+        CpuErrorCorrectorOutput correctionOutput = makeOutputOfTask(task);
 
         totalTime += timings;
 
@@ -339,37 +342,10 @@ public:
 
 private:
 
-    struct Task{
-        bool active{};
-
-        std::vector<read_number> candidateReadIds{};
-        std::vector<read_number> filteredReadIds{};
-        std::vector<unsigned int> candidateSequencesData{};
-        std::vector<unsigned int> candidateSequencesRevcData{};
-        std::vector<int> candidateSequencesLengths{};
-        std::vector<int> alignmentShifts{};
-        std::vector<int> alignmentOps{};
-        std::vector<int> alignmentOverlaps{};
-        std::vector<float> alignmentWeights{};
-        std::vector<char> candidateQualities{};
-        std::vector<char> decodedAnchor{};
-        std::vector<char> decodedCandidateSequences{};
-        std::vector<cpu::SHDResult> alignments{};
-        std::vector<cpu::SHDResult> revcAlignments{};
-        std::vector<BestAlignment_t> alignmentFlags{};
-
-        CorrectionInput input{};
-
-        CorrectionResult subjectCorrection;
-        std::vector<CorrectedCandidate> candidateCorrections;
-        MSAProperties msaProperties;
-        MultipleSequenceAlignment multipleSequenceAlignment;
-    };
-
-    Task makeTask(const CorrectionInput& input){
-        Task task;
+    CpuErrorCorrectorTask makeTask(const CpuErrorCorrectorInput& input){
+        CpuErrorCorrectorTask task;
         task.active = true;
-        task.input = input;
+        task.input = &input;
         task.multipleSequenceAlignment.setQualityConversion(qualityCoversion.get());
 
         const int length = input.anchorLength;
@@ -381,18 +357,18 @@ private:
         return task;
     }
 
-    void determineCandidateReadIds(Task& task) const{
+    void determineCandidateReadIds(CpuErrorCorrectorTask& task) const{
 
         task.candidateReadIds.clear();
 
-        const read_number readId = task.input.anchorReadId;
+        const read_number readId = task.input->anchorReadId;
 
         const bool containsN = readStorage->readContainsN(readId);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
-            assert(task.input.anchorLength == int(task.decodedAnchor.size()));
+            assert(task.input->anchorLength == int(task.decodedAnchor.size()));
 
             minhasher->getCandidates_any_map(
                 minhashHandle,
@@ -432,7 +408,7 @@ private:
     }
 
     //Gets forward sequence and reverse complement sequence of each candidate
-    void getCandidateSequenceData(Task& task) const{
+    void getCandidateSequenceData(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
         
@@ -474,7 +450,7 @@ private:
     }     
 
     //compute alignments between anchor sequence and candidate sequences
-    void getCandidateAlignments(Task& task) const{
+    void getCandidateAlignments(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.alignments.resize(numCandidates);
@@ -484,8 +460,8 @@ private:
         cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
             alignmentHandle,
             task.alignments.begin(),
-            task.input.encodedAnchor,
-            task.input.anchorLength,
+            task.input->encodedAnchor,
+            task.input->anchorLength,
             task.candidateSequencesData.data(),
             encodedSequencePitchInInts,
             task.candidateSequencesLengths.data(),
@@ -498,8 +474,8 @@ private:
         cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
             alignmentHandle,
             task.revcAlignments.begin(),
-            task.input.encodedAnchor,
-            task.input.anchorLength,
+            task.input->encodedAnchor,
+            task.input->anchorLength,
             task.candidateSequencesRevcData.data(),
             encodedSequencePitchInInts,
             task.candidateSequencesLengths.data(),
@@ -519,7 +495,7 @@ private:
             BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(
                 forwardAlignment,
                 revcAlignment,
-                task.input.anchorLength,
+                task.input->anchorLength,
                 candidateLength,
                 goodAlignmentProperties->min_overlap_ratio,
                 goodAlignmentProperties->min_overlap,
@@ -531,7 +507,7 @@ private:
     }
 
     //remove candidates with alignment flag None
-    void filterCandidatesByAlignmentFlag(Task& task) const{
+    void filterCandidatesByAlignmentFlag(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
 
@@ -596,7 +572,7 @@ private:
     }
 
     //remove candidates with bad alignment mismatch ratio
-    void filterCandidatesByAlignmentMismatchRatio(Task& task) const{
+    void filterCandidatesByAlignmentMismatchRatio(CpuErrorCorrectorTask& task) const{
         
         auto lastResortFunc = [](){
             return false;
@@ -685,7 +661,7 @@ private:
     }
 
     //get quality scores of candidates with respect to alignment direction
-    void getCandidateQualities(Task& task) const{
+    void getCandidateQualities(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.candidateQualities.resize(qualityPitchInBytes * numCandidates);
@@ -710,7 +686,7 @@ private:
     }
 
     //compute decoded candidate strings with respect to alignment direction
-    void makeCandidateStrings(Task& task) const{
+    void makeCandidateStrings(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.decodedCandidateSequences.resize(decodedSequencePitchInBytes * numCandidates);
@@ -728,7 +704,7 @@ private:
         }
     }
 
-    void alignmentsComputeWeightsAndAoStoSoA(Task& task) const{
+    void alignmentsComputeWeightsAndAoStoSoA(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.alignmentShifts.resize(numCandidates);
@@ -742,7 +718,7 @@ private:
             task.alignmentOverlaps[i] = task.alignments[i].overlap;
 
             task.alignmentWeights[i] = calculateOverlapWeight(
-                task.input.anchorLength,
+                task.input->anchorLength,
                 task.alignments[i].nOps, 
                 task.alignments[i].overlap,
                 goodAlignmentProperties->maxErrorRate
@@ -750,7 +726,7 @@ private:
         }
     }
 
-    void buildMultipleSequenceAlignment(Task& task) const{
+    void buildMultipleSequenceAlignment(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
 
@@ -760,13 +736,13 @@ private:
 
         MultipleSequenceAlignment::InputData buildArgs;
         buildArgs.useQualityScores = correctionOptions->useQualityScores;
-        buildArgs.subjectLength = task.input.anchorLength;
+        buildArgs.subjectLength = task.input->anchorLength;
         buildArgs.nCandidates = numCandidates;
         buildArgs.candidatesPitch = decodedSequencePitchInBytes;
         buildArgs.candidateQualitiesPitch = qualityPitchInBytes;
         buildArgs.subject = task.decodedAnchor.data();
         buildArgs.candidates = task.decodedCandidateSequences.data();
-        buildArgs.subjectQualities = task.input.anchorQualityscores;
+        buildArgs.subjectQualities = task.input->anchorQualityscores;
         buildArgs.candidateQualities = candidateQualityPtr;
         buildArgs.candidateLengths = task.candidateSequencesLengths.data();
         buildArgs.candidateShifts = task.alignmentShifts.data();
@@ -775,7 +751,7 @@ private:
         task.multipleSequenceAlignment.build(buildArgs);
     }
 
-    void refineMSA(Task& task) const{
+    void refineMSA(CpuErrorCorrectorTask& task) const{
 
         constexpr int max_num_minimizations = 5;
 
@@ -884,7 +860,7 @@ private:
         }      
     }
 
-    void correctAnchorClassic(Task& task) const{
+    void correctAnchorClassic(CpuErrorCorrectorTask& task) const{
 
         assert(correctionOptions->correctionType == CorrectionType::Classic);
 
@@ -905,21 +881,21 @@ private:
             correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage,
             correctionOptions->kmerlength,
-            task.input.anchorReadId
+            task.input->anchorReadId
         );        
     }       
 
-    void correctAnchorClf(Task& task) const
+    void correctAnchorClf(CpuErrorCorrectorTask& task) const
     {
         const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         auto& cons = task.multipleSequenceAlignment.consensus;
         auto& orig = task.decodedAnchor;
         auto& corr = task.subjectCorrection.correctedSequence;
 
-        corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
+        corr.insert(0, cons.data()+subject_b, task.input->anchorLength);
         if (!task.msaProperties.isHQ) {
             constexpr float THRESHOLD = 0.73f; //TODO: move into agent or somewhere else. runtime parameter?
-            for (int i = 0; i < task.input.anchorLength; ++i) {
+            for (int i = 0; i < task.input->anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i] &&
                     clfAgent->decide_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions)
                         < THRESHOLD)
@@ -932,22 +908,22 @@ private:
         task.subjectCorrection.isCorrected = true;
     }
 
-    void correctAnchorPrint(Task& task) const{
+    void correctAnchorPrint(CpuErrorCorrectorTask& task) const{
         const int subject_b = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         const auto& cons = task.multipleSequenceAlignment.consensus;
         const auto& orig = task.decodedAnchor;
 
         if (!task.msaProperties.isHQ) {
-            for (int i = 0; i < task.input.anchorLength; ++i) {
+            for (int i = 0; i < task.input->anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
-                    clfAgent->print_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions, task.input.anchorReadId);
+                    clfAgent->print_anchor(task.multipleSequenceAlignment, orig[i], i, *correctionOptions, task.input->anchorReadId);
                 }
             }
         }
         task.subjectCorrection.isCorrected = false;
     }
 
-    void correctAnchor(Task& task) const{
+    void correctAnchor(CpuErrorCorrectorTask& task) const{
         if(correctionOptions->correctionType == CorrectionType::Classic)
             correctAnchorClassic(task);
         else if(correctionOptions->correctionType == CorrectionType::Forest)
@@ -956,7 +932,7 @@ private:
             correctAnchorPrint(task);
     }
 
-    void correctCandidatesClassic(Task& task) const{
+    void correctCandidatesClassic(CpuErrorCorrectorTask& task) const{
 
         task.candidateCorrections = task.multipleSequenceAlignment.getCorrectedCandidates(
             correctionOptions->estimatedErrorrate,
@@ -966,7 +942,7 @@ private:
         );
     }
 
-    void correctCandidatesPrint(Task& task) const{
+    void correctCandidatesPrint(CpuErrorCorrectorTask& task) const{
 
         const auto& msa = task.multipleSequenceAlignment;
         const int subject_begin = msa.subjectColumnsBegin_incl;
@@ -991,7 +967,7 @@ private:
         task.candidateCorrections = std::vector<CorrectedCandidate>{};
     }
 
-    void correctCandidatesClf(Task& task) const 
+    void correctCandidatesClf(CpuErrorCorrectorTask& task) const 
     {
         const auto& msa = task.multipleSequenceAlignment;
 
@@ -1026,7 +1002,7 @@ private:
         }
     }
 
-    void correctCandidates(Task& task) const{
+    void correctCandidates(CpuErrorCorrectorTask& task) const{
         switch (correctionOptions->correctionTypeCands) {
             case CorrectionType::Print:
                 correctCandidatesPrint(task);
@@ -1039,15 +1015,15 @@ private:
         }
     }
 
-    CorrectionOutput makeOutputOfTask(Task& task) const{
-        CorrectionOutput result;
+    CpuErrorCorrectorOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
+        CpuErrorCorrectorOutput result;
 
         result.hasAnchorCorrection = task.subjectCorrection.isCorrected;
 
         if(result.hasAnchorCorrection){
             auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
             const int correctedlength = correctedSequenceString.length();
-            const bool originalReadContainsN = readStorage->readContainsN(task.input.anchorReadId);
+            const bool originalReadContainsN = readStorage->readContainsN(task.input->anchorReadId);
             
             TempCorrectedSequence tmp;
             
@@ -1067,7 +1043,7 @@ private:
             
             tmp.hq = task.msaProperties.isHQ;
             tmp.type = TempCorrectedSequence::Type::Anchor;
-            tmp.readId = task.input.anchorReadId;
+            tmp.readId = task.input->anchorReadId;
             tmp.sequence = std::move(correctedSequenceString); 
             
             result.anchorCorrection = std::move(tmp);

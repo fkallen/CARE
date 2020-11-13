@@ -226,7 +226,7 @@ correct_cpu(
             for(size_t i = 0; i < batchReadIds.size(); i++){
                 const read_number readId = batchReadIds[i];
 
-                CpuErrorCorrector::CorrectionInput input;
+                CpuErrorCorrectorInput input;
                 input.anchorReadId = readId;
                 input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
                 input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
