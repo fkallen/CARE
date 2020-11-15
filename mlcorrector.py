@@ -126,7 +126,7 @@ def train(train_data, clf="rf"):
     # extract_forest(clf, out_file='ml/forest.bin')
     # tree.export_graphviz(clf.estimators_[0], out_file='ml/tree.dot')
 
-def test(test_data, clf):
+def test(test_data, clf, roc_file):
     print("predicting...")
 
     X_test, y_test = test_data['atts'], test_data['class']
@@ -143,7 +143,7 @@ def test(test_data, clf):
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
     plt.legend()
-    plt.savefig("ml/roc.png")
+    plt.savefig(roc_file)
 
 def extract_node(tree_, i, out_file):
     if tree_.children_left[i] == tree._tree.TREE_LEAF:
@@ -179,7 +179,7 @@ def extract_lr(clf, out_file):
         out_file.write(struct.pack("I", clf.intercept_[0]))
         for coef in clf.coef_[0]:
             out_file.write(struct.pack("I", coef))
-            
+
 ### main ###
 # def main():
 #     plans = json.load(open(sys.argv[1]))

@@ -66,7 +66,7 @@ struct clf_agent
         anchor_stream << '\n';
     }
 
-    void print_cand(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
+    void print_cand(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
         if (!coinflip_cands(rng)) return;
 
         cands_stream << task.candidateReadIds[cand] << ' ' << (task.alignmentFlags[cand]==BestAlignment_t::ReverseComplement?-i-1:i) << ' ';

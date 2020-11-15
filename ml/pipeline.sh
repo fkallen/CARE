@@ -65,7 +65,7 @@ EVALDIR=/home/jcascitt/ec/mixdata_new
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
 CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0"
-FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 150G -p -t 88"
+FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 100G -p -t 88"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
 
@@ -98,19 +98,19 @@ TESTCOV1=60
 
 TESTFILE2=/share/errorcorrection/datasets/arthiseq2000elegans/elegans60cov.fq
 TESTFILE2EF=/share/errorcorrection/datasets/arthiseq2000elegans/elegans60cov_errFree.fq
-TESTPREFIX2=elegans-60
+TESTPREFIX2=ele-60
 TESTCOV2=60
 
 TESTFILE3=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
 TESTFILE3EF=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
-TESTPREFIX3=athaliana-30
+TESTPREFIX3=atha-30
 TESTCOV3=30
 
 ### run
 
 mkdir $EVALDIR
 cd $EVALDIR
-cp $SCRIPTDIR $(basename $SCRIPTDIR).log
+cp $SCRIPTDIR $(basename $SCRIPTDIR).log.2
 
 $CARE -i $FILE1 -c $COV1 -o null $FLAGS \
 	--correctionType 2 --ml-forestfile ${PREFIX1}_anchor.samples \
@@ -127,6 +127,21 @@ $CARE -i $FILE3 -c $COV3 -o null $FLAGS \
 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX3}_cands.samples \
 	$(auto_preprocess $PREFIX3)
 
+$CARE -i $TESTFILE1 -c $TESTCOV1 -o null $FLAGS \
+	--correctionType 2 --ml-forestfile ${TESTPREFIX1}_anchor.samples \
+	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${TESTPREFIX1}_cands.samples \
+	$(auto_preprocess $TESTPREFIX1)
+
+$CARE -i $TESTFILE2 -c $TESTCOV2 -o null $FLAGS \
+	--correctionType 2 --ml-forestfile ${TESTPREFIX2}_anchor.samples \
+	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${TESTPREFIX2}_cands.samples \
+	$(auto_preprocess $TESTPREFIX2)
+
+$CARE -i $TESTFILE3 -c $TESTCOV3 -o null $FLAGS \
+	--correctionType 2 --ml-forestfile ${TESTPREFIX3}_anchor.samples \
+	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${TESTPREFIX3}_cands.samples \
+	$(auto_preprocess $TESTPREFIX3)
+
 python3 - <<EOF
 import sys
 sys.path.append("$MLCDIR")
@@ -137,10 +152,18 @@ np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_anchor.npy", data)
 clf = train(data, "rf")
 extract_forest(clf, "${CLF1}_anchor.rf")
 
+data = read_data(37, [{"X":"${TESTPREFIX1}_anchor.samples", "y":"$TESTFILE1EF"}, {"X":"${TESTPREFIX2}_anchor.samples", "y":"$TESTFILE2EF"}, {"X":"${TESTPREFIX3}_anchor.samples", "y":"$TESTFILE3EF"}])
+np.save("${TESTPREFIX1}+${TESTPREFIX2}+${TESTPREFIX3}_anchor.npy", data)
+test(data, clf, "${CLF1}_anchor_${TESTPREFIX1}+${TESTPREFIX2}+${TESTPREFIX3}_anchor.roc.png")
+
 data = read_data(42, [{"X":"${PREFIX1}_cands.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_cands.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_cands.samples", "y":"$FILE3EF"}])
 np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_cands.npy", data)
 clf = train(data, "rf")
 extract_forest(clf, "${CLF1}_cands.rf")
+
+data = read_data(42, [{"X":"${TESTPREFIX1}_cands.samples", "y":"$TESTFILE1EF"}, {"X":"${TESTPREFIX2}_cands.samples", "y":"$TESTFILE2EF"}, {"X":"${TESTPREFIX3}_cands.samples", "y":"$TESTFILE3EF"}])
+np.save("${TESTPREFIX1}+${TESTPREFIX2}+${TESTPREFIX3}_cands.npy", data)
+test(data, clf, "${CLF1}_cands_${TESTPREFIX1}+${TESTPREFIX2}+${TESTPREFIX3}_cands.roc.png")
 
 EOF
 
