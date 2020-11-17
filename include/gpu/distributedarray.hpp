@@ -463,7 +463,6 @@ public:
     };
 
     using GatherHandle = std::unique_ptr<GatherHandleStruct>;
-    using PeerAccess_t = helpers::PeerAccess;
 
     MemoryUsage getMemoryInfoOfHandle(const GatherHandle& handle) const{
 
@@ -557,7 +556,6 @@ public:
     std::vector<Index_t> elementsPerLocationPS; //inclusive prefix sum with leading zero
 
     std::vector<Value_t*> dataPtrPerLocation; // the storage of each location. dataPtrPerLocation[hostLocation] is the host data. dataPtrPerLocation[gpu] is device data
-    PeerAccess_t peerAccess;
 
     DistributedArray()
         : DistributedArray({},{}, DistributedArrayLayout::GPUEqual, 0,0,-1){
@@ -579,8 +577,7 @@ public:
                     numColumns(numCols_),
                     sizeOfElement(numCols_ * sizeof(Value_t)),
                     deviceIds(std::move(deviceIds_)),
-                    memoryLimitBytesPerGPU(std::move(memoryLimitBytesPerGPU_)),
-                    peerAccess(PeerAccess_t{}){
+                    memoryLimitBytesPerGPU(std::move(memoryLimitBytesPerGPU_)){
 
         assert(deviceIds.size() == memoryLimitBytesPerGPU.size());
 
@@ -589,8 +586,6 @@ public:
         elementsPerLocation.resize(numLocations, 0);
         elementsPerLocationPS.resize(numLocations+1, 0);
         dataPtrPerLocation.resize(numLocations, nullptr);
-
-        peerAccess.enableAllPeerAccesses();
 
         if(numRows > 0 && numColumns > 0){
 
@@ -707,7 +702,6 @@ public:
         elementsPerLocation = std::move(rhs.elementsPerLocation);
         elementsPerLocationPS = std::move(rhs.elementsPerLocationPS);
         dataPtrPerLocation = std::move(rhs.dataPtrPerLocation);
-        peerAccess = std::move(rhs.peerAccess);
 
         rhs.numGpus = 0;
         rhs.numLocations = 1;
