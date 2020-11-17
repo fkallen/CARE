@@ -118,120 +118,120 @@ void constructOutputFileFromExtensionResults(
     const std::string& extendedOutputfile,
     const std::vector<std::string>& outputfiles,
     SequencePairType pairmode,
-    bool isSorted
+    bool isSorted,
+    bool outputToSingleFile
 ){
 
-#if 1                        
-    writeExtensionResultsToFile(
-        tempdir, 
-        partialResults, 
-        memoryForSorting, 
-        outputFormat,
-        extendedOutputfile, 
-        isSorted
-    );
-#else 
+    if(outputToSingleFile){                      
+        writeExtensionResultsToFile(
+            tempdir, 
+            partialResults, 
+            memoryForSorting, 
+            outputFormat,
+            extendedOutputfile, 
+            isSorted
+        );
+    }else{
+        // {
+        //     std::map<ExtendedReadStatus, std::int64_t> statusHistogram2;
+        //     auto partialResultsReader = partialResults.makeReader();
 
-    // {
-    //     std::map<ExtendedReadStatus, std::int64_t> statusHistogram2;
-    //     auto partialResultsReader = partialResults.makeReader();
+        //     while(partialResultsReader.hasNext()){
+        //         ExtendedRead er = *(partialResultsReader.next());
+        //         statusHistogram2[er.status]++;
 
-    //     while(partialResultsReader.hasNext()){
-    //         ExtendedRead er = *(partialResultsReader.next());
-    //         statusHistogram2[er.status]++;
+        //         if(er.status == ExtendedReadStatus::MSANoExtension){
+        //             //std::cerr << er.readId << "\n";
+        //         }
+        //     }
 
-    //         if(er.status == ExtendedReadStatus::MSANoExtension){
-    //             //std::cerr << er.readId << "\n";
-    //         }
-    //     }
+        //     std::cerr << "should be:\n";
+        //     for(const auto& pair : statusHistogram2){
+        //         switch(pair.first){
+        //             case ExtendedReadStatus::FoundMate: std::cerr << "Found Mate: " << pair.second << "\n"; break;
+        //             case ExtendedReadStatus::LengthAbort: std::cerr << "Too long: " << pair.second << "\n"; break;
+        //             case ExtendedReadStatus::CandidateAbort: std::cerr << "Empty candidate list: " << pair.second << "\n"; break;
+        //             case ExtendedReadStatus::MSANoExtension: std::cerr << "Did not grow: " << pair.second << "\n"; break;
+        //         }
+        //     }
+        // }
 
-    //     std::cerr << "should be:\n";
-    //     for(const auto& pair : statusHistogram2){
-    //         switch(pair.first){
-    //             case ExtendedReadStatus::FoundMate: std::cerr << "Found Mate: " << pair.second << "\n"; break;
-    //             case ExtendedReadStatus::LengthAbort: std::cerr << "Too long: " << pair.second << "\n"; break;
-    //             case ExtendedReadStatus::CandidateAbort: std::cerr << "Empty candidate list: " << pair.second << "\n"; break;
-    //             case ExtendedReadStatus::MSANoExtension: std::cerr << "Did not grow: " << pair.second << "\n"; break;
-    //         }
-    //     }
-    // }
+        auto origIdResultIdLessThan = [&](read_number origId, read_number resultId){
+            //return origId < (resultId / 2);
+            //return origId < resultId;
+            if(pairmode == SequencePairType::PairedEnd){
+                return (origId / 2) < (resultId / 2);
+            }else{
+                return origId < resultId;
+            }
+        };
 
-    auto origIdResultIdLessThan = [&](read_number origId, read_number resultId){
-        //return origId < (resultId / 2);
-        //return origId < resultId;
-        if(pairmode == SequencePairType::PairedEnd){
-            return (origId / 2) < (resultId / 2);
-        }else{
-            return origId < resultId;
+        std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
+
+        auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId, ReadWithId* mate, std::string& extendedSequence){
+            statusHistogram[tmpresults[0].status]++;
+
+            return combineExtendedReadWithOriginalRead(tmpresults, readWithId, extendedSequence);
+        };
+
+        mergeExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
+            tempdir,
+            originalReadFiles,
+            partialResults, 
+            memoryForSorting,
+            outputFormat,
+            extendedOutputfile,
+            outputfiles,
+            pairmode,
+            isSorted,
+            combine,
+            origIdResultIdLessThan
+        );
+
+        for(const auto& pair : statusHistogram){
+            switch(pair.first){
+                case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+                case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+                case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+                case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+            }
         }
-    };
 
-    std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
+        // std::vector<std::string> firstOriginalReadFile{originalReadFiles.front()};
 
-    auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId, ReadWithId* mate, std::string& extendedSequence){
-        statusHistogram[tmpresults[0].status]++;
+        // auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
+        //     return origId < (resultId / 2);
+        // };
 
-        return combineExtendedReadWithOriginalRead(tmpresults, readWithId, extendedSequence);
-    };
+        // std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-    mergeExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
-        tempdir,
-        originalReadFiles,
-        partialResults, 
-        memoryForSorting,
-        outputFormat,
-        extendedOutputfile,
-        outputfiles,
-        pairmode,
-        isSorted,
-        combine,
-        origIdResultIdLessThan
-    );
+        // auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId){
+        //     statusHistogram[tmpresults[0].status]++;
 
-    for(const auto& pair : statusHistogram){
-        switch(pair.first){
-            case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
-        }
+        //     combineExtendedReadWithOriginalRead(tmpresults, readWithId);
+        // };
+
+        // mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
+        //     tempdir,
+        //     firstOriginalReadFile,
+        //     partialResults, 
+        //     memoryForSorting,
+        //     outputFormat,
+        //     outputfiles,
+        //     isSorted,
+        //     combine,
+        //     origIdResultIdLessThan
+        // );
+
+        // for(const auto& pair : statusHistogram){
+        //     switch(pair.first){
+        //         case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+        //         case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+        //     }
+        // }
     }
-
-    // std::vector<std::string> firstOriginalReadFile{originalReadFiles.front()};
-
-    // auto origIdResultIdLessThan = [](read_number origId, read_number resultId){
-    //     return origId < (resultId / 2);
-    // };
-
-    // std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
-
-    // auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId){
-    //     statusHistogram[tmpresults[0].status]++;
-
-    //     combineExtendedReadWithOriginalRead(tmpresults, readWithId);
-    // };
-
-    // mergeResultsWithOriginalReads_multithreaded<ExtendedRead>(
-    //     tempdir,
-    //     firstOriginalReadFile,
-    //     partialResults, 
-    //     memoryForSorting,
-    //     outputFormat,
-    //     outputfiles,
-    //     isSorted,
-    //     combine,
-    //     origIdResultIdLessThan
-    // );
-
-    // for(const auto& pair : statusHistogram){
-    //     switch(pair.first){
-    //         case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-    //         case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
-    //         case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
-    //         case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
-    //     }
-    // }
-#endif
 
 }
 

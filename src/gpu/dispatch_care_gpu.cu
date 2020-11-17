@@ -723,7 +723,8 @@ namespace care{
             extendedOutputfile,
             outputfiles,
             fileOptions.pairType, 
-            false
+            false,
+            fileOptions.mergedoutput
         );
 
 

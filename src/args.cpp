@@ -266,6 +266,10 @@ namespace args{
             result.outputfilenames = pr["outputfilenames"].as<std::vector<std::string>>();
         }
 
+        if(pr.count("mergedoutput")){
+            result.mergedoutput = true;
+        }
+
         return result;
 	}
 

@@ -171,6 +171,8 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
+
+		("mergedoutput", "extension results will not be split into _extended and _remaining", cxxopts::value<bool>()->implicit_value("true"))
 		
 	;
 

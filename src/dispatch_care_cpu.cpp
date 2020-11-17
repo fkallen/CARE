@@ -632,7 +632,8 @@ namespace care{
             extendedOutputfile,
             outputfiles,
             fileOptions.pairType, 
-            false
+            false,
+            fileOptions.mergedoutput
         );
 
         step3Timer.print();

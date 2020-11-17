@@ -372,7 +372,8 @@ namespace care{
         const std::string& extendedOutputfile,
         const std::vector<std::string>& outputfiles, //one output file per original file
         SequencePairType pairmode,
-        bool isSorted
+        bool isSorted,
+        bool outputToSingleFile
     );
 
 

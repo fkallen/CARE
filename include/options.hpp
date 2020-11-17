@@ -67,6 +67,7 @@ namespace care{
     };
 
 	struct FileOptions{
+        bool mergedoutput = false;
         SequencePairType pairType = SequencePairType::Invalid;
 		std::string outputdirectory = "";
 		std::uint64_t nReads = 0;
