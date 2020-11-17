@@ -108,6 +108,9 @@ namespace care{
             return;
         }
 
+        helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
+        peerAccess.enableAllPeerAccesses();
+
         std::uint64_t maximumNumberOfReads = fileOptions.nReads;
         int maximumSequenceLength = fileOptions.maximum_sequence_length;
         int minimumSequenceLength = fileOptions.minimum_sequence_length;
