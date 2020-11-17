@@ -640,8 +640,10 @@ namespace care{
                 if(format == FileFormat::FASTAGZ)
                     format = FileFormat::FASTA;
 
-                std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, format);
-                std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", format);
+                auto extendedformat = FileFormat::FASTA; //extended reads are stored as fasta. No qualities available for gap.
+
+                std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, extendedformat);
+                std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", extendedformat);
 
                 std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
