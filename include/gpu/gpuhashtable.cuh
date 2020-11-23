@@ -91,6 +91,9 @@ namespace gpu{
             }
         }
 
+
+        
+
         template<class CompactTableView, class Key, class Offset>
         __global__
         void numValuePerKeyCompactKernel(
@@ -172,6 +175,7 @@ namespace gpu{
             );
         }
 
+        HOSTDEVICEQUALIFIER
         static constexpr bool isValidKey(Key key){
             return MultiValueHashTable::is_valid_key(key);
         }
@@ -298,6 +302,7 @@ namespace gpu{
                 d_values
             );
         }
+
 
         template<class Offset>
         void numValuesPerKeyCompact(
