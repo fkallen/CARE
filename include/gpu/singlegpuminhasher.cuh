@@ -201,10 +201,13 @@ namespace gpu{
         }
 
         int addHashfunctions(int numExtraFunctions){
+            
             DevicerSwitcher ds(deviceId);
 
             int added = 0;
             int cur = gpuHashTables.size();
+
+            assert(!(numExtraFunctions + cur > 64));
 
             for(int i = 0; i < numExtraFunctions; i++){
                 gpuHashTables.emplace_back(
@@ -328,7 +331,9 @@ namespace gpu{
             helpers::SimpleAllocationDevice<std::uint64_t, 0> d_sig(numHashfunctions * numSequences);
             helpers::SimpleAllocationDevice<std::uint64_t, 0> d_sig_trans(numHashfunctions * numSequences);
 
-            helpers::SimpleAllocationDevice<int, 0> d_int_temp(numSequences * numHashfunctions);
+            helpers::SimpleAllocationDevice<int, 0> d_numValuesPerSequencePerHash(numSequences * numHashfunctions);
+            helpers::SimpleAllocationDevice<int, 0> d_numValuesPerSequencePerHashExclPSVert(numSequences * numHashfunctions);
+            helpers::SimpleAllocationDevice<int, 0> d_queryOffsetsPerSequencePerHash(numSequences * numHashfunctions);
             helpers::SimpleAllocationDevice<int, 0> d_cubsum(1 + numSequences);
 
             std::size_t cubtempbytes = 0;
@@ -408,145 +413,172 @@ namespace gpu{
                 gpuHashTables[i]->numValuesPerKeyCompact(
                     d_signatures_transposed + i * numSequences,
                     numSequences,
-                    d_int_temp.data() + i * numSequences,
+                    d_numValuesPerSequencePerHash.data() + i * numSequences,
                     stream
                 );
             }
 
             //cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream); CUERR;
 
-            //accumulate number of values per sequence
+            // accumulate number of values per sequence in d_numValuesPerSequence
+            // calculate vertical exclusive prefix sum
             helpers::lambda_kernel<<<1024, 256, 0, stream>>>(
-                [=, d_int_temp = d_int_temp.data()] __device__ (){
+                [=, 
+                    d_numValuesPerSequencePerHash = d_numValuesPerSequencePerHash.data(),
+                    d_numValuesPerSequencePerHashExclPSVert = d_numValuesPerSequencePerHashExclPSVert.data()
+                ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
                     for(int i = tid; i < numSequences; i += stride){
-                        d_numValuesPerSequence[i] = 0;
+                        d_numValuesPerSequencePerHashExclPSVert[0 * numSequences + i] = 0;
                     }
-                    
+
                     for(int i = tid; i < numSequences; i += stride){
+                        int vertPS = 0;
                         for(int k = 0; k < numTables; k++){
-                            d_numValuesPerSequence[i] += d_int_temp[k * numSequences + i];
+                            const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
+                            vertPS += num;
+                            if(k < numTables - 1){
+                                d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
+                            }else{
+                                d_numValuesPerSequence[i] = vertPS;
+                            }
+                        }
+                    }
+                }
+            );
+
+            //calculate global offsets for each sequence in output array
+            cudaMemsetAsync(d_offsets, 0, sizeof(int), stream); CUERR;
+
+            cub::DeviceScan::InclusiveSum(
+                nullptr,
+                cubtempbytes,
+                d_numValuesPerSequence,
+                d_offsets + 1,
+                numSequences,
+                stream
+            );
+
+            // compute destination offsets for each hashtable such that values of different tables 
+            // for the same sequence are stored contiguous in the result array
+
+            helpers::lambda_kernel<<<1024, 256, 0, stream>>>(
+                [=, 
+                    d_offsets,
+                    d_numValuesPerSequencePerHashExclPSVert = d_numValuesPerSequencePerHashExclPSVert.data(),
+                    d_queryOffsetsPerSequencePerHash = d_queryOffsetsPerSequencePerHash.data()
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+
+                    
+
+                    for(int i = tid; i < numSequences; i += stride){
+                        
+                        const int base = d_offsets[i];
+
+                        //k == 0 is a copy from d_offsets
+                        d_queryOffsetsPerSequencePerHash[0 * numSequences + i] = base;
+
+                        for(int k = 1; k < numTables; k++){
+                            d_queryOffsetsPerSequencePerHash[k * numSequences + i] = base + d_numValuesPerSequencePerHashExclPSVert[k * numSequences + i];
                         }
                     }
                 }
             );
 
             //calculate total number of values
-            cub::DeviceReduce::Sum(
-                d_cubTemp, 
-                cubtempbytes, 
-                d_numValuesPerSequence, 
-                d_cubsum + numSequences, 
-                numSequences, 
-                stream
-            );
+            // cub::DeviceReduce::Sum(
+            //     d_cubTemp, 
+            //     cubtempbytes, 
+            //     d_numValuesPerSequence, 
+            //     d_cubsum + numSequences, 
+            //     numSequences, 
+            //     stream
+            // );
 
             //calculate total number of values per table
-            for(int i = 0; i < numHashfunctions; i++){
-                cub::DeviceReduce::Sum(
-                    d_cubTemp, 
-                    cubtempbytes, 
-                    d_int_temp.data() + i * numSequences, 
-                    d_cubsum + i, 
-                    numSequences, 
-                    stream
-                );
-            }
+            // for(int i = 0; i < numHashfunctions; i++){
+            //     cub::DeviceReduce::Sum(
+            //         d_cubTemp, 
+            //         cubtempbytes, 
+            //         d_int_temp.data() + i * numSequences, 
+            //         d_cubsum + i, 
+            //         numSequences, 
+            //         stream
+            //     );
+            // }
 
             //calculate global begin offset for each table
-            cub::DeviceScan::ExclusiveSum(
-                d_cubTemp, 
-                cubtempbytes, 
-                d_cubsum,
-                d_cubsum,
-                numHashfunctions,
-                stream
-            );
+            // cub::DeviceScan::ExclusiveSum(
+            //     d_cubTemp, 
+            //     cubtempbytes, 
+            //     d_cubsum,
+            //     d_cubsum,
+            //     numHashfunctions,
+            //     stream
+            // );
 
-            std::vector<int> h_cubsum(numSequences + 1);
+            // std::vector<int> h_cubsum(numSequences + 1);
 
-            cudaMemcpyAsync(h_cubsum.data, d_cubsum.data(), sizeof(int) * (numHashfunctions + 1), D2H, stream); CUERR;
+            // cudaMemcpyAsync(h_cubsum.data, d_cubsum.data(), sizeof(int) * (numHashfunctions + 1), D2H, stream); CUERR;
+            // cudaStreamSynchronize(stream);
+
+            const int totalNumValues = 0;
+            cudaMemcpyAsync(&totalNumValues, d_offsets + numSequences, sizeof(int), D2H, stream); CUERR;
+
+            std::vector<int> h_offsets(numSequences + 1);
+            cudaMemcpyAsync(h_offsets.data(), d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
+
             cudaStreamSynchronize(stream);
 
-            const int totalNumValues = h_cubsum.back();
-
             helpers::SimpleAllocationDevice<Value> d_values_tmp(totalNumValues);
+            helpers::SimpleAllocationDevice<int> d_end_offsets(numSequences);
+            helpers::SimpleAllocationDevice<int> d_flags(totalNumValues);
+
+            cudaMemcpyAsync(d_end_offsets.data(), d_offsets + 1, sizeof(int) * numSequences, D2D, stream); CUERR;
 
             //retrieve values
 
             for(int i = 0; i < numHashfunctions; i++){
-                d_signatures_transposed + i * numSequences,
-                    numSequences,
-                    d_int_temp.data() + i * numSequences,
-                    stream
                 gpuHashTables[i]->retrieveCompact(
-                   d_signatures_transposed + i * numSequences,
-                    const Offset* d_beginOffsets,
+                    d_signatures_transposed + i * numSequences,
+                    d_queryOffsetsPerSequencePerHash  + i * numSequences,
                     numSequences,
                     d_values_tmp,
                     stream
                 );
             }
 
-            // cudaMemsetAsync(d_offsets, 0, sizeof(int), stream); CUERR;
+            // all values for the same key are now stored in consecutive locations in d_values_tmp.
+            // now, make value ranges unique
 
-            // cub::DeviceScan::InclusiveSum(
-            //     nullptr,
-            //     cubtempbytes,
-            //     d_numValuesPerSequence,
-            //     d_offsets + 1,
-            //     numSequences,
-            //     stream
-            // );
+            GpuSegmentedUnique::Handle segmentedUniqueHandle = GpuSegmentedUnique::makeHandle(); 
+
+            GpuSegmentedUnique::unique(
+                handle.segmentedUniqueHandle,
+                d_values_tmp, //input values
+                totalNumValues,
+                d_values, //output values
+                d_numValuesPerSequence, //output segment sizes
+                numSequences,
+                d_offsets, //device accessible
+                d_end_offsets.data(), //device accessible
+                h_offsets.data(),
+                h_offsets.data() + 1,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+
+            // State: d_values contains unique values per sequence from all tables. num unique values per sequence are computed in d_numValuesPerSequence
+            // Segment of values for sequence i begins at d_offsets[i]
+            // Now, remove d_readIds[i] from segment i, if present
 
 
 
-            
-            for(int i = 0; i < numHashfunctions; i++){
-
-                gpuHashTables[i]->numValuesPerKeyCompact(
-                    d_signatures_transposed + i * numSequences,
-                    numSequences,
-                    d_numValuesPerSequence,
-                    stream
-                );
-
-                cub::DeviceScan::ExclusiveSum(
-                    nullptr,
-                    cubtempbytes,
-                    d_numValuesPerSequence,
-                    d_beginOffsets,
-                    numSequences,
-                    stream
-                );
-
-                gpuHashTables[i]->retrieveCompact(
-                    d_signatures_transposed + i * numSequences,
-                    d_beginOffsets,
-                    numSequences,
-                    d_values
-                    cudaStream_t stream
-                ) const 
-
-                // for(std::size_t k = 0; k < curBatchsize; k++){
-                //     if(h_insertionStatus[k].has_any()){
-                //         std::cerr << "Error table " << i << ", batch " << iter << ", position " << k << ": " << h_insertionStatus[k] << "\n";
-                //     }
-                // }
-            }
-
-            cudaStreamSynchronize(stream);
-
-            for(int i = 0; i < numHashfunctions; i++){
-                status_type status = gpuHashTables[firstHashfunction + i]->pop_status(stream);
-                cudaStreamSynchronize(stream);
-
-                if(h_insertionStatus[k].has_any()){
-                    std::cerr << "Error table " << (firstHashfunction + i) << " after insertion: " << status << "\n";
-                }
-            }
         }
 
         void compact(){
