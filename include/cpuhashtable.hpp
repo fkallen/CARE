@@ -895,6 +895,13 @@ namespace cpuhashtabledetail{
             init(std::move(keys), std::move(vals), maxValuesPerKey);
         }
 
+        CpuReadOnlyMultiValueHashTable(
+            std::uint64_t maxNumValues_
+        ) : buildMaxNumValues{maxNumValues_}{
+            buildkeys.reserve(buildMaxNumValues);
+            buildvalues.reserve(buildMaxNumValues);
+        }
+
         bool operator==(const CpuReadOnlyMultiValueHashTable& rhs) const{
             return values == rhs.values && lookup == rhs.lookup;
         }
@@ -974,7 +981,7 @@ namespace cpuhashtabledetail{
             #endif
 
             lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
-
+            //std::cerr << "keys.size(): " << keys.size() << "\n";
             for(std::size_t i = 0; i < keys.size(); i++){
                 // if(i < 10){
                 //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
@@ -986,9 +993,26 @@ namespace cpuhashtabledetail{
                 );
                 
             }
+
+            isInit = true;
+        }
+
+        void insert(Key* keys, Value* values, int N){
+            assert(keys != nullptr);
+            assert(values != nullptr);
+            assert(buildMaxNumValues >= buildkeys.size() + N);
+
+            buildkeys.insert(buildkeys.end(), keys, keys + N);
+            buildvalues.insert(buildvalues.end(), values, values + N);
+        }
+
+        void finalize(int maxValuesPerKey, const std::vector<int>& gpuIds = {}){
+            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, gpuIds);            
         }
 
         QueryResult query(const Key& key) const{
+            assert(isInit);
+
             auto lookupQueryResult = lookup.query(key);
 
             if(lookupQueryResult.valid()){
@@ -1010,6 +1034,7 @@ namespace cpuhashtabledetail{
         }
 
         void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
             for(std::size_t i = 0; i < numKeys; i++){
                 resultsOutput[i] = query(keys[i]);
             }
@@ -1019,13 +1044,18 @@ namespace cpuhashtabledetail{
             MemoryUsage result;
             result.host = sizeof(Value) * values.capacity();
             result.host += lookup.getMemoryInfo().host;
+            result.host += sizeof(Key) * buildkeys.capacity();
+            result.host += sizeof(Value) * buildvalues.capacity();
 
             result.device = lookup.getMemoryInfo().device;
+
+            //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
 
             return result;
         }
 
         void writeToStream(std::ostream& os) const{
+            assert(isInit);
 
             const std::size_t elements = values.size();
             const std::size_t bytes = sizeof(Value) * elements;
@@ -1045,6 +1075,7 @@ namespace cpuhashtabledetail{
             is.read(reinterpret_cast<char*>(values.data()), bytes);
 
             lookup.loadFromStream(is);
+            isInit = true;
         }
 
         void destroy(){
@@ -1052,6 +1083,7 @@ namespace cpuhashtabledetail{
             std::swap(values, tmp);
 
             lookup.destroy();
+            isInit = false;
         }
 
         static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
@@ -1068,7 +1100,10 @@ namespace cpuhashtabledetail{
     private:
 
         using ValueIndex = std::pair<read_number, BucketSize>;
-
+        bool isInit = false;
+        std::uint64_t buildMaxNumValues = 0;
+        std::vector<Key> buildkeys;
+        std::vector<Value> buildvalues;
         // values with the same key are stored in contiguous memory locations
         // a single-value hashmap maps keys to the range of the corresponding values
         std::vector<Value> values; 
