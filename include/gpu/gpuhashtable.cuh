@@ -32,36 +32,36 @@ namespace gpu{
             }
         }
 
-        template<class CompactTableView, class Key, class Value, class Offset>
-        __global__
-        void retrieveCompactKernel(
-            CompactTableView table,
-            const Key* __restrict__ querykeys,
-            const int numKeys,
-            Value* __restrict__ outValues,
-            int valueOffset, // values for key i begin at valueOffset * i
-            Offset* __restrict__ numValuesPerKey
-        ){
-            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
-            const int stride = blockDim.x * gridDim.x;
+        // template<class CompactTableView, class Key, class Value, class Offset>
+        // __global__
+        // void retrieveCompactKernel(
+        //     CompactTableView table,
+        //     const Key* __restrict__ querykeys,
+        //     const int numKeys,
+        //     Value* __restrict__ outValues,
+        //     int valueOffset, // values for key i begin at valueOffset * i
+        //     Offset* __restrict__ numValuesPerKey
+        // ){
+        //     const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+        //     const int stride = blockDim.x * gridDim.x;
 
-            constexpr int tilesize = CompactTableView::cg_size();
+        //     constexpr int tilesize = CompactTableView::cg_size();
 
-            assert(stride % tilesize == 0);
+        //     assert(stride % tilesize == 0);
 
-            auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
-            const int tileId = tid / tilesize;
-            const int numTiles = stride / tilesize;
+        //     auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+        //     const int tileId = tid / tilesize;
+        //     const int numTiles = stride / tilesize;
 
-            for(int k = tileId; k < numKeys; k += numTiles){
-                const Key key = querykeys[k];
+        //     for(int k = tileId; k < numKeys; k += numTiles){
+        //         const Key key = querykeys[k];
 
-                const int num = table.retrieve(tile, key, outValues + size_t(k) * valueOffset);
-                if(tile.thread_rank() == 0){
-                    numValuesPerKey[k] = num;
-                }    
-            }
-        }
+        //         const int num = table.retrieve(tile, key, outValues + size_t(k) * valueOffset);
+        //         if(tile.thread_rank() == 0){
+        //             numValuesPerKey[k] = num;
+        //         }    
+        //     }
+        // }
 
         template<class CompactTableView, class Key, class Value, class Offset>
         __global__
@@ -69,6 +69,8 @@ namespace gpu{
             CompactTableView table,
             const Key* __restrict__ querykeys,
             const Offset* __restrict__ beginOffsets,
+            const int* __restrict__ numValuesPerKey,
+            const int maxValuesPerKey,
             const int numKeys,
             Value* __restrict__ outValues
         ){
@@ -86,8 +88,11 @@ namespace gpu{
             for(int k = tileId; k < numKeys; k += numTiles){
                 const Key key = querykeys[k];
                 const auto beginOffset = beginOffsets[k];
+                const int num = numValuesPerKey[k];
 
-                table.retrieve(tile, key, outValues + beginOffset);
+                if(num != 0){
+                    table.retrieve(tile, key, outValues + beginOffset);
+                }
             }
         }
 
@@ -98,6 +103,7 @@ namespace gpu{
         __global__
         void numValuePerKeyCompactKernel(
             const CompactTableView table,
+            int maxValuesPerKey,
             const Key* const __restrict__ querykeys,
             const int numKeys,
             Offset* const __restrict__ numValuesPerKey
@@ -118,7 +124,7 @@ namespace gpu{
 
                 const int num = table.numValues(tile, key);
                 if(tile.thread_rank() == 0){
-                    numValuesPerKey[k] = num;
+                    numValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
                 }    
             }
         }
@@ -170,8 +176,9 @@ namespace gpu{
             const std::size_t capacity = maxPairs / load;
             gpuMvTable = std::move(
                 std::make_unique<MultiValueHashTable>(
-                    capacity, warpcore::defaults::seed<Key>(), maxValuesPerKey
+                    capacity, warpcore::defaults::seed<Key>(), (maxValuesPerKey + 1)
                 )
+                //use maxValuesPerKey + 1 for hashtable. when querying, remove all values of keys with numValues == (maxValuesPerKey + 1)
             );
         }
 
@@ -179,6 +186,7 @@ namespace gpu{
         static constexpr bool isValidKey(Key key){
             return MultiValueHashTable::is_valid_key(key);
         }
+
 
         void insert(
             const Key* d_keys, 
@@ -209,6 +217,7 @@ namespace gpu{
             numValues += N;
         }
 
+//DEBUGGING
         void retrieve(
             const Key* d_keys, 
             Index N,
@@ -232,7 +241,7 @@ namespace gpu{
                 d_statusarray
             );
         }
-
+//DEBUGGING
         void retrieve(
             const Key* d_keys, 
             Index N,
@@ -259,33 +268,34 @@ namespace gpu{
         
 
         
-        template<class Offset>
-        void retrieveCompact(
-            const Key* d_keys, 
-            Index N,
-            Offset* d_numValuesPerKey,
-            Value* d_values,
-            cudaStream_t stream,
-            int valueOffset
-        ) const {
-            assert(isCompact);
+        // template<class Offset>
+        // void retrieveCompact(
+        //     const Key* d_keys, 
+        //     Index N,
+        //     Offset* d_numValuesPerKey,
+        //     Value* d_values,
+        //     cudaStream_t stream,
+        //     int valueOffset
+        // ) const {
+        //     assert(isCompact);
 
-            CompactTableView table{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
+        //     CompactTableView table{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
 
-            gpuhashtablekernels::retrieveCompactKernel<<<1024, 256, 0, stream>>>(
-                table,
-                d_keys,
-                N,
-                d_values,
-                valueOffset, // values for key i begin at valueOffset * i
-                d_numValuesPerKey
-            );
-        }
+        //     gpuhashtablekernels::retrieveCompactKernel<<<1024, 256, 0, stream>>>(
+        //         table,
+        //         d_keys,
+        //         N,
+        //         d_values,
+        //         valueOffset, // values for key i begin at valueOffset * i
+        //         d_numValuesPerKey
+        //     );
+        // }
 
         template<class Offset>
         void retrieveCompact(
             const Key* d_keys, 
             const Offset* d_beginOffsets,
+            const Offset* d_numValuesPerKey,
             Index N,
             Value* d_values,
             cudaStream_t stream
@@ -298,6 +308,8 @@ namespace gpu{
                 table,
                 d_keys,
                 d_beginOffsets,
+                d_numValuesPerKey,
+                maxValuesPerKey,
                 N,
                 d_values
             );
@@ -317,6 +329,7 @@ namespace gpu{
 
             gpuhashtablekernels::numValuePerKeyCompactKernel<<<1024, 256, 0, stream>>>(
                 table,
+                maxValuesPerKey,
                 d_keys,
                 N,
                 d_numValuesPerKey
