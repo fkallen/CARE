@@ -4,6 +4,8 @@
 #include <hpc_helpers.cuh>
 #include <memorymanagement.hpp>
 
+#include <gpu/cuda_block_select.cuh>
+
 #include <memory>
 #include <cassert>
 #include <cmath>
@@ -75,13 +77,13 @@ namespace cudauniquekernels{
         using BlockRadixSort = cub::BlockRadixSort<T, blocksize, elemsPerThread>;
         using BlockLoad = cub::BlockLoad<T, blocksize, elemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
         using BlockDiscontinuity = cub::BlockDiscontinuity<T, blocksize>;
-        using BlockScan = cub::BlockScan<int, blocksize>; 
+        using MyBlockSelect = BlockSelect<T, blocksize>;
     
         __shared__ union{
             typename BlockRadixSort::TempStorage sort;
             typename BlockLoad::TempStorage load;
             typename BlockDiscontinuity::TempStorage discontinuity;
-            typename BlockScan::TempStorage scan;
+            typename MyBlockSelect::TempStorage select;
         } temp_storage;
     
         for(int segmentId = blockIdx.x; segmentId < numSegments; segmentId += gridDim.x){
@@ -134,24 +136,18 @@ namespace cudauniquekernels{
                         head_flags[i] = 0;
                     }
                 }
-    
-                int prefixsum[elemsPerThread];
-                int numberOfSetHeadFlags = 0;
-    
-                BlockScan(temp_storage.scan).ExclusiveSum(head_flags, prefixsum, numberOfSetHeadFlags);
+
+                const int numSelected = MyBlockSelect(temp_storage.select).ForEachFlagged(tempregs, head_flags, sizeOfRange,
+                    [&](const T& item, const int& pos){
+                        output[segmentBegin + pos] = item;
+                    }
+                );
+
+                if(threadIdx.x == 0){
+                    unique_lengths[segmentId] = numSelected;
+                }
 
                 __syncthreads();
-    
-                #pragma unroll
-                for(int i = 0; i < elemsPerThread; i++){
-                    if(threadIdx.x * elemsPerThread + i < sizeOfRange && head_flags[i] == 1){
-                        output[segmentBegin + prefixsum[i]] = tempregs[i];
-                    }
-                }
-    
-                if(threadIdx.x == 0){
-                    unique_lengths[segmentId] = numberOfSetHeadFlags;
-                }
             }
         }
     
