@@ -1,6 +1,8 @@
 #include <dispatch_care.hpp>
 #include <gpu/gpuminhasher.cuh>
 
+#include <gpu/singlegpuminhasher.cuh>
+
 #include <config.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -261,6 +263,21 @@ namespace care{
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );
 
+        // gpu::SingleGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength);
+
+        // int validNumHashFunctions = sgpuMinhasher.addHashfunctions(correctionOptions.numHashFunctions);
+
+        // sgpuMinhasher.constructFromReadStorage(
+        //     runtimeOptions,
+        //     totalInputFileProperties.nReads,
+        //     readStorage,
+        //     totalInputFileProperties.maxSequenceLength,
+        //     0,
+        //     validNumHashFunctions //correctionOptions.numHashFunctions
+        // );
+
+
+
         if(fileOptions.load_hashtables_from != ""){
 
             std::ifstream is(fileOptions.load_hashtables_from);
@@ -301,11 +318,177 @@ namespace care{
 
         printDataStructureMemoryUsage(newGpuMinhasher, "hash tables");
 
-
-
         buildMinhasherTimer.print();
 
         step1timer.print();
+
+#if 0        
+        //compare minhashers
+
+        {
+            CudaStream stream;
+            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(totalInputFileProperties.maxSequenceLength);
+            int batchsize = 2000;
+
+            const int batches = totalInputFileProperties.nReads / batchsize;
+
+            gpu::GpuMinhasher::QueryHandle queryHandle1 = gpu::GpuMinhasher::makeQueryHandle();
+            gpu::SingleGpuMinhasher::QueryHandle queryHandle2 = gpu::SingleGpuMinhasher::makeQueryHandle();
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_readIds(batchsize);
+            helpers::SimpleAllocationDevice<read_number> d_readIds(batchsize);
+            helpers::SimpleAllocationDevice<int> d_sequenceLengths(batchsize);
+            helpers::SimpleAllocationDevice<unsigned int> d_encodedSequences(batchsize * encodedSequencePitchInInts);
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_similarReadIds(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequence(batchsize);
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum(batchsize+1);
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_similarReadIds2(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequence2(batchsize);
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum2(batchsize+1);
+
+            helpers::SimpleAllocationDevice<read_number> d_similarReadIds(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequence(batchsize);
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequencePrefixSum(batchsize+1);
+
+            helpers::SimpleAllocationDevice<read_number> d_similarReadIds2(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequence2(batchsize);
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequencePrefixSum2(batchsize+1);
+
+            auto sequencehandle = readStorage.makeGatherHandleSequences();
+            std::cerr << "Checking hashes\n";
+            for(int batch = 0; batch < batches; batch++){
+
+                for(int i = 0; i < batchsize; i++){
+                    h_readIds[i] = batch * batchsize + i;
+                }
+
+                cudaMemcpyAsync(d_readIds, h_readIds, h_readIds.sizeInBytes(), H2D, stream); CUERR;
+
+                readStorage.gatherSequenceDataToGpuBufferAsync(
+                    nullptr,
+                    sequencehandle,
+                    d_encodedSequences,
+                    encodedSequencePitchInInts,
+                    h_readIds,
+                    d_readIds,
+                    batchsize,
+                    0,
+                    stream
+                );
+            
+                readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                    d_sequenceLengths,
+                    0,
+                    d_readIds,
+                    batchsize,
+                    stream
+                );               
+
+                ForLoopExecutor forLoopExecutor(nullptr, nullptr);
+                helpers::CpuTimer oldTimer("oldTimer");
+                nvtx::push_range("oldminhasher", 0);
+                newGpuMinhasher.getIdsOfSimilarReadsNormalExcludingSelfNew(
+                    queryHandle1,
+                    d_readIds,
+                    h_readIds,
+                    d_encodedSequences,
+                    encodedSequencePitchInInts,
+                    d_sequenceLengths,
+                    batchsize,
+                    0, 
+                    stream,
+                    forLoopExecutor,
+                    d_similarReadIds,
+                    d_similarReadsPerSequence,
+                    d_similarReadsPerSequencePrefixSum
+                );
+                nvtx::pop_range();
+
+                cudaStreamSynchronize(stream); CUERR;
+                oldTimer.stop();
+                //oldTimer.print();
+
+                helpers::CpuTimer newTimer("newTimer");
+                nvtx::push_range("newminhasher", 0);
+                sgpuMinhasher.queryExcludingSelf(
+                    queryHandle2,
+                    d_similarReadIds2,
+                    d_similarReadsPerSequence2,
+                    d_similarReadsPerSequencePrefixSum2,
+                    d_encodedSequences,
+                    batchsize,
+                    d_sequenceLengths,
+                    encodedSequencePitchInInts,
+                    d_readIds,
+                    stream
+                );
+                nvtx::pop_range();            
+
+                cudaStreamSynchronize(stream); CUERR;
+                newTimer.stop();
+                //newTimer.print();
+
+                cudaMemcpyAsync(h_similarReadIds, d_similarReadIds, d_similarReadIds.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequence, d_similarReadsPerSequence, d_similarReadsPerSequence.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequencePrefixSum, d_similarReadsPerSequencePrefixSum, d_similarReadsPerSequencePrefixSum.sizeInBytes(), D2H, stream); CUERR;
+
+                cudaMemcpyAsync(h_similarReadIds2, d_similarReadIds2, d_similarReadIds2.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequence2, d_similarReadsPerSequence2, d_similarReadsPerSequence2.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequencePrefixSum2, d_similarReadsPerSequencePrefixSum2, d_similarReadsPerSequencePrefixSum2.sizeInBytes(), D2H, stream); CUERR;
+
+                cudaDeviceSynchronize(); CUERR;
+
+                for(int i = 0; i < batchsize; i++){
+                //for(int i = 0; i < std::min(10, batchsize); i++){
+                    // std::cerr << h_similarReadsPerSequence[i] << " , " << h_similarReadsPerSequence2[i] << "\n";
+                    // for(int p = 0; p < h_similarReadsPerSequence[i]; p++){
+                    //     std::cerr << h_similarReadIds[h_similarReadsPerSequencePrefixSum[i] + p] << ", ";
+                    // }
+                    // std::cerr << " AAA\n";
+
+                    // for(int p = 0; p < h_similarReadsPerSequence2[i]; p++){
+                    //     std::cerr << h_similarReadIds2[h_similarReadsPerSequencePrefixSum2[i] + p] << ", ";
+                    // }
+                    // std::cerr << " BBB\n";
+
+                    if(!(h_similarReadsPerSequence[i] == h_similarReadsPerSequence2[i])){
+                        std::cerr << "error batch " << batch << ", i = " << i << "\n";
+                        std::cerr << h_similarReadsPerSequence[i] << " != " << h_similarReadsPerSequence2[i] << "\n";
+                    }
+                    assert(h_similarReadsPerSequence[i] == h_similarReadsPerSequence2[i]);
+                    
+                    for(int p = 0; p < h_similarReadsPerSequence[i]; p++){
+                        auto old = h_similarReadIds[h_similarReadsPerSequencePrefixSum[i] + p];
+                        auto notold = h_similarReadIds2[h_similarReadsPerSequencePrefixSum2[i] + p];
+
+                        if(!(old == notold)){
+                            std::cerr << "error batch " << batch << ", i = " << i << ", p = " << p << "\n";
+                            std::cerr << old << " != " << notold << "\n";
+                        }
+                        assert(old == notold);
+                    }
+                }
+
+                if(batch % (SDIV(batches,20)) == 0){
+                    std::cerr << batch << "/ " << batches << "\n";
+                }
+            }
+
+            std::cerr << "Checking hashes done\n";
+
+        }
+
+#endif
+
+
+
+
+
+
+
+
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
