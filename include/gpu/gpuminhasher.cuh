@@ -485,6 +485,11 @@ namespace gpu{
             }
 
             const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
+            if(totalNumIds == 0){
+                cudaMemsetAsync(d_similarReadsPerSequence, 0, sizeof(int) * numSequences, stream);
+                cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int) * (numSequences + 1), stream);
+                return;
+            }
 
             handle.h_begin_offsets[0] = 0;
 
@@ -760,6 +765,11 @@ namespace gpu{
             }
 
             const int totalNumIds = idsPerChunkPrefixSum[numChunksRequired-1] + idsPerChunk[numChunksRequired-1];
+            if(totalNumIds == 0){
+                cudaMemsetAsync(d_similarReadsPerSequence, 0, sizeof(int) * numSequences, stream);
+                cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int) * (numSequences + 1), stream);
+                return;
+            }
             
             handle.h_begin_offsets[0] = 0;
 
@@ -1140,6 +1150,12 @@ namespace gpu{
                 numSequences
             );
             nvtx::pop_range();
+
+            if(myTotalNumberOfPossibleCandidates == 0){
+                cudaMemsetAsync(d_similarReadsPerSequence, 0, sizeof(int) * numSequences, stream);
+                cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int) * (numSequences + 1), stream);
+                return;
+            }
 
             constexpr int roundUpTo = 10000;
             const int roundedTotalNum = SDIV(myTotalNumberOfPossibleCandidates, roundUpTo) * roundUpTo;
