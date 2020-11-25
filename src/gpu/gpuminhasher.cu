@@ -381,6 +381,13 @@ void GpuMinhasher::construct(
     std::size_t bytesOfCachedConstructedTables = 0;
     bool allowCaching = false;
 
+    // std::vector<std::ofstream> keysoutput;
+    // for(int i = 0; i < requestedNumberOfMaps; i++){
+    //     keysoutput.emplace_back("hashkeys" + std::to_string(i));
+    //     std::size_t num = numReads;
+    //     keysoutput.back().write((const char*)&num, sizeof(std::size_t));
+    // }
+
     while(numConstructedTables < requestedNumberOfMaps && maxMemoryForTables > (writtenTableBytes + bytesOfCachedConstructedTables)){
 
         int maxNumTables = 0;
@@ -514,7 +521,13 @@ void GpuMinhasher::construct(
                     
                     auto& kmers = initialMinhashes.first[i];
                     auto& readIds = initialMinhashes.second[i];
+
+                    // for(int i = 0; i < 10; i++){
+                    //     std::cerr << kmers[i] << " " << readIds[i] << "\n";
+                    // }
                     const int maxValuesPerKey = getNumResultsPerMapThreshold();
+
+                    //keysoutput[globalTableId].write((const char*)(kmers.data()), kmers.size() * sizeof(kmer_type));
 
                     HashTable hashTable(
                         std::move(kmers), 
