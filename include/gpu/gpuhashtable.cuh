@@ -167,24 +167,33 @@ namespace gpu{
         GpuHashtable(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_)
             : maxPairs(pairs_), load(load_), maxValuesPerKey(maxValuesPerKey_){
 
-            if(maxPairs > std::numeric_limits<int>::max()){
-                assert(maxPairs <= std::numeric_limits<int>::max()); //CompactKeyIndexTable uses int
+            if(maxPairs > std::size_t(std::numeric_limits<int>::max())){
+                assert(maxPairs <= std::size_t(std::numeric_limits<int>::max())); //CompactKeyIndexTable uses int
             }
 
             cudaGetDevice(&deviceId);
 
             const std::size_t capacity = maxPairs / load;
             gpuMvTable = std::move(
+                //use maxValuesPerKey + 1 for hashtable. when querying, remove all values of keys with numValues == (maxValuesPerKey + 1)
                 std::make_unique<MultiValueHashTable>(
                     capacity, warpcore::defaults::seed<Key>(), (maxValuesPerKey + 1)
                 )
-                //use maxValuesPerKey + 1 for hashtable. when querying, remove all values of keys with numValues == (maxValuesPerKey + 1)
             );
+
         }
 
         HOSTDEVICEQUALIFIER
         static constexpr bool isValidKey(Key key){
             return MultiValueHashTable::is_valid_key(key);
+        }
+
+        warpcore::Status pop_status(cudaStream_t stream){
+            if(isCompact){
+                return gpuKeyIndexTable->pop_status(stream);
+            }else{
+                return gpuMvTable->pop_status(stream);
+            }
         }
 
 
