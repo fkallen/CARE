@@ -28,10 +28,19 @@
 #include <fstream>
 #include <algorithm>
 
+
 namespace care{
 namespace gpu{
 
     namespace sgpuminhasherkernels{
+
+        template<class T>
+        struct IsValidKey{
+            __host__ __device__
+            bool operator()(T key) const{
+                return GpuHashtable<T, int>::isValidKey(key);
+            }
+        };
 
         __global__
         void minhashSignaturesKernel(
@@ -160,26 +169,7 @@ namespace gpu{
                     mySignature[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
                 }
             }
-        }
-    
-        template<class T, class IsValidFunc>
-        __global__
-        void fixTableKeysKernel(T* __restrict__ keys, int numKeys, IsValidFunc isValid){
-            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            const int stride = blockDim.x * gridDim.x;
-
-            for(int i = tid; i < numKeys; i += stride){
-                T key = keys[i];
-                int changed = 0;
-                while(!isValid(key)){
-                    key++;
-                    changed = 1;
-                }
-                if(changed == 1){
-                    keys[i] = key;
-                }
-            }
-        }
+        }        
     
     }
 
@@ -389,13 +379,7 @@ namespace gpu{
                 stream
             );
 
-            sgpuminhasherkernels::fixTableKeysKernel<<<SDIV(numSequences * numHashfunctions, 128), 128, 0, stream>>>(
-                d_signatures_transposed, 
-                numSequences * numHashfunctions, 
-                [] __device__ (const Key key){
-                    return GpuTable::isValidKey(key);
-                }                
-            ); CUERR;
+            fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
 
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[firstHashfunction + i]->insert(
@@ -520,13 +504,7 @@ namespace gpu{
                 stream
             );
 
-            sgpuminhasherkernels::fixTableKeysKernel<<<SDIV(numSequences * numHashfunctions, 128), 128, 0, stream>>>(
-                d_signatures_transposed, 
-                numSequences * numHashfunctions, 
-                [] __device__ (const Key key){
-                    return GpuTable::isValidKey(key);
-                }                
-            ); CUERR;
+            fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
 
             //determine number of values per hashfunction per sequence
             for(int i = 0; i < numHashfunctions; i++){
@@ -783,7 +761,6 @@ namespace gpu{
 
 }
 }
-
 
 
 

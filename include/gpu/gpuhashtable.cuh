@@ -32,6 +32,25 @@ namespace gpu{
             }
         }
 
+        template<class T, class IsValidKey>
+        __global__
+        void fixTableKeysKernel(T* __restrict__ keys, int numKeys, IsValidKey isValid){
+            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            for(int i = tid; i < numKeys; i += stride){
+                T key = keys[i];
+                int changed = 0;
+                while(!isValid(key)){
+                    key++;
+                    changed = 1;
+                }
+                if(changed == 1){
+                    keys[i] = key;
+                }
+            }
+        }
+
         // template<class CompactTableView, class Key, class Value, class Offset>
         // __global__
         // void retrieveCompactKernel(
@@ -129,6 +148,8 @@ namespace gpu{
             }
         }
     }
+
+
 
     template<class Key, class Value>
     class GpuHashtable{
@@ -539,6 +560,27 @@ namespace gpu{
         helpers::SimpleAllocationDevice<Value, 0> d_compactValues;
     };
 
+    template<class T>
+    struct GpuHashtableKeyCheck{
+        __host__ __device__
+        bool operator()(T key) const{
+            return GpuHashtable<T, int>::isValidKey(key);
+        }
+    };
+
+    template<class Key>
+    void fixKeysForGpuHashTable(
+        Key* d_keys,
+        int numKeys,
+        cudaStream_t stream
+    ){
+        dim3 block(128);
+        dim3 grid(SDIV(numKeys, block.x));
+
+        GpuHashtableKeyCheck<Key> isValidKey;
+
+        gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUERR;
+    }
 
 
 
