@@ -418,8 +418,14 @@ namespace gpu{
             DeviceBuffer<int> d_end_offsets;
             DeviceBuffer<int> d_flags;
 
+            HostBuffer<int> h_totalNumValues;
+            HostBuffer<int> h_offsets;
+
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
+
+                mem.host += h_totalNumValues.capacityInBytes();
+                mem.host += h_offsets.capacityInBytes();
 
                 mem.device[deviceId] += d_sig.capacityInBytes();
                 mem.device[deviceId] += d_sig_trans.capacityInBytes();
@@ -528,6 +534,8 @@ namespace gpu{
             handle.d_queryOffsetsPerSequencePerHash.resize(numSequences * numHashfunctions);
             handle.d_cubsum.resize(1 + numSequences);
             handle.d_cub_temp.resize(cubtempbytes);
+            handle.h_totalNumValues.resize(1);
+            handle.h_offsets.resize(1 + numSequences);
 
             std::uint64_t* d_signatures = handle.d_sig.data();
             std::uint64_t* d_signatures_transposed = handle.d_sig_trans.data();
@@ -643,13 +651,18 @@ namespace gpu{
                 }
             );
 
-            int totalNumValues = 0;
-            cudaMemcpyAsync(&totalNumValues, d_offsets + numSequences, sizeof(int), D2H, stream); CUERR;
+            int* h_offsets = handle.h_offsets.data();
+            cudaMemcpyAsync(h_offsets, d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
 
-            std::vector<int> h_offsets(numSequences + 1);
-            cudaMemcpyAsync(h_offsets.data(), d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
+            //int totalNumValues = 0;
+            //cudaMemcpyAsync(&totalNumValues, d_offsets + numSequences, sizeof(int), D2H, stream); CUERR;
+
+            //std::vector<int> h_offsets(numSequences + 1);
+            //cudaMemcpyAsync(h_offsets.data(), d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
 
             cudaStreamSynchronize(stream); CUERR;
+
+            const int totalNumValues = h_offsets[numSequences];
 
             handle.d_values_tmp.resize(totalNumValues);
             handle.d_end_offsets.resize(numSequences);
@@ -694,8 +707,8 @@ namespace gpu{
                 numSequences,
                 d_offsets, //device accessible
                 d_end_offsets, //device accessible
-                h_offsets.data(),
-                h_offsets.data() + 1,
+                h_offsets,
+                h_offsets + 1,
                 0,
                 sizeof(read_number) * 8,
                 stream
