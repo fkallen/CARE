@@ -457,6 +457,20 @@ void callConversionKernel2BitTo2BitHiLoTT(
 
 
 
+void callMinhashSignaturesKernel(
+    std::uint64_t* __restrict__ signatures,
+    std::size_t signaturesRowPitchElements,
+    const unsigned int* __restrict__ sequences2Bit,
+    std::size_t sequenceRowPitchElements,
+    int numSequences,
+    const int* __restrict__ sequenceLengths,
+    int k,
+    int numHashFuncs,
+    int firstHashFunc,
+    cudaStream_t stream
+);
+
+
 #endif //ifdef __NVCC__
 
 }
