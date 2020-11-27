@@ -3,10 +3,10 @@
 
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/singlegpuminhasher.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
-#include <minhasher.hpp>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -28,7 +28,7 @@ correct_gpu(
 	const FileOptions& fileOptions,
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
-	Minhasher& minhasher,
+	SingleGpuMinhasher& minhasher,
 	DistributedReadStorage& readStorage
 );
 

@@ -7,6 +7,7 @@
 
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/singlegpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
@@ -502,7 +503,8 @@ namespace gpucorrectorkernels{
         DeviceBuffer<int> d_anchor_sequences_lengths;
         DeviceBuffer<read_number> d_candidate_read_ids;
         DeviceBuffer<int> d_candidates_per_anchor;
-        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;    
+        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;  
+        DeviceBuffer<int> d_candidatesBeginOffsets;
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
@@ -591,6 +593,29 @@ namespace gpucorrectorkernels{
         }  
     };
 
+    template<class Handle>
+    class HandleWrapper{};
+
+    template<>
+    class HandleWrapper<GpuMinhasher::QueryHandle>{
+        using Handle = GpuMinhasher::QueryHandle;
+    public:
+        static MemoryUsage getMemoryInfo(const Handle& handle){
+            return handle.getMemoryInfo();
+        }
+    };
+
+    template<>
+    class HandleWrapper<SingleGpuMinhasher::QueryHandle>{
+        using Handle = SingleGpuMinhasher::QueryHandle;
+    public:
+        static MemoryUsage getMemoryInfo(const Handle& handle){
+            return handle->getMemoryInfo();
+        }
+    };
+
+
+    template<class Minhasher, class QueryHandle>
     class GpuAnchorHasher{
     public:
 
@@ -598,7 +623,7 @@ namespace gpucorrectorkernels{
 
         GpuAnchorHasher(
             const DistributedReadStorage& gpuReadStorage_,
-            const GpuMinhasher& gpuMinhasher_,
+            const Minhasher& gpuMinhasher_,
             const SequenceFileProperties& sequenceFileProperties_,
             ThreadPool* threadPool_
         ) : 
@@ -609,7 +634,7 @@ namespace gpucorrectorkernels{
         {
             cudaGetDevice(&deviceId); CUERR;
 
-            minhashHandle = GpuMinhasher::makeQueryHandle();
+            minhashHandle = Minhasher::makeQueryHandle();
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
             backgroundStream = CudaStream{};
@@ -670,7 +695,11 @@ namespace gpucorrectorkernels{
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
+#if 0            
             info += minhashHandle.getMemoryInfo();
+#else            
+            info += HandleWrapper<QueryHandle>::getMemoryInfo(minhashHandle);
+#endif            
             info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(anchorSequenceGatherHandle);
             return info;
         } 
@@ -693,6 +722,7 @@ namespace gpucorrectorkernels{
             ecinput.d_anchor_sequences_lengths.resize(numAnchors);
             ecinput.d_candidates_per_anchor.resize(numAnchors);
             ecinput.d_candidates_per_anchor_prefixsum.resize(numAnchors + 1);
+            ecinput.d_candidatesBeginOffsets.resize(numAnchors);
         }
         
         void getAnchorReads(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -848,12 +878,12 @@ namespace gpucorrectorkernels{
         CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
         const DistributedReadStorage* gpuReadStorage;
-        const GpuMinhasher* gpuMinhasher;
+        const Minhasher* gpuMinhasher;
         const SequenceFileProperties* sequenceFileProperties;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
-        GpuMinhasher::QueryHandle minhashHandle;
+        typename Minhasher::QueryHandle minhashHandle;
     };
 
 
@@ -1079,7 +1109,7 @@ namespace gpucorrectorkernels{
 
     class GpuErrorCorrector{
         static constexpr bool useGraph() noexcept{
-            return true;
+            return false;
         }
 
     public:
@@ -1104,7 +1134,6 @@ namespace gpucorrectorkernels{
 
         GpuErrorCorrector(
             const DistributedReadStorage& gpuReadStorage_,
-            const GpuMinhasher& gpuMinhasher_,
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
             const SequenceFileProperties& sequenceFileProperties_,
@@ -1114,15 +1143,12 @@ namespace gpucorrectorkernels{
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
             gpuReadStorage{&gpuReadStorage_},
-            gpuMinhasher{&gpuMinhasher_},
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
             sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_}
         {
             cudaGetDevice(&deviceId); CUERR;
-
-            GpuMinhasher::QueryHandle minhashHandle = GpuMinhasher::makeQueryHandle();
 
             kernelLaunchHandle = make_kernel_launch_handle(deviceId);
 
@@ -1321,6 +1347,7 @@ namespace gpucorrectorkernels{
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
+            handleDevice(d_candidatesBeginOffsets);
 
             return info;
         } 
@@ -1370,6 +1397,7 @@ namespace gpucorrectorkernels{
             zero(d_anchor_sequences_lengths);
             zero(d_candidates_per_anchor);
             zero(d_candidates_per_anchor_prefixsum);
+            zero(d_candidatesBeginOffsets);
             zero(d_anchorIndicesOfCandidates);
             zero(d_candidateContainsN);
             zero(d_candidate_read_ids);
@@ -1439,6 +1467,7 @@ namespace gpucorrectorkernels{
             d_anchor_sequences_lengths.resize(maxAnchors);
             d_candidates_per_anchor.resize(maxAnchors);
             d_candidates_per_anchor_prefixsum.resize(maxAnchors + 1);
+            d_candidatesBeginOffsets.resize(maxAnchors);
         }
  
         void resizeBuffers(int numReads, int numCandidates){  
@@ -2312,7 +2341,6 @@ namespace gpucorrectorkernels{
         int currentNumCandidates;
 
         const DistributedReadStorage* gpuReadStorage;
-        const GpuMinhasher* gpuMinhasher;
 
         const CorrectionOptions* correctionOptions;
         const GoodAlignmentProperties* goodAlignmentProperties;
@@ -2388,6 +2416,7 @@ namespace gpucorrectorkernels{
         DeviceBuffer<read_number> d_candidate_read_ids;
         DeviceBuffer<int> d_candidates_per_anchor;
         DeviceBuffer<int> d_candidates_per_anchor_prefixsum; 
+        DeviceBuffer<int> d_candidatesBeginOffsets;
 
 
         

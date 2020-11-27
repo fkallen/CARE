@@ -4190,6 +4190,7 @@ correct_gpu(
 #include <gpu/gpucorrector.cuh>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/distributedreadstorage.hpp>
+#include <gpu/singlegpuminhasher.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -4210,6 +4211,9 @@ correct_gpu(
 
 namespace care{
 namespace gpu{
+
+
+
 
 class SimpleCpuCorrectionPipeline{
     template<class T>
@@ -4332,13 +4336,15 @@ public:
 };
 
 
-
+template<class Minhasher>
 class SimpleGpuCorrectionPipeline{    
     /*
         SimpleGpuCorrectionPipeline uses
         thread which is responsible for everything.
         Threadpool may be used for internal parallelization.
     */
+
+    using AnchorHasher = GpuAnchorHasher<Minhasher, typename Minhasher::QueryHandle>;
 public:
     struct RunStatistics{
         double hasherTimeAverage{};
@@ -4353,7 +4359,7 @@ public:
 
     SimpleGpuCorrectionPipeline(
         const DistributedReadStorage& readStorage_,
-        const GpuMinhasher& minhasher_,
+        const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
         readStorage(&readStorage_),
@@ -4442,7 +4448,7 @@ public:
         //ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
-        GpuAnchorHasher gpuAnchorHasher(
+        AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
             sequenceFileProperties,
@@ -4451,7 +4457,6 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
-            *minhasher,
             correctionOptions,
             goodAlignmentProperties,
             sequenceFileProperties,
@@ -4605,12 +4610,14 @@ public:
 
 private:
     const DistributedReadStorage* readStorage;
-    const GpuMinhasher* minhasher;
+    const Minhasher* minhasher;
     ThreadPool* threadPool;
 };
 
 
+template<class Minhasher>
 class ComplexGpuCorrectionPipeline{
+    using AnchorHasher = GpuAnchorHasher<Minhasher, typename Minhasher::QueryHandle>;
 public:
     struct Config{
         int numHashers;
@@ -4620,7 +4627,7 @@ public:
 
     ComplexGpuCorrectionPipeline(
         const DistributedReadStorage& readStorage_,
-        const GpuMinhasher& minhasher_,
+        const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
         readStorage(&readStorage_),
@@ -4799,7 +4806,7 @@ public:
     ){
         cudaSetDevice(deviceId);
 
-        GpuAnchorHasher gpuAnchorHasher(
+        AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
             sequenceFileProperties,
@@ -4868,7 +4875,6 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
-            *minhasher,
             correctionOptions,
             goodAlignmentProperties,
             sequenceFileProperties,
@@ -4958,7 +4964,6 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
-            *minhasher,
             correctionOptions,
             goodAlignmentProperties,
             sequenceFileProperties,
@@ -5199,7 +5204,7 @@ public:
 
 private:
     const DistributedReadStorage* readStorage;
-    const GpuMinhasher* minhasher;
+    const Minhasher* minhasher;
     ThreadPool* threadPool;
 
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
@@ -5214,16 +5219,16 @@ private:
 };
 
 
-
+template<class Minhasher>
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu(
+correct_gpu_impl(
         const GoodAlignmentProperties& goodAlignmentProperties,
         const CorrectionOptions& correctionOptions,
         const RuntimeOptions& runtimeOptions,
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        GpuMinhasher& minhasher,
+        Minhasher& minhasher,
         DistributedReadStorage& readStorage){
 
     assert(runtimeOptions.canUseGpu);
@@ -5413,7 +5418,7 @@ correct_gpu(
         //execute a single thread pipeline with each available thread
 
         auto runPipeline = [&](int deviceId){    
-            SimpleGpuCorrectionPipeline pipeline(
+            SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
                 nullptr //&threadPool         
@@ -5552,10 +5557,10 @@ correct_gpu(
         //These estimates will be used to spawn an appropriate number of threads for each gpu (assuming all gpus are similar)
 
 
-        SimpleGpuCorrectionPipeline::RunStatistics runStatistics;
+        typename SimpleGpuCorrectionPipeline<Minhasher>::RunStatistics runStatistics;
 
         {
-            SimpleGpuCorrectionPipeline pipeline(
+            SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
                 nullptr //&threadPool         
@@ -5581,28 +5586,28 @@ correct_gpu(
         std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
         auto runSimpleCpuPipeline = [&](int deviceId){
-            cudaSetDevice(deviceId); CUERR;
+            // cudaSetDevice(deviceId); CUERR;
 
-            SimpleCpuCorrectionPipeline pipeline;
+            // SimpleCpuCorrectionPipeline pipeline;
 
-            std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-            std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
+            // std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
+            // std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
 
-            pipeline.runToCompletion(
-                readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
-                sequenceFileProperties,
-                correctionFlags,
-                readProvider.get(),
-                candidateIdsProvider.get(),
-                processResults,
-                batchCompleted
-            ); 
+            // pipeline.runToCompletion(
+            //     readIdGenerator,
+            //     correctionOptions,
+            //     goodAlignmentProperties,
+            //     sequenceFileProperties,
+            //     correctionFlags,
+            //     readProvider.get(),
+            //     candidateIdsProvider.get(),
+            //     processResults,
+            //     batchCompleted
+            // ); 
         };
 
         auto runSimpleGpuPipeline = [&](int deviceId){
-            SimpleGpuCorrectionPipeline pipeline(
+            SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
                 nullptr //&threadPool         
@@ -5620,9 +5625,9 @@ correct_gpu(
             );  
         };
 
-        auto runComplexGpuPipeline = [&](int deviceId, ComplexGpuCorrectionPipeline::Config config){
+        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config){
             
-            ComplexGpuCorrectionPipeline pipeline(readStorage, minhasher, nullptr); //&threadPool);
+            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr); //&threadPool);
 
             pipeline.run(
                 deviceId,
@@ -5702,7 +5707,7 @@ correct_gpu(
             for(int i = 0; i < firstSimpleDevice; i++){
                 const int deviceId = deviceIds[i];
 
-                ComplexGpuCorrectionPipeline::Config pipelineConfig;
+                typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
                 pipelineConfig.numHashers = numHashersPerCorrectorByTime + 2;
                 pipelineConfig.numCorrectors = 1 + 1;
                 pipelineConfig.numOutputConstructors = 0;
@@ -5814,6 +5819,58 @@ auto runPipeline = [&](int deviceId){
         << partialResults.getNumElementsInFile() << "\n";
 
     return partialResults;
+}
+
+
+
+
+
+
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        GpuMinhasher& minhasher,
+        DistributedReadStorage& readStorage){
+
+    return correct_gpu_impl(
+        goodAlignmentProperties,
+        correctionOptions,
+        runtimeOptions,
+        fileOptions,
+        memoryOptions,
+        sequenceFileProperties,
+        minhasher,
+        readStorage
+    );
+}
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        SingleGpuMinhasher& minhasher,
+        DistributedReadStorage& readStorage){
+
+    return correct_gpu_impl(
+        goodAlignmentProperties,
+        correctionOptions,
+        runtimeOptions,
+        fileOptions,
+        memoryOptions,
+        sequenceFileProperties,
+        minhasher,
+        readStorage
+    );
 }
 
 }
