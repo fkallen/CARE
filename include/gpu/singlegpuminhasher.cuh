@@ -34,147 +34,6 @@
 namespace care{
 namespace gpu{
 
-    // namespace sgpuminhasherkernels{
-
-    //     template<class T>
-    //     struct IsValidKey{
-    //         __host__ __device__
-    //         bool operator()(T key) const{
-    //             return GpuHashtable<T, int>::isValidKey(key);
-    //         }
-    //     };
-
-    //     __global__
-    //     void minhashSignaturesKernelABCDEF(
-    //         std::uint64_t* __restrict__ signatures,
-    //         std::size_t signaturesRowPitchElements,
-    //         const unsigned int* __restrict__ sequences2Bit,
-    //         std::size_t sequenceRowPitchElements,
-    //         int numSequences,
-    //         const int* __restrict__ sequenceLengths,
-    //         int k,
-    //         int numHashFuncs,
-    //         int firstHashFunc
-    //     ){
-                    
-    //         //constexpr int blocksize = 128;
-    //         constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
-
-    //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-    //         if(tid < numSequences * numHashFuncs){
-    //             const int mySequenceIndex = tid / numHashFuncs;
-    //             const int myNumHashFunc = tid % numHashFuncs;
-    //             const int hashFuncId = myNumHashFunc + firstHashFunc;
-
-    //             const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
-    //             const int myLength = sequenceLengths[mySequenceIndex];
-
-    //             std::uint64_t* const mySignature = signatures + mySequenceIndex * signaturesRowPitchElements;
-
-    //             std::uint64_t minHashValue = std::numeric_limits<std::uint64_t>::max();
-
-    //             auto handlekmer = [&](auto fwd, auto rc){
-    //                 using hasher = hashers::MurmurHash<std::uint64_t>;
-
-    //                 const auto smallest = min(fwd, rc);
-    //                 const auto hashvalue = hasher::hash(smallest + hashFuncId);
-    //                 minHashValue = min(minHashValue, hashvalue);
-    //             };
-
-    //             if(myLength >= k){
-    //                 //const int numKmers = myLength - k + 1;
-    //                 const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
-    //                 const int rcshiftamount = (maximum_kmer_length - k) * 2;
-
-    //                 //Compute the first kmer
-    //                 std::uint64_t kmer_encoded = mySequence[0];
-    //                 if(k <= 16){
-    //                     kmer_encoded >>= (16 - k) * 2;
-    //                 }else{
-    //                     kmer_encoded = (kmer_encoded << 32) | mySequence[1];
-    //                     kmer_encoded >>= (32 - k) * 2;
-    //                 }
-
-    //                 kmer_encoded >>= 2; //k-1 bases, allows easier loop
-
-    //                 std::uint64_t rc_kmer_encoded = SequenceHelpers::reverseComplementInt2Bit(kmer_encoded);
-
-    //                 auto addBase = [&](std::uint64_t encBase){
-    //                     kmer_encoded <<= 2;
-    //                     rc_kmer_encoded >>= 2;
-
-    //                     const std::uint64_t revcBase = (~encBase) & 3;
-    //                     kmer_encoded |= encBase;
-    //                     rc_kmer_encoded |= revcBase << 62;
-    //                 };
-
-    //                 constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
-
-    //                 const int itersend1 = min(SDIV(k-1, basesPerInt) * basesPerInt, myLength);
-
-    //                 //process sequence positions one by one
-    //                 // until the next encoded sequence data element is reached
-    //                 for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
-    //                     const int nextIntIndex = nextSequencePos / basesPerInt;
-    //                     const int nextPositionInInt = nextSequencePos % basesPerInt;
-
-    //                     const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
-
-    //                     addBase(nextBase);
-
-    //                     handlekmer(
-    //                         kmer_encoded & kmer_mask, 
-    //                         rc_kmer_encoded >> rcshiftamount
-    //                     );
-    //                 }
-
-    //                 const int fullIntIters = (myLength - itersend1) / basesPerInt;
-
-    //                 //process all fully occupied encoded sequence data elements
-    //                 // improves memory access
-    //                 for(int iter = 0; iter < fullIntIters; iter++){
-    //                     const int intIndex = (itersend1 + iter * basesPerInt) / basesPerInt;
-    //                     const unsigned int data = mySequence[intIndex];
-
-    //                     #pragma unroll
-    //                     for(int posInInt = 0; posInInt < basesPerInt; posInInt++){
-    //                         const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
-
-    //                         addBase(nextBase);
-
-    //                         handlekmer(
-    //                             kmer_encoded & kmer_mask, 
-    //                             rc_kmer_encoded >> rcshiftamount
-    //                         );
-    //                     }
-    //                 }
-
-    //                 //process remaining positions one by one
-    //                 for(int nextSequencePos = fullIntIters * basesPerInt + itersend1; nextSequencePos < myLength; nextSequencePos++){
-    //                     const int nextIntIndex = nextSequencePos / basesPerInt;
-    //                     const int nextPositionInInt = nextSequencePos % basesPerInt;
-
-    //                     const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
-
-    //                     addBase(nextBase);
-
-    //                     handlekmer(
-    //                         kmer_encoded & kmer_mask, 
-    //                         rc_kmer_encoded >> rcshiftamount
-    //                     );
-    //                 }
-
-    //                 mySignature[myNumHashFunc] = minHashValue & kmer_mask;
-
-    //             }else{
-    //                 mySignature[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
-    //             }
-    //         }
-    //     }        
-    
-    // }
-
 
     class SingleGpuMinhasher{
     public:
@@ -316,7 +175,7 @@ namespace gpu{
                     resultsPerMapThreshold);
 
                 auto status = ptr->pop_status((cudaStream_t)0);
-                cudaDeviceSynchronize();
+                cudaDeviceSynchronize(); CUERR;
                 if(status.has_any_errors()){
                     std::cerr << "observed error when initialiting hash function " << (gpuHashTables.size() + 1) << " : " << i << ", " << status << "\n";
                     break;
@@ -617,6 +476,23 @@ namespace gpu{
                 }
             );
 
+            //debug
+            // cudaStreamSynchronize(stream); CUERR;
+
+            // std::cerr << "new\n";
+            // for(int i = 0; i < numHashfunctions; i++){
+            //     std::cerr << d_numValuesPerSequencePerHash[i] << " ";
+            // }
+            // std::cerr << "\n";
+            // for(int i = 0; i < numHashfunctions; i++){
+            //     std::cerr << d_numValuesPerSequencePerHashExclPSVert[i] << " ";
+            // }
+            // std::cerr << "\n";
+            // for(int i = 0; i < numSequences; i++){
+            //     std::cerr << d_numValuesPerSequence[i] << " ";
+            // }
+            // std::cerr << "\n";
+
             //calculate global offsets for each sequence in output array
             cudaMemsetAsync(d_offsets, 0, sizeof(int), stream); CUERR;
 
@@ -663,6 +539,11 @@ namespace gpu{
             cudaStreamSynchronize(stream); CUERR;
 
             const int totalNumValues = h_offsets[numSequences];
+            //std::cerr << "totalNumValues " << totalNumValues << "\n";
+
+            if(totalNumValues == 0){
+                return;
+            }
 
             handle.d_values_tmp.resize(totalNumValues);
             handle.d_end_offsets.resize(numSequences);
@@ -714,12 +595,31 @@ namespace gpu{
                 stream
             );
 
+            //debug
+            // cudaStreamSynchronize(stream); CUERR;
+
+            // std::cerr << "new\n";
+            // for(int i = 0; i < numHashfunctions; i++){
+            //     std::cerr << d_numValuesPerSequencePerHash[i] << " ";
+            // }
+            // std::cerr << "\n";
+            // for(int i = 0; i < numHashfunctions; i++){
+            //     std::cerr << d_numValuesPerSequencePerHashExclPSVert[i] << " ";
+            // }
+            // std::cerr << "\n";
+            // for(int i = 0; i < numSequences; i++){
+            //     std::cerr << d_numValuesPerSequence[i] << " ";
+            // }
+            // std::cerr << "\n";
+
             if(d_readIds != nullptr){
 
                 // State: d_values contains unique values per sequence from all tables. num unique values per sequence are computed in d_numValuesPerSequence
                 // Segment of values for sequence i begins at d_offsets[i]
                 // Remove d_readIds[i] from segment i, if present. Operation is performed inplace
 
+                //std::cerr << "lambda kernel " << numSequences << " 128" << "\n";
+                //cudaDeviceSynchronize(); CUERR;
                 helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                     [
                         d_readIds,
@@ -733,6 +633,7 @@ namespace gpu{
                         constexpr int itemsPerIteration = ITEMS_PER_THREAD * BLOCKSIZE;
 
                         assert(BLOCKSIZE == blockDim.x);
+                        //assert(false);
 
                         using BlockLoad = cub::BlockLoad<read_number, BLOCKSIZE, ITEMS_PER_THREAD, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
                         using MyBlockSelect = BlockSelect<read_number, BLOCKSIZE>;
@@ -741,6 +642,9 @@ namespace gpu{
                             typename BlockLoad::TempStorage load;
                             typename MyBlockSelect::TempStorage select;
                         } temp_storage;
+
+                        // printf("tid %d bid %d, numSequences %d\n", threadIdx.x, blockIdx.x, numSequences);
+                        
 
                         for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
                             const int segmentsize = d_numValuesPerSequence[s];
@@ -751,6 +655,10 @@ namespace gpu{
                             read_number items[ITEMS_PER_THREAD];
                             int flags[ITEMS_PER_THREAD];
 
+                            // if(threadIdx.x == 0){
+                            //     printf("numIterations %d\n", numIterations);
+                            // }
+
                             int numSelectedTotal = 0;
                             int remainingItems = segmentsize;
                             const read_number* inputdata = d_values + beginOffset;
@@ -759,7 +667,9 @@ namespace gpu{
                             for(int iter = 0; iter < numIterations; iter++){
                                 const int validItems = min(remainingItems, itemsPerIteration);
                                 BlockLoad(temp_storage.load).Load(inputdata, items, validItems);
-
+// if(threadIdx.x == 0){
+//     printf("segmentsize %d iteration %d remainingItems %d validItems %d\n", segmentsize, iter, remainingItems, validItems);
+// }
                                 #pragma unroll
                                 for(int i = 0; i < ITEMS_PER_THREAD; i++){
                                     if(threadIdx.x * ITEMS_PER_THREAD + i < validItems && items[i] != idToRemove){
@@ -776,30 +686,39 @@ namespace gpu{
                                         outputdata[pos] = item;
                                     }
                                 );
+                                assert(numSelected <= validItems);
 
                                 numSelectedTotal += numSelected;
                                 outputdata += numSelected;
                                 inputdata += validItems;
+                                remainingItems -= validItems;
 
                                 __syncthreads();
                             }
+
+                            assert(segmentsize >= numSelectedTotal);
 
                             //update segment size
                             if(numSelectedTotal != segmentsize){
                                 if(threadIdx.x == 0){
                                     d_numValuesPerSequence[s] = numSelectedTotal;
+                                    //printf("numSelectedTotal %d\n", numSelectedTotal);
                                 }
                             }
                         }
                     }
-                );
+                ); CUERR
 
                 //copy values to compact array
 
-                //repurpose
-                int* d_newOffsets = d_numValuesPerSequencePerHash;
+                //debug
+                // cudaStreamSynchronize(stream); CUERR;
+                // std::cerr << "copy to compact\n";
 
-                cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream);
+                //repurpose
+                int* d_newOffsets = handle.d_cubsum.data();
+
+                cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
 
                 cub::DeviceScan::InclusiveSum(
                     d_cubTemp,
@@ -831,6 +750,9 @@ namespace gpu{
                         }
                     }
                 ); CUERR;
+
+                //debug
+                //cudaStreamSynchronize(stream); CUERR;
 
                 cudaMemcpyAsync(d_offsets, d_newOffsets, sizeof(int) * (numSequences+1), D2D, stream); CUERR;
 
