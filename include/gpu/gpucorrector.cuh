@@ -5,8 +5,13 @@
 #include <hpc_helpers.cuh>
 #include <hpc_helpers/include/nvtx_markers.cuh>
 
+#include <gpu/cuda_block_select.cuh>
+
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
+#if 0
+#include <gpu/singlegpuminhasher.cuh>
+#endif
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
@@ -183,51 +188,64 @@ namespace gpucorrectorkernels{
         int* __restrict__ selectedIndices,
         int* __restrict__ numSelectedIndices,
         const Flags flags,
-        const int* __restrict__ numFlags
+        const int* __restrict__ numFlagsPtr
     ){
         constexpr int ITEMS_PER_THREAD = 4;
+        constexpr int itemsPerIteration = blocksize * ITEMS_PER_THREAD;
 
-        using BlockScan = cub::BlockScan<int, blocksize>;
+        using MyBlockSelect = BlockSelect<int, blocksize>;
 
-        __shared__ typename BlockScan::TempStorage temp_storage;
+        __shared__ typename MyBlockSelect::TempStorage temp_storage;
 
         int aggregate = 0;
-        const int iters = SDIV(*numFlags, blocksize * ITEMS_PER_THREAD);
+        const int numFlags = *numFlagsPtr;
+        const int iters = SDIV(numFlags, blocksize * ITEMS_PER_THREAD);
         const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
 
+        int remainingItems = numFlags;
+
         for(int iter = 0; iter < iters; iter++){
+            const int validItems = min(remainingItems, itemsPerIteration);
 
             int data[ITEMS_PER_THREAD];
-            int prefixsum[ITEMS_PER_THREAD];
 
-            const int iteroffset = blocksize * ITEMS_PER_THREAD * iter;
+            const int iteroffset = itemsPerIteration * iter;
 
             #pragma unroll
             for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                if(iteroffset + threadoffset + k < *numFlags){
-                    data[k] = flags[iteroffset + threadoffset + k];
+                if(iteroffset + threadoffset + k < numFlags){
+                    data[k] = int(flags[iteroffset + threadoffset + k]);
                 }else{
                     data[k] = 0;
                 }
             }
 
-            int block_aggregate = 0;
-            BlockScan(temp_storage).ExclusiveSum(data, prefixsum, block_aggregate);
-
             #pragma unroll
             for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                if(data[k] == 1){
-                    selectedIndices[prefixsum[k]] = iteroffset + threadoffset + k;
+                if(iteroffset + threadoffset + k < numFlags){
+                    data[k] = data[k] != 0 ? 1 : 0;
                 }
             }
 
-            aggregate += block_aggregate;
+            const int numSelected = MyBlockSelect(temp_storage).ForEachFlaggedPosition(data, validItems,
+                [&](const auto& flaggedPosition, const int& outputpos){
+                    selectedIndices[aggregate + outputpos] = iteroffset + flaggedPosition;
+                }
+            );
+
+            aggregate += numSelected;
+            remainingItems -= validItems;
 
             __syncthreads();
         }
 
         if(threadIdx.x == 0){
             *numSelectedIndices = aggregate;
+
+            // for(int i = 0; i < aggregate; i++){
+            //     printf("%d ", selectedIndices[i]);
+            // }
+            // printf("\n");
         }
 
     }
@@ -502,7 +520,8 @@ namespace gpucorrectorkernels{
         DeviceBuffer<int> d_anchor_sequences_lengths;
         DeviceBuffer<read_number> d_candidate_read_ids;
         DeviceBuffer<int> d_candidates_per_anchor;
-        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;    
+        DeviceBuffer<int> d_candidates_per_anchor_prefixsum;  
+        DeviceBuffer<int> d_candidatesBeginOffsets;
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
@@ -591,6 +610,30 @@ namespace gpucorrectorkernels{
         }  
     };
 
+    template<class Handle>
+    class HandleWrapper{};
+
+    template<>
+    class HandleWrapper<GpuMinhasher::QueryHandle>{
+        using Handle = GpuMinhasher::QueryHandle;
+    public:
+        static MemoryUsage getMemoryInfo(const Handle& handle){
+            return handle.getMemoryInfo();
+        }
+    };
+
+#if 0    
+    template<>
+    class HandleWrapper<SingleGpuMinhasher::QueryHandle>{
+        using Handle = SingleGpuMinhasher::QueryHandle;
+    public:
+        static MemoryUsage getMemoryInfo(const Handle& handle){
+            return handle->getMemoryInfo();
+        }
+    };
+#endif
+
+    template<class Minhasher, class QueryHandle>
     class GpuAnchorHasher{
     public:
 
@@ -598,7 +641,7 @@ namespace gpucorrectorkernels{
 
         GpuAnchorHasher(
             const DistributedReadStorage& gpuReadStorage_,
-            const GpuMinhasher& gpuMinhasher_,
+            const Minhasher& gpuMinhasher_,
             const SequenceFileProperties& sequenceFileProperties_,
             ThreadPool* threadPool_
         ) : 
@@ -609,7 +652,7 @@ namespace gpucorrectorkernels{
         {
             cudaGetDevice(&deviceId); CUERR;
 
-            minhashHandle = GpuMinhasher::makeQueryHandle();
+            minhashHandle = Minhasher::makeQueryHandle();
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
             backgroundStream = CudaStream{};
@@ -670,7 +713,11 @@ namespace gpucorrectorkernels{
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
+#if 0            
             info += minhashHandle.getMemoryInfo();
+#else            
+            info += HandleWrapper<QueryHandle>::getMemoryInfo(minhashHandle);
+#endif            
             info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(anchorSequenceGatherHandle);
             return info;
         } 
@@ -693,6 +740,7 @@ namespace gpucorrectorkernels{
             ecinput.d_anchor_sequences_lengths.resize(numAnchors);
             ecinput.d_candidates_per_anchor.resize(numAnchors);
             ecinput.d_candidates_per_anchor_prefixsum.resize(numAnchors + 1);
+            ecinput.d_candidatesBeginOffsets.resize(numAnchors);
         }
         
         void getAnchorReads(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
@@ -848,12 +896,12 @@ namespace gpucorrectorkernels{
         CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
         const DistributedReadStorage* gpuReadStorage;
-        const GpuMinhasher* gpuMinhasher;
+        const Minhasher* gpuMinhasher;
         const SequenceFileProperties* sequenceFileProperties;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
-        GpuMinhasher::QueryHandle minhashHandle;
+        typename Minhasher::QueryHandle minhashHandle;
     };
 
 
@@ -1079,7 +1127,7 @@ namespace gpucorrectorkernels{
 
     class GpuErrorCorrector{
         static constexpr bool useGraph() noexcept{
-            return true;
+            return false;
         }
 
     public:
@@ -1104,7 +1152,6 @@ namespace gpucorrectorkernels{
 
         GpuErrorCorrector(
             const DistributedReadStorage& gpuReadStorage_,
-            const GpuMinhasher& gpuMinhasher_,
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
             const SequenceFileProperties& sequenceFileProperties_,
@@ -1114,15 +1161,12 @@ namespace gpucorrectorkernels{
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
             gpuReadStorage{&gpuReadStorage_},
-            gpuMinhasher{&gpuMinhasher_},
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
             sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_}
         {
             cudaGetDevice(&deviceId); CUERR;
-
-            GpuMinhasher::QueryHandle minhashHandle = GpuMinhasher::makeQueryHandle();
 
             kernelLaunchHandle = make_kernel_launch_handle(deviceId);
 
@@ -1321,6 +1365,7 @@ namespace gpucorrectorkernels{
             handleDevice(d_candidate_read_ids);
             handleDevice(d_candidates_per_anchor);
             handleDevice(d_candidates_per_anchor_prefixsum);
+            handleDevice(d_candidatesBeginOffsets);
 
             return info;
         } 
@@ -1370,6 +1415,7 @@ namespace gpucorrectorkernels{
             zero(d_anchor_sequences_lengths);
             zero(d_candidates_per_anchor);
             zero(d_candidates_per_anchor_prefixsum);
+            zero(d_candidatesBeginOffsets);
             zero(d_anchorIndicesOfCandidates);
             zero(d_candidateContainsN);
             zero(d_candidate_read_ids);
@@ -1439,6 +1485,7 @@ namespace gpucorrectorkernels{
             d_anchor_sequences_lengths.resize(maxAnchors);
             d_candidates_per_anchor.resize(maxAnchors);
             d_candidates_per_anchor_prefixsum.resize(maxAnchors + 1);
+            d_candidatesBeginOffsets.resize(maxAnchors);
         }
  
         void resizeBuffers(int numReads, int numCandidates){  
@@ -2312,7 +2359,6 @@ namespace gpucorrectorkernels{
         int currentNumCandidates;
 
         const DistributedReadStorage* gpuReadStorage;
-        const GpuMinhasher* gpuMinhasher;
 
         const CorrectionOptions* correctionOptions;
         const GoodAlignmentProperties* goodAlignmentProperties;
@@ -2388,6 +2434,7 @@ namespace gpucorrectorkernels{
         DeviceBuffer<read_number> d_candidate_read_ids;
         DeviceBuffer<int> d_candidates_per_anchor;
         DeviceBuffer<int> d_candidates_per_anchor_prefixsum; 
+        DeviceBuffer<int> d_candidatesBeginOffsets;
 
 
         

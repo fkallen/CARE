@@ -3,10 +3,11 @@
 
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
-
+#if 0
+#include <gpu/singlegpuminhasher.cuh>
+#endif
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
-#include <minhasher.hpp>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -19,7 +20,7 @@
 namespace care {
 namespace gpu {
 
-
+#if 0
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
 	const GoodAlignmentProperties& goodAlignmentProperties,
@@ -28,9 +29,10 @@ correct_gpu(
 	const FileOptions& fileOptions,
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
-	Minhasher& minhasher,
+	SingleGpuMinhasher& minhasher,
 	DistributedReadStorage& readStorage
 );
+#endif
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
