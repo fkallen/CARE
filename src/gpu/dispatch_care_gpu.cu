@@ -108,6 +108,12 @@ namespace care{
             return;
         }
 
+        if(correctionOptions.batchsize > 1024){
+            correctionOptions.batchsize = 1024;
+            //development - selectIndicesOfFlagsOnlyOneBlock
+            std::cerr << "Adjusted batchsize to 1024 to prevent a bug which is not fixed yet.\n";
+        }
+
         std::uint64_t maximumNumberOfReads = fileOptions.nReads;
         int maximumSequenceLength = fileOptions.maximum_sequence_length;
         int minimumSequenceLength = fileOptions.minimum_sequence_length;
