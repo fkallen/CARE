@@ -259,7 +259,7 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-#define WARPMIN
+//#define WARPMIN
 
 #ifndef WARPMIN
         gpu::GpuMinhasher currentGpuMinhasher(
@@ -335,9 +335,9 @@ namespace care{
         {
             CudaStream stream;
             const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(totalInputFileProperties.maxSequenceLength);
-            int batchsize = 2000;
+            int batchsize = 1500;
 
-            const int batches = totalInputFileProperties.nReads / batchsize;
+            const int batches = SDIV(totalInputFileProperties.nReads, batchsize);
 
             gpu::GpuMinhasher::QueryHandle queryHandle1 = gpu::GpuMinhasher::makeQueryHandle();
             gpu::SingleGpuMinhasher::QueryHandle queryHandle2 = gpu::SingleGpuMinhasher::makeQueryHandle();
@@ -370,8 +370,12 @@ namespace care{
             std::cerr << "Checking hashes\n";
             for(int batch = 0; batch < batches; batch++){
 
-                for(int i = 0; i < batchsize; i++){
-                    h_readIds[i] = batch * batchsize + i;
+                const int bbegin = batch * batchsize;
+                const int bend = std::min(int(totalInputFileProperties.nReads), (batch+1) * batchsize);
+                const int bsize = bend - bbegin;
+
+                for(int i = 0; i < bsize; i++){
+                    h_readIds[i] = bbegin + i;
                 }
 
                 cudaMemcpyAsync(d_readIds, h_readIds, h_readIds.sizeInBytes(), H2D, stream); CUERR;
@@ -383,7 +387,7 @@ namespace care{
                     encodedSequencePitchInInts,
                     h_readIds,
                     d_readIds,
-                    batchsize,
+                    bsize,
                     0,
                     stream
                 );
@@ -392,7 +396,7 @@ namespace care{
                     d_sequenceLengths,
                     0,
                     d_readIds,
-                    batchsize,
+                    bsize,
                     stream
                 );               
 
@@ -408,7 +412,7 @@ namespace care{
                     d_encodedSequences,
                     encodedSequencePitchInInts,
                     d_sequenceLengths,
-                    batchsize,
+                    bsize,
                     0, 
                     stream,
                     forLoopExecutor,
@@ -434,7 +438,7 @@ namespace care{
                     d_similarReadsPerSequence2,
                     d_similarReadsPerSequencePrefixSum2,
                     d_encodedSequences,
-                    batchsize,
+                    bsize,
                     d_sequenceLengths,
                     encodedSequencePitchInInts,
                     d_readIds,
@@ -448,7 +452,7 @@ namespace care{
                     d_encodedSequences,
                     encodedSequencePitchInInts,
                     d_sequenceLengths,
-                    batchsize,
+                    bsize,
                     0, 
                     stream,
                     forLoopExecutor,
@@ -474,8 +478,8 @@ namespace care{
 
                 cudaDeviceSynchronize(); CUERR;
 
-                for(int i = 0; i < batchsize; i++){
-                //for(int i = 0; i < std::min(10, batchsize); i++){
+                for(int i = 0; i < bsize; i++){
+                //for(int i = 0; i < std::min(10, bsize); i++){
                     // std::cerr << h_similarReadsPerSequence[i] << " , " << h_similarReadsPerSequence2[i] << "\n";
                     // for(int p = 0; p < h_similarReadsPerSequence[i]; p++){
                     //     std::cerr << h_similarReadIds[h_similarReadsPerSequencePrefixSum[i] + p] << ", ";
