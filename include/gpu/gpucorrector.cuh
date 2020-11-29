@@ -5,6 +5,8 @@
 #include <hpc_helpers.cuh>
 #include <hpc_helpers/include/nvtx_markers.cuh>
 
+#include <gpu/cuda_block_select.cuh>
+
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
@@ -184,51 +186,64 @@ namespace gpucorrectorkernels{
         int* __restrict__ selectedIndices,
         int* __restrict__ numSelectedIndices,
         const Flags flags,
-        const int* __restrict__ numFlags
+        const int* __restrict__ numFlagsPtr
     ){
         constexpr int ITEMS_PER_THREAD = 4;
+        constexpr int itemsPerIteration = blocksize * ITEMS_PER_THREAD;
 
-        using BlockScan = cub::BlockScan<int, blocksize>;
+        using MyBlockSelect = BlockSelect<int, blocksize>;
 
-        __shared__ typename BlockScan::TempStorage temp_storage;
+        __shared__ typename MyBlockSelect::TempStorage temp_storage;
 
         int aggregate = 0;
-        const int iters = SDIV(*numFlags, blocksize * ITEMS_PER_THREAD);
+        const int numFlags = *numFlagsPtr;
+        const int iters = SDIV(numFlags, blocksize * ITEMS_PER_THREAD);
         const int threadoffset = ITEMS_PER_THREAD * threadIdx.x;
 
+        int remainingItems = numFlags;
+
         for(int iter = 0; iter < iters; iter++){
+            const int validItems = min(remainingItems, itemsPerIteration);
 
             int data[ITEMS_PER_THREAD];
-            int prefixsum[ITEMS_PER_THREAD];
 
-            const int iteroffset = blocksize * ITEMS_PER_THREAD * iter;
+            const int iteroffset = itemsPerIteration * iter;
 
             #pragma unroll
             for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                if(iteroffset + threadoffset + k < *numFlags){
-                    data[k] = flags[iteroffset + threadoffset + k];
+                if(iteroffset + threadoffset + k < numFlags){
+                    data[k] = int(flags[iteroffset + threadoffset + k]);
                 }else{
                     data[k] = 0;
                 }
             }
 
-            int block_aggregate = 0;
-            BlockScan(temp_storage).ExclusiveSum(data, prefixsum, block_aggregate);
-
             #pragma unroll
             for(int k = 0; k < ITEMS_PER_THREAD; k++){
-                if(data[k] == 1){
-                    selectedIndices[prefixsum[k]] = iteroffset + threadoffset + k;
+                if(iteroffset + threadoffset + k < numFlags){
+                    data[k] = data[k] != 0 ? 1 : 0;
                 }
             }
 
-            aggregate += block_aggregate;
+            const int numSelected = MyBlockSelect(temp_storage).ForEachFlaggedPosition(data, validItems,
+                [&](const auto& flaggedPosition, const int& outputpos){
+                    selectedIndices[aggregate + outputpos] = iteroffset + flaggedPosition;
+                }
+            );
+
+            aggregate += numSelected;
+            remainingItems -= validItems;
 
             __syncthreads();
         }
 
         if(threadIdx.x == 0){
             *numSelectedIndices = aggregate;
+
+            // for(int i = 0; i < aggregate; i++){
+            //     printf("%d ", selectedIndices[i]);
+            // }
+            // printf("\n");
         }
 
     }

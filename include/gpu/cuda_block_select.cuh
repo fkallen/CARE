@@ -61,6 +61,25 @@ public:
         return numSelected;
     }
 
+    //blocked arrangement of inputs
+    template<int ITEMS_PER_THREAD, class Flag, class Op>
+    __device__
+    int ForEachFlaggedPosition(Flag (&flags)[ITEMS_PER_THREAD], int num_valid, Op op){
+        int prefixsum[ITEMS_PER_THREAD];
+        int numSelected = 0;
+
+        BlockScan(temp_storage->storage.scan).ExclusiveSum(flags, prefixsum, numSelected);
+
+        #pragma unroll
+        for(int i = 0; i < ITEMS_PER_THREAD; i++){
+            if(threadIdx.x * ITEMS_PER_THREAD + i < num_valid && flags[i] > 0){
+                op(threadIdx.x * ITEMS_PER_THREAD + i, prefixsum[i]);
+            }
+        }
+
+        return numSelected;
+    }
+
     // //blocked arrangement of inputs
     // template<int ITEMS_PER_THREAD, class Flag>
     // int Flagged(T (&inputs)[ITEMS_PER_THREAD] /*inout*/, Flag (&flags)[ITEMS_PER_THREAD], int num_valid){
