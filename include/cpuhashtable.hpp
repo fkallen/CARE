@@ -1,5 +1,5 @@
-#ifndef CARE_CPUHASHTABLE_CUH
-#define CARE_CPUHASHTABLE_CUH 
+#ifndef CARE_CPUHASHTABLE_HPP
+#define CARE_CPUHASHTABLE_HPP 
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
@@ -224,7 +224,8 @@ namespace cpuhashtabledetail{
         template<class Key_t, class Value_t, class Index_t>
         std::uint64_t transformCPUCompactKeys(std::vector<Key_t>& keys,
                                             std::vector<Value_t>& values,
-                                            std::vector<Index_t>& countsPrefixSum){
+                                            std::vector<Index_t>& countsPrefixSum,
+                                            bool valuesOfSameKeyMustBeSorted = true){
 
             auto deallocVector = [](auto& vec){
                 using T = typename std::remove_reference<decltype(vec)>::type;
@@ -247,16 +248,29 @@ namespace cpuhashtabledetail{
             //TIMERSTOPCPU(iota);
 
             //TIMERSTARTCPU(sortindices);
+            if(valuesOfSameKeyMustBeSorted){
             //sort indices by key. if keys are equal, sort by value
-            thrust::sort(policy,
-                        indices_begin,
-                        indices_end,
-                        [&] (const auto &lhs, const auto &rhs) {
-                            if(keys[lhs] == keys[rhs]){
-                                return values[lhs] < values[rhs];
-                            }
-                            return keys[lhs] < keys[rhs];
-                        });
+                thrust::sort(
+                    policy,
+                    indices_begin,
+                    indices_end,
+                    [&] (const auto &lhs, const auto &rhs) {
+                        if(keys[lhs] == keys[rhs]){
+                            return values[lhs] < values[rhs];
+                        }
+                        return keys[lhs] < keys[rhs];
+                    }
+                );
+            }else{
+                thrust::sort(
+                    policy,
+                    indices_begin,
+                    indices_end,
+                    [&] (const auto &lhs, const auto &rhs) {
+                        return keys[lhs] < keys[rhs];
+                    }
+                );
+            }
             //TIMERSTOPCPU(sortindices);
 
 
@@ -456,12 +470,14 @@ namespace cpuhashtabledetail{
         TransformResult cpu_transformation(std::vector<Key_t>& keys,
                                 std::vector<Value_t>& values,
                                 std::vector<Index_t>& countsPrefixSum,
-                                int maxValuesPerKey){
+                                int maxValuesPerKey,
+                                bool valuesOfSameKeyMustBeSorted = true){
 
             std::uint64_t uniqueKeys = transformCPUCompactKeys(
                 keys, 
                 values, 
-                countsPrefixSum
+                countsPrefixSum,
+                valuesOfSameKeyMustBeSorted
             );
 
             TransformRemoveKeysResult removeKeysResult = transformCPURemoveKeysWithToManyValues(
@@ -491,13 +507,14 @@ namespace cpuhashtabledetail{
             static std::size_t estimateRequiredGpuMem(
                                 std::vector<Key_t>& keys, 
                                 std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum){
+                                std::vector<Index_t>& countsPrefixSum,
+                                bool valuesOfSameKeyMustBeSorted = true){
                 
-                return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size());
+                return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size()), valuesOfSameKeyMustBeSorted;
             }
 
             template<class Key_t, class Value_t, class Index_t>
-            static std::size_t estimateRequiredGpuMem(Index_t numEntries){
+            static std::size_t estimateRequiredGpuMem(Index_t numEntries, bool valuesOfSameKeyMustBeSorted = true){
 
                 std::size_t mem = 0;
                 mem += sizeof(Key_t) * numEntries; //d_keys
@@ -512,7 +529,8 @@ namespace cpuhashtabledetail{
             static std::uint64_t execute(std::vector<Key_t>& keys, 
                                 std::vector<Value_t>& values, 
                                 std::vector<Index_t>& countsPrefixSum,
-                                const std::vector<int>& /*deviceIds*/){
+                                const std::vector<int>& /*deviceIds*/,
+                                bool valuesOfSameKeyMustBeSorted = true){
 
                 auto deallocVector = [](auto& vec){
                     using T = typename std::remove_reference<decltype(vec)>::type;
@@ -525,27 +543,60 @@ namespace cpuhashtabledetail{
                 ThrustAlloc<char> allocator;
                 auto allocatorPolicy = thrust::cuda::par(allocator);
 
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);
-                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(size);
+                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);                
                 thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_indices(size);
 
-                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-                thrust::copy(values.begin(), values.end(), d_values.begin());
+                thrust::copy(keys.begin(), keys.end(), d_keys.begin());                
                 thrust::sequence(allocatorPolicy, d_indices.begin(), d_indices.end(), Index_t(0));
 
-                thrust::device_ptr<Key_t> d_keys_ptr = d_keys.data();
-                thrust::device_ptr<Value_t> d_values_ptr = d_values.data();
+                thrust::device_ptr<Key_t> d_keys_ptr = d_keys.data();                
+
+                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values;
+
+                //std::cerr << "before sort\n";
+
+
 
                 //sort indices
-                thrust::sort(allocatorPolicy,
-                            d_indices.begin(),
-                            d_indices.end(),
-                            [=] __device__ (const auto &lhs, const auto &rhs) {
-                                if(d_keys_ptr[lhs] == d_keys_ptr[rhs]){
-                                    return d_values_ptr[lhs] < d_values_ptr[rhs];
-                                }
-                                return d_keys_ptr[lhs] < d_keys_ptr[rhs];
-                            });
+                if(valuesOfSameKeyMustBeSorted){
+                    d_values.resize(size);
+                    thrust::copy(values.begin(), values.end(), d_values.begin());
+                    thrust::device_ptr<Value_t> d_values_ptr = d_values.data();
+
+                    thrust::sort(
+                        allocatorPolicy,
+                        d_indices.begin(),
+                        d_indices.end(),
+                        [=] __device__ (const auto& lhs, const auto& rhs) {
+                            if(d_keys_ptr[lhs] == d_keys_ptr[rhs]){
+                                return d_values_ptr[lhs] < d_values_ptr[rhs];
+                            }
+                            return d_keys_ptr[lhs] < d_keys_ptr[rhs];
+                        }
+                    );
+                }else{
+                    thrust::sort(allocatorPolicy,
+                        d_indices.begin(),
+                        d_indices.end(),
+                        [=] __device__ (const auto& lhs, const auto& rhs) {
+                            return d_keys_ptr[lhs] < d_keys_ptr[rhs];
+                        }
+                    );
+
+                    d_values.resize(size);
+                    thrust::copy(values.begin(), values.end(), d_values.begin());
+                }
+                
+                deallocVector(d_keys);
+
+                //std::cerr << "after sort\n";
+
+                // std::cerr << "before sort by key\n";
+
+                // //sort indices
+                // thrust::sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
+
+                // std::cerr << "after sort by key\n";
 
                 //sort values by order defined by indices and copy sorted values to host.
                 thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(size);
@@ -560,6 +611,9 @@ namespace cpuhashtabledetail{
 
                 deallocVector(d_values_tmp);
                 deallocVector(d_values);
+
+                d_keys.resize(size);
+                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
 
                 //sort keys by order defined by indices
                 thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(size);
@@ -585,8 +639,7 @@ namespace cpuhashtabledetail{
 
                 //histogram storage
                 thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_histogram_keys(nUniqueKeys);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts(nUniqueKeys);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts_prefixsum(nUniqueKeys+1, Index_t(0));
+                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts(nUniqueKeys);                
 
                 //make key multiplicity histogram
                 auto histogramEndIterators = thrust::reduce_by_key(allocatorPolicy,
@@ -599,16 +652,6 @@ namespace cpuhashtabledetail{
                 assert(histogramEndIterators.first == d_histogram_keys.end());
                 assert(histogramEndIterators.second == d_histogram_counts.end());
 
-                thrust::inclusive_scan(allocatorPolicy,
-                    d_histogram_counts.begin(),
-                    histogramEndIterators.second,
-                    d_histogram_counts_prefixsum.begin() + 1);
-
-                countsPrefixSum.resize(nUniqueKeys+1);
-                thrust::copy(d_histogram_counts_prefixsum.begin(),
-                            d_histogram_counts_prefixsum.end(),
-                            countsPrefixSum.begin());
-
                 deallocVector(keys);
 
                 keys.resize(nUniqueKeys);
@@ -616,6 +659,22 @@ namespace cpuhashtabledetail{
                 thrust::copy(d_histogram_keys.begin(),
                             d_histogram_keys.end(),
                             keys.begin());
+
+                deallocVector(d_histogram_keys);
+
+                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts_prefixsum(nUniqueKeys+1, Index_t(0));
+
+                thrust::inclusive_scan(allocatorPolicy,
+                    d_histogram_counts.begin(),
+                    histogramEndIterators.second,
+                    d_histogram_counts_prefixsum.begin() + 1);
+
+                deallocVector(countsPrefixSum);
+
+                countsPrefixSum.resize(nUniqueKeys+1);
+                thrust::copy(d_histogram_counts_prefixsum.begin(),
+                            d_histogram_counts_prefixsum.end(),
+                            countsPrefixSum.begin());                
 
                 return nUniqueKeys;
             }
@@ -776,15 +835,14 @@ namespace cpuhashtabledetail{
 
         template<bool allowFallback>
         struct GPUTransformation{
-            template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
 
             template<class Key_t, class Value_t, class Index_t>
             static std::pair<bool, TransformResult> execute(std::vector<Key_t>& keys, 
                                 std::vector<Value_t>& values, 
                                 std::vector<Index_t>& countsPrefixSum, 
                                 const std::vector<int>& deviceIds,
-                                int maxValuesPerKey){
+                                int maxValuesPerKey,
+                                bool valuesOfSameKeyMustBeSorted = true){
 
                 assert(keys.size() == values.size());
                 assert(std::numeric_limits<Index_t>::max() >= keys.size());
@@ -814,7 +872,7 @@ namespace cpuhashtabledetail{
 
                 try{           
                     transformresult.numberOfUniqueKeys = TransformGPUCompactKeys<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, deviceIds);
+                            ::execute(keys, values, countsPrefixSum, deviceIds, valuesOfSameKeyMustBeSorted);
 
                     auto removeresult = TransformGPURemoveKeysWithToManyValues<allowFallback>
                             ::execute(keys, values, countsPrefixSum, maxValuesPerKey, deviceIds);  
@@ -882,17 +940,19 @@ namespace cpuhashtabledetail{
             std::vector<Key> keys, 
             std::vector<Value> vals, 
             int maxValuesPerKey,
-            const std::vector<int>& gpuIds
+            const std::vector<int>& gpuIds,
+            bool valuesOfSameKeyMustBeSorted = true
         ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds);
+            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds, valuesOfSameKeyMustBeSorted);
         }
 
         CpuReadOnlyMultiValueHashTable(
             std::vector<Key> keys, 
             std::vector<Value> vals, 
-            int maxValuesPerKey
+            int maxValuesPerKey,
+            bool valuesOfSameKeyMustBeSorted = true
         ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey);
+            init(std::move(keys), std::move(vals), maxValuesPerKey, valuesOfSameKeyMustBeSorted);
         }
 
         CpuReadOnlyMultiValueHashTable(
@@ -913,16 +973,18 @@ namespace cpuhashtabledetail{
         void init(
             std::vector<Key> keys, 
             std::vector<Value> vals, 
-            int maxValuesPerKey
+            int maxValuesPerKey,
+            bool valuesOfSameKeyMustBeSorted = true
         ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, {});
+            init(std::move(keys), std::move(vals), maxValuesPerKey, {}, valuesOfSameKeyMustBeSorted);
         }
 
         void init(
             std::vector<Key> keys, 
             std::vector<Value> vals, 
             int maxValuesPerKey,
-            const std::vector<int>& gpuIds
+            const std::vector<int>& gpuIds,
+            bool valuesOfSameKeyMustBeSorted = true
         ){
             assert(keys.size() == vals.size());
 
@@ -938,7 +1000,8 @@ namespace cpuhashtabledetail{
                     keys, 
                     values, 
                     countsPrefixSum, 
-                    maxValuesPerKey
+                    maxValuesPerKey,
+                    valuesOfSameKeyMustBeSorted
                 );
             #ifdef __NVCC__
             }else{
@@ -948,7 +1011,8 @@ namespace cpuhashtabledetail{
                     values, 
                     countsPrefixSum, 
                     gpuIds, 
-                    maxValuesPerKey
+                    maxValuesPerKey,
+                    valuesOfSameKeyMustBeSorted
                 );
 
                 bool success = pair.first;
@@ -961,7 +1025,8 @@ namespace cpuhashtabledetail{
                         values, 
                         countsPrefixSum, 
                         gpuIds, 
-                        maxValuesPerKey
+                        maxValuesPerKey,
+                        valuesOfSameKeyMustBeSorted
                     );
 
                     success = pair.first;
@@ -974,7 +1039,8 @@ namespace cpuhashtabledetail{
                         keys, 
                         values, 
                         countsPrefixSum, 
-                        maxValuesPerKey
+                        maxValuesPerKey,
+                        valuesOfSameKeyMustBeSorted
                     );
                 }
             }
@@ -1112,6 +1178,165 @@ namespace cpuhashtabledetail{
 
 
 
+#if 0
+
+    template<class Key, class Value, class Index>
+    struct CpuMultiValueHashTableInConstruction{
+    public:
+
+        CpuMultiValueHashTableInConstruction(std::size_t pairs_, float load_, std::size_t maxValuesPerKey_)
+            : maxPairs(pairs_), load(load_), maxValuesPerKey(maxValuesPerKey_){
+
+            // if(maxPairs > std::size_t(std::numeric_limits<int>::max())){
+            //     assert(maxPairs <= std::size_t(std::numeric_limits<int>::max())); 
+            // }
+
+            myKeys.resize(maxPairs);
+            myValues.resize(maxPairs);
+        }
+
+        void insert(
+            const Key* keys, 
+            const Value* values, 
+            Index N
+        ){
+            if(N == 0) return;
+
+            assert(keys != nullptr);
+            assert(values != nullptr);
+            assert(numKeys + N <= maxPairs);    
+            assert(numValues + N <= maxPairs);
+
+            myKeys.insert(myKeys.end(), keys, keys + N);
+            myValues.insert(myValues.end(), values, values + N);
+
+            numKeys += N;
+            numValues += N;
+        }
+
+        MemoryUsage getMemoryInfo() const{
+
+            MemoryUsage result{};
+            result.host += myKeys.size() * sizeof(Key);
+            result.host += myValues.size() * sizeof(Value);
+
+            return result;
+        }
+
+        float load{};
+        std::size_t numKeys{};
+        std::size_t numValues{};
+        std::size_t maxPairs{};
+        std::size_t maxValuesPerKey{};
+        std::vector<Key> myKeys;
+        std::vector<Value> myValues;
+    };
+
+    template<class Key, class Value, class Index>
+    class CpuMultiValueHashTable{
+        static_assert(std::is_integral<Key>::value, "Key must be integral!");
+    public:
+
+        struct QueryResult{
+            int numValues;
+            const Value* valuesBegin;
+        };
+
+
+        bool operator==(const CpuMultiValueHashTable& rhs) const{
+            return values == rhs.values && lookup == rhs.lookup;
+        }
+
+        bool operator!=(const CpuMultiValueHashTable& rhs) const{
+            return !(operator==(rhs));
+        }
+
+        QueryResult query(const Key& key) const{
+            assert(isInit);
+
+            auto lookupQueryResult = lookup.query(key);
+
+            if(lookupQueryResult.valid()){
+                QueryResult result;
+
+                result.numValues = lookupQueryResult.value().second;
+                const auto valuepos = lookupQueryResult.value().first;
+                result.valuesBegin = &values[valuepos];
+
+                return result;
+            }else{
+                QueryResult result;
+
+                result.numValues = 0;
+                result.valuesBegin = nullptr;
+
+                return result;
+            }
+        }
+
+        void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
+            for(std::size_t i = 0; i < numKeys; i++){
+                resultsOutput[i] = query(keys[i]);
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+            result.host = sizeof(Value) * values.capacity();
+            result.host += lookup.getMemoryInfo().host;
+
+            result.device = lookup.getMemoryInfo().device;
+
+            //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+            assert(isInit);
+
+            const std::size_t elements = values.size();
+            const std::size_t bytes = sizeof(Value) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(values.data()), bytes);
+
+            lookup.writeToStream(os);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            values.resize(elements);
+            const std::size_t bytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(values.data()), bytes);
+
+            lookup.loadFromStream(is);
+            isInit = true;
+        }
+
+        void destroy(){
+            std::vector<Value> tmp;
+            std::swap(values, tmp);
+
+            lookup.destroy();
+            isInit = false;
+        }
+        private:
+
+        using ValueIndex = std::pair<read_number, BucketSize>;
+        bool isInit = false;
+
+        // values with the same key are stored in contiguous memory locations
+        // a single-value hashmap maps keys to the range of the corresponding values
+        std::vector<Value> values; 
+        NaiveCpuSingleValueHashTable<Key, ValueIndex> lookup;
+    };
+
+#endif
+
 }
 
-#endif // CARE_GPUHASHTABLE_CUH
+#endif // CARE_CPUHASHTABLE_HPP
