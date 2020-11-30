@@ -515,6 +515,7 @@ void GpuMinhasher::construct(
             std::ofstream rstempostream(rstempfile, std::ios::binary);
             savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, availableMemoryToSaveGpuPartitions));
             
+            constexpr bool valuesOfSameKeyMustBeSorted = false;
             
             //if all tables could be constructed at once, no need to save them to temporary file
             if(requestedNumberOfMaps == currentIterNumTables){
@@ -531,15 +532,16 @@ void GpuMinhasher::construct(
                     const int maxValuesPerKey = getNumResultsPerMapThreshold();
 
                     HashTable hashTable(
-                        std::move(kmers), 
+                        std::move(kmers),
                         std::move(readIds), 
                         maxValuesPerKey,
-                        deviceIds
+                        deviceIds,
+                        valuesOfSameKeyMustBeSorted
                     );
 
                     addHashTable(std::move(hashTable));
 
-                    numConstructedTables++;                            
+                    numConstructedTables++;
                 }
 
                 if(didSaveGpudata){
@@ -566,7 +568,8 @@ void GpuMinhasher::construct(
                         std::move(kmers), 
                         std::move(readIds), 
                         maxValuesPerKey,
-                        deviceIds
+                        deviceIds,
+                        valuesOfSameKeyMustBeSorted
                     );
 
                     numConstructedTables++;     
