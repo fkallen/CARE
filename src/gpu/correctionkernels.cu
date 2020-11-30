@@ -677,7 +677,7 @@ namespace gpu{
 
             if(thisSequenceContainsN){
                 if(tgroup.thread_rank() == 0){
-                    d_numEditsPerCorrectedCandidate[candidateIndex] = doNotUseEditsValue;
+                    d_numEditsPerCorrectedCandidate[destinationIndex] = doNotUseEditsValue;
                 }
             }else{
                 const int maxEdits = min(candidate_length / 7, numEditsThreshold);
@@ -781,7 +781,6 @@ namespace gpu{
 
                 tgroup.sync();
 
-                //int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
                 int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
 
                 TempCorrectedSequence::EncodedEdit* const myEdits 
