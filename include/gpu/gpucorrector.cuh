@@ -1040,11 +1040,6 @@ namespace gpucorrectorkernels{
                     const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
                     const read_number anchorReadId = currentOutput.h_anchorReadIds[anchor_index];
 
-                    assert(positionInVector < int(candidateIndicesToProcess.size()));
-                    assert(anchor_index < currentOutput.numAnchors);
-                    assert(candidateIndex < currentOutput.numCandidates);
-                    assert(positionInVector < int(correctionOutput.candidateCorrections.size()));
-
                     auto& tmp = correctionOutput.candidateCorrections[positionInVector];
 
                     const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
@@ -1060,8 +1055,6 @@ namespace gpucorrectorkernels{
 
 
                     const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
-                    assert(global_candidate_index < currentOutput.numCandidates);
-                    //std::cerr << global_candidate_index << "\n";
                     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[global_candidate_index];
 
                     const int candidate_shift = currentOutput.h_alignment_shifts[global_candidate_index];
@@ -1080,9 +1073,6 @@ namespace gpucorrectorkernels{
                     const int numEdits = currentOutput.h_numEditsPerCorrectedCandidate[offsetForCorrectedCandidateData + candidateIndex];
 
                     if(numEdits != currentOutput.doNotUseEditsValue){
-                        const int maxNumEditsPerSequence = std::max(1,101 / 7);
-                        assert(numEdits <= maxNumEditsPerSequence);
-
                         tmp.edits.resize(numEdits);
                         const TempCorrectedSequence::EncodedEdit* gpuedits 
                             = (const TempCorrectedSequence::EncodedEdit*)(((const char*)my_editsPerCorrectedCandidate) 
@@ -2337,11 +2327,14 @@ namespace gpucorrectorkernels{
                 kernelLaunchHandle
             );    
             
-            //sanity check kernel
+#if 0            
+            //debug: sanity check kernel
             helpers::lambda_kernel<<<1,1, 0, stream>>>([
-                =,
+                encodedSequencePitchInInts = encodedSequencePitchInInts,
+                decodedSequencePitchInBytes = decodedSequencePitchInBytes,
                 d_num_total_corrected_candidates = d_num_total_corrected_candidates.get(),
                 noEdits = getDoNotUseEditsValue(),
+                maxNumEditsPerSequence,
                 d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.get(),
                 d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.get(),
                 d_candidate_sequences_lengths = d_candidate_sequences_lengths.get(),
@@ -2354,24 +2347,34 @@ namespace gpucorrectorkernels{
 
                 const int totalNumCorrected = d_num_total_corrected_candidates[0];
 
-                const int maxNumEditsPerSequence = max(1, 101/7);
-
                 for(int i = tid; i < totalNumCorrected; i += stride){
                     const int numEdits = d_numEditsPerCorrectedCandidate[i];
                     if(numEdits != noEdits && numEdits > maxNumEditsPerSequence){
                         printf("corrected candidate %d, numEdits = %d\n", i, numEdits);
-                        
+                        printf("read numEdits of corrected %d from address %p\n", i, (d_numEditsPerCorrectedCandidate + i));
 
                         const int candidateIndex = d_indices_of_corrected_candidates[i];
+
+                        printf("candidateIndex %d\n", candidateIndex);
+
                         const int len = d_candidate_sequences_lengths[candidateIndex];
                         const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[candidateIndex];
 
-                        for(int k = 0; k < len; k++){
-                            const char corChar =  d_corrected_candidates[decodedSequencePitchInBytes * candidateIndex + k];
-                            const char uncorFwChar = SequenceHelpers::decodeBase(SequenceHelpers::getEncodedNuc2Bit(d_candidate_sequences_data + encodedSequencePitchInInts * candidateIndex, len, k));
-                            const char uncorRcChar = SequenceHelpers::decodeBase(SequenceHelpers::getEncodedNuc2Bit(d_candidate_sequences_data + encodedSequencePitchInInts * candidateIndex, len, len - 1 - k));
+                        printf("len %d, bestAlignmentFlag %d\n", len, int(bestAlignmentFlag));
+                        printf("encodedSequencePitchInInts %lu\n", encodedSequencePitchInInts);
 
-                            printf("%d %c %c %c, %d %d %d\n", k, corChar, uncorFwChar, uncorRcChar, int(corChar), int(uncorFwChar), int(uncorRcChar));
+
+
+                        printf("%lu\n", sizeof(d_candidate_sequences_data[0]));
+
+                        for(int k = 0; k < len; k++){
+                            const char corChar =  d_corrected_candidates[decodedSequencePitchInBytes * i + k];
+                            const std::uint8_t a = SequenceHelpers::getEncodedNuc2Bit((const unsigned int*)(d_candidate_sequences_data) + encodedSequencePitchInInts * candidateIndex, len, k);
+                            const std::uint8_t b = SequenceHelpers::getEncodedNuc2Bit((const unsigned int*)(d_candidate_sequences_data) + encodedSequencePitchInInts * candidateIndex, len, len - 1 - k);
+                            const char uncorFwChar = SequenceHelpers::decodeBase(a);
+                            const char uncorRcChar = SequenceHelpers::decodeBase(b);
+
+                            printf("%d %c %c %c, %d %d %d %d\n", k, corChar, uncorFwChar, uncorRcChar, int(corChar), int(uncorFwChar), int(uncorRcChar), (uncorFwChar == corChar) ? 0 : 1);
                         }
 
                         assert(false);
@@ -2379,7 +2382,9 @@ namespace gpucorrectorkernels{
                     
                 }
             });
- 
+
+            cudaStreamSynchronize(stream); CUERR; //DEBUG
+#endif
         }
 
 
