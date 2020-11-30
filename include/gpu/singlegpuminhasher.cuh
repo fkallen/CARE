@@ -56,6 +56,138 @@ namespace gpu{
             cudaGetDevice(&deviceId); CUERR;
         }
 
+        int constructFromReadStorage(
+            const RuntimeOptions &runtimeOptions,
+            std::uint64_t nReads,
+            const DistributedReadStorage& gpuReadStorage,
+            int upperBoundSequenceLength,
+            int maxNumHashfunctions
+        ){
+            
+            DevicerSwitcher ds(deviceId);
+
+            gpuHashTables.clear();
+
+
+            constexpr read_number parallelReads = 1000000;
+            const read_number numReads = nReads;
+            const int numIters = SDIV(numReads, parallelReads);
+            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(upperBoundSequenceLength);
+
+            const int numThreads = runtimeOptions.threads;
+            ThreadPool::ParallelForHandle pforHandle;
+            ThreadPool threadPool(numThreads);
+
+            helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+            helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+
+            helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+            helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+
+            CudaStream stream{};
+
+            auto sequencehandle = gpuReadStorage.makeGatherHandleSequences();
+
+            auto showProgress = [&](auto totalCount, auto seconds){
+                if(runtimeOptions.showProgress){
+                    std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+                            << seconds << " seconds.\n";
+                }
+            };
+
+            auto updateShowProgressInterval = [](auto duration){
+                return duration * 2;
+            };
+
+            int remainingHashFunctions = maxNumHashfunctions;
+            bool keepGoing = true;
+
+            while(remainingHashFunctions > 0 && keepGoing){
+                const int alreadyExistingHashFunctions = maxNumHashfunctions - remainingHashFunctions;
+                int addedHashFunctions = addHashfunctions(remainingHashFunctions + 1);
+
+                if(addedHashFunctions == 0){
+                    keepGoing = false;
+                    break;
+                    //throw std::runtime_error("Unable to construct a single gpu hashtable. Abort.");
+                }else{
+                    // safety for memory
+                    addedHashFunctions -= 1;
+                    gpuHashTables.pop_back();
+
+                    if(addedHashFunctions == 0){
+                        keepGoing = false;
+                        break;
+                    }
+                }
+
+                ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+                std::cout << "Constructing maps: ";
+                for(int i = 0; i < addedHashFunctions; i++){
+                    std::cout << (alreadyExistingHashFunctions + i) << ' ';
+                }
+                std::cout << '\n';
+
+                for (int iter = 0; iter < numIters; iter++){
+                    read_number readIdBegin = iter * parallelReads;
+                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+                    const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+                    std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+                    cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+                    gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
+                        &threadPool,
+                        sequencehandle,
+                        d_sequenceData,
+                        encodedSequencePitchInInts,
+                        h_indices,
+                        d_indices,
+                        curBatchsize,
+                        deviceId,
+                        stream
+                    );
+                
+                    gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+                        d_lengths,
+                        deviceId,
+                        d_indices,
+                        curBatchsize,
+                        stream
+                    );
+
+                    insert(
+                        d_sequenceData,
+                        curBatchsize,
+                        d_lengths,
+                        encodedSequencePitchInInts,
+                        d_indices,
+                        alreadyExistingHashFunctions,
+                        addedHashFunctions,
+                        stream
+                    );
+
+                    cudaStreamSynchronize(stream); CUERR;
+
+                    progressThread.addProgress(curBatchsize);
+                }
+
+                std::cerr << "Compacting\n";
+                finalize();
+
+                progressThread.finished();
+
+                remainingHashFunctions -= addedHashFunctions;
+            }
+
+            const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingHashFunctions;
+
+            return numberOfAvailableHashFunctions; 
+        }
+
         void constructFromReadStorage(
             const RuntimeOptions &runtimeOptions,
             std::uint64_t nReads,

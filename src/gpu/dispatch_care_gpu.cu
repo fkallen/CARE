@@ -271,16 +271,26 @@ namespace care{
 #ifdef WARPMIN
         gpu::SingleGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength);
 
-        int validNumHashFunctions = sgpuMinhasher.addHashfunctions(correctionOptions.numHashFunctions);
+        // int validNumHashFunctions = sgpuMinhasher.addHashfunctions(correctionOptions.numHashFunctions);
 
-        sgpuMinhasher.constructFromReadStorage(
+        // sgpuMinhasher.constructFromReadStorage(
+        //     runtimeOptions,
+        //     totalInputFileProperties.nReads,
+        //     readStorage,
+        //     totalInputFileProperties.maxSequenceLength,
+        //     0,
+        //     validNumHashFunctions //correctionOptions.numHashFunctions
+        // );
+
+        int validNumHashFunctions = sgpuMinhasher.constructFromReadStorage(
             runtimeOptions,
             totalInputFileProperties.nReads,
             readStorage,
             totalInputFileProperties.maxSequenceLength,
-            0,
-            validNumHashFunctions //correctionOptions.numHashFunctions
+            correctionOptions.numHashFunctions
         );
+
+        std::cerr << "warpcore minhasher can use " << validNumHashFunctions << " maps\n";
 
 #endif
 
