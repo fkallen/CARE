@@ -533,7 +533,7 @@ namespace gpu{
         };
 
         auto to_nuc = [](std::uint8_t c){
-            return SequenceHelpers::convertIntToDNACharNoIf(c);
+            return SequenceHelpers::decodeBase(c);
         };
 
         __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
@@ -583,9 +583,6 @@ namespace gpu{
             }
             tgroup.sync();          
 
-            
-            
-
             const int copyposbegin = queryColumnsBegin_incl;
             const int copyposend = queryColumnsEnd_excl;
             assert(copyposend - copyposbegin == candidate_length);
@@ -625,7 +622,7 @@ namespace gpu{
 
             if(thisSequenceContainsN){
                 if(tgroup.thread_rank() == 0){
-                    d_numEditsPerCorrectedCandidate[candidateIndex] = doNotUseEditsValue;
+                    d_numEditsPerCorrectedCandidate[destinationIndex] = doNotUseEditsValue;
                 }
             }else{
                 const int maxEdits = min(candidate_length / 7, numEditsThreshold);
@@ -686,8 +683,8 @@ namespace gpu{
                 };
 
                 constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
-                const int fullInts = candidate_length / basesPerInt;                
-
+                const int fullInts = candidate_length / basesPerInt;   
+                
                 for(int i = 0; i < fullInts; i++){
                     const unsigned int encodedDataInt = encUncorrectedCandidate[i];
 
@@ -714,6 +711,7 @@ namespace gpu{
                 //process remaining positions
                 if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
                     const int remainingPositions = candidate_length - basesPerInt * fullInts;
+
                     if(remainingPositions > 0){
                         const unsigned int encodedDataInt = encUncorrectedCandidate[fullInts];
                         for(int posInInt = tgroup.thread_rank(); posInInt < remainingPositions; posInInt += tgroup.size()){
@@ -730,7 +728,6 @@ namespace gpu{
 
                 tgroup.sync();
 
-                //int* const myNumEdits = d_numEditsPerCorrectedCandidate + candidateIndex;
                 int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
 
                 TempCorrectedSequence::EncodedEdit* const myEdits 
@@ -758,6 +755,7 @@ namespace gpu{
                         *myNumEdits = doNotUseEditsValue;
                     }
                 }
+
             }
             
 
