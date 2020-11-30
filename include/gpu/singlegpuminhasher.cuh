@@ -596,7 +596,7 @@ namespace gpu{
                         int vertPS = 0;
                         for(int k = 0; k < numHashfunctions; k++){
                             const int num = d_numValuesPerSequencePerHash[k * numSequences + i];
-                            assert(num <= 75);
+
                             vertPS += num;
                             if(k < numHashfunctions - 1){
                                 d_numValuesPerSequencePerHashExclPSVert[(k+1) * numSequences + i] = vertPS;
