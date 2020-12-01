@@ -1259,25 +1259,21 @@ namespace gpucorrectorkernels{
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             currentInput->event.record(stream);
 
+            getAmbiguousFlagsOfAnchors(stream);
+            getAmbiguousFlagsOfCandidates(stream);
+
             nvtx::push_range("getCandidateSequenceData", 3);
             getCandidateSequenceData(stream); 
             nvtx::pop_range();
 
-            if(correctionOptions->useQualityScores) {
-                nvtx::push_range("getQualities", 4);
 
-                getQualities(stream);
-
-                nvtx::pop_range();
-            }
-
-            if(useGraph()){
-                //std::cerr << "Launching graph for output " << currentOutput << "\n";
-                graphMap[currentOutput].execute(stream);
-                //cudaStreamSynchronize(stream); CUERR;
-            }else{
+            // if(useGraph()){
+            //     //std::cerr << "Launching graph for output " << currentOutput << "\n";
+            //     graphMap[currentOutput].execute(stream);
+            //     //cudaStreamSynchronize(stream); CUERR;
+            // }else{
                 execute(stream);
-            }
+            //}
 
             copyResultsFromDeviceToHost(stream);
 
@@ -1631,6 +1627,20 @@ namespace gpucorrectorkernels{
             getCandidateAlignments(stream); 
             nvtx::pop_range();
 
+            if(correctionOptions->useQualityScores) {
+                events[0].record(stream);
+                backgroundStream.waitEvent(events[0], 0);
+                
+                nvtx::push_range("getQualities", 4);
+
+                getQualities(backgroundStream);
+
+                nvtx::pop_range();
+
+                events[0].record(backgroundStream);
+                cudaStreamWaitEvent(stream, events[0], 0); CUERR;
+            }
+
             nvtx::push_range("buildMultipleSequenceAlignment", 6);
             buildMultipleSequenceAlignment(stream);
             nvtx::pop_range();
@@ -1793,8 +1803,7 @@ namespace gpucorrectorkernels{
         }
 
 
-        void getCandidateSequenceData(cudaStream_t stream){
-
+        void getAmbiguousFlagsOfAnchors(cudaStream_t stream){
             gpuReadStorage->readsContainN_async(
                 deviceId,
                 d_anchorContainsN.get(), 
@@ -1803,7 +1812,9 @@ namespace gpucorrectorkernels{
                 maxAnchors, 
                 stream
             );
+        }
 
+        void getAmbiguousFlagsOfCandidates(cudaStream_t stream){
             gpuReadStorage->readsContainN_async(
                 deviceId,
                 d_candidateContainsN.get(), 
@@ -1811,7 +1822,10 @@ namespace gpucorrectorkernels{
                 d_numCandidates,
                 maxCandidates, 
                 stream
-            );  
+            ); 
+        }
+
+        void getCandidateSequenceData(cudaStream_t stream){
 
             gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
                 d_candidate_sequences_lengths.get(),
@@ -1846,6 +1860,9 @@ namespace gpucorrectorkernels{
         void getQualities(cudaStream_t stream){
 
             if(correctionOptions->useQualityScores) {
+                // events[0].record(stream);
+                // backgroundStream.waitEvent(events[0]);
+
                 // std::cerr << "gather anchor qual\n";
                 gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                     threadPool,
@@ -1871,6 +1888,9 @@ namespace gpucorrectorkernels{
                     deviceId,
                     stream
                 );
+
+                // events[0].record(backgroundStream);
+                // cudaStreamWaitEvent(stream, events[0], 0); CUERR;
             }
 
             //cudaStreamSynchronize(stream); CUERR;
