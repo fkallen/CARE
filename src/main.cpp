@@ -164,8 +164,8 @@ int main(int argc, char** argv){
 			cxxopts::value<std::string>())
 		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
 			cxxopts::value<std::string>())
-
-		
+		("threshold", "Classification threshold for classifier-based (\"Forest\") mode",
+			cxxopts::value<float>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -303,6 +303,7 @@ int main(int argc, char** argv){
 	std::cout << "\n";
 	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
 	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
+	std::cout << "Threshold: " << correctionOptions.threshold << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

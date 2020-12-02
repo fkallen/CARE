@@ -75,11 +75,11 @@ struct clf_agent
         cands_stream << '\n';
     }
 
-    float decide_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
+    bool decide_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
         return classifier_anchor->decide(extract_anchor(task, i, opt));
     }
 
-    float decide_cand(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
+    bool decide_cand(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
         return classifier_cands->decide(extract_cands(task, i, opt, cand, offset));
     }
 

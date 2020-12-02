@@ -63,10 +63,13 @@ class ForestClf {
     using Forest = std::vector<Tree>;
     
     Forest forest_;
+    float thresh_;
 
 public:
 
-    ForestClf (const std::string& path) {
+    ForestClf (const std::string& path, float t = 0.5f) : 
+        thresh_(t) 
+    {
         std::ifstream is(path, std::ios::binary);
         forest_ = Forest(read_one<uint32_t>(is));
         for (Tree& tree: forest_) {
@@ -76,12 +79,20 @@ public:
         is.close();
     }
 
+    void threshold(float t) {
+        thresh_ = t;
+    }
+
+    float threshold() const {
+        return thresh_;
+    }
+
     template<typename features_t>
-    float decide(const features_t& features) const {
+    bool decide(const features_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
             prob += decide(features, tree);
-        return prob/forest_.size();
+        return prob/forest_.size() >= thresh_;
     }
 };
 

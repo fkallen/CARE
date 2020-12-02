@@ -167,12 +167,12 @@ test(data, clf, "${CLF1}_cands_${TESTPREFIX1}+${TESTPREFIX2}+${TESTPREFIX3}_cand
 
 EOF
 
-$1: File
-$2: File error-free
-$3: cov
-$4: file-prefix
-$5: classifier-prefix
-$6: threshold
+# $1: File
+# $2: File error-free
+# $3: cov
+# $4: file-prefix
+# $5: classifier-prefix
+# $6: threshold
 full_eval $TESTFILE1 $TESTFILE1EF $TESTCOV1 $TESTPREFIX1 $CLF1 73
 full_eval $TESTFILE2 $TESTFILE2EF $TESTCOV2 $TESTPREFIX2 $CLF1 73
 full_eval $TESTFILE3 $TESTFILE3EF $TESTCOV3 $TESTPREFIX3 $CLF1 73

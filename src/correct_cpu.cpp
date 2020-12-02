@@ -117,10 +117,6 @@ correct_cpu(
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
 
-   
-    std::shared_ptr<anchor_clf_t> classifier_anchor;
-    std::shared_ptr<cands_clf_t> classifier_cands;
-
     ClfAgent clfAgent_(correctionOptions, fileOptions);
     
     auto showProgress = [&](auto totalCount, auto seconds){

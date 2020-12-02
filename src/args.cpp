@@ -118,6 +118,9 @@ namespace args{
                 default: result.correctionType = CorrectionType::Classic; break;
             }
         }
+        if(pr.count("threshold")){
+            result.threshold = pr["threshold"].as<float>();
+        }
 
         return result;
 	}

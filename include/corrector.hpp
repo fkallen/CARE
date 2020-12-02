@@ -892,9 +892,8 @@ private:
 
         corr.insert(0, cons.data()+subject_b, task.input->anchorLength);
         if (!task.msaProperties.isHQ) {
-            constexpr float THRESHOLD = 0.73f; //TODO: move into agent or somewhere else. runtime parameter?
             for (int i = 0; i < task.input->anchorLength; ++i) {
-                if (orig[i] != cons[subject_b+i] && clfAgent->decide_anchor(task, i, *correctionOptions) < THRESHOLD)
+                if (orig[i] != cons[subject_b+i] && clfAgent->decide_anchor(task, i, *correctionOptions))
                 {
                     corr[i] = orig[i];
                 }
@@ -992,10 +991,8 @@ private:
 
 
                 for (int i = 0; i < cand_length; ++i) {
-                    constexpr float THRESHOLD = 0.73f;
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
-                        && clfAgent->decide_cand(task, i, *correctionOptions, cand, offset)
-                            < THRESHOLD)
+                        && clfAgent->decide_cand(task, i, *correctionOptions, cand, offset))
                     {
                         task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];
                     }

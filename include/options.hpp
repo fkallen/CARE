@@ -45,6 +45,7 @@ namespace care{
         int numHashFunctions = 48;
         CorrectionType correctionType = CorrectionType::Classic;
         CorrectionType correctionTypeCands = CorrectionType::Classic;
+        float threshold = .5f; // threshold for classifier
     };
 
 

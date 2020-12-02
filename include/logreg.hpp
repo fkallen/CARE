@@ -42,7 +42,7 @@ public:
     }
 
     template<typename features_t>
-    float decide(const features_t& features) const {
+    bool decide(const features_t& features) const {
         float z = b_;
         for (size_t i = 0; i < num_features, ++i)
             z += w_[i] * features[i];
