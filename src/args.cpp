@@ -119,7 +119,8 @@ namespace args{
             }
         }
         if(pr.count("threshold")){
-            result.threshold = pr["threshold"].as<float>();
+            float t = pr["threshold"].as<float>();
+            result.threshold = t>1.0?t/100:t;
         }
 
         return result;
