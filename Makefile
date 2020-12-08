@@ -22,8 +22,9 @@ NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-const
 
 # This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
-			-gencode=arch=compute_70,code=sm_70 \
-  			-gencode=arch=compute_70,code=compute_70
+		-gencode=arch=compute_70,code=sm_70 \
+		-gencode=arch=compute_80,code=sm_80 \
+  		-gencode=arch=compute_80,code=compute_80
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz 
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz 
