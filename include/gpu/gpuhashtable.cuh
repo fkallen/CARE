@@ -11,6 +11,7 @@
 #include <numeric>
 #include <limits>
 #include <cassert>
+#include <future>
 
 #include <cooperative_groups.h>
 
@@ -256,7 +257,7 @@ namespace gpu{
             Value* d_values,
             cudaStream_t stream,
             StatusHandler::base_type* d_statusarray = nullptr
-        ){
+        ) const {
             Index num_out = 0; //TODO pinned memory?
 
             retrieve(
@@ -281,7 +282,7 @@ namespace gpu{
             Index& num_out,
             cudaStream_t stream,
             StatusHandler::base_type* d_statusarray = nullptr
-        ){
+        ) const {
             gpuMvTable->retrieve(
                 d_keys,
                 N,
@@ -400,6 +401,10 @@ namespace gpu{
             return numValues;
         }
 
+        std::size_t getNumUniqueKeys(cudaStream_t stream = 0) const noexcept{
+            return gpuMvTable->num_keys(stream);
+        }
+
         void compact(){
             if(isCompact) return;
 
@@ -488,6 +493,181 @@ namespace gpu{
             numValues = numRetrievedValues;
             
             isCompact = true;
+        }
+
+        template<class Offset>
+        void compactIntoHostBuffers(Key* out_uniqueKeys, Value* out_values, Offset* out_offsets) const{
+
+            Index numUniqueKeys = gpuMvTable->num_keys();
+
+            helpers::SimpleAllocationPinnedHost<Key, 0> h_uniqueKeys(numUniqueKeys);
+            helpers::SimpleAllocationPinnedHost<Index, 0> h_compactOffsetTmp(numUniqueKeys+1);
+            helpers::SimpleAllocationDevice<Key, 0> d_uniqueKeys(numUniqueKeys);
+            helpers::SimpleAllocationDevice<Index, 0> d_compactOffsetTmp(numUniqueKeys+1);
+
+            gpuMvTable->retrieve_all_keys(
+                d_uniqueKeys,
+                numUniqueKeys
+            ); CUERR;
+
+            Index numRetrievedValues = 0;
+
+            gpuMvTable->retrieve(
+                d_uniqueKeys.data(),
+                numUniqueKeys,
+                d_compactOffsetTmp.data(),
+                d_compactOffsetTmp.data() + 1,
+                nullptr,
+                numRetrievedValues,
+                (cudaStream_t)0,
+                warpcore::defaults::probing_length()
+            );
+
+            helpers::SimpleAllocationPinnedHost<Value, 0> h_compactValues(numRetrievedValues); 
+            helpers::SimpleAllocationDevice<Value, 0> d_compactValues(numRetrievedValues); 
+
+            gpuMvTable->retrieve(
+                d_uniqueKeys.data(),
+                numUniqueKeys,
+                d_compactOffsetTmp.data(),
+                d_compactOffsetTmp.data() + 1,
+                d_compactValues.data(),
+                numRetrievedValues,
+                (cudaStream_t)0,
+                warpcore::defaults::probing_length()
+            );
+
+            cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, (cudaStream_t)0); CUERR;
+            cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Index) * (1+numUniqueKeys), D2H, (cudaStream_t)0); CUERR;
+            cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, (cudaStream_t)0); CUERR;
+            cudaStreamSynchronize((cudaStream_t)0); CUERR;
+            //cudaDeviceSynchronize(); CUERR;
+            std::copy(h_uniqueKeys.begin(), h_uniqueKeys.end(), out_uniqueKeys);
+            std::copy(h_compactValues.begin(), h_compactValues.end(), out_values);
+            std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
+            //std::cerr << "numUniqueKeys = " << numUniqueKeys << ", numRetrievedValues = " << numRetrievedValues << "\n";
+
+            // CudaEvent event0{cudaEventDisableTiming};
+            // CudaEvent event1{cudaEventDisableTiming};
+            // CudaEvent event2{cudaEventDisableTiming};
+            // CudaStream stream0;
+            // CudaStream stream1;
+
+            // h_compactOffsetTmp[0] = 0;
+            
+            // gpuMvTable->retrieve_all_keys(
+            //     d_uniqueKeys,
+            //     numUniqueKeys
+            // ); CUERR;
+
+            // cudaMemcpyAsync(h_uniqueKeys.data(), d_uniqueKeys.data(), sizeof(Key) * numUniqueKeys, D2H, stream1); CUERR;
+            // event0.record(stream1);
+
+            //  Index numRetrievedValues = 0;
+            // gpuMvTable->retrieve(
+            //     d_uniqueKeys.data(),
+            //     numUniqueKeys,
+            //     d_compactOffsetTmp.data(),
+            //     d_compactOffsetTmp.data() + 1,
+            //     nullptr,
+            //     numRetrievedValues,
+            //     stream0,
+            //     warpcore::defaults::probing_length()
+            // );
+
+            
+            // // gpuMvTable->num_values(
+            // //     d_uniqueKeys.data(),
+            // //     numUniqueKeys,
+            // //     numRetrievedValues,
+            // //     d_compactOffsetTmp + 1,
+            // //     stream0,
+            // //     warpcore::defaults::probing_length()
+            // // );
+
+            // // cudaStreamSynchronize(0); CUERR;
+            // // std::size_t required_temp_bytes = 0;
+            // // cub::DeviceScan::InclusiveSum(
+            // //     nullptr,
+            // //     required_temp_bytes,
+            // //     d_compactOffsetTmp + 1,
+            // //     d_compactOffsetTmp + 1,
+            // //     numUniqueKeys,
+            // //     stream0
+            // // );
+            // helpers::SimpleAllocationPinnedHost<Value, 0> h_compactValues(numRetrievedValues); 
+            // helpers::SimpleAllocationDevice<Value, 0> d_compactValues(numRetrievedValues); 
+            // //helpers::SimpleAllocationDevice<char, 0> cubtemp(required_temp_bytes);
+
+            // // cub::DeviceScan::InclusiveSum(
+            // //     cubtemp,
+            // //     required_temp_bytes,
+            // //     d_compactOffsetTmp + 1,
+            // //     d_compactOffsetTmp + 1,
+            // //     numUniqueKeys,
+            // //     stream0
+            // // );
+            // event1.record(stream0);
+            // stream1.waitEvent(event1, 0);
+            // cudaMemcpyAsync(h_compactOffsetTmp.data(), d_compactOffsetTmp.data(), sizeof(Offset) * (1+numUniqueKeys), D2H, stream1); CUERR;
+            // event1.record(stream1);
+
+            // // gpuMvTable->retrieve(
+            // //     d_uniqueKeys.data(),
+            // //     numUniqueKeys,
+            // //     d_compactOffsetTmp.data(),
+            // //     d_compactValues.data(),
+            // //     stream0,
+            // //     warpcore::defaults::probing_length()
+            // // );
+
+            // gpuMvTable->retrieve(
+            //     d_uniqueKeys.data(),
+            //     numUniqueKeys,
+            //     d_compactOffsetTmp.data(),
+            //     d_compactOffsetTmp.data() + 1,
+            //     d_compactValues.data(),
+            //     numRetrievedValues,
+            //     stream0,
+            //     warpcore::defaults::probing_length()
+            // );
+
+            // cudaMemcpyAsync(h_compactValues.data(), d_compactValues.data(), sizeof(Value) * numRetrievedValues, D2H, stream0); CUERR;
+
+            // event2.record(stream0);
+
+            // // retrieve(
+            // //     h_uniqueKeys.data(),
+            // //     numUniqueKeys,
+            // //     h_compactOffsetTmp.data(),
+            // //     h_compactOffsetTmp.data() + 1,
+            // //     h_compactValues.data(),
+            // //     numRetrievedValues,
+            // //     (cudaStream_t)0
+            // // );
+            // auto copyToOutput = [](auto event, const auto src, auto dst){
+            //     event->synchronize(); CUERR;
+            //     std::copy(src->begin(), src->end(), dst);
+            // };
+
+            // auto future0 = std::async(std::launch::async,
+            //     copyToOutput,
+            //     &event0, &h_uniqueKeys, out_uniqueKeys
+            // );
+
+            // auto future1 = std::async(std::launch::async,
+            //     copyToOutput,
+            //     &event1, &h_compactOffsetTmp, out_offsets
+            // );
+
+            // copyToOutput(&event2, &h_compactValues, out_values);
+
+            // future0.wait();
+            // future1.wait();
+
+            // std::copy(h_uniqueKeys.begin(), h_uniqueKeys.end(), out_uniqueKeys);
+            // std::copy(h_compactValues.begin(), h_compactValues.end(), out_values);
+            // std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
         }
 
         struct CompactTableView{

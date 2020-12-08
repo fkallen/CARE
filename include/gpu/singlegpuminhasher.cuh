@@ -29,7 +29,7 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
-
+#include <numeric>
 
 namespace care{
 namespace gpu{
@@ -129,6 +129,13 @@ namespace gpu{
                 }
                 std::cout << '\n';
 
+                std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
+                std::iota(
+                    h_hashfunctionNumbers.begin(),
+                    h_hashfunctionNumbers.end(),
+                    alreadyExistingHashFunctions
+                );
+
                 for (int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
                     read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
@@ -167,6 +174,7 @@ namespace gpu{
                         d_indices,
                         alreadyExistingHashFunctions,
                         addedHashFunctions,
+                        h_hashfunctionNumbers.data(),
                         stream
                     );
 
@@ -188,6 +196,7 @@ namespace gpu{
             return numberOfAvailableHashFunctions; 
         }
 
+#if 0
         void constructFromReadStorage(
             const RuntimeOptions &runtimeOptions,
             std::uint64_t nReads,
@@ -292,6 +301,7 @@ namespace gpu{
             finalize();
         }
 
+#endif 
         int addHashfunctions(int numExtraFunctions){
             
             DevicerSwitcher ds(deviceId);
@@ -333,6 +343,7 @@ namespace gpu{
             const read_number* d_readIds,
             int firstHashfunction,
             int numHashfunctions,
+            const int* h_hashFunctionNumbers,
             cudaStream_t stream
         ){
             assert(firstHashfunction + numHashfunctions <= int(gpuHashTables.size()));
@@ -343,6 +354,15 @@ namespace gpu{
 
             helpers::SimpleAllocationDevice<std::uint64_t> d_sig(numHashfunctions * numSequences);
             helpers::SimpleAllocationDevice<std::uint64_t> d_sig_trans(numHashfunctions * numSequences);
+            helpers::SimpleAllocationDevice<int> d_hashFunctionNumbers(numHashfunctions);
+            
+            cudaMemcpyAsync(
+                d_hashFunctionNumbers, 
+                h_hashFunctionNumbers, 
+                sizeof(int) * numHashfunctions, 
+                H2D, 
+                stream
+            ); CUERR;
 
             std::uint64_t* d_signatures = d_sig.data();
             std::uint64_t* d_signatures_transposed = d_sig_trans.data();
@@ -360,7 +380,7 @@ namespace gpu{
                 d_sequenceLengths,
                 getKmerSize(),
                 numHashfunctions,
-                firstHashfunction,
+                d_hashFunctionNumbers,
                 stream
             ); CUERR;
 
@@ -750,96 +770,14 @@ namespace gpu{
                 // Segment of values for sequence i begins at d_offsets[i]
                 // Remove d_readIds[i] from segment i, if present. Operation is performed inplace
 
-                //std::cerr << "lambda kernel " << numSequences << " 128" << "\n";
-                //cudaDeviceSynchronize(); CUERR;
-                helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
-                    [
-                        d_readIds,
-                        d_values = d_values_dblbuf.Current(),
-                        numSequences,
-                        d_numValuesPerSequence,
-                        d_offsets
-                    ] __device__ (){
-                        constexpr int ITEMS_PER_THREAD = 4;
-                        constexpr int BLOCKSIZE = 128;
-                        constexpr int itemsPerIteration = ITEMS_PER_THREAD * BLOCKSIZE;
-
-                        assert(BLOCKSIZE == blockDim.x);
-                        //assert(false);
-
-                        using BlockLoad = cub::BlockLoad<read_number, BLOCKSIZE, ITEMS_PER_THREAD, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
-                        using MyBlockSelect = BlockSelect<read_number, BLOCKSIZE>;
-    
-                        __shared__ union{
-                            typename BlockLoad::TempStorage load;
-                            typename MyBlockSelect::TempStorage select;
-                        } temp_storage;
-
-                        // printf("tid %d bid %d, numSequences %d\n", threadIdx.x, blockIdx.x, numSequences);
-                        
-
-                        for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
-                            const int segmentsize = d_numValuesPerSequence[s];
-                            const int beginOffset = d_offsets[s];
-                            const read_number idToRemove = d_readIds[s];
-
-                            const int numIterations = SDIV(segmentsize, itemsPerIteration);
-                            read_number items[ITEMS_PER_THREAD];
-                            int flags[ITEMS_PER_THREAD];
-
-                            // if(threadIdx.x == 0){
-                            //     printf("numIterations %d\n", numIterations);
-                            // }
-
-                            int numSelectedTotal = 0;
-                            int remainingItems = segmentsize;
-                            const read_number* inputdata = d_values + beginOffset;
-                            read_number* outputdata = d_values + beginOffset;
-
-                            for(int iter = 0; iter < numIterations; iter++){
-                                const int validItems = min(remainingItems, itemsPerIteration);
-                                BlockLoad(temp_storage.load).Load(inputdata, items, validItems);
-// if(threadIdx.x == 0){
-//     printf("segmentsize %d iteration %d remainingItems %d validItems %d\n", segmentsize, iter, remainingItems, validItems);
-// }
-                                #pragma unroll
-                                for(int i = 0; i < ITEMS_PER_THREAD; i++){
-                                    if(threadIdx.x * ITEMS_PER_THREAD + i < validItems && items[i] != idToRemove){
-                                        flags[i] = 1;
-                                    }else{
-                                        flags[i] = 0;
-                                    }
-                                }
-
-                                __syncthreads();
-
-                                const int numSelected = MyBlockSelect(temp_storage.select).ForEachFlagged(items, flags, validItems,
-                                    [&](const auto& item, const int& pos){
-                                        outputdata[pos] = item;
-                                    }
-                                );
-                                assert(numSelected <= validItems);
-
-                                numSelectedTotal += numSelected;
-                                outputdata += numSelected;
-                                inputdata += validItems;
-                                remainingItems -= validItems;
-
-                                __syncthreads();
-                            }
-
-                            assert(segmentsize >= numSelectedTotal);
-
-                            //update segment size
-                            if(numSelectedTotal != segmentsize){
-                                if(threadIdx.x == 0){
-                                    d_numValuesPerSequence[s] = numSelectedTotal;
-                                    //printf("numSelectedTotal %d\n", numSelectedTotal);
-                                }
-                            }
-                        }
-                    }
-                ); CUERR
+                callFindAndRemoveFromSegmentKernel<read_number,128,4>(
+                    d_readIds,
+                    d_values_dblbuf.Current(),
+                    numSequences,
+                    d_numValuesPerSequence,
+                    d_offsets,
+                    stream
+                );
 
                 //copy values to compact array
 
