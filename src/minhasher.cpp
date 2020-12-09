@@ -385,8 +385,9 @@ namespace care{
 
         handle.allUniqueResults.resize(maximumResultSize);
 
-        auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges.data(), handle.ranges.size());
-        handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
+        auto resultEnd = k_way_set_union(handle.suHandle, handle.allUniqueResults.data(), handle.ranges.data(), handle.ranges.size());
+        const std::size_t resultSize = std::distance(handle.allUniqueResults.data(), resultEnd);
+        handle.allUniqueResults.erase(handle.allUniqueResults.begin() + resultSize, handle.allUniqueResults.end());
     }
 
 
@@ -404,20 +405,12 @@ namespace care{
         constexpr int maximum_kmer_length = max_k<kmer_type>::value;
         const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - kmerLength) * 2);
         const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
-        
-
-        auto murmur3_fmix = [](std::uint64_t x) {
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccd;
-            x ^= x >> 33;
-            x *= 0xc4ceb9fe1a85ec53;
-            x ^= x >> 33;
-            return x;
-        };
 
         auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
             const auto smallest = std::min(fwd, rc);
-            const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
+            const auto hashvalue = hasher::hash(smallest + numhashfunc);
             minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
         };
 

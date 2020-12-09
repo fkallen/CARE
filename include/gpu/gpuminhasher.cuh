@@ -75,6 +75,7 @@ namespace gpu{
             template<class T>
             using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
+            bool isInitialized = false;
             int deviceId;
 
             DeviceBuffer<std::uint64_t> d_minhashSignatures;
@@ -85,6 +86,10 @@ namespace gpu{
 
             PinnedBuffer<int> h_begin_offsets;
             DeviceBuffer<int> d_begin_offsets;
+            PinnedBuffer<int> h_end_offsets;
+            DeviceBuffer<int> d_end_offsets;
+            PinnedBuffer<int> h_global_begin_offsets;
+            DeviceBuffer<int> d_global_begin_offsets;
 
             DeviceBuffer<char> d_cub_temp;
 
@@ -101,6 +106,7 @@ namespace gpu{
             PinnedBuffer<int> h_hashFuncIds;
 
             GpuSegmentedUnique::Handle segmentedUniqueHandle;
+            std::vector<GpuSegmentedUnique::Handle> segmentedUniqueHandles;
 
 
             void resize(const GpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
@@ -114,6 +120,10 @@ namespace gpu{
 
                 h_begin_offsets.resize(numSequences+1);
                 d_begin_offsets.resize(numSequences+1);
+                h_end_offsets.resize(numSequences+1);
+                d_end_offsets.resize(numSequences+1);
+                h_global_begin_offsets.resize(numSequences);
+                d_global_begin_offsets.resize(numSequences);
             
                 allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
                 idsPerChunk.resize(numThreads, 0);   
@@ -150,10 +160,14 @@ namespace gpu{
                 handlehost(h_minhashSignatures);
                 handlehost(h_candidate_read_ids_tmp);
                 handlehost(h_begin_offsets);
+                handlehost(h_end_offsets);
+                handlehost(h_global_begin_offsets);
     
                 handledevice(d_minhashSignatures);
                 handledevice(d_candidate_read_ids_tmp);
                 handledevice(d_begin_offsets);
+                handledevice(d_end_offsets);
+                handledevice(d_global_begin_offsets);
 
                 handledevice(d_cub_temp);
 
@@ -170,6 +184,10 @@ namespace gpu{
                 handlehost(h_hashFuncIds);
 
                 info += segmentedUniqueHandle->getMemoryInfo();
+
+                for(const auto& h : segmentedUniqueHandles){
+                    info += h->getMemoryInfo();
+                }
     
                 return info;
             }
@@ -185,6 +203,10 @@ namespace gpu{
                 d_candidate_read_ids_tmp.destroy();
                 h_begin_offsets.destroy();
                 d_begin_offsets.destroy();
+                h_end_offsets.destroy();
+                d_end_offsets.destroy();
+                h_global_begin_offsets.destroy();
+                d_global_begin_offsets.destroy();
 
                 d_cub_temp.destroy();
 
@@ -199,16 +221,22 @@ namespace gpu{
                 h_hashFuncIds.destroy();
 
                 segmentedUniqueHandle = nullptr;
+                for(auto& h : segmentedUniqueHandles){
+                    h = nullptr;
+                }
 
                 cudaSetDevice(cur); CUERR;
+                isInitialized = false;
             }
         };
 
         static QueryHandle makeQueryHandle(){
             QueryHandle handle;
-            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
+            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();            
 
             cudaGetDevice(&handle.deviceId); CUERR;
+
+            handle.isInitialized = true;
 
             return handle;
         }
@@ -232,6 +260,121 @@ namespace gpu{
         GpuMinhasher& operator=(const GpuMinhasher&) = delete;
         GpuMinhasher& operator=(GpuMinhasher&&) = default;
 
+        std::array<std::uint64_t, maximum_number_of_maps> 
+        hostminhashfunction(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) const noexcept{
+
+            const int length = sequenceLength;
+
+            std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
+            std::fill_n(minhashSignature.begin(), numHashFuncs, std::numeric_limits<std::uint64_t>::max());
+
+            if(length < kmerLength) return minhashSignature;
+
+            constexpr int maximum_kmer_length = max_k<kmer_type>::value;
+            const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - kmerLength) * 2);
+            const int rcshiftamount = (maximum_kmer_length - kmerLength) * 2;
+
+            auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+                using hasher = hashers::MurmurHash<std::uint64_t>;
+
+                const auto smallest = std::min(fwd, rc);
+                const auto hashvalue = hasher::hash(smallest + numhashfunc);
+                minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
+            };
+
+            kmer_type kmer_encoded = 0;
+            kmer_type rc_kmer_encoded = std::numeric_limits<kmer_type>::max();
+
+            auto addBase = [&](char c){
+                kmer_encoded <<= 2;
+                rc_kmer_encoded >>= 2;
+                switch(c) {
+                case 'A':
+                    kmer_encoded |= 0;
+                    rc_kmer_encoded |= kmer_type(3) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'C':
+                    kmer_encoded |= 1;
+                    rc_kmer_encoded |= kmer_type(2) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'G':
+                    kmer_encoded |= 2;
+                    rc_kmer_encoded |= kmer_type(1) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                case 'T':
+                    kmer_encoded |= 3;
+                    rc_kmer_encoded |= kmer_type(0) << (sizeof(kmer_type) * 8 - 2);
+                    break;
+                default:break;
+                }
+            };
+
+            for(int i = 0; i < kmerLength - 1; i++){
+                addBase(sequence[i]);
+            }
+
+            for(int i = kmerLength - 1; i < length; i++){
+                addBase(sequence[i]);
+
+                for(int m = 0; m < numHashFuncs; m++){
+                    handlekmer(kmer_encoded & kmer_mask, 
+                                rc_kmer_encoded >> rcshiftamount, 
+                                m);
+                }
+            }
+
+            return minhashSignature;
+        }
+
+        //host version
+        void getCandidates(
+            QueryHandle& handle, 
+            std::vector<read_number>& ids,
+            const char* sequence,
+            int sequenceLength
+        ) const{
+
+            // we do not consider reads which are shorter than k
+            if(sequenceLength < getKmerSize()){
+                ids.clear();
+                return;
+            }
+
+            const std::uint64_t kmer_mask = getKmerMask();
+    
+            auto hashValues = hostminhashfunction(sequence, sequenceLength, getKmerSize(), getNumberOfMaps());
+
+            std::array<Range_t, maximum_number_of_maps> allRanges;
+
+            int totalNumResults = 0;
+    
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            queryPrecalculatedSignatures(
+                hashValues.data(),
+                allRanges.data(),
+                &totalNumResults, 
+                1
+            );
+            nvtx::pop_range();
+
+            auto handlesEnd = std::remove_if(
+                allRanges.begin(), 
+                allRanges.end(), 
+                [](const auto& range){return 0 == std::distance(range.first, range.second);}
+            );
+
+            const int numNonEmptyRanges = std::distance(allRanges.begin(), handlesEnd);
+
+            ids.resize(totalNumResults);
+
+            nvtx::push_range("k_way_set_union", 7);
+            SetUnionHandle suHandle;
+            auto resultEnd = k_way_set_union(suHandle, ids.data(), allRanges.data(), numNonEmptyRanges);
+            nvtx::pop_range();
+            const std::size_t resultSize = std::distance(ids.data(), resultEnd);
+            ids.erase(ids.begin() + resultSize, ids.end());
+        }
+
 
 
         template<class ParallelForLoop>
@@ -248,6 +391,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+            assert(handle.isInitialized);
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
@@ -511,7 +655,6 @@ namespace gpu{
 
 
 
-
         template<class ParallelForLoop>
         void getIdsOfSimilarReadsNormalExcludingSelf(
             QueryHandle& handle,
@@ -528,6 +671,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
+            assert(handle.isInitialized);
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
@@ -735,6 +879,38 @@ namespace gpu{
                 sizeof(read_number) * 8,
                 stream
             );
+
+            // cudaStreamSynchronize(stream); CUERR;
+            // static int aaa = 0;
+
+            // if(aaa == 0){
+            //     std::cerr << numSequences << "\n";
+            //     std::cerr << "h_begin_offsets:\n";
+            //     for(int i = 0; i < numSequences + 1; i++){
+            //         std::cerr << handle.h_begin_offsets[i] << ", ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_similarReadsPerSequence:\n";
+            //     for(int i = 0; i < numSequences; i++){
+            //         std::cerr << d_similarReadsPerSequence[i] << ", ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "h_candidate_read_ids_tmp:\n";
+            //     for(int i = 0; i < getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences; i++){
+            //         std::cerr << handle.h_candidate_read_ids_tmp[i] << ", ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "d_candidate_read_ids_tmp:\n";
+            //     for(int i = 0; i < getNumResultsPerMapThreshold() * getNumberOfMaps() * numSequences; i++){
+            //         std::cerr << handle.d_candidate_read_ids_tmp[i] << ", ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     aaa = 1;
+            // }
 
             //if a candidate list is not empty, it must at least contain the id of the querying read.
             //this id will be removed next. however, the prefixsum already requires the numbers with removed ids.
@@ -1437,7 +1613,8 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
-
+            assert(handle.isInitialized);
+            
             if(numSequences == 0){
                 return;
             }

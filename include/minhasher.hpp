@@ -45,7 +45,7 @@ struct Minhasher {
     struct Handle{        
         std::vector<Range_t> ranges;
 		std::vector<Value_t> allUniqueResults;
-        SetUnionHandle<Value_t> suHandle;
+        SetUnionHandle suHandle;
 
         
 
