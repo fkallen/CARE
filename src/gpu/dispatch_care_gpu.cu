@@ -110,6 +110,8 @@ namespace care{
             return;
         }
 
+        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
+
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
@@ -259,7 +261,7 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-#define WARPMIN
+//#define WARPMIN
 
 #ifndef WARPMIN
         gpu::GpuMinhasher currentGpuMinhasher(
@@ -290,7 +292,22 @@ namespace care{
             correctionOptions.numHashFunctions
         );
 
+        if(validNumHashFunctions == 0){
+            std::cout << "Cannot construct a single gpu hashtable. Abort!" << std::endl;
+            return;
+        }
+
         std::cerr << "warpcore minhasher can use " << validNumHashFunctions << " maps\n";
+
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != sgpuMinhasher.getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        
 
 #endif
 
