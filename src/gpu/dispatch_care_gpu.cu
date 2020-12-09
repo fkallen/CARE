@@ -108,11 +108,7 @@ namespace care{
             return;
         }
 
-        if(correctionOptions.batchsize > 1024){
-            correctionOptions.batchsize = 1024;
-            //development - selectIndicesOfFlagsOnlyOneBlock
-            std::cerr << "Adjusted batchsize to 1024 to prevent a bug which is not fixed yet.\n";
-        }
+        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
