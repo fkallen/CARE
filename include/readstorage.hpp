@@ -2,7 +2,7 @@
 #define READ_STORAGE_HPP
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <lengthstorage.hpp>
 #include <memorymanagement.hpp>
 
@@ -88,7 +88,7 @@ namespace cpu{
         void init(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length){
             sequenceLengthLowerBound = minimum_sequence_length,
             sequenceLengthUpperBound = maximum_sequence_length,
-            sequenceDataPitchInInts = getEncodedNumInts2Bit(maximum_sequence_length),
+            sequenceDataPitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximum_sequence_length),
             sequenceQualitiesPitchInBytes = maximum_sequence_length,
             useQualityScores = b,
             maximumNumberOfSequences = nSequences;
@@ -354,7 +354,7 @@ private:
             const int sequencelength = sequence.length();
 
             unsigned int* dest = &h_sequence_data[std::size_t(readNumber) * sequenceDataPitchInInts];
-            encodeSequence2Bit(
+            SequenceHelpers::encodeSequence2Bit(
                 dest,
                 sequence.c_str(),
                 sequence.length(),

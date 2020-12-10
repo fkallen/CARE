@@ -1,3 +1,4 @@
+#include <version.hpp>
 
 #include <config.hpp>
 
@@ -239,7 +240,7 @@ int main(int argc, char** argv){
 
 	//print all options that will be used
 	std::cout << std::boolalpha;
-	std::cout << "CARE will be started with the following parameters:\n";
+	std::cout << "CARE version " << CARE_VERSION_STRING << " will be started with the following parameters:\n";
 
 	std::cout << "----------------------------------------\n";
 

@@ -76,7 +76,7 @@ correct_cpu(
     }
 
 
-    CpuErrorCorrector::ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+    ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
 
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
@@ -99,10 +99,7 @@ correct_cpu(
 
 
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
-
-    
-
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
     
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
         //std::unique_lock<std::mutex> l(outputstreammutex);
@@ -147,11 +144,13 @@ correct_cpu(
     {
         //const int threadId = omp_get_thread_num();
 
-        const std::size_t encodedSequencePitchInInts2Bit = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+        ClfAgent clfAgent = clfAgent_;
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
         const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 
-        ClfAgent clfAgent = clfAgent_;
+        std::unique_ptr<ReadProvider> readProvider = std::make_unique<CpuReadStorageReadProvider>(readStorage);
+        std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<CpuMinhasherCandidateIdsProvider>(minhasher);
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
@@ -159,13 +158,11 @@ correct_cpu(
             qualityPitchInBytes,
             correctionOptions,
             goodAlignmentProperties,
-            minhasher,
-            readStorage,
+            *candidateIdsProvider,
+            *readProvider,
             correctionFlags,
             clfAgent
         );
-
-        ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
         std::vector<read_number> batchReadIds(correctionOptions.batchsize);
         std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
@@ -189,15 +186,13 @@ correct_cpu(
 
             //collect input data of all reads in batch
 
-            readStorage.gatherSequenceLengths(
-                readStorageGatherHandle,
+            readProvider->gatherSequenceLengths(
                 batchReadIds.data(),
                 batchReadIds.size(),
                 batchReadLengths.data()
             );
 
-            readStorage.gatherSequenceData(
-                readStorageGatherHandle,
+            readProvider->gatherSequenceData(
                 batchReadIds.data(),
                 batchReadIds.size(),
                 batchEncodedData.data(),
@@ -205,8 +200,7 @@ correct_cpu(
             );
 
             if(correctionOptions.useQualityScores){
-                readStorage.gatherSequenceQualities(
-                    readStorageGatherHandle,
+                readProvider->gatherSequenceQualities(
                     batchReadIds.data(),
                     batchReadIds.size(),
                     batchQualities.data(),
@@ -214,10 +208,7 @@ correct_cpu(
                 );
             }
 
-            std::vector<TempCorrectedSequence> anchorCorrections;
-            std::vector<TempCorrectedSequence> candidateCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+            CorrectionOutput correctionOutput;
 
             for(size_t i = 0; i < batchReadIds.size(); i++){
                 const read_number readId = batchReadIds[i];
@@ -231,37 +222,34 @@ correct_cpu(
                 auto output = errorCorrector.process(input);
 
                 if(output.hasAnchorCorrection){
-                    encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
-                    anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                    correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
+                    correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
                 }
 
                 for(auto& tmp : output.candidateCorrections){
-                    encodedCandidateCorrections.emplace_back(tmp.encode());
-                    candidateCorrections.emplace_back(std::move(tmp));
+                    correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
+                    correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
                 }
             }
 
             auto outputfunction = [
                 &, 
-                encodedAnchorCorrections = std::move(encodedAnchorCorrections),
-                anchorCorrections = std::move(anchorCorrections),
-                encodedCandidateCorrections = std::move(encodedCandidateCorrections),
-                candidateCorrections = std::move(candidateCorrections)
+                correctionOutput = std::move(correctionOutput)
             ](){
-                const int numA = anchorCorrections.size();
-                const int numC = candidateCorrections.size();
+                const int numA = correctionOutput.anchorCorrections.size();
+                const int numC = correctionOutput.candidateCorrections.size();
 
                 for(int i = 0; i < numA; i++){
                     saveCorrectedSequence(
-                        std::move(anchorCorrections[i]), 
-                        std::move(encodedAnchorCorrections[i])
+                        std::move(correctionOutput.anchorCorrections[i]), 
+                        std::move(correctionOutput.encodedAnchorCorrections[i])
                     );
                 }
 
                 for(int i = 0; i < numC; i++){
                     saveCorrectedSequence(
-                        std::move(candidateCorrections[i]), 
-                        std::move(encodedCandidateCorrections[i])
+                        std::move(correctionOutput.candidateCorrections[i]), 
+                        std::move(correctionOutput.encodedCandidateCorrections[i])
                     );
                 }
             };

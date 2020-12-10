@@ -35,8 +35,13 @@ struct KernelLaunchConfig {
 };
 
 constexpr bool operator<(const KernelLaunchConfig& lhs, const KernelLaunchConfig& rhs){
-	return lhs.threads_per_block < rhs.threads_per_block
-	       && lhs.smem < rhs.smem;
+    if(lhs.threads_per_block < rhs.threads_per_block){
+        return true;
+    }else if(lhs.threads_per_block > rhs.threads_per_block){
+        return false;
+    }else{
+        return lhs.smem < rhs.smem;
+    }
 }
 
 struct KernelProperties {
