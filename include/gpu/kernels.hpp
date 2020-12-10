@@ -19,6 +19,8 @@ namespace gpu {
 
 #ifdef __NVCC__
 
+
+
 struct AnchorHighQualityFlag{
     char data;
 
@@ -30,6 +32,13 @@ struct AnchorHighQualityFlag{
     __host__ __device__
     void hq(bool isHq){
         data = isHq ? 1 : 0;
+    }
+};
+
+struct IsHqAnchor{
+    DEVICEQUALIFIER
+    bool operator() (const AnchorHighQualityFlag& flag) const{
+        return flag.hq();
     }
 };
 

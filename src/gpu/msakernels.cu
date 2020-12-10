@@ -5,7 +5,7 @@
 
 #include <bestalignment.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <gpu/gpumsa.cuh>
 

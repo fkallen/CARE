@@ -2,9 +2,10 @@
 #!/bin/sh
 
 PREFIX=/usr/local
-CUB_INCDIR=/usr/local/cuda/include
-THRUST_INCDIR=/usr/local/cuda/include
 CUDA_DIR=/usr/local/cuda
+CUB_INCDIR=$CUDA_DIR/include
+THRUST_INCDIR=$CUDA_DIR/include
+
 
 HELP="Usage: ./configure [OPTION]...
 Installation directories:
@@ -14,14 +15,16 @@ By default, \`make install' will install all the files in
 \`$PREFIX/bin'. You can specify
 an installation prefix other than \`$PREFIX' using \`--prefix',
 for instance \`--prefix=\$HOME'.
-The following options can be used to manually specify the
-locations of dependencies:
-  --with-cuda-dir=DIR      The installation directory of the CUDA toolkit. [$CUDA_DIR]
+The following options can be used to manually specify the locations of dependencies. 
+If cuda-dir is set, but not cub or thrust, cuda-dir/include will be used for cub or thrust if it is not specified.
+
+  --with-cuda-dir=DIR      The top directory of the CUDA toolkit. [$CUDA_DIR]
   --with-cub-incdir=DIR    use the copy of CUB in DIR. DIR/cub/cub.cuh must exist [$CUB_INCDIR]
   --with-thrust-incdir=DIR use the copy of THRUST in DIR. DIR/thrust/version.h must exist [$THRUST_INCDIR]
 " 
 
-
+cubdirset=0
+thrustdirset=0
 
 for var in "$@"
 do
@@ -33,14 +36,23 @@ do
 	TMP=`echo "$var" | sed -n 's/^--prefix=\(.*\)$/\1/p'`
 	if [ "$TMP" ]; then PREFIX="$TMP"; continue; fi
 
-    TMP=`echo "$var" | sed -n 's/^--with-cuda-dir=\(.*\)$/\1/p'`
-	if [ "$TMP" ]; then CUDA_DIR="$TMP"; continue; fi
+	TMP=`echo "$var" | sed -n 's/^--with-cuda-dir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then 
+		CUDA_DIR="$TMP"; 
+		if [ $cubdirset -eq 0 ]; then
+			CUB_INCDIR=$CUDA_DIR/include;
+ 		fi
+		if [ $thrustdirset -eq 0 ]; then
+			THRUST_INCDIR=$CUDA_DIR/include;
+		fi
+		continue; 
+	fi
 
 	TMP=`echo "$var" | sed -n 's/^--with-cub-incdir=\(.*\)$/\1/p'`
-	if [ "$TMP" ]; then CUB_INCDIR="$TMP"; continue; fi
+	if [ "$TMP" ]; then CUB_INCDIR="$TMP"; cubdirset=1; continue; fi
 
 	TMP=`echo "$var" | sed -n 's/^--with-thrust-incdir=\(.*\)$/\1/p'`
-	if [ "$TMP" ]; then THRUST_INCDIR="$TMP"; continue; fi
+	if [ "$TMP" ]; then THRUST_INCDIR="$TMP"; thrustdirset=1; continue; fi
 
 	echo "config.sh: Unknown or malformed option '$var'" 1>&2
 	exit 1
@@ -76,5 +88,9 @@ echo $CUDA_DIR > .CUDA_DIR
 echo $CUB_INCDIR > .CUB_INCDIR
 echo $THRUST_INCDIR > .THRUST_INCDIR
 
+echo "Prefix: $PREFIX"
+echo "CUDA: $CUDA_DIR"
+echo "CUB: $CUB_INCDIR"
+echo "THRUST: $THRUST_INCDIR"
 
 

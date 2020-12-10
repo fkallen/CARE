@@ -134,15 +134,65 @@ namespace distarraykernels{
             size_t resultPitchValueTs,
             size_t numCols
     ){
+        auto standardGather = [&](){
 
-        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-            const Index_t outputrow = i / numCols;
-            const Index_t inputrow = indices[outputrow] + indexOffset;
-            const Index_t col = i % numCols;
-            result[size_t(outputrow) * resultPitchValueTs + col] 
-                    = sourceData[size_t(inputrow) * numCols + col];
-        }
+            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+                const Index_t outputrow = i / numCols;
+                const Index_t inputrow = indices[outputrow] + indexOffset;
+                const Index_t col = i % numCols;
+                result[size_t(outputrow) * resultPitchValueTs + col] 
+                        = sourceData[size_t(inputrow) * numCols + col];
+            }
+        };
+
+        // auto specialGather = [&](){
+        //     constexpr int groupsize = 8;
+        //     auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        //     const int numGroupsInGrid = (blockDim.x * gridDim.x) / groupsize;
+        //     const int groupIdInGrid = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+        //     for(int outputrow = groupIdInGrid; outputrow < nIndices; outputrow += numGroupsInGrid){
+        //         const Index_t inputrow = indices[outputrow] + indexOffset;
+
+        //         for(int k = group.thread_rank(); k < numCols; k += group.size()){
+        //             result[size_t(outputrow) * resultPitchValueTs + k] 
+        //                 = sourceData[size_t(inputrow) * numCols + k];
+        //         }
+        //     }
+        // };
+
+        // auto specialGather2 = [&](){
+        //     constexpr int groupsize = 8;
+        //     auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        //     const int numGroupsInGrid = (blockDim.x * gridDim.x) / groupsize;
+        //     const int groupIdInGrid = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+        //     const int numIntsToCopy = (numCols * sizeof(Value_t)) / sizeof(int);
+        //     const int remainingBytes = (numCols * sizeof(Value_t)) - numIntsToCopy * sizeof(int);
+
+        //     for(int outputrow = groupIdInGrid; outputrow < nIndices; outputrow += numGroupsInGrid){
+        //         const Index_t inputrow = indices[outputrow] + indexOffset;
+
+        //         for(int k = group.thread_rank(); k < numIntsToCopy; k += group.size()){
+        //             ((int*)&result[size_t(outputrow) * resultPitchValueTs])[k] 
+        //                 = ((const int*)&sourceData[size_t(inputrow) * numCols])[k];
+        //         }
+
+        //         for(int k = group.thread_rank(); k < remainingBytes; k += group.size()){
+        //             ((char*)(((int*)&result[size_t(outputrow) * resultPitchValueTs]) + numIntsToCopy))[k] 
+        //                 = ((const char*)(((const int*)&sourceData[size_t(inputrow) * numCols]) + numIntsToCopy))[k];
+        //         }
+        //     }
+        // };
+
+        standardGather();
+        //specialGather();
+        // assert((numCols * sizeof(Value_t)) % sizeof(int) == 0);
+        // assert((resultPitchValueTs * sizeof(Value_t)) % sizeof(int) == 0);
+
+        // specialGather2();
     }
+
 
     template<class Index_t, class Value_t>
     __global__

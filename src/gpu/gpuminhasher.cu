@@ -20,24 +20,6 @@ void minhashSignaturesKernel(
     //constexpr int blocksize = 128;
     constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
 
-    auto murmur3_fmix = [](std::uint64_t x) {
-        x ^= x >> 33;
-        x *= 0xff51afd7ed558ccd;
-        x ^= x >> 33;
-        x *= 0xc4ceb9fe1a85ec53;
-        x ^= x >> 33;
-        return x;
-    };
-
-    auto make_reverse_complement = [](std::uint64_t s){
-        s = ((s >> 2)  & 0x3333333333333333ull) | ((s & 0x3333333333333333ull) << 2);
-        s = ((s >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((s & 0x0F0F0F0F0F0F0F0Full) << 4);
-        s = ((s >> 8)  & 0x00FF00FF00FF00FFull) | ((s & 0x00FF00FF00FF00FFull) << 8);
-        s = ((s >> 16) & 0x0000FFFF0000FFFFull) | ((s & 0x0000FFFF0000FFFFull) << 16);
-        s = ((s >> 32) & 0x00000000FFFFFFFFull) | ((s & 0x00000000FFFFFFFFull) << 32);
-        return ((std::uint64_t)(-1) - s) >> (8 * sizeof(s) - (32 << 1));
-    };
-
     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
     if(tid < numSequences * numHashFuncs){
@@ -53,8 +35,10 @@ void minhashSignaturesKernel(
         std::uint64_t minHashValue = std::numeric_limits<std::uint64_t>::max();
 
         auto handlekmer = [&](auto fwd, auto rc){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
             const auto smallest = min(fwd, rc);
-            const auto hashvalue = murmur3_fmix(smallest + hashFuncId);
+            const auto hashvalue = hasher::hash(smallest + hashFuncId);
             minHashValue = min(minHashValue, hashvalue);
         };
 
@@ -74,7 +58,7 @@ void minhashSignaturesKernel(
 
             kmer_encoded >>= 2; //k-1 bases, allows easier loop
 
-            std::uint64_t rc_kmer_encoded = make_reverse_complement(kmer_encoded);
+            std::uint64_t rc_kmer_encoded = SequenceHelpers::reverseComplementInt2Bit(kmer_encoded);
 
             auto addBase = [&](std::uint64_t encBase){
                 kmer_encoded <<= 2;
@@ -85,13 +69,15 @@ void minhashSignaturesKernel(
                 rc_kmer_encoded |= revcBase << 62;
             };
 
-            const int itersend1 = min(SDIV(k-1, 16) * 16, myLength);
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            const int itersend1 = min(SDIV(k-1, basesPerInt) * basesPerInt, myLength);
 
             //process sequence positions one by one
             // until the next encoded sequence data element is reached
             for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
-                const int nextIntIndex = nextSequencePos / 16;
-                const int nextPositionInInt = nextSequencePos % 16;
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
 
                 const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
 
@@ -103,16 +89,16 @@ void minhashSignaturesKernel(
                 );
             }
 
-            const int full16Iters = (myLength - itersend1) / 16;
+            const int fullIntIters = (myLength - itersend1) / basesPerInt;
 
             //process all fully occupied encoded sequence data elements
             // improves memory access
-            for(int iter = 0; iter < full16Iters; iter++){
-                const int intIndex = (itersend1 + iter * 16) / 16;
+            for(int iter = 0; iter < fullIntIters; iter++){
+                const int intIndex = (itersend1 + iter * basesPerInt) / basesPerInt;
                 const unsigned int data = mySequence[intIndex];
 
                 #pragma unroll
-                for(int posInInt = 0; posInInt < 16; posInInt++){
+                for(int posInInt = 0; posInInt < basesPerInt; posInInt++){
                     const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
 
                     addBase(nextBase);
@@ -125,9 +111,9 @@ void minhashSignaturesKernel(
             }
 
             //process remaining positions one by one
-            for(int nextSequencePos = full16Iters * 16 + itersend1; nextSequencePos < myLength; nextSequencePos++){
-                const int nextIntIndex = nextSequencePos / 16;
-                const int nextPositionInInt = nextSequencePos % 16;
+            for(int nextSequencePos = fullIntIters * basesPerInt + itersend1; nextSequencePos < myLength; nextSequencePos++){
+                const int nextIntIndex = nextSequencePos / basesPerInt;
+                const int nextPositionInInt = nextSequencePos % basesPerInt;
 
                 const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
 
@@ -356,7 +342,7 @@ void GpuMinhasher::construct(
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
 
     auto sequencehandle = readStorage.makeGatherHandleSequences();
-    std::size_t sequencepitch = getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(int);
+    std::size_t sequencepitch = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(int);
 
     const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
     std::ofstream outstream(tmpmapsFilename, std::ios::binary);
@@ -743,7 +729,7 @@ GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
     constexpr read_number parallelReads = 1000000;
     read_number numReads = numberOfReads;
     const int numIters = SDIV(numReads, parallelReads);
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(upperBoundSequenceLength);
 
     const auto& deviceIds = runtimeOptions.deviceIds;
     const int numThreads = runtimeOptions.threads;

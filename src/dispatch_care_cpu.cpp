@@ -10,7 +10,7 @@
 #include <minhasher.hpp>
 
 #include <correctionresultprocessing.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <readextension_cpu.hpp>
 
@@ -107,10 +107,11 @@ namespace care{
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
+
         helpers::CpuTimer step1Timer("STEP1");
 
-        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
+        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
         care::cpu::ContiguousReadStorage readStorage(
             maximumNumberOfReads, 
@@ -120,7 +121,7 @@ namespace care{
         );
 
         if(fileOptions.load_binary_reads_from != ""){
-
+            
             readStorage.loadFromFile(fileOptions.load_binary_reads_from);
 
             if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
@@ -192,6 +193,7 @@ namespace care{
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
+        
         Minhasher minhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)

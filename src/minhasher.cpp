@@ -205,7 +205,7 @@ namespace care{
 
                     const unsigned int* sequenceptr = readStorage.fetchSequenceData_ptr(localId);
                     const int sequencelength = readStorage.fetchSequenceLength(readId);
-                    std::string sequencestring = get2BitString(sequenceptr, sequencelength);
+                    std::string sequencestring = SequenceHelpers::get2BitString(sequenceptr, sequencelength);
 
                     if(readId >= nReads)
                         throw std::runtime_error("Minhasher::insertSequence: read number too large. "

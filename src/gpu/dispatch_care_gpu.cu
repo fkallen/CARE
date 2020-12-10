@@ -745,7 +745,6 @@ namespace care{
             fileOptions.mergedoutput
         );
 
-
         step3Timer.print();
 
         std::cout << "Construction of output file(s) finished." << std::endl;

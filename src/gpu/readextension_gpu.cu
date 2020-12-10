@@ -1,6 +1,6 @@
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <minhasher.hpp>
 #include <readstorage.hpp>
 #include <options.hpp>
@@ -128,7 +128,7 @@ extend_gpu_pairedend(
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
     std::mutex ompCriticalMutex;
@@ -242,8 +242,8 @@ extend_gpu_pairedend(
                 input.encodedRead2 = currentEncodedReads.get() + (2*i+1) * encodedSequencePitchInInts;
                 input.readLength1 = currentReadLengths[2*i];
                 input.readLength2 = currentReadLengths[2*i+1];
-                input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[2*i]);
-                input.numInts2 = getEncodedNumInts2Bit(currentReadLengths[2*i+1]);
+                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i]);
+                input.numInts2 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i+1]);
                 input.verbose = false;
                 input.verboseMutex = &verboseMutex;
             }
@@ -444,7 +444,7 @@ extend_gpu_singleend(
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
     std::mutex ompCriticalMutex;
@@ -552,7 +552,7 @@ extend_gpu_singleend(
                 input.encodedRead2 = nullptr;
                 input.readLength1 = currentReadLengths[i];
                 input.readLength2 = 0;
-                input.numInts1 = getEncodedNumInts2Bit(currentReadLengths[i]);
+                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[i]);
                 input.numInts2 = 0;
                 input.verbose = false;
                 input.verboseMutex = &verboseMutex;

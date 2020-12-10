@@ -179,8 +179,8 @@ private:
                 //std::cerr << "lengthToHash = " << lengthToHash << "\n";
 
                 std::vector<char> buf(task.currentAnchorLength);
-                decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
-                encodeSequence2Bit(
+                SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+                SequenceHelpers::encodeSequence2Bit(
                     h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
                     buf.data() + task.currentAnchorLength - lengthToHash, 
                     lengthToHash

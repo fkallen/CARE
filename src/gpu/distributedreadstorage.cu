@@ -6,7 +6,7 @@
 #include <memorymanagement.hpp>
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <readlibraryio.hpp>
 #include <threadpool.hpp>
 #include <util.hpp>
@@ -107,7 +107,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         
 
 
-        const int intsPerSequence = getEncodedNumInts2Bit(sequenceLengthUpperBound);
+        const int intsPerSequence = SequenceHelpers::getEncodedNumInts2Bit(sequenceLengthUpperBound);
 
         updateMemoryLimits();
         distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, 
@@ -220,7 +220,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, const std:
         
 
 
-        const int intsPerSequence = getEncodedNumInts2Bit(sequenceLengthUpperBound);
+        const int intsPerSequence = SequenceHelpers::getEncodedNumInts2Bit(sequenceLengthUpperBound);
 
         updateMemoryLimits();
         distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, 
@@ -485,7 +485,7 @@ void DistributedReadStorage::setReads(
         ;
     }      
 
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(getSequenceLengthUpperBound());
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(getSequenceLengthUpperBound());
     const std::size_t qualityPitch = getSequenceLengthUpperBound();
 
     const std::size_t decodedSequencePitch = SDIV(statistics.maximumSequenceLength, 128) * 128;
@@ -589,27 +589,17 @@ void DistributedReadStorage::setReads(
                 const int tileId = (threadIdx.x + blockIdx.x * blockDim.x) / tilesize;
 
                 auto encode = [](unsigned int& dest, char base){
-                    if(base == 'A'){
-                        dest = (dest << 2) | encodedbaseA;
-                    }
-                    if(base == 'C'){
-                        dest = (dest << 2) | encodedbaseC;
-                    }
-                    if(base == 'G'){
-                        dest = (dest << 2) | encodedbaseG;
-                    }
-                    if(base == 'T'){
-                        dest = (dest << 2) | encodedbaseT;
-                    }
+                    dest = (dest << 2) | SequenceHelpers::encodeBase(base);
                 };
 
+                constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
 
                 for(int sequenceIndex = tileId; sequenceIndex < chunksize; sequenceIndex += numTiles){
                     const char* const sequenceinput = decodedSequences + sequenceIndex * decodedSequencePitch;
                     unsigned int* const output = encodedSequences + sequenceIndex * encodedSequencePitchInInts;
 
                     const int length = lengths[sequenceIndex];
-                    const int numRequiredInts = getEncodedNumInts2Bit(length);
+                    const int numRequiredInts = SequenceHelpers::getEncodedNumInts2Bit(length);
 
                     for(int outputIntIndex = tile.thread_rank(); outputIntIndex < numRequiredInts; outputIntIndex += tile.size()){
 
@@ -621,23 +611,23 @@ void DistributedReadStorage::setReads(
                         for(int i = 0; i < 4; i++){
                             const char4 data = myInput[i];
 
-                            if(outputIntIndex * 16 + i * 4 + 0 < length){
+                            if(outputIntIndex * basesPerInt + i * 4 + 0 < length){
                                 encode(outputdata, data.x);
                             }
-                            if(outputIntIndex * 16 + i * 4 + 1 < length){
+                            if(outputIntIndex * basesPerInt + i * 4 + 1 < length){
                                 encode(outputdata, data.y);
                             }
-                            if(outputIntIndex * 16 + i * 4 + 2 < length){
+                            if(outputIntIndex * basesPerInt + i * 4 + 2 < length){
                                 encode(outputdata, data.z);
                             }
-                            if(outputIntIndex * 16 + i * 4 + 3 < length){
+                            if(outputIntIndex * basesPerInt + i * 4 + 3 < length){
                                 encode(outputdata, data.w);
                             }
                         } 
 
                         if(outputIntIndex == numRequiredInts - 1){
                             //pack bits of last integer into higher order bits
-                            int leftoverbits = 2 * (numRequiredInts * basesPerInt2Bit - length);
+                            int leftoverbits = 2 * (numRequiredInts * SequenceHelpers::basesPerInt2Bit() - length);
                             if(leftoverbits > 0){
                                 outputdata <<= leftoverbits;
                             }
