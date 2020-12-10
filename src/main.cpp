@@ -1,5 +1,4 @@
 #include <version.hpp>
-
 #include <config.hpp>
 
 #include <cxxopts/cxxopts.hpp>
@@ -39,14 +38,13 @@ bool checkMandatoryArguments(const cxxopts::ParseResult& parseresults){
 	};
 
 	bool success = true;
-#if 0	
 	for(const auto& opt : mandatory){
 		if(parseresults.count(opt) == 0){
 			success = false;
 			std::cerr << "Mandatory argument " << opt << " is missing.\n";
 		}
 	}
-#endif
+
 	return success;
 }
 
@@ -202,12 +200,12 @@ int main(int argc, char** argv){
 	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
 	FileOptions fileOptions = args::to<FileOptions>(parseresults);
 
-	// if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
-	// if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
-	// if(!args::isValid(extensionOptions)) throw std::runtime_error("Invalid extensionOptions!");
-	// if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
-	// if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
-	// if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
+	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
+	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
+	if(!args::isValid(extensionOptions)) throw std::runtime_error("Invalid extensionOptions!");
+	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
+	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
+	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
 
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
@@ -239,7 +237,7 @@ int main(int argc, char** argv){
 
 	//print all options that will be used
 	std::cout << std::boolalpha;
-	std::cout << "CARE version " << CARE_VERSION_STRING << " will be started with the following parameters:\n";
+	std::cout << "CARE will be started with the following parameters:\n";
 
 	std::cout << "----------------------------------------\n";
 
@@ -311,7 +309,7 @@ int main(int argc, char** argv){
 
 	omp_set_num_threads(numThreads);
 
-#if 1
+#if 0
     care::performCorrection(
 		correctionOptions,
 		runtimeOptions,
