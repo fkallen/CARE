@@ -4768,7 +4768,7 @@ public:
         cudaGetDevice(&cur); CUERR;
         cudaSetDevice(deviceId);
 
-        constexpr int numextra = 1;
+        //constexpr int numextra = 1;
 
         CudaStream stream;
         GpuErrorCorrectorInput input;
@@ -4813,7 +4813,7 @@ public:
         double elapsedCorrectionTime = 0.0;
         double elapsedOutputTime = 0.0;
 
-        int globalcounter = 0;
+        //int globalcounter = 0;
 
         while(continueCondition()){
 
@@ -5019,9 +5019,7 @@ public:
             }
 
         }else{
-            int numBatches = config.numHashers + config.numCorrectors; // such that all hashers and all correctors could be busy simultaneously
-
-            int numInputBatches = config.numHashers + config.numCorrectors;
+            int numInputBatches = config.numHashers + config.numCorrectors; // such that all hashers and all correctors could be busy simultaneously
 
             std::vector<GpuErrorCorrectorInput> inputs(numInputBatches);
             for(auto& i : inputs){
@@ -5890,26 +5888,26 @@ correct_gpu_impl(
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
         std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
-        auto runSimpleCpuPipeline = [&](int deviceId){
-            // cudaSetDevice(deviceId); CUERR;
+        // auto runSimpleCpuPipeline = [&](int deviceId){
+        //     // cudaSetDevice(deviceId); CUERR;
 
-            // SimpleCpuCorrectionPipeline pipeline;
+        //     // SimpleCpuCorrectionPipeline pipeline;
 
-            // std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-            // std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
+        //     // std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
+        //     // std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
 
-            // pipeline.runToCompletion(
-            //     readIdGenerator,
-            //     correctionOptions,
-            //     goodAlignmentProperties,
-            //     sequenceFileProperties,
-            //     correctionFlags,
-            //     readProvider.get(),
-            //     candidateIdsProvider.get(),
-            //     processResults,
-            //     batchCompleted
-            // ); 
-        };
+        //     // pipeline.runToCompletion(
+        //     //     readIdGenerator,
+        //     //     correctionOptions,
+        //     //     goodAlignmentProperties,
+        //     //     sequenceFileProperties,
+        //     //     correctionFlags,
+        //     //     readProvider.get(),
+        //     //     candidateIdsProvider.get(),
+        //     //     processResults,
+        //     //     batchCompleted
+        //     // ); 
+        // };
 
         auto runSimpleGpuPipeline = [&](int deviceId){
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
