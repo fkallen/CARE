@@ -461,8 +461,63 @@ namespace gpu{
             return ptr;
         }
 
+        void query(
+            QueryHandle& handle,
+            const unsigned int* d_encodedSequences,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int deviceId, 
+            cudaStream_t stream,
+            read_number* d_similarReadIds,
+            int* d_similarReadsPerSequence,
+            int* d_similarReadsPerSequencePrefixSum
+        ) const{
+            query_impl(
+                handle,
+                nullptr,
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                deviceId,
+                stream, 
+                d_similarReadIds,
+                d_similarReadsPerSequence,
+                d_similarReadsPerSequencePrefixSum
+            );
+        }
 
         void queryExcludingSelf(
+            QueryHandle& handle,
+            const read_number* d_readIds,
+            const unsigned int* d_encodedSequences,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int deviceId, 
+            cudaStream_t stream,
+            read_number* d_similarReadIds,
+            int* d_similarReadsPerSequence,
+            int* d_similarReadsPerSequencePrefixSum
+        ) const{
+            query_impl(
+                handle,
+                d_readIds,
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                deviceId,
+                stream, 
+                d_similarReadIds,
+                d_similarReadsPerSequence,
+                d_similarReadsPerSequencePrefixSum
+            );
+        }
+
+
+        void query_impl(
             QueryHandle& queryHandle,
             const read_number* d_readIds,
             const unsigned int* d_sequenceData2Bit,
@@ -674,10 +729,6 @@ namespace gpu{
 
             //results will be in Current() buffer
             cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, handle.d_values_tmp.data());
-            if(d_readIds != nullptr){
-                //if readIds should be removed, an additional pass is required. swap buffers
-                d_values_dblbuf.selector +=1;
-            }
 
             int* d_end_offsets = handle.d_end_offsets.data();
             int* d_flags = handle.d_flags.data();
@@ -692,7 +743,7 @@ namespace gpu{
                     d_queryOffsetsPerSequencePerHash  + i * numSequences,
                     d_numValuesPerSequencePerHash + i * numSequences,
                     numSequences,
-                    d_values_dblbuf.Alternate(),
+                    d_values_dblbuf.Current(),
                     stream
                 );
             }
@@ -704,9 +755,9 @@ namespace gpu{
 
             GpuSegmentedUnique::unique(
                 segmentedUniqueHandle,
-                d_values_dblbuf.Alternate(), //input values
+                d_values_dblbuf.Current(), //input values
                 totalNumValues,
-                d_values_dblbuf.Current(), //output values
+                d_values_dblbuf.Alternate(), //output values
                 d_numValuesPerSequence, //output segment sizes
                 numSequences,
                 d_offsets, //device accessible
@@ -718,23 +769,6 @@ namespace gpu{
                 stream
             );
 
-            //debug
-            // cudaStreamSynchronize(stream); CUERR;
-
-            // std::cerr << "new\n";
-            // for(int i = 0; i < numHashfunctions; i++){
-            //     std::cerr << d_numValuesPerSequencePerHash[i] << " ";
-            // }
-            // std::cerr << "\n";
-            // for(int i = 0; i < numHashfunctions; i++){
-            //     std::cerr << d_numValuesPerSequencePerHashExclPSVert[i] << " ";
-            // }
-            // std::cerr << "\n";
-            // for(int i = 0; i < numSequences; i++){
-            //     std::cerr << d_numValuesPerSequence[i] << " ";
-            // }
-            // std::cerr << "\n";
-
             if(d_readIds != nullptr){
 
                 // State: d_values contains unique values per sequence from all tables. num unique values per sequence are computed in d_numValuesPerSequence
@@ -743,61 +777,54 @@ namespace gpu{
 
                 callFindAndRemoveFromSegmentKernel<read_number,128,4>(
                     d_readIds,
-                    d_values_dblbuf.Current(),
+                    d_values_dblbuf.Alternate(),
                     numSequences,
                     d_numValuesPerSequence,
                     d_offsets,
                     stream
                 );
 
-                //copy values to compact array
+            }
 
-                //debug
-                // cudaStreamSynchronize(stream); CUERR;
-                // std::cerr << "copy to compact\n";
+            //copy values to compact array
 
-                //repurpose
-                int* d_newOffsets = handle.d_cubsum.data();
+            //repurpose
+            int* d_newOffsets = handle.d_cubsum.data();
 
-                cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
+            cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
 
-                cub::DeviceScan::InclusiveSum(
-                    d_cubTemp,
-                    cubtempbytes,
-                    d_numValuesPerSequence,
-                    d_newOffsets + 1,
+            cub::DeviceScan::InclusiveSum(
+                d_cubTemp,
+                cubtempbytes,
+                d_numValuesPerSequence,
+                d_newOffsets + 1,
+                numSequences,
+                stream
+            );
+
+            helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
+                [
+                    d_values_in = d_values_dblbuf.Alternate(),
+                    d_values_out = d_values_dblbuf.Current(),
                     numSequences,
-                    stream
-                );
+                    d_numValuesPerSequence,
+                    d_offsets,
+                    d_newOffsets
+                ] __device__ (){
 
-                helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
-                    [
-                        d_values_in = d_values_dblbuf.Current(),
-                        d_values_out = d_values_dblbuf.Alternate(),
-                        numSequences,
-                        d_numValuesPerSequence,
-                        d_offsets,
-                        d_newOffsets
-                    ] __device__ (){
+                    for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
+                        const int numValues = d_numValuesPerSequence[s];
+                        const int inOffset = d_offsets[s];
+                        const int outOffset = d_newOffsets[s];
 
-                        for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
-                            const int numValues = d_numValuesPerSequence[s];
-                            const int inOffset = d_offsets[s];
-                            const int outOffset = d_newOffsets[s];
-
-                            for(int c = threadIdx.x; c < numValues; c += blockDim.x){
-                                d_values_out[outOffset + c] = d_values_in[inOffset + c];    
-                            }
+                        for(int c = threadIdx.x; c < numValues; c += blockDim.x){
+                            d_values_out[outOffset + c] = d_values_in[inOffset + c];    
                         }
                     }
-                ); CUERR;
+                }
+            ); CUERR;
 
-                //debug
-                //cudaStreamSynchronize(stream); CUERR;
-
-                cudaMemcpyAsync(d_offsets, d_newOffsets, sizeof(int) * (numSequences+1), D2D, stream); CUERR;
-
-            }
+            cudaMemcpyAsync(d_offsets, d_newOffsets, sizeof(int) * (numSequences+1), D2D, stream); CUERR;
 
         }
 
