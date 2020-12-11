@@ -432,6 +432,8 @@ namespace gpu{
             HostBuffer<int> h_totalNumValues;
             HostBuffer<int> h_offsets;
 
+            GpuSegmentedUnique::Handle segmentedUniqueHandle; 
+
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
 
@@ -458,6 +460,7 @@ namespace gpu{
         static QueryHandle makeQueryHandle(){
             auto ptr = std::make_shared<QueryHandleStruct>();
             cudaGetDevice(&ptr->deviceId); CUERR;
+            ptr->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle(); 
             return ptr;
         }
 
@@ -751,7 +754,7 @@ namespace gpu{
             // all values for the same key are stored in consecutive locations in d_values_tmp.
             // now, make value ranges unique
 
-            GpuSegmentedUnique::Handle segmentedUniqueHandle = GpuSegmentedUnique::makeHandle(); 
+            GpuSegmentedUnique::Handle& segmentedUniqueHandle = handle.segmentedUniqueHandle; 
 
             GpuSegmentedUnique::unique(
                 segmentedUniqueHandle,
