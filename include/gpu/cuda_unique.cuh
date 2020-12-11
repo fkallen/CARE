@@ -366,24 +366,13 @@ struct GpuSegmentedUnique{
         T* d_unique_items,
         int* d_unique_lengths,
         int numSegments,
+        int sizeOfLargestSegment,
         int* d_begin_offsets,
         int* d_end_offsets,
-        int* h_begin_offsets,
-        int* h_end_offsets,
         int begin_bit = 0,
         int end_bit = sizeof(T) * 8,
         cudaStream_t stream = 0
     ){
-
-        int sizeOfLargestSegment = 0;
-        for(int i = 0; i < numSegments; i++){
-            const int segmentSize = h_end_offsets[i] - h_begin_offsets[i];
-            sizeOfLargestSegment = std::max(segmentSize, sizeOfLargestSegment);
-        }
-
-        if(sizeOfLargestSegment == 0){
-            return;
-        }
 
         constexpr int maximumSegmentSizeForRegSort = 128 * 64;
 
@@ -464,6 +453,49 @@ struct GpuSegmentedUnique{
 
         CUERR;
 #endif        
+    }
+
+    template<class T>
+    static void unique(
+        Handle& handle,
+        const T* d_items,
+        int numItems,
+        T* d_unique_items,
+        int* d_unique_lengths,
+        int numSegments,
+        int* d_begin_offsets,
+        int* d_end_offsets,
+        int* h_begin_offsets,
+        int* h_end_offsets,
+        int begin_bit = 0,
+        int end_bit = sizeof(T) * 8,
+        cudaStream_t stream = 0
+    ){
+
+        int sizeOfLargestSegment = 0;
+        for(int i = 0; i < numSegments; i++){
+            const int segmentSize = h_end_offsets[i] - h_begin_offsets[i];
+            sizeOfLargestSegment = std::max(segmentSize, sizeOfLargestSegment);
+        }
+
+        if(sizeOfLargestSegment == 0){
+            return;
+        }
+
+        unique(
+            handle,
+            d_items,
+            numItems,
+            d_unique_items,
+            d_unique_lengths,
+            numSegments,
+            sizeOfLargestSegment,
+            d_begin_offsets,
+            d_end_offsets,
+            begin_bit,
+            end_bit,
+            stream
+        );       
     }
 
     //segments of size larger than 128 * 64 are not processed
