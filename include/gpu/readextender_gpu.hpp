@@ -205,7 +205,7 @@ private:
             stream
         ); CUERR;
         
-        gpuMinhasher->getIdsOfSimilarReads(
+        gpuMinhasher->query(
             gpuMinhashHandle,
             d_subjectSequencesData.get(), //device accessible
             encodedSequencePitchInInts2Bit,
@@ -213,7 +213,6 @@ private:
             numIndices,
             deviceId, 
             stream,
-            SequentialForLoopExecutor{},
             d_candidateReadIds.get(), //device accessible
             d_numCandidatesPerAnchor.get(), //device accessible
             d_numCandidatesPerAnchorPrefixSum.get() //device accessible
