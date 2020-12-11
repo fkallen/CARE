@@ -19,7 +19,7 @@
 namespace care {
 namespace gpu {
 
-#if 0
+#if 1
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
 	const GoodAlignmentProperties& goodAlignmentProperties,

@@ -461,48 +461,19 @@ namespace gpu{
             return ptr;
         }
 
-        //TODO this is only temporary to match the interface of old gpuminhasher
-        template<class ParallelForLoop>
-        void getIdsOfSimilarReadsNormalExcludingSelfNew(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const read_number* h_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            ParallelForLoop parallelFor,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const {
-            queryExcludingSelf(
-                handle,
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum,
-                d_encodedSequences,
-                numSequences,
-                d_sequenceLengths,
-                encodedSequencePitchInInts,
-                d_readIds,
-                stream
-            );
-        }
 
         void queryExcludingSelf(
             QueryHandle& queryHandle,
+            const read_number* d_readIds,
+            const unsigned int* d_sequenceData2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int /*deviceId*/, 
+            cudaStream_t stream,
             read_number* d_values,
             int* d_numValuesPerSequence,
-            int* d_offsets, //numSequences + 1
-            const unsigned int* d_sequenceData2Bit,
-            int numSequences,
-            const int* d_sequenceLengths,
-            std::size_t encodedSequencePitchInInts,
-            const read_number* d_readIds,
-            cudaStream_t stream
+            int* d_offsets //numSequences + 1
         ) const {
 
             DevicerSwitcher ds(deviceId);
