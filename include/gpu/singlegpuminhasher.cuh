@@ -50,8 +50,8 @@ namespace gpu{
         using DeviceBuffer = helpers::SimpleAllocationDevice<T, 5>;
 
 
-        SingleGpuMinhasher(int maxNumKeys_, int maxKeysPerValue, int k)
-            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxKeysPerValue)
+        SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
+            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey)
         {
             cudaGetDevice(&deviceId); CUERR;
         }
@@ -61,7 +61,8 @@ namespace gpu{
             std::uint64_t nReads,
             const DistributedReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
-            int maxNumHashfunctions
+            int maxNumHashfunctions,
+            int hashFunctionOffset = 0
         ){
             
             DeviceSwitcher ds(deviceId);
@@ -83,6 +84,8 @@ namespace gpu{
 
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
             helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+
+            std::vector<int> usedHashFunctionNumbers;
 
             CudaStream stream{};
 
@@ -133,8 +136,10 @@ namespace gpu{
                 std::iota(
                     h_hashfunctionNumbers.begin(),
                     h_hashfunctionNumbers.end(),
-                    alreadyExistingHashFunctions
+                    alreadyExistingHashFunctions + hashFunctionOffset
                 );
+
+                usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
 
                 for (int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
@@ -192,6 +197,9 @@ namespace gpu{
             }
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingHashFunctions;
+
+            h_currentHashFunctionNumbers.resize(numberOfAvailableHashFunctions);
+            std::copy(usedHashFunctionNumbers.begin(), usedHashFunctionNumbers.end(), h_currentHashFunctionNumbers.begin());
 
             return numberOfAvailableHashFunctions; 
         }
@@ -428,6 +436,7 @@ namespace gpu{
             DeviceBuffer<Value> d_values_tmp;
             DeviceBuffer<int> d_end_offsets;
             DeviceBuffer<int> d_flags;
+            DeviceBuffer<int> d_hashFunctionNumbers;
 
             HostBuffer<int> h_totalNumValues;
             HostBuffer<int> h_offsets;
@@ -450,6 +459,7 @@ namespace gpu{
                 mem.device[deviceId] += d_values_tmp.capacityInBytes();
                 mem.device[deviceId] += d_end_offsets.capacityInBytes();
                 mem.device[deviceId] += d_flags.capacityInBytes();
+                mem.device[deviceId] += d_hashFunctionNumbers.capacityInBytes();
 
                 return mem;
             }
@@ -539,7 +549,14 @@ namespace gpu{
             QueryHandleStruct& handle = *queryHandle;
 
             const int numHashfunctions = gpuHashTables.size();
-            const int firstHashfunction = 0;
+            handle.d_hashFunctionNumbers.resize(numHashfunctions);
+            cudaMemcpyAsync(
+                handle.d_hashFunctionNumbers.data(), 
+                h_currentHashFunctionNumbers.data(), 
+                sizeof(int) * numHashfunctions, 
+                H2D, 
+                stream
+            ); CUERR;
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
@@ -597,7 +614,7 @@ namespace gpu{
                 d_sequenceLengths,
                 getKmerSize(),
                 numHashfunctions,
-                firstHashfunction,
+                handle.d_hashFunctionNumbers.data(),
                 stream
             ); CUERR;
 
@@ -728,12 +745,14 @@ namespace gpu{
             int sizeOfLargestSegment = 0;
             cudaMemcpyAsync(&sizeOfLargestSegment, handle.d_cubsum.data(), sizeof(int), D2H, stream); CUERR;
 
-            handle.d_values_tmp.resize(totalNumValues);
+            handle.d_sig.resize(SDIV( sizeof(read_number) * totalNumValues, sizeof(std::uint64_t)));
+            read_number* d_values_tmp = (read_number*) handle.d_sig.data();
+            //handle.d_values_tmp.resize(totalNumValues);
             handle.d_end_offsets.resize(numSequences);
             handle.d_flags.resize(totalNumValues);
 
             //results will be in Current() buffer
-            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, handle.d_values_tmp.data());
+            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_values_tmp);
 
             int* d_end_offsets = handle.d_end_offsets.data();
             int* d_flags = handle.d_flags.data();
@@ -875,13 +894,19 @@ namespace gpu{
         }
 
         void destroy(){
+            DeviceSwitcher sd(getDeviceId());
             gpuHashTables.clear();
+        }
+
+        constexpr int getDeviceId() const noexcept{
+            return deviceId;
         }
 
         int deviceId{};
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};
+        HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
     };
 
