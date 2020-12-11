@@ -772,18 +772,15 @@ namespace gpucorrectorkernels{
             // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchorAAAA(ecinput.d_candidates_per_anchor.size());
             // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchor_prefixsumAAAA(ecinput.d_candidates_per_anchor_prefixsum.size());
 
-            gpuMinhasher->getIdsOfSimilarReadsNormalExcludingSelfNew(
-            //gpuMinhasher->getIdsOfSimilarReadsExcludingSelf(
+            gpuMinhasher->queryExcludingSelf(
                 minhashHandle,
                 ecinput.d_anchorReadIds.get(),
-                ecinput.h_anchorReadIds.get(),
                 ecinput.d_anchor_sequences_data.get(),
                 encodedSequencePitchInInts,
                 ecinput.d_anchor_sequences_lengths.get(),
                 (*ecinput.h_numAnchors.get()),
                 deviceId, 
                 stream,
-                forLoopExecutor,
                 ecinput.d_candidate_read_ids.get(),
                 ecinput.d_candidates_per_anchor.get(),
                 ecinput.d_candidates_per_anchor_prefixsum.get()
