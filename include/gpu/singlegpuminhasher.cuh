@@ -555,12 +555,12 @@ namespace gpu{
             );
 
             std::size_t cubtempbytes2 = 0;
-            cub::DeviceScan::ExclusiveSum(
-                nullptr,
-                cubtempbytes2,
+            cub::DeviceReduce::Max(
+                nullptr, 
+                cubtempbytes2, 
                 (int*)nullptr, 
                 (int*)nullptr, 
-                numSequences,
+                numSequences, 
                 stream
             );
 
@@ -708,23 +708,25 @@ namespace gpu{
                 }
             );
 
-            int* h_offsets = handle.h_offsets.data();
-            cudaMemcpyAsync(h_offsets, d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
-
-            //int totalNumValues = 0;
-            //cudaMemcpyAsync(&totalNumValues, d_offsets + numSequences, sizeof(int), D2H, stream); CUERR;
-
-            //std::vector<int> h_offsets(numSequences + 1);
-            //cudaMemcpyAsync(h_offsets.data(), d_offsets, sizeof(int) * (numSequences + 1), D2H, stream); CUERR;
+            int totalNumValues = 0;
+            cudaMemcpyAsync(&totalNumValues, d_offsets + numSequences, sizeof(int), D2H, stream); CUERR;
 
             cudaStreamSynchronize(stream); CUERR;
-
-            const int totalNumValues = h_offsets[numSequences];
-            //std::cerr << "totalNumValues " << totalNumValues << "\n";
 
             if(totalNumValues == 0){
                 return;
             }
+
+            cub::DeviceReduce::Max(
+                d_cubTemp, 
+                cubtempbytes, 
+                d_numValuesPerSequence, 
+                handle.d_cubsum.data(), 
+                numSequences, 
+                stream
+            );
+            int sizeOfLargestSegment = 0;
+            cudaMemcpyAsync(&sizeOfLargestSegment, handle.d_cubsum.data(), sizeof(int), D2H, stream); CUERR;
 
             handle.d_values_tmp.resize(totalNumValues);
             handle.d_end_offsets.resize(numSequences);
@@ -754,19 +756,16 @@ namespace gpu{
             // all values for the same key are stored in consecutive locations in d_values_tmp.
             // now, make value ranges unique
 
-            GpuSegmentedUnique::Handle& segmentedUniqueHandle = handle.segmentedUniqueHandle; 
-
             GpuSegmentedUnique::unique(
-                segmentedUniqueHandle,
+                handle.segmentedUniqueHandle,
                 d_values_dblbuf.Current(), //input values
                 totalNumValues,
                 d_values_dblbuf.Alternate(), //output values
                 d_numValuesPerSequence, //output segment sizes
                 numSequences,
+                sizeOfLargestSegment,
                 d_offsets, //device accessible
                 d_end_offsets, //device accessible
-                h_offsets,
-                h_offsets + 1,
                 0,
                 sizeof(read_number) * 8,
                 stream
