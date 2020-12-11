@@ -42,7 +42,7 @@ namespace gpu{
 
         using GpuTable = GpuHashtable<Key, Value>;
 
-        using DevicerSwitcher = cub::SwitchDevice;
+        using DeviceSwitcher = cub::SwitchDevice;
 
         template<class T>
         using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
@@ -64,7 +64,7 @@ namespace gpu{
             int maxNumHashfunctions
         ){
             
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             gpuHashTables.clear();
 
@@ -207,7 +207,7 @@ namespace gpu{
         ){
             assert(firstHashFunc + numHashFuncs <= int(gpuHashTables.size()));
 
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             constexpr read_number parallelReads = 1000000;
             const read_number numReads = nReads;
@@ -304,7 +304,7 @@ namespace gpu{
 #endif 
         int addHashfunctions(int numExtraFunctions){
             
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             int added = 0;
             int cur = gpuHashTables.size();
@@ -348,7 +348,7 @@ namespace gpu{
         ){
             assert(firstHashfunction + numHashfunctions <= int(gpuHashTables.size()));
 
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
@@ -534,7 +534,7 @@ namespace gpu{
             int* d_offsets //numSequences + 1
         ) const {
 
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             QueryHandleStruct& handle = *queryHandle;
 
@@ -831,7 +831,7 @@ namespace gpu{
         }
 
         void compact(){
-            DevicerSwitcher ds(deviceId);
+            DeviceSwitcher ds(deviceId);
 
             for(auto& table : gpuHashTables){
                 table->compact();
