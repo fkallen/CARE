@@ -539,7 +539,8 @@ namespace gpu{
                         }
                     }
                     const auto& range = myRanges[k];
-                    dest = std::copy(range.first, range.second, dest);
+                    if(std::distance(range.first, range.second) <= getNumResultsPerMapThreshold())
+                        dest = std::copy(range.first, range.second, dest);
                 }
 
                 h_my_end_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
