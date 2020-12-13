@@ -559,7 +559,7 @@ namespace gpu{
 
             if(totalNumValues == 0){
                 return;
-            }           
+            }
 
             retrieveValues(
                 queryHandle->d_singlepersistentbuffer.data(),
@@ -575,12 +575,41 @@ namespace gpu{
                 123456, //unused
                 stream,
                 totalNumValues,
+                123456, //unused
                 d_values,
                 d_numValuesPerSequence,
                 d_offsets //numSequences + 1
             );
 
+            std::size_t cubsize = 0;
+            cub::DeviceReduce::Max(
+                nullptr, 
+                cubsize, 
+                d_numValuesPerSequence, 
+                (int*)nullptr, 
+                numSequences, 
+                stream
+            );
+            cubsize = SDIV(cubsize, 4) * 4;
+
+            temp_storage_bytes = std::max(temp_storage_bytes, cubsize + sizeof(int));
+
             queryHandle->d_singletempbuffer.resize(temp_storage_bytes);
+
+            int* d_maxvalue = (int*)(queryHandle->d_singletempbuffer.data() + cubsize);
+
+            cub::DeviceReduce::Max(
+                queryHandle->d_singletempbuffer.data(), 
+                temp_storage_bytes, 
+                d_numValuesPerSequence, 
+                d_maxvalue, 
+                numSequences, 
+                stream
+            );
+            
+            int sizeOfLargestSegment = 0;
+            cudaMemcpyAsync(&sizeOfLargestSegment, d_maxvalue, sizeof(int), D2H, stream); CUERR;
+            cudaStreamSynchronize(stream);
 
             retrieveValues(
                 queryHandle->d_singlepersistentbuffer.data(),
@@ -596,6 +625,7 @@ namespace gpu{
                 123456, //unused
                 stream,
                 totalNumValues,
+                sizeOfLargestSegment,
                 d_values,
                 d_numValuesPerSequence,
                 d_offsets //numSequences + 1
@@ -774,6 +804,7 @@ namespace gpu{
             int /*deviceId*/, 
             cudaStream_t stream,
             int totalNumValues,
+            int sizeOfLargestSegment,
             read_number* d_values,
             int* d_numValuesPerSequence,
             int* d_offsets //numSequences + 1
@@ -916,10 +947,6 @@ namespace gpu{
                 numSequences, 
                 stream
             );
-            
-            int sizeOfLargestSegment = 0;
-            cudaMemcpyAsync(&sizeOfLargestSegment, d_cub_sum, sizeof(int), D2H, stream); CUERR;
-            cudaStreamSynchronize(stream);
 
             //results will be in Current() buffer
             cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_values_tmp);
