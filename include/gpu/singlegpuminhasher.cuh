@@ -426,43 +426,12 @@ namespace gpu{
 
         struct QueryHandleStruct{
             int deviceId;
-            DeviceBuffer<std::uint64_t> d_sig;
-            DeviceBuffer<std::uint64_t> d_sig_trans;
-            DeviceBuffer<int> d_numValuesPerSequencePerHash;
-            DeviceBuffer<int> d_numValuesPerSequencePerHashExclPSVert;
-            DeviceBuffer<int> d_queryOffsetsPerSequencePerHash;
-            DeviceBuffer<int> d_cubsum;
-            DeviceBuffer<char> d_cub_temp;
-            DeviceBuffer<Value> d_values_tmp;
-            DeviceBuffer<int> d_end_offsets;
-            DeviceBuffer<int> d_flags;
-            DeviceBuffer<int> d_hashFunctionNumbers;
-
             DeviceBuffer<char> d_singletempbuffer;
             DeviceBuffer<char> d_singlepersistentbuffer;
-
-            HostBuffer<int> h_totalNumValues;
-            HostBuffer<int> h_offsets;
-
             GpuSegmentedUnique::Handle segmentedUniqueHandle; 
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
-
-                mem.host += h_totalNumValues.capacityInBytes();
-                mem.host += h_offsets.capacityInBytes();
-
-                mem.device[deviceId] += d_sig.capacityInBytes();
-                mem.device[deviceId] += d_sig_trans.capacityInBytes();
-                mem.device[deviceId] += d_numValuesPerSequencePerHash.capacityInBytes();
-                mem.device[deviceId] += d_numValuesPerSequencePerHashExclPSVert.capacityInBytes();
-                mem.device[deviceId] += d_queryOffsetsPerSequencePerHash.capacityInBytes();
-                mem.device[deviceId] += d_cubsum.capacityInBytes();
-                mem.device[deviceId] += d_cub_temp.capacityInBytes();
-                mem.device[deviceId] += d_values_tmp.capacityInBytes();
-                mem.device[deviceId] += d_end_offsets.capacityInBytes();
-                mem.device[deviceId] += d_flags.capacityInBytes();
-                mem.device[deviceId] += d_hashFunctionNumbers.capacityInBytes();
 
                 mem.device[deviceId] += d_singletempbuffer.capacityInBytes();
                 mem.device[deviceId] += d_singlepersistentbuffer.capacityInBytes();
@@ -552,8 +521,31 @@ namespace gpu{
            
             int totalNumValues = 0;
 
+            std::size_t persistent_storage_bytes = 0;
+            std::size_t temp_storage_bytes = 0;
+
             determineNumValues(
-                queryHandle, 
+                nullptr,
+                persistent_storage_bytes,
+                nullptr,
+                temp_storage_bytes,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                d_numValuesPerSequence,
+                totalNumValues,
+                stream
+            );
+
+            queryHandle->d_singlepersistentbuffer.resize(persistent_storage_bytes);
+            queryHandle->d_singletempbuffer.resize(temp_storage_bytes);
+
+            determineNumValues(
+                queryHandle->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                queryHandle->d_singletempbuffer.data(),
+                temp_storage_bytes,
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 d_sequenceLengths,
@@ -567,10 +559,35 @@ namespace gpu{
 
             if(totalNumValues == 0){
                 return;
-            }
+            }           
 
             retrieveValues(
-                queryHandle,
+                queryHandle->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                nullptr,
+                temp_storage_bytes,
+                queryHandle->segmentedUniqueHandle,
+                d_readIds,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                123456, //unused
+                stream,
+                totalNumValues,
+                d_values,
+                d_numValuesPerSequence,
+                d_offsets //numSequences + 1
+            );
+
+            queryHandle->d_singletempbuffer.resize(temp_storage_bytes);
+
+            retrieveValues(
+                queryHandle->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                queryHandle->d_singletempbuffer.data(),
+                temp_storage_bytes,
+                queryHandle->segmentedUniqueHandle,
                 d_readIds,
                 d_sequenceData2Bit,
                 encodedSequencePitchInInts,
@@ -587,7 +604,10 @@ namespace gpu{
 
 
         void determineNumValues(
-            QueryHandle& queryHandle,
+            void* persistent_storage,            
+            std::size_t& persistent_storage_bytes,
+            void* temp_storage,
+            std::size_t& temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -596,19 +616,26 @@ namespace gpu{
             int& totalNumValues,
             cudaStream_t stream
         ) const {
-            DeviceSwitcher ds(deviceId);
-
-            QueryHandleStruct& handle = *queryHandle;
 
             const int numHashfunctions = gpuHashTables.size();
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
-            // handle.d_sig_trans.resize(numHashfunctions * numSequences);
-            // handle.d_numValuesPerSequencePerHash.resize(numSequences * numHashfunctions);
-            // handle.d_numValuesPerSequencePerHashExclPSVert.resize(numSequences * numHashfunctions);
+            void* persistent_allocations[3]{};
+            std::size_t persistent_allocation_sizes[3]{};
+
+            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
+            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
+
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                persistent_storage,
+                persistent_storage_bytes,
+                persistent_allocations,
+                persistent_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
 
             std::size_t cubtempbytes = 0;
-
             cub::DeviceReduce::Sum(
                 nullptr, 
                 cubtempbytes, 
@@ -618,26 +645,8 @@ namespace gpu{
                 stream
             );
 
-            void* persistent_allocations[3]{};
-            std::size_t persistent_allocation_sizes[3]{};
-            std::size_t persistent_storage_bytes = 0;
-
-            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
-            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
-            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
-
-            cudaError_t cubstatus = cub::AliasTemporaries(
-                nullptr,
-                persistent_storage_bytes,
-                persistent_allocations,
-                persistent_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
-
             void* temp_allocations[4];
             std::size_t temp_allocation_sizes[4];
-            std::size_t temp_storage_bytes = 0;
             
             temp_allocation_sizes[0] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             temp_allocation_sizes[1] = cubtempbytes; // d_cub_temp
@@ -645,31 +654,16 @@ namespace gpu{
             temp_allocation_sizes[3] = sizeof(int); // d_cub_sum
             
             cubstatus = cub::AliasTemporaries(
-                nullptr,
+                temp_storage,
                 temp_storage_bytes,
                 temp_allocations,
                 temp_allocation_sizes
             );
             assert(cubstatus == cudaSuccess);
 
-            handle.d_singlepersistentbuffer.resize(persistent_storage_bytes);
-            handle.d_singletempbuffer.resize(temp_storage_bytes);
-
-            cubstatus = cub::AliasTemporaries(
-                handle.d_singlepersistentbuffer.data(),
-                persistent_storage_bytes,
-                persistent_allocations,
-                persistent_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess); 
-
-            cubstatus = cub::AliasTemporaries(
-                handle.d_singletempbuffer.data(),
-                temp_storage_bytes,
-                temp_allocations,
-                temp_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
+            if(persistent_storage == nullptr || temp_storage == nullptr){
+                return;
+            }
 
             std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(persistent_allocations[0]);
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
@@ -679,6 +673,8 @@ namespace gpu{
             void* const d_cubTemp = temp_allocations[1];
             std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[2]);
             int* const d_cub_sum = static_cast<int*>(temp_allocations[3]);
+
+            DeviceSwitcher ds(deviceId);
 
             cudaMemcpyAsync(
                 d_hashFunctionNumbers,
@@ -765,7 +761,11 @@ namespace gpu{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            void* persistentbufferFromNumValues,            
+            std::size_t persistent_storage_bytes,
+            void* temp_storage,
+            std::size_t& temp_storage_bytes,
+            GpuSegmentedUnique::Handle segmentedUniqueHandle,
             const read_number* d_readIds,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
@@ -778,9 +778,7 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int* d_offsets //numSequences + 1
         ) const {
-            DeviceSwitcher ds(deviceId);
-
-            QueryHandleStruct& handle = *queryHandle;
+            assert(persistentbufferFromNumValues != nullptr);
 
             const int numHashfunctions = gpuHashTables.size();
 
@@ -807,25 +805,8 @@ namespace gpu{
 
             cubtempbytes = std::max(cubtempbytes, cubtempbytes2);
 
-            void* persistent_allocations[3]{};
-            std::size_t persistent_allocation_sizes[3]{};
-            std::size_t persistent_storage_bytes = 0;
-
-            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
-            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
-            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
-
-            cudaError_t cubstatus = cub::AliasTemporaries(
-                nullptr,
-                persistent_storage_bytes,
-                persistent_allocations,
-                persistent_allocation_sizes
-            );
-            assert(cubstatus == cudaSuccess);
-
             void* temp_allocations[5]{};
             std::size_t temp_allocation_sizes[5]{};
-            std::size_t temp_storage_bytes = 0;
             
             temp_allocation_sizes[0] = cubtempbytes; // d_cub_temp
             temp_allocation_sizes[1] = sizeof(int) * (numSequences + 1); // d_cub_sum
@@ -833,32 +814,34 @@ namespace gpu{
             temp_allocation_sizes[3] = sizeof(read_number) * totalNumValues; // d_values_tmp
             temp_allocation_sizes[4] = sizeof(int) * numSequences; // d_end_offsets
             
-            cubstatus = cub::AliasTemporaries(
-                nullptr,
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                temp_storage,
                 temp_storage_bytes,
                 temp_allocations,
                 temp_allocation_sizes
             );
             assert(cubstatus == cudaSuccess);
 
-            assert(handle.d_singlepersistentbuffer.size() >= persistent_storage_bytes); //cannot reallocate. need data
-            handle.d_singletempbuffer.resize(temp_storage_bytes);
+            if(temp_storage == nullptr) return;
+
+            void* persistent_allocations[3]{};
+            std::size_t persistent_allocation_sizes[3]{};
+
+            persistent_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            persistent_allocation_sizes[1] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHash
+            persistent_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_numValuesPerSequencePerHashExclPSVert
 
             cubstatus = cub::AliasTemporaries(
-                handle.d_singlepersistentbuffer.data(),
+                persistentbufferFromNumValues,
                 persistent_storage_bytes,
                 persistent_allocations,
                 persistent_allocation_sizes
             );
-            assert(cubstatus == cudaSuccess); 
-
-            cubstatus = cub::AliasTemporaries(
-                handle.d_singletempbuffer.data(),
-                temp_storage_bytes,
-                temp_allocations,
-                temp_allocation_sizes
-            );
             assert(cubstatus == cudaSuccess);
+
+
+
+            DeviceSwitcher ds(deviceId);
 
             std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(persistent_allocations[0]);
             int* const d_numValuesPerSequencePerHash = static_cast<int*>(persistent_allocations[1]);
@@ -942,7 +925,7 @@ namespace gpu{
             // now, make value ranges unique
 
             GpuSegmentedUnique::unique(
-                handle.segmentedUniqueHandle,
+                segmentedUniqueHandle,
                 d_values_dblbuf.Current(), //input values
                 totalNumValues,
                 d_values_dblbuf.Alternate(), //output values
