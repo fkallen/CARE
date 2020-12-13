@@ -318,7 +318,6 @@ struct GpuSegmentedUnique{
     struct HandleData{
         int gpu;
         helpers::SimpleAllocationDevice<char, 0> d_temp_storage;
-        helpers::SimpleAllocationDevice<int> d_end_offsets_tmp;
 
         HandleData(){
             cudaGetDevice(&gpu); CUERR;
@@ -333,7 +332,6 @@ struct GpuSegmentedUnique{
             cudaSetDevice(gpu); CUERR;
 
             d_temp_storage.destroy();
-            d_end_offsets_tmp.destroy();
 
             cudaSetDevice(curgpu); CUERR;
         }
@@ -348,7 +346,6 @@ struct GpuSegmentedUnique{
             };
 
             handledevice(d_temp_storage);
-            handledevice(d_end_offsets_tmp);
 
             return info;
         }
@@ -367,7 +364,8 @@ struct GpuSegmentedUnique{
     // removes duplicates in each segment, writes results to d_unique_items. d_items may be modified
     template<class T>
     static void unique(
-        Handle& handle,
+        void* d_temp_storage,
+        std::size_t& temp_storage_bytes,
         T* d_items,
         int numItems,
         T* d_unique_items,
@@ -382,6 +380,38 @@ struct GpuSegmentedUnique{
     ){
 
         constexpr int maximumSegmentSizeForRegSort = 128 * 64;
+
+        void* temp_allocations[2]{};
+        std::size_t temp_allocation_sizes[2]{};
+        
+        temp_allocation_sizes[0] = sizeof(int) * numSegments; // d_end_offsets_tmp
+
+        makeUniqueRangeWithGmemSort(
+            nullptr,
+            temp_allocation_sizes[1], //d_gmemsorttmp
+            d_unique_items,
+            d_unique_lengths, 
+            d_items,
+            numItems,
+            numSegments,
+            d_begin_offsets, 
+            (int*)nullptr, 
+            begin_bit,
+            end_bit,
+            stream
+        );
+        
+        cudaError_t cubstatus = cub::AliasTemporaries(
+            d_temp_storage,
+            temp_storage_bytes,
+            temp_allocations,
+            temp_allocation_sizes
+        );
+        assert(cubstatus == cudaSuccess);
+
+        if(d_temp_storage == nullptr){
+            return;
+        }
 
         cudaMemsetAsync(d_unique_lengths, 0, sizeof(int) * numSegments, stream);
 
@@ -405,48 +435,27 @@ struct GpuSegmentedUnique{
             //Then process the remaining segments with fast register algorithm
 
             //select segments larger than limit
-
-            handle->d_end_offsets_tmp.resize(numSegments);
+            int* const d_end_offsets_tmp = static_cast<int*>(temp_allocations[0]);
+            void* const d_gmemsorttmp = static_cast<void*>(temp_allocations[1]);
 
             cudauniquekernels::setSmallSegmentSizesToZeroKernel<<<SDIV(numSegments, 128), 128, 0, stream>>>(
-                handle->d_end_offsets_tmp.get(),
+                d_end_offsets_tmp,
                 numSegments,
                 d_begin_offsets,
                 d_end_offsets,
                 maximumSegmentSizeForRegSort+1
             ); CUERR;
 
-            //handle those selected segments
-
-            std::size_t temp_storage_bytes = 0;
-
             makeUniqueRangeWithGmemSort(
-                nullptr,
-                temp_storage_bytes,
+                d_gmemsorttmp,
+                temp_allocation_sizes[1],
                 d_unique_items,
                 d_unique_lengths, 
                 d_items,
                 numItems,
                 numSegments,
                 d_begin_offsets, 
-                handle->d_end_offsets_tmp.get(), 
-                begin_bit,
-                end_bit,
-                stream
-            );
-
-            handle->d_temp_storage.resize(temp_storage_bytes);
-
-            makeUniqueRangeWithGmemSort(
-                handle->d_temp_storage.get(),
-                temp_storage_bytes,
-                d_unique_items,
-                d_unique_lengths, 
-                d_items,
-                numItems,
-                numSegments,
-                d_begin_offsets, 
-                handle->d_end_offsets_tmp.get(), 
+                d_end_offsets_tmp, 
                 begin_bit,
                 end_bit,
                 stream
@@ -464,9 +473,7 @@ struct GpuSegmentedUnique{
                 end_bit,
                 stream
             );
-        }
-
-    
+        }    
     }
 
     template<class T>
@@ -496,8 +503,11 @@ struct GpuSegmentedUnique{
             return;
         }
 
+        std::size_t requiredTempBytes = 0;
+
         unique(
-            handle,
+            nullptr,
+            requiredTempBytes,
             d_items,
             numItems,
             d_unique_items,
@@ -509,7 +519,78 @@ struct GpuSegmentedUnique{
             begin_bit,
             end_bit,
             stream
-        );       
+        );
+
+        handle->d_temp_storage.resize(requiredTempBytes);
+
+        unique(
+            handle->d_temp_storage.data(),
+            requiredTempBytes,
+            d_items,
+            numItems,
+            d_unique_items,
+            d_unique_lengths,
+            numSegments,
+            sizeOfLargestSegment,
+            d_begin_offsets,
+            d_end_offsets,
+            begin_bit,
+            end_bit,
+            stream
+        );
+    }
+
+    template<class T>
+    static void unique(
+        Handle& handle,
+        T* d_items,
+        int numItems,
+        T* d_unique_items,
+        int* d_unique_lengths,
+        int numSegments,
+        int sizeOfLargestSegment,
+        int* d_begin_offsets,
+        int* d_end_offsets,
+        int begin_bit = 0,
+        int end_bit = sizeof(T) * 8,
+        cudaStream_t stream = 0
+    ){
+
+        std::size_t requiredTempBytes = 0;
+
+        unique(
+            nullptr,
+            requiredTempBytes,
+            d_items,
+            numItems,
+            d_unique_items,
+            d_unique_lengths,
+            numSegments,
+            sizeOfLargestSegment,
+            d_begin_offsets,
+            d_end_offsets,
+            begin_bit,
+            end_bit,
+            stream
+        );
+
+        handle->d_temp_storage.resize(requiredTempBytes);
+
+        unique(
+            handle->d_temp_storage.data(),
+            requiredTempBytes,
+            d_items,
+            numItems,
+            d_unique_items,
+            d_unique_lengths,
+            numSegments,
+            sizeOfLargestSegment,
+            d_begin_offsets,
+            d_end_offsets,
+            begin_bit,
+            end_bit,
+            stream
+        );
     }
 
     //segments of size larger than 128 * 64 are not processed
@@ -641,14 +722,9 @@ struct GpuSegmentedUnique{
         }
 
         assert(temp_storage_bytes >= requiredTempStorageSize);
-
-        void* d_cub_temp = d_temp_storage;
-
-        constexpr int blocksize = 128;
-        constexpr int elemsPerThread = 4;
-
-        cub::DeviceSegmentedRadixSort::SortKeys(
-            d_cub_temp,
+        
+        cudaError_t cubstatus = cub::DeviceSegmentedRadixSort::SortKeys(
+            d_temp_storage,
             temp_storage_bytes,
             d_values_dblbuf,
             numItems,
@@ -659,8 +735,10 @@ struct GpuSegmentedUnique{
             end_bit,
             stream
         );
+        assert(cubstatus == cudaSuccess);
 
-        CUERR;
+        constexpr int blocksize = 128;
+        constexpr int elemsPerThread = 4;
 
         cudauniquekernels::makeUniqueRangeFromSortedRangeKernel<blocksize, elemsPerThread>
                 <<<numSegments, blocksize, 0, stream>>>(
@@ -670,10 +748,10 @@ struct GpuSegmentedUnique{
             numSegments,
             d_begin_offsets,
             d_end_offsets 
-        );
+        ); CUERR;
 
         if(d_values_dblbuf.Alternate() == d_input){
-            cudaMemcpyAsync(d_output, d_input, sizeof(T) * numItems, D2D, stream);
+            cudaMemcpyAsync(d_output, d_input, sizeof(T) * numItems, D2D, stream); CUERR;
         }
 
         CUERR;

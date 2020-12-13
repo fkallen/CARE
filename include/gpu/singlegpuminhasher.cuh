@@ -810,7 +810,25 @@ namespace gpu{
             
             temp_allocation_sizes[0] = cubtempbytes; // d_cub_temp
             temp_allocation_sizes[1] = sizeof(int) * (numSequences + 1); // d_cub_sum
-            temp_allocation_sizes[2] = sizeof(int) * numSequences * numHashfunctions; // d_queryOffsetsPerSequencePerHash
+
+            GpuSegmentedUnique::unique(
+                nullptr,
+                temp_allocation_sizes[2],
+                (read_number*)nullptr,
+                totalNumValues,
+                (read_number*)nullptr,
+                d_numValuesPerSequence,
+                numSequences,
+                0,
+                (int*)nullptr,
+                (int*)nullptr,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+
+            temp_allocation_sizes[2] = std::max(temp_allocation_sizes[2], sizeof(int) * numSequences * numHashfunctions); // d_queryOffsetsPerSequencePerHash, d_uniquetemp
+
             temp_allocation_sizes[3] = sizeof(read_number) * totalNumValues; // d_values_tmp
             temp_allocation_sizes[4] = sizeof(int) * numSequences; // d_end_offsets
             
@@ -850,6 +868,7 @@ namespace gpu{
             void* const d_cubTemp = temp_allocations[0];
             int* const d_cub_sum = static_cast<int*>(temp_allocations[1]);
             int* const d_queryOffsetsPerSequencePerHash = static_cast<int*>(temp_allocations[2]);
+            void* const d_uniquetemp = temp_allocations[2];
             read_number* const d_values_tmp = static_cast<read_number*>(temp_allocations[3]);
             int* const d_end_offsets = static_cast<int*>(temp_allocations[4]);
      
@@ -897,11 +916,10 @@ namespace gpu{
                 numSequences, 
                 stream
             );
+            
             int sizeOfLargestSegment = 0;
             cudaMemcpyAsync(&sizeOfLargestSegment, d_cub_sum, sizeof(int), D2H, stream); CUERR;
             cudaStreamSynchronize(stream);
-
-
 
             //results will be in Current() buffer
             cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, d_values_tmp);
@@ -925,7 +943,8 @@ namespace gpu{
             // now, make value ranges unique
 
             GpuSegmentedUnique::unique(
-                segmentedUniqueHandle,
+                d_uniquetemp,
+                temp_allocation_sizes[2],
                 d_values_dblbuf.Current(), //input values
                 totalNumValues,
                 d_values_dblbuf.Alternate(), //output values
