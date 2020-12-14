@@ -44,6 +44,7 @@ namespace gpu{
         using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
         template<class T>
         using DeviceBuffer = helpers::SimpleAllocationDevice<T, 5>;
+        //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
 
 
         MultiGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k, std::vector<int> deviceIds_)
@@ -82,7 +83,7 @@ namespace gpu{
                         nReads, 
                         gpuReadStorage, 
                         upperBoundSequenceLength, 
-                        remainingNumHashfunctions, 
+                        std::min(remainingNumHashfunctions, 4), //debugging. allow only 4 tables per gpu
                         currentHashFunctionOffset
                     );
 
@@ -99,9 +100,13 @@ namespace gpu{
                         remainingNumHashfunctions -= createdTables;
 
                         usableDeviceIds.emplace_back(deviceIds[d]);
+
+                        std::cerr << "Placed " << createdTables << " tables on gpu with id " << deviceIds[d] << ". (id number " << d << " in list\n";
                     }
                 }                
             }
+
+            cudaDeviceSynchronize(); CUERR;
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingNumHashfunctions;
 
@@ -110,34 +115,34 @@ namespace gpu{
 
         struct QueryHandleStruct{
             struct RemoteData{
-                DeviceBuffer<unsigned int> d_input_sequences;
-                DeviceBuffer<int> d_input_lengths;
-                DeviceBuffer<Value> d_results;
-                DeviceBuffer<int> d_numResultsPerSequence;
-                DeviceBuffer<int> d_offsets;
-                DeviceBuffer<char> d_persistent;
-                DeviceBuffer<char> d_temp;
-                DeviceBuffer<read_number> d_readIds;
+                DeviceBuffer<unsigned int> d_input_sequences{};
+                DeviceBuffer<int> d_input_lengths{};
+                DeviceBuffer<Value> d_results{};
+                DeviceBuffer<int> d_numResultsPerSequence{};
+                DeviceBuffer<int> d_offsets{};
+                DeviceBuffer<char> d_persistent{};
+                DeviceBuffer<char> d_temp{};
+                DeviceBuffer<read_number> d_readIds{};
             };
 
             struct CallerData{
-                DeviceBuffer<Value> d_results;
-                DeviceBuffer<int> d_numResultsPerSequence;
-                DeviceBuffer<int> d_offsets;
-                DeviceBuffer<int> d_offsets_tmp;
-                DeviceBuffer<char> d_temp;
-                CudaEvent event;
+                DeviceBuffer<Value> d_results{};
+                DeviceBuffer<int> d_numResultsPerSequence{};
+                DeviceBuffer<int> d_offsets{};
+                DeviceBuffer<int> d_offsets_tmp{};
+                DeviceBuffer<char> d_temp{};
+                CudaEvent event{cudaEventDisableTiming};
             };
 
-            std::vector<RemoteData> remotedataPerGpu;
-            std::map<int, CallerData> callerDataMap;
+            std::vector<RemoteData> remotedataPerGpu{};
+            std::map<int, CallerData> callerDataMap{};
 
-            HostBuffer<int> pinnedData;
+            HostBuffer<int> pinnedData{};
 
-            std::vector<CudaStream> streams;
-            std::vector<CudaEvent> events;
+            std::vector<CudaStream> streams{};
+            std::vector<CudaEvent> events{};
 
-            std::vector<int> deviceIds;
+            std::vector<int> deviceIds{};
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
@@ -154,7 +159,7 @@ namespace gpu{
 
         using QueryHandle = std::shared_ptr<QueryHandleStruct>;
 
-        QueryHandle makeQueryHandle(){
+        QueryHandle makeQueryHandle() const{
             auto ptr = std::make_shared<QueryHandleStruct>();
 
             const int numMinhashers = sgpuMinhashers.size();
@@ -173,6 +178,8 @@ namespace gpu{
                 ptr->remotedataPerGpu[i] = std::move(QueryHandleStruct::RemoteData{});
                 ptr->callerDataMap.emplace(sgpuMinhashers[i].getDeviceId(), std::move(QueryHandleStruct::CallerData{}));
             }
+
+            CUERR;
 
             return ptr;
         }
@@ -246,12 +253,24 @@ namespace gpu{
             int* d_numValuesPerSequence,
             int* d_offsets //numSequences + 1
         ) const {
-
+            if(numSequences == 0){
+                return;
+            }
+#if 0            
+            #define debugsync { \
+                for(int id : usableDeviceIds){ \
+                    DeviceSwitcher ds(id); \
+                    cudaDeviceSynchronize(); CUERR; \
+                } \
+            }
+#else 
+            #define debugsync 
+#endif 
             DeviceSwitcher globalds(deviceId);
 
             queryHandle->callerDataMap[deviceId].event.synchronize(); //Ensure that handle is not in use by a previous call (may need to reallocate memory)
 
-
+            debugsync
             const int numUsable = usableDeviceIds.size();
             queryHandle->pinnedData.resize(2*numUsable + numUsable + 1);
 
@@ -273,6 +292,8 @@ namespace gpu{
                 queryHandle->streams[d].waitEvent(queryHandle->events[d], 0);
             }
 
+            debugsync;
+
             //resize remote buffers for input data
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
@@ -283,7 +304,7 @@ namespace gpu{
                     queryHandle->remotedataPerGpu[d].d_readIds.resize(numSequences);
                 }
             }
-
+            debugsync
             //broadcast input to remote buffers
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
@@ -314,14 +335,14 @@ namespace gpu{
                     ); CUERR;
                 }
             }
-
+            debugsync
             //resize remote buffers numValuesPerSequence, offsets
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.resize(numSequences);
                 queryHandle->remotedataPerGpu[d].d_offsets.resize(numSequences+1);
             }
-
+            debugsync
             //Determine total number of values, number of values per key, max(number of values per key)
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
@@ -382,7 +403,7 @@ namespace gpu{
                     myStream
                 );
             }
-
+            debugsync
             //Retrieve the values
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
@@ -429,7 +450,7 @@ namespace gpu{
                 minhasher.retrieveValues(
                     queryHandle->remotedataPerGpu[d].d_persistent.data(),
                     persistent_storage_bytes,
-                    nullptr,
+                    queryHandle->remotedataPerGpu[d].d_temp.data(),
                     temp_storage_bytes,
                     d_readIds,
                     numSequences,
@@ -442,7 +463,7 @@ namespace gpu{
                     myOffsets //numSequences + 1
                 );
             }
-        
+            debugsync
             //early exit if there is only one minhasher. Simply copy remote results to destination buffers and return
             if(numUsable == 1){        
                 const int d = 0;        
@@ -472,9 +493,9 @@ namespace gpu{
                     D2D,
                     queryHandle->streams[d]
                 ); CUERR;
-
+                debugsync
                 queryHandle->events[d].record(queryHandle->streams[d]);
-                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); //join the internal stream
+                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR; //join the internal stream
                 return;
             }
 
@@ -492,7 +513,7 @@ namespace gpu{
             callerData.d_offsets_tmp.resize(numSequences * numUsable);
 
             int* const h_numPerGpu_ps = &queryHandle->pinnedData[2*numUsable];
-
+debugsync
             int runningSum = 0;
             h_numPerGpu_ps[0] = 0;
             //Copy remote results to caller
@@ -530,11 +551,11 @@ namespace gpu{
                 ); CUERR;
 
                 queryHandle->events[d].record(queryHandle->streams[d]);
-                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); //join the internal stream
+                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR; //join the internal stream
             }
-
-            cudaMemcpyAsync(callerData.d_offsets_tmp.data(), h_numPerGpu_ps, sizeof(int) * numUsable, H2D, stream);
-
+debugsync
+            cudaMemcpyAsync(callerData.d_offsets_tmp.data(), h_numPerGpu_ps, sizeof(int) * numUsable, H2D, stream); CUERR;
+debugsync
             //reduce number of results per sequence of different gpus
             helpers::lambda_kernel<<<SDIV(numSequences, 128), 128, 0, stream>>>(
                 [
@@ -558,7 +579,7 @@ namespace gpu{
                     }
                 }
             );
-
+debugsync
             //Allocate temp storage for the remaining steps
             std::size_t temp_storage_bytes = 0;
 
@@ -577,7 +598,7 @@ namespace gpu{
                 sizeof(Value) * 8,
                 stream
             );
-
+debugsync
             temp_storage_bytes = std::max(temp_storage_bytes, getRequiredCubTempSizeForResultMerging(numSequences));
             callerData.d_temp.resize(temp_storage_bytes);
 
@@ -592,7 +613,7 @@ namespace gpu{
                 numSequences,
                 stream
             );
-
+debugsync
             int* h_maxSegmentSize = queryHandle->pinnedData + 2 * numUsable + numUsable;
 
             cudaMemcpyAsync(
@@ -601,8 +622,8 @@ namespace gpu{
                 sizeof(int),
                 D2H,
                 stream
-            );
-
+            ); CUERR
+debugsync
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
                     inputdata = callerData.d_results.data(),
@@ -638,7 +659,7 @@ namespace gpu{
             ); CUERR;
 
             cudaStreamSynchronize(stream); CUERR; //wait for h_maxSegmentSize
-
+debugsync
             //values of same sequence are now stored in contiguous locations. make unique
             GpuSegmentedUnique::unique(
                 callerData.d_temp.data(),
@@ -655,7 +676,7 @@ namespace gpu{
                 sizeof(Value) * 8,
                 stream
             );
-
+debugsync
             //compute final offsets. d_offsets[0] == 0 from previous memset call
             cub::DeviceScan::InclusiveSum(
                 callerData.d_temp.data(),
@@ -665,7 +686,7 @@ namespace gpu{
                 numSequences,
                 stream
             );
-
+debugsync
             //copy results to destintation
             helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
                 [
@@ -682,8 +703,8 @@ namespace gpu{
                     }
                 }
             ); CUERR;
-        
-            callerData.event.record(stream);
+            debugsync
+            callerData.event.record(stream); CUERR;
         }
 
         std::size_t getRequiredCubTempSizeForResultMerging(int numSequences) const noexcept{
@@ -776,6 +797,8 @@ namespace gpu{
                 minhasher.destroy();
             }
         }
+
+
 
         int maxNumKeys{};
         int kmerSize{};

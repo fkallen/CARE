@@ -10,6 +10,7 @@
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
+#include <gpu/multigpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
@@ -502,6 +503,7 @@ namespace gpucorrectorkernels{
 
         template<class T>
         using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+        //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
 
         CudaEvent event{cudaEventDisableTiming};
@@ -629,6 +631,48 @@ namespace gpucorrectorkernels{
         }
     };
 
+    template<>
+    class HandleWrapper<MultiGpuMinhasher::QueryHandle>{
+        using Handle = MultiGpuMinhasher::QueryHandle;
+    public:
+        static MemoryUsage getMemoryInfo(const Handle& handle){
+            return handle->getMemoryInfo();
+        }
+    };
+
+    template<class Minhasher>
+    class HandleCreator{};
+
+    template<>
+    class HandleCreator<GpuMinhasher>{
+        using Minhasher = GpuMinhasher;
+        using Handle = typename Minhasher::QueryHandle;
+    public:
+        static Handle makeQueryHandle(const Minhasher& /*minhasher*/){
+            return Minhasher::makeQueryHandle();
+        }
+    };
+
+    template<>
+    class HandleCreator<SingleGpuMinhasher>{
+        using Minhasher = SingleGpuMinhasher;
+        using Handle = typename Minhasher::QueryHandle;
+    public:
+        static Handle makeQueryHandle(const Minhasher& /*minhasher*/){
+            return Minhasher::makeQueryHandle();
+        }
+    };
+
+    template<>
+    class HandleCreator<MultiGpuMinhasher>{
+        using Minhasher = MultiGpuMinhasher;
+        using Handle = typename Minhasher::QueryHandle;
+    public:
+        static Handle makeQueryHandle(const Minhasher& minhasher){
+            return minhasher.makeQueryHandle();
+        }
+    };
+
     template<class Minhasher, class QueryHandle>
     class GpuAnchorHasher{
     public:
@@ -648,7 +692,8 @@ namespace gpucorrectorkernels{
         {
             cudaGetDevice(&deviceId); CUERR;
 
-            minhashHandle = Minhasher::makeQueryHandle();
+            minhashHandle = HandleCreator<Minhasher>::makeQueryHandle(*gpuMinhasher);
+
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
             backgroundStream = CudaStream{};

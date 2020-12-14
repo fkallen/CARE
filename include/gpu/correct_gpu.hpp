@@ -4,6 +4,7 @@
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
+#include <gpu/multigpuminhasher.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
@@ -29,6 +30,20 @@ correct_gpu(
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
 	SingleGpuMinhasher& minhasher,
+	DistributedReadStorage& readStorage
+);
+#endif
+
+#if 1
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+	const GoodAlignmentProperties& goodAlignmentProperties,
+	const CorrectionOptions& correctionOptions,
+	const RuntimeOptions& runtimeOptions,
+	const FileOptions& fileOptions,
+	const MemoryOptions& memoryOptions,
+	const SequenceFileProperties& sequenceFileProperties,
+	MultiGpuMinhasher& minhasher,
 	DistributedReadStorage& readStorage
 );
 #endif

@@ -2,6 +2,7 @@
 #include <gpu/gpuminhasher.cuh>
 
 #include <gpu/singlegpuminhasher.cuh>
+#include <gpu/multigpuminhasher.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -271,7 +272,7 @@ namespace care{
 #endif
 
 #ifdef WARPMIN
-        gpu::SingleGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength);
+        gpu::MultiGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength,{0, 0});
 
         // int validNumHashFunctions = sgpuMinhasher.addHashfunctions(correctionOptions.numHashFunctions);
 

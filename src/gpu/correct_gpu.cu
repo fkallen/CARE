@@ -4191,6 +4191,7 @@ correct_gpu(
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/singlegpuminhasher.cuh>
+#include <gpu/multigpuminhasher.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -4562,6 +4563,10 @@ public:
                 auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
                 anchorIds.erase(readIdsEnd, anchorIds.end());
 
+                if(anchorIds.size() == 0){
+                    continue;
+                }
+
                 //std::cerr << "globalcounter " << globalcounter << "\n";
         
                 nvtx::push_range("makeErrorCorrectorInput", 0);
@@ -4595,79 +4600,92 @@ public:
 
         while(continueCondition()){
 
-            helpers::CpuTimer hashingTimer;
+            
             
             anchorIds.resize(correctionOptions.batchsize);
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
-            input.event.synchronize();
-
-            //std::cerr << "globalcounter " << globalcounter << "\n";
-    
-            nvtx::push_range("makeErrorCorrectorInput", 0);
-            gpuAnchorHasher.makeErrorCorrectorInput(
-                anchorIds.data(),
-                anchorIds.size(),
-                input,
-                stream
-            );
-            nvtx::pop_range();
-
-            input.event.synchronize();
-
-            //globalcounter++;
-
-            hashingTimer.stop();
-            //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
-            elapsedHashingTime += hashingTimer.elapsed();
-
-            GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.front();
-            freeRawOutputQueue.pop();
-
-
             helpers::CpuTimer correctionTimer;
 
-            nvtx::push_range("correct", 1);
-            gpuErrorCorrector.correct(input, *rawOutputPtr, stream);
-            nvtx::pop_range();
+            if(anchorIds.size() > 0){
+                helpers::CpuTimer hashingTimer;
 
-            unprocessedRawOutputQueue.push(rawOutputPtr);
+                input.event.synchronize();
 
-            rawOutputPtr = unprocessedRawOutputQueue.front();
-            unprocessedRawOutputQueue.pop();
+                //std::cerr << "globalcounter " << globalcounter << "\n";
+        
+                nvtx::push_range("makeErrorCorrectorInput", 0);
+                gpuAnchorHasher.makeErrorCorrectorInput(
+                    anchorIds.data(),
+                    anchorIds.size(),
+                    input,
+                    stream
+                );
+                nvtx::pop_range();
 
-            rawOutputPtr->event.synchronize();
+                input.event.synchronize();
 
-            correctionTimer.stop();
-            //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-            elapsedCorrectionTime += correctionTimer.elapsed();
+                //globalcounter++;
+
+                hashingTimer.stop();
+                //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
+                elapsedHashingTime += hashingTimer.elapsed();
+
+                GpuErrorCorrectorRawOutput* rawOutputPtr = freeRawOutputQueue.front();
+                freeRawOutputQueue.pop();
+
+                //helpers::CpuTimer correctionTimer;
+                correctionTimer.reset();
+                correctionTimer.start();
+
+                nvtx::push_range("correct", 1);
+                gpuErrorCorrector.correct(input, *rawOutputPtr, stream);
+                nvtx::pop_range();
+
+                unprocessedRawOutputQueue.push(rawOutputPtr);
+            }
+
+            if(unprocessedRawOutputQueue.size() > 0){
+
+                GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputQueue.front();
+                unprocessedRawOutputQueue.pop();
+
+                rawOutputPtr->event.synchronize();
+
+                if(anchorIds.size() > 0){
+                    correctionTimer.stop();
+                    //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
+                    elapsedCorrectionTime += correctionTimer.elapsed();
+                }
 
 
-            helpers::CpuTimer outputTimer;
+                helpers::CpuTimer outputTimer;
 
-            nvtx::push_range("constructResults", 2);
-            auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
-            nvtx::pop_range();
+                nvtx::push_range("constructResults", 2);
+                auto correctionOutput = outputConstructor.constructResults(*rawOutputPtr, forLoopExecutor);
+                nvtx::pop_range();
 
-            freeRawOutputQueue.push(rawOutputPtr);
+                freeRawOutputQueue.push(rawOutputPtr);
 
 
-            nvtx::push_range("encodeResults", 3);
+                nvtx::push_range("encodeResults", 3);
 
-            correctionOutput.encode();
+                correctionOutput.encode();
 
-            nvtx::pop_range();
+                nvtx::pop_range();
 
-            outputTimer.stop();
-            //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-            elapsedOutputTime += outputTimer.elapsed();
+                outputTimer.stop();
+                //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+                elapsedOutputTime += outputTimer.elapsed();
 
-            processResults(
-                std::move(correctionOutput)
-            );
+                processResults(
+                    std::move(correctionOutput)
+                );
 
-            batchCompleted(*input.h_numAnchors.get());
+            }
+
+            batchCompleted(anchorIds.size());
 
             iterations++;
         }
@@ -4814,60 +4832,63 @@ public:
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
-            input.event.synchronize();
+            if(anchorIds.size() > 0){
 
-            //std::cerr << "globalcounter " << globalcounter << "\n";
-    
-            nvtx::push_range("makeErrorCorrectorInput", 0);
-            gpuAnchorHasher.makeErrorCorrectorInput(
-                anchorIds.data(),
-                anchorIds.size(),
-                input,
-                stream
-            );
-            nvtx::pop_range();
+                input.event.synchronize();
 
-            input.event.synchronize();
+                //std::cerr << "globalcounter " << globalcounter << "\n";
+        
+                nvtx::push_range("makeErrorCorrectorInput", 0);
+                gpuAnchorHasher.makeErrorCorrectorInput(
+                    anchorIds.data(),
+                    anchorIds.size(),
+                    input,
+                    stream
+                );
+                nvtx::pop_range();
 
-            //globalcounter++;
+                input.event.synchronize();
 
-            hashingTimer.stop();
-            //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
-            elapsedHashingTime += hashingTimer.elapsed();
+                //globalcounter++;
 
-            helpers::CpuTimer correctionTimer;
+                hashingTimer.stop();
+                //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
+                elapsedHashingTime += hashingTimer.elapsed();
 
-            nvtx::push_range("correct", 1);
-            gpuErrorCorrector.correct(input, rawOutput, stream);
-            nvtx::pop_range();
+                helpers::CpuTimer correctionTimer;
 
-            rawOutput.event.synchronize();
+                nvtx::push_range("correct", 1);
+                gpuErrorCorrector.correct(input, rawOutput, stream);
+                nvtx::pop_range();
 
-            correctionTimer.stop();
-            //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-            elapsedCorrectionTime += correctionTimer.elapsed();
+                rawOutput.event.synchronize();
 
-            helpers::CpuTimer outputTimer;
+                correctionTimer.stop();
+                //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
+                elapsedCorrectionTime += correctionTimer.elapsed();
 
-            nvtx::push_range("constructResults", 2);
-            auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
-            nvtx::pop_range();
+                helpers::CpuTimer outputTimer;
 
-            nvtx::push_range("encodeResults", 3);
+                nvtx::push_range("constructResults", 2);
+                auto correctionOutput = outputConstructor.constructResults(rawOutput, forLoopExecutor);
+                nvtx::pop_range();
 
-            correctionOutput.encode();
+                nvtx::push_range("encodeResults", 3);
 
-            nvtx::pop_range();
+                correctionOutput.encode();
 
-            outputTimer.stop();
-            //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-            elapsedOutputTime += outputTimer.elapsed();
+                nvtx::pop_range();
 
-            processResults(
-                std::move(correctionOutput)
-            );
+                outputTimer.stop();
+                //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
+                elapsedOutputTime += outputTimer.elapsed();
 
-            batchCompleted(*input.h_numAnchors.get());
+                processResults(
+                    std::move(correctionOutput)
+                );
+            }
+
+            batchCompleted(anchorIds.size());
 
             iterations++;
         }
@@ -4953,6 +4974,7 @@ public:
         activeHasherThreads = config.numHashers;
         noMoreRawOutputs = false;
         activeCorrectorThreads = config.numCorrectors;
+        currentConfig = config;
 
         bool combinedCorrectionAndOutputconstruction = config.numOutputConstructors == 0;
 
@@ -5119,25 +5141,33 @@ public:
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
-            nvtx::push_range("getFreeInput",1);
-            GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
-            nvtx::pop_range();
+            if(anchorIds.size() > 0){
 
-            assert(cudaSuccess == inputPtr->event.query());
+                nvtx::push_range("getFreeInput",1);
+                GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
+                nvtx::pop_range();
 
-            nvtx::push_range("makeErrorCorrectorInput", 0);
-            gpuAnchorHasher.makeErrorCorrectorInput(
-                anchorIds.data(),
-                anchorIds.size(),
-                *inputPtr,
-                hasherStream
-            );
-            nvtx::pop_range();
+                assert(cudaSuccess == inputPtr->event.query());
 
-            inputPtr->event.synchronize();
+                nvtx::push_range("makeErrorCorrectorInput", 0);
+                gpuAnchorHasher.makeErrorCorrectorInput(
+                    anchorIds.data(),
+                    anchorIds.size(),
+                    *inputPtr,
+                    hasherStream
+                );
+                nvtx::pop_range();
 
-            unprocessedInputs.push(inputPtr);
-            
+                inputPtr->event.synchronize();
+
+                unprocessedInputs.push(inputPtr);
+            }else{
+                unprocessedInputs.push(nullptr);
+            }      
+        }
+
+        for(int i = 0; i < currentConfig.numCorrectors){
+            unprocessedInputs.push(nullptr);
         }
 
         activeHasherThreads--;
@@ -5510,6 +5540,8 @@ private:
     std::atomic<int> activeHasherThreads{0};
     std::atomic<bool> noMoreRawOutputs{false};
     std::atomic<int> activeCorrectorThreads{0};
+
+    Config currentConfig;
 };
 
 
@@ -6144,6 +6176,8 @@ correct_gpu(
     );
 }
 
+#if 1
+
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
         const GoodAlignmentProperties& goodAlignmentProperties,
@@ -6166,6 +6200,35 @@ correct_gpu(
         readStorage
     );
 }
+
+#endif
+
+#if 1
+
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        MultiGpuMinhasher& minhasher,
+        DistributedReadStorage& readStorage){
+
+    return correct_gpu_impl(
+        goodAlignmentProperties,
+        correctionOptions,
+        runtimeOptions,
+        fileOptions,
+        memoryOptions,
+        sequenceFileProperties,
+        minhasher,
+        readStorage
+    );
+}
+
+#endif
 
 }
 }
