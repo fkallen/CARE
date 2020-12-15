@@ -128,7 +128,7 @@ namespace gpu{
 
                 std::cout << "Constructing maps: ";
                 for(int i = 0; i < addedHashFunctions; i++){
-                    std::cout << (alreadyExistingHashFunctions + i) << ' ';
+                    std::cout << (alreadyExistingHashFunctions + i) << "(" << (hashFunctionOffset + alreadyExistingHashFunctions + i) << ") ";
                 }
                 std::cout << '\n';
 

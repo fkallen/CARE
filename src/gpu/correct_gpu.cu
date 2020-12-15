@@ -6176,7 +6176,7 @@ correct_gpu(
     );
 }
 
-#if 0
+#if 1
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(

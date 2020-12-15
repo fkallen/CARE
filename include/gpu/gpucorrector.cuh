@@ -857,6 +857,21 @@ namespace gpucorrectorkernels{
             ); CUERR;
 
             // cudaStreamSynchronize(stream); CUERR;
+            // std::vector<int> vec((1 + *ecinput.h_numAnchors));
+            // cudaMemcpyAsync(vec.data(), ecinput.d_candidates_per_anchor_prefixsum, sizeof(int) * (1 + *ecinput.h_numAnchors), D2H, stream);
+
+            // std::cerr << *ecinput.h_numCandidates << "\n";
+            // for(int i = 0; i < (1 + *ecinput.h_numAnchors); i++){
+            //     std::cerr << vec[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // for(int i = 0; i < *ecinput.h_numCandidates; i++){
+            //     std::cerr << ecinput.h_candidate_read_ids[i] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // cudaStreamSynchronize(stream); CUERR;
 
             // bool error = false;
 

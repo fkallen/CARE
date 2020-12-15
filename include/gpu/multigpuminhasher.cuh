@@ -101,12 +101,15 @@ namespace gpu{
 
                         usableDeviceIds.emplace_back(deviceIds[d]);
 
-                        std::cerr << "Placed " << createdTables << " tables on gpu with id " << deviceIds[d] << ". (id number " << d << " in list\n";
+                        std::cerr << "Placed " << createdTables << " tables on gpu with id " << deviceIds[d] << ". (id at position " << d << " in list)\n";
                     }
                 }                
             }
 
-            cudaDeviceSynchronize(); CUERR;
+            for(int d = 0; d < numDevices; d++){
+                DeviceSwitcher ds(deviceIds[d]);
+                cudaDeviceSynchronize(); CUERR;
+            }
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingNumHashfunctions;
 
@@ -621,7 +624,8 @@ debugsync
                 temp_storage_bytes, 
                 d_numValuesPerSequence,
                 h_maxSegmentSize,
-                numSequences
+                numSequences,
+                stream
             );
 debugsync
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
@@ -715,6 +719,12 @@ debugsync
                             inputoffsets[s] = outputoffset;
                         }
                     }
+
+                    //last entry of offsets (total number) is not used for copying. no need for sync
+                    if(blockIdx.x == 0 && threadIdx.x == 0){
+                        inputoffsets[numSequences] = outputoffsets[numSequences];
+                    }
+
                 }
             ); CUERR;
             debugsync
