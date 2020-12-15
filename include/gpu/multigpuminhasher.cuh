@@ -28,9 +28,80 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <cassert>
 
 namespace care{
 namespace gpu{
+
+    namespace multigpuminhasherkernels{
+        template<int blocksize, int itemsPerThread>
+        __global__
+        void aggregatePartitionResultsSingleBlockKernel(
+            const int* __restrict__ numResultsPerSequencePerPartition,
+            int* __restrict__ numResultsPerSequence,
+            int numSequences,
+            int numPartitions,
+            int* __restrict__ maxNumResultsPerSequence,
+            int* __restrict__ offsets
+        ){
+            assert(gridDim.x * gridDim.y * gridDim.z == 1);
+
+            struct BlockPrefixCallbackOp{
+                // Running prefix
+                int running_total;
+                // Constructor
+                __device__ BlockPrefixCallbackOp(int running_total) : running_total(running_total) {}
+                // Callback operator to be entered by the first warp of threads in the block.
+                // Thread-0 is responsible for returning a value for seeding the block-wide scan.
+                __device__ int operator()(int block_aggregate)
+                {
+                    int old_prefix = running_total;
+                    running_total += block_aggregate;
+                    return old_prefix;
+                }
+            };
+
+            using BlockReduce = cub::BlockReduce<int, blocksize>;
+            using BlockScan = cub::BlockScan<int, blocksize>;
+
+            __shared__ typename BlockReduce::TempStorage smem_reduce;
+            __shared__ typename BlockScan::TempStorage smem_scan;
+
+            constexpr int itemsPerIteration = blocksize * itemsPerThread;
+
+            const int numIterations = SDIV(numSequences, itemsPerIteration);
+            int myMax = 0;
+            BlockPrefixCallbackOp prefix_op(0);
+
+            //full iterations
+            for(int iteration = 0; iteration < numIterations; iteration++){
+                const int s = iteration * itemsPerIteration + threadIdx.x;
+                int sum = 0;
+
+                if(s < numSequences){
+                    for(int r = 0; r < numPartitions; r++){
+                        sum += numResultsPerSequencePerPartition[r * numSequences + s];
+                    }
+
+                    numResultsPerSequence[s] = sum;
+                    myMax = max(myMax, sum);
+                }
+
+                BlockScan(smem_scan).ExclusiveSum(sum, sum, prefix_op);
+
+                if(s < numSequences){
+                    offsets[s] = sum;
+                }
+            }
+
+            myMax = BlockReduce(smem_reduce).Reduce(myMax, cub::Max{});
+
+            if(threadIdx.x == 0){
+                *maxNumResultsPerSequence = myMax;
+                offsets[numSequences] = prefix_op.running_total;
+            }
+        };
+    }
 
 
     class MultiGpuMinhasher{
@@ -136,6 +207,15 @@ namespace gpu{
                 DeviceBuffer<char> d_temp{};
                 CudaEvent event{cudaEventDisableTiming};
             };
+
+            int numSequences{};
+            int callerDeviceId{};
+            std::size_t encodedSequencePitchInInts{};
+            const read_number* d_readIds{};
+            const unsigned int* d_sequenceData2Bit{};
+            const int* d_sequenceLengths{};
+
+            int totalNumValues{};
 
             std::vector<RemoteData> remotedataPerGpu{};
             std::map<int, CallerData> callerDataMap{};
@@ -259,23 +339,20 @@ namespace gpu{
             if(numSequences == 0){
                 return;
             }
-#if 0            
-            #define debugsync { \
-                for(int id : usableDeviceIds){ \
-                    DeviceSwitcher ds(id); \
-                    cudaDeviceSynchronize(); CUERR; \
-                } \
-            }
-#else 
-            #define debugsync 
-#endif 
+
             DeviceSwitcher globalds(deviceId);
 
             auto& callerData = queryHandle->callerDataMap[deviceId]; //Implicit creation of node is safe because deviceId is currently set
             auto& callerEvent = callerData.event;
             callerEvent.synchronize(); //Ensure that handle is not in use by a previous call (may need to reallocate memory)
 
-            debugsync
+            queryHandle->numSequences = numSequences;
+            queryHandle->callerDeviceId = deviceId;
+            queryHandle->encodedSequencePitchInInts = encodedSequencePitchInInts;
+            queryHandle->d_readIds = d_readIds;
+            queryHandle->d_sequenceData2Bit = d_sequenceData2Bit;
+            queryHandle->d_sequenceLengths = d_sequenceLengths;
+
             const int numUsable = usableDeviceIds.size();
             queryHandle->pinnedData.resize(2*numUsable + numUsable + 1);
 
@@ -297,26 +374,119 @@ namespace gpu{
                 queryHandle->streams[d].waitEvent(callerEvent, 0);
             }
 
-            debugsync;
+            resizeRemoteInputBuffers(queryHandle);          
 
-            //resize remote buffers for input data
+            broadcastInputToRemote(queryHandle);
+            
+            resizeRemoteNumValuesBuffers(queryHandle);
+
+            determineNumValuesOnEachGpu(queryHandle);
+            
+            retrieveValuesOnEachGpu(queryHandle);
+                        
+            //early exit if there is only one minhasher. Simply copy remote results to destination buffers and return
+            if(numUsable == 1){        
+                copyRemoteResultsToCaller(queryHandle, 0, d_values, d_numValuesPerSequence, d_offsets);
+
+                cudaStreamWaitEvent(stream, queryHandle->events[0], 0); CUERR; //join the internal stream
+
+                return;
+            }
+
+            queryHandle->totalNumValues = 0;
+            for(int d = 0; d < numUsable; d++){
+                const int* const myPinnedData = queryHandle->pinnedData + 2*d;
+                queryHandle->totalNumValues += myPinnedData[0];
+            }
+
+            resizeCallerData(queryHandle);            
+
+            int* const h_numPerGpu_ps = &queryHandle->pinnedData[2*numUsable];
+            h_numPerGpu_ps[0] = 0;
+            for(int d = 0; d < numUsable-1; d++){
+                const int numValues = queryHandle->pinnedData[2*d];
+                h_numPerGpu_ps[d+1] = h_numPerGpu_ps[d] + numValues;
+            }
+            cudaMemcpyAsync(callerData.d_offsets_tmp.data(), h_numPerGpu_ps, sizeof(int) * numUsable, H2D, stream); CUERR;
+
+            copyRemoteResultsToCallerData(queryHandle);
+
+            joinInternalStreams(queryHandle, stream);
+
+            combineResults(
+                queryHandle, 
+                d_values, 
+                d_numValuesPerSequence, 
+                d_offsets, 
+                stream
+            );
+
+            callerEvent.record(stream); CUERR;
+        }
+
+        std::size_t getRequiredCubTempSizeForResultMerging(int numSequences) const noexcept{
+            std::size_t bytes = 0;
+
+            cub::DeviceScan::InclusiveSum(
+                nullptr,
+                bytes,
+                (int*)nullptr,
+                (int*)nullptr,
+                numSequences
+            );
+
+            std::size_t bytes2 = 0;
+
+            cub::DeviceReduce::Max(
+                nullptr, 
+                bytes2, 
+                (int*)nullptr,
+                (int*)nullptr,
+                numSequences
+            );
+
+            bytes = std::max(bytes, bytes2);
+
+            cub::DeviceReduce::Sum(
+                nullptr, 
+                bytes2, 
+                (int*)nullptr,
+                (int*)nullptr,
+                numSequences
+            );
+
+            bytes = std::max(bytes, bytes2);
+
+            return bytes;
+        }
+
+        void resizeRemoteInputBuffers(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+            const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
+
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 queryHandle->remotedataPerGpu[d].d_input_lengths.resize(numSequences);
                 queryHandle->remotedataPerGpu[d].d_input_sequences.resize(encodedSequencePitchInInts * numSequences);
                 
-                if(d_readIds != nullptr){
+                if(queryHandle->d_readIds != nullptr){
                     queryHandle->remotedataPerGpu[d].d_readIds.resize(numSequences);
                 }
             }
-            debugsync
-            //broadcast input to remote buffers
+        }
+
+        void broadcastInputToRemote(QueryHandle& queryHandle) const {
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+            const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
+
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
 
                 cudaMemcpyAsync(
                     queryHandle->remotedataPerGpu[d].d_input_lengths.data(),
-                    d_sequenceLengths,
+                    queryHandle->d_sequenceLengths,
                     sizeof(int) * numSequences,
                     D2D,
                     queryHandle->streams[d]
@@ -324,31 +494,51 @@ namespace gpu{
 
                 cudaMemcpyAsync(
                     queryHandle->remotedataPerGpu[d].d_input_sequences.data(),
-                    d_sequenceData2Bit,
+                    queryHandle->d_sequenceData2Bit,
                     sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
                     D2D,
                     queryHandle->streams[d]
                 ); CUERR;
 
-                if(d_readIds != nullptr){
+                if(queryHandle->d_readIds != nullptr){
                     cudaMemcpyAsync(
                         queryHandle->remotedataPerGpu[d].d_readIds.data(),
-                        d_readIds,
+                        queryHandle->d_readIds,
                         sizeof(read_number) * numSequences,
                         D2D,
                         queryHandle->streams[d]
                     ); CUERR;
                 }
             }
-            debugsync
+        }
+
+        void resizeRemoteNumValuesBuffers(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+
             //resize remote buffers numValuesPerSequence, offsets
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.resize(numSequences);
                 queryHandle->remotedataPerGpu[d].d_offsets.resize(numSequences+1);
             }
-            debugsync
-            //Determine total number of values, number of values per key, max(number of values per key)
+        }
+
+        void determineNumValuesOnEachGpu(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+            const std::size_t encodedSequencePitchInInts = queryHandle->encodedSequencePitchInInts;
+
+            std::size_t cubsize = 0;
+            cub::DeviceReduce::Max(
+                nullptr, 
+                cubsize, 
+                (int*)nullptr, 
+                (int*)nullptr, 
+                numSequences
+            );
+            cubsize = SDIV(cubsize, 4) * 4;
+            
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
 
@@ -408,8 +598,12 @@ namespace gpu{
                     myStream
                 );
             }
-            debugsync
-            //Retrieve the values
+        }
+
+        void retrieveValuesOnEachGpu(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+
             for(int d = 0; d < numUsable; d++){
                 DeviceSwitcher ds(usableDeviceIds[d]);
 
@@ -420,13 +614,13 @@ namespace gpu{
 
                 int* const myNumValuesPerSequence = queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data();                
                 int* const myOffsets = queryHandle->remotedataPerGpu[d].d_offsets.data();
-                const read_number* const myReadIds = (d_readIds == nullptr) ? nullptr: queryHandle->remotedataPerGpu[d].d_readIds.data();
+                const read_number* const myReadIds = (queryHandle->d_readIds == nullptr) ? nullptr: queryHandle->remotedataPerGpu[d].d_readIds.data();
 
                 int* const myPinnedData = queryHandle->pinnedData + 2*d;
                 
                 CudaStream& myStream = queryHandle->streams[d];
 
-                cudaStreamSynchronize(myStream); CUERR; //Wait for number of values and max segment
+                cudaStreamSynchronize(myStream); CUERR; //Wait for number of values and max segment from async memcpy call.
 
                 const int totalNumValues = myPinnedData[0];
                 const int largestSegment = myPinnedData[1];
@@ -439,12 +633,12 @@ namespace gpu{
                     persistent_storage_bytes,
                     nullptr,
                     temp_storage_bytes,
-                    d_readIds,
+                    myReadIds,
                     numSequences,
                     123456, //unused
                     myStream,
                     totalNumValues,
-                    123456, //unused largest segment
+                    123456, //largest segment unused for dry-run
                     myValues,
                     myNumValuesPerSequence,
                     myOffsets //numSequences + 1
@@ -457,7 +651,7 @@ namespace gpu{
                     persistent_storage_bytes,
                     queryHandle->remotedataPerGpu[d].d_temp.data(),
                     temp_storage_bytes,
-                    d_readIds,
+                    myReadIds,
                     numSequences,
                     123456, //unused
                     myStream,
@@ -468,74 +662,101 @@ namespace gpu{
                     myOffsets //numSequences + 1
                 );
             }
-            debugsync
-            //early exit if there is only one minhasher. Simply copy remote results to destination buffers and return
-            if(numUsable == 1){        
-                const int d = 0;        
-                DeviceSwitcher ds(usableDeviceIds[d]);
-                const int numValues = queryHandle->pinnedData[2*d];
+        }
 
-                cudaMemcpyAsync(
-                    d_values,
-                    queryHandle->remotedataPerGpu[d].d_results.data(),
-                    sizeof(Value) * numValues,
-                    D2D,
-                    queryHandle->streams[d]
-                ); CUERR;
+        void resizeCallerData(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
 
-                cudaMemcpyAsync(
-                    d_numValuesPerSequence,
-                    queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data(),
-                    sizeof(int) * numSequences,
-                    D2D,
-                    queryHandle->streams[d]
-                ); CUERR;
+            auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
 
-                cudaMemcpyAsync(
-                    d_offsets,
-                    queryHandle->remotedataPerGpu[d].d_offsets.data(),
-                    sizeof(int) * (numSequences + 1),
-                    D2D,
-                    queryHandle->streams[d]
-                ); CUERR;
-                debugsync
-                queryHandle->events[d].record(queryHandle->streams[d]);
-                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR; //join the internal stream
-                return;
-            }
-
-            int totalNumValues = 0;
-            for(int d = 0; d < numUsable; d++){
-                const int* const myPinnedData = queryHandle->pinnedData + 2*d;
-                totalNumValues += myPinnedData[0];
-            }
-
-            callerData.d_results.resize(totalNumValues);
+            callerData.d_results.resize(queryHandle->totalNumValues);
             callerData.d_numResultsPerSequence.resize(numSequences * numUsable);
             callerData.d_offsets.resize((numSequences + 1) * numUsable);
             callerData.d_offsets_tmp.resize(numSequences * numUsable);
 
+            //Allocate temp storage for the remaining steps
+            std::size_t temp_storage_bytes = 0;
+
+            GpuSegmentedUnique::unique(
+                nullptr, //tempstorage
+                temp_storage_bytes,
+                (Value*)nullptr, //input values
+                queryHandle->totalNumValues,
+                (Value*)nullptr, //output values
+                (int*)nullptr, //output segment sizes
+                numSequences,
+                123456, //sizeOfLargestSegment, unused for dry-run
+                (int*)nullptr, //segment begin offsets
+                (int*)nullptr, //segment end offsets
+                0,
+                sizeof(Value) * 8,
+                (cudaStream_t)0
+            );
+
+            temp_storage_bytes = std::max(temp_storage_bytes, getRequiredCubTempSizeForResultMerging(numSequences));
+            callerData.d_temp.resize(temp_storage_bytes);
+        }
+
+        void copyRemoteResultsToCaller(
+            QueryHandle& queryHandle, 
+            int deviceIndex,
+            Value* d_values,
+            int* d_numValuesPerSequence,
+            int* d_offsets
+        ) const {
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+
+            const int d = deviceIndex;
+
+            DeviceSwitcher ds(usableDeviceIds[d]);
+            const int numValues = queryHandle->pinnedData[2*d];
+
+            cudaMemcpyAsync(
+                d_values,
+                queryHandle->remotedataPerGpu[d].d_results.data(),
+                sizeof(Value) * numValues,
+                D2D,
+                queryHandle->streams[d]
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_numValuesPerSequence,
+                queryHandle->remotedataPerGpu[d].d_numResultsPerSequence.data(),
+                sizeof(int) * numSequences,
+                D2D,
+                queryHandle->streams[d]
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_offsets,
+                queryHandle->remotedataPerGpu[d].d_offsets.data(),
+                sizeof(int) * (numSequences + 1),
+                D2D,
+                queryHandle->streams[d]
+            ); CUERR;
+
+            queryHandle->events[d].record(queryHandle->streams[d]);
+        }
+
+        void copyRemoteResultsToCallerData(QueryHandle& queryHandle) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+            auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
             int* const h_numPerGpu_ps = &queryHandle->pinnedData[2*numUsable];
-debugsync
-            int runningSum = 0;
-            h_numPerGpu_ps[0] = 0;
-            //Copy remote results to caller
+
             for(int d = 0; d < numUsable; d++){                
                 DeviceSwitcher ds(usableDeviceIds[d]);
                 const int numValues = queryHandle->pinnedData[2*d];
 
                 cudaMemcpyAsync(
-                    callerData.d_results.data() + runningSum,
+                    callerData.d_results.data() + h_numPerGpu_ps[d],
                     queryHandle->remotedataPerGpu[d].d_results.data(),
                     sizeof(Value) * numValues,
                     D2D,
                     queryHandle->streams[d]
                 ); CUERR;
-
-                runningSum += numValues;
-                if(d < numUsable - 1){
-                    h_numPerGpu_ps[d+1] = runningSum;
-                }
 
                 cudaMemcpyAsync(
                     callerData.d_numResultsPerSequence.data() + d * numSequences,
@@ -554,80 +775,47 @@ debugsync
                 ); CUERR;
 
                 queryHandle->events[d].record(queryHandle->streams[d]);
-                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR; //join the internal stream
             }
-debugsync
-            cudaMemcpyAsync(callerData.d_offsets_tmp.data(), h_numPerGpu_ps, sizeof(int) * numUsable, H2D, stream); CUERR;
-debugsync
-            //reduce number of results per sequence of different gpus
-            helpers::lambda_kernel<<<SDIV(numSequences, 128), 128, 0, stream>>>(
-                [
-                    inputsegmentsizes = callerData.d_numResultsPerSequence.data(),
-                    outputsegmentsizes = d_numValuesPerSequence,
-                    numSequences,
-                    numUsable
-                ] __device__ (){
+        }
 
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
+        void joinInternalStreams(QueryHandle& queryHandle, cudaStream_t stream) const{
+            const int numUsable = usableDeviceIds.size();
 
-                    for(int i = tid; i < numSequences; i += stride){
-                        int sum = 0;
+            for(int d = 0; d < numUsable; d++){
+                cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR;
+            }
+        }
 
-                        for(int r = 0; r < numUsable; r++){
-                            sum += inputsegmentsizes[r * numSequences + i];
-                        }
-
-                        outputsegmentsizes[i] = sum;
-                    }
-                }
-            );
-debugsync
-            //Allocate temp storage for the remaining steps
-            std::size_t temp_storage_bytes = 0;
-
-            GpuSegmentedUnique::unique(
-                nullptr, //tempstorage
-                temp_storage_bytes,
-                (Value*)nullptr, //input values
-                totalNumValues,
-                (Value*)nullptr, //output values
-                (int*)nullptr, //output segment sizes
-                numSequences,
-                123456, //sizeOfLargestSegment, unused for memory calculation
-                (int*)nullptr, //segment begin offsets
-                (int*)nullptr, //segment end offsets
-                0,
-                sizeof(Value) * 8,
-                stream
-            );
-debugsync
-            temp_storage_bytes = std::max(temp_storage_bytes, getRequiredCubTempSizeForResultMerging(numSequences));
-            callerData.d_temp.resize(temp_storage_bytes);
-
-            //compute begin offsets of contiguous segments per sequence   
-            cudaMemsetAsync(d_offsets, 0, sizeof(int), stream); CUERR;
-
-            cub::DeviceScan::InclusiveSum(
-                callerData.d_temp.data(),
-                temp_storage_bytes,
-                d_numValuesPerSequence,
-                d_offsets + 1,
-                numSequences,
-                stream
-            );
-debugsync
+        void combineResults(
+            QueryHandle& queryHandle, 
+            Value* d_values, 
+            int* d_numValuesPerSequence, 
+            int* d_offsets, 
+            cudaStream_t stream
+        ) const{
+            const int numUsable = usableDeviceIds.size();
+            const int numSequences = queryHandle->numSequences;
+            auto& callerData = queryHandle->callerDataMap[queryHandle->callerDeviceId];
+            auto& callerEvent = callerData.event;
+            
             int* h_maxSegmentSize = queryHandle->pinnedData + 2 * numUsable + numUsable;
+            std::size_t temp_storage_bytes = callerData.d_temp.sizeInBytes();
 
-            cub::DeviceReduce::Max(
-                callerData.d_temp.data(),
-                temp_storage_bytes, 
+            multigpuminhasherkernels::aggregatePartitionResultsSingleBlockKernel<1024, 1><<<1, 1024, 0, stream>>>(
+                callerData.d_numResultsPerSequence.data(),
                 d_numValuesPerSequence,
-                h_maxSegmentSize,
                 numSequences,
-                stream
-            );
-debugsync
+                numUsable,
+                h_maxSegmentSize,
+                d_offsets
+            ); CUERR;
+
+            callerEvent.record(stream);
+
+            /*
+                Copy gpu results into contiguous range. Interleave results for same sequences
+                i.e. for input GPU 0: AABBBBC, GPU 1: AAAABBC result will be AAAAAABBBBBCC
+            */
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
                     inputdata = callerData.d_results.data(),
@@ -662,14 +850,14 @@ debugsync
                 }
             ); CUERR;
 
-            cudaStreamSynchronize(stream); CUERR; //wait for h_maxSegmentSize
-debugsync
+            callerEvent.synchronize(); CUERR; //wait for h_maxSegmentSize
+
             //values of same sequence are now stored in contiguous locations. make unique
             GpuSegmentedUnique::unique(
                 callerData.d_temp.data(),
                 temp_storage_bytes,
                 d_values, //input values
-                totalNumValues,
+                queryHandle->totalNumValues,
                 callerData.d_results.data(), //output values
                 d_numValuesPerSequence, //output segment sizes
                 numSequences,
@@ -680,9 +868,9 @@ debugsync
                 sizeof(Value) * 8,
                 stream
             );
-debugsync
+
             //compute final offsets.
-            cudaMemsetAsync(callerData.d_offsets.data(), 0, sizeof(int), stream); CUERR;
+            //callerData.d_offsets[0] == 0 is set to 0 in aggregatePartitionResultsSingleBlockKernel
 
             cub::DeviceScan::InclusiveSum(
                 callerData.d_temp.data(),
@@ -692,7 +880,7 @@ debugsync
                 numSequences,
                 stream
             );
-debugsync
+
             //copy results to destination
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
@@ -727,44 +915,6 @@ debugsync
 
                 }
             ); CUERR;
-debugsync
-            callerEvent.record(stream); CUERR;
-        }
-
-        std::size_t getRequiredCubTempSizeForResultMerging(int numSequences) const noexcept{
-            std::size_t bytes = 0;
-
-            cub::DeviceScan::InclusiveSum(
-                nullptr,
-                bytes,
-                (int*)nullptr,
-                (int*)nullptr,
-                numSequences
-            );
-
-            std::size_t bytes2 = 0;
-
-            cub::DeviceReduce::Max(
-                nullptr, 
-                bytes2, 
-                (int*)nullptr,
-                (int*)nullptr,
-                numSequences
-            );
-
-            bytes = std::max(bytes, bytes2);
-
-            cub::DeviceReduce::Sum(
-                nullptr, 
-                bytes2, 
-                (int*)nullptr,
-                (int*)nullptr,
-                numSequences
-            );
-
-            bytes = std::max(bytes, bytes2);
-
-            return bytes;
         }
 
         void compact(){
