@@ -91,16 +91,16 @@ namespace gpu{
 
             auto sequencehandle = gpuReadStorage.makeGatherHandleSequences();
 
-            auto showProgress = [&](auto totalCount, auto seconds){
-                if(runtimeOptions.showProgress){
-                    std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
-                            << seconds << " seconds.\n";
-                }
-            };
+            // auto showProgress = [&](auto totalCount, auto seconds){
+            //     if(runtimeOptions.showProgress){
+            //         std::cout << "Hashed " << totalCount << " / " << numReads << " reads. Elapsed time: " 
+            //                 << seconds << " seconds.\n";
+            //     }
+            // };
 
-            auto updateShowProgressInterval = [](auto duration){
-                return duration * 2;
-            };
+            // auto updateShowProgressInterval = [](auto duration){
+            //     return duration * 2;
+            // };
 
             int remainingHashFunctions = maxNumHashfunctions;
             bool keepGoing = true;
@@ -124,7 +124,7 @@ namespace gpu{
                     }
                 }
 
-                ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+                //ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
 
                 std::cout << "Constructing maps: ";
                 for(int i = 0; i < addedHashFunctions; i++){
@@ -185,13 +185,13 @@ namespace gpu{
 
                     cudaStreamSynchronize(stream); CUERR;
 
-                    progressThread.addProgress(curBatchsize);
+                    //progressThread.addProgress(curBatchsize);
                 }
 
                 std::cerr << "Compacting\n";
                 finalize();
 
-                progressThread.finished();
+                //progressThread.finished();
 
                 remainingHashFunctions -= addedHashFunctions;
             }

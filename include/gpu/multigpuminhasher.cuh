@@ -137,6 +137,9 @@ namespace gpu{
             sgpuMinhashers.clear();
             usableDeviceIds.clear();
 
+            helpers::CpuTimer cpuTimer{"MultiGpuMinhasher construction"};
+            cpuTimer.start();
+
             int currentHashFunctionOffset = hashFunctionOffset;
 
             vec_h_currentHashFunctionNumbers.resize(numDevices);
@@ -147,6 +150,8 @@ namespace gpu{
                 DeviceSwitcher ds(deviceIds[d]);
 
                 if(remainingNumHashfunctions > 0){
+
+                    nvtx::push_range("Construct SingleGpuMinhasher", 4);
 
                     SingleGpuMinhasher mh(nReads, resultsPerMapThreshold, kmerSize);
                     const int createdTables =  mh.constructFromReadStorage(
@@ -174,6 +179,8 @@ namespace gpu{
 
                         std::cerr << "Placed " << createdTables << " tables on gpu with id " << deviceIds[d] << ". (id at position " << d << " in list)\n";
                     }
+
+                    nvtx::pop_range();
                 }                
             }
 
@@ -181,6 +188,9 @@ namespace gpu{
                 DeviceSwitcher ds(deviceIds[d]);
                 cudaDeviceSynchronize(); CUERR;
             }
+
+            cpuTimer.stop();
+            cpuTimer.print();
 
             const int numberOfAvailableHashFunctions = maxNumHashfunctions - remainingNumHashfunctions;
 
