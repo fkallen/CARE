@@ -616,13 +616,13 @@ debugsync
 debugsync
             int* h_maxSegmentSize = queryHandle->pinnedData + 2 * numUsable + numUsable;
 
-            cudaMemcpyAsync(
+            cub::DeviceReduce::Max(
+                callerData.d_temp.data(),
+                temp_storage_bytes, 
+                d_numValuesPerSequence,
                 h_maxSegmentSize,
-                d_offsets + numSequences,
-                sizeof(int),
-                D2H,
-                stream
-            ); CUERR
+                numSequences
+            );
 debugsync
             helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
@@ -677,29 +677,43 @@ debugsync
                 stream
             );
 debugsync
-            //compute final offsets. d_offsets[0] == 0 from previous memset call
+            //compute final offsets.
+            cudaMemsetAsync(callerData.d_offsets.data(), 0, sizeof(int), stream); CUERR;
+
             cub::DeviceScan::InclusiveSum(
                 callerData.d_temp.data(),
                 temp_storage_bytes,
                 d_numValuesPerSequence,
-                d_offsets + 1,
+                callerData.d_offsets.data() + 1,
                 numSequences,
                 stream
             );
 debugsync
-            //copy results to destintation
-            helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
+            //copy results to destination
+            helpers::lambda_kernel<<<numSequences, 128, 0, stream>>>(
                 [
-                    numElementsPtr = d_offsets + numSequences,
                     input = callerData.d_results.data(),
-                    output = d_values
+                    inputoffsets = d_offsets,
+                    output = d_values,
+                    outputoffsets = callerData.d_offsets.data(),
+                    d_numValuesPerSequence,
+                    numSequences
                 ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
 
-                    const int numElements = *numElementsPtr;
-                    for(int i = tid; i < numElements; i += stride){
-                        output[i] = input[i];
+                    for(int s = blockIdx.x; s < numSequences; s += gridDim.x){
+                        const int inputoffset = inputoffsets[s];
+                        const int outputoffset = outputoffsets[s];
+                        const int segmentsize = d_numValuesPerSequence[s];
+
+                        for(int i = threadIdx.x; i < segmentsize; i += blockDim.x){
+                            output[outputoffset + i] = input[inputoffset + i];
+                        }
+
+                        __syncthreads();
+                        //update d_offsets within this kernel to avoid additional api call
+                        if(threadIdx.x == 0){
+                            inputoffsets[s] = outputoffset;
+                        }
                     }
                 }
             ); CUERR;

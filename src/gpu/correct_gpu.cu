@@ -5166,7 +5166,7 @@ public:
             }      
         }
 
-        for(int i = 0; i < currentConfig.numCorrectors){
+        for(int i = 0; i < currentConfig.numCorrectors; i++){
             unprocessedInputs.push(nullptr);
         }
 
@@ -6176,7 +6176,7 @@ correct_gpu(
     );
 }
 
-#if 1
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
@@ -6187,7 +6187,7 @@ correct_gpu(
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
         SingleGpuMinhasher& minhasher,
-        DistributedReadStorage& readStorage){
+        DistributedReadStorage& readStorage){ 
 
     return correct_gpu_impl(
         goodAlignmentProperties,
