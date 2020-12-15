@@ -271,7 +271,9 @@ namespace gpu{
 #endif 
             DeviceSwitcher globalds(deviceId);
 
-            queryHandle->callerDataMap[deviceId].event.synchronize(); //Ensure that handle is not in use by a previous call (may need to reallocate memory)
+            auto& callerData = queryHandle->callerDataMap[deviceId]; //Implicit creation of node is safe because deviceId is currently set
+            auto& callerEvent = callerData.event;
+            callerEvent.synchronize(); //Ensure that handle is not in use by a previous call (may need to reallocate memory)
 
             debugsync
             const int numUsable = usableDeviceIds.size();
@@ -289,10 +291,10 @@ namespace gpu{
             cubsize = SDIV(cubsize, 4) * 4;
 
             //Create dependency for internal streams
+            callerEvent.record(stream);
             for(int d = 0; d < numUsable; d++){
-                DeviceSwitcher ds(usableDeviceIds[d]);
-                queryHandle->events[d].record(stream);
-                queryHandle->streams[d].waitEvent(queryHandle->events[d], 0);
+                DeviceSwitcher ds(usableDeviceIds[d]);                
+                queryHandle->streams[d].waitEvent(callerEvent, 0);
             }
 
             debugsync;
@@ -501,8 +503,6 @@ namespace gpu{
                 cudaStreamWaitEvent(stream, queryHandle->events[d], 0); CUERR; //join the internal stream
                 return;
             }
-
-            auto& callerData = queryHandle->callerDataMap[deviceId]; //Implicit creation of node is safe because deviceId is currently set
 
             int totalNumValues = 0;
             for(int d = 0; d < numUsable; d++){
@@ -727,8 +727,8 @@ debugsync
 
                 }
             ); CUERR;
-            debugsync
-            callerData.event.record(stream); CUERR;
+debugsync
+            callerEvent.record(stream); CUERR;
         }
 
         std::size_t getRequiredCubTempSizeForResultMerging(int numSequences) const noexcept{
