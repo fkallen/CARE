@@ -1066,16 +1066,36 @@ namespace gpu{
         }
 
 
-        void compact(){
+        void compact(cudaStream_t stream = 0){
             DeviceSwitcher ds(deviceId);
 
+            std::size_t required_temp_bytes = 0;
+
             for(auto& table : gpuHashTables){
-                table->compact();
+                std::size_t temp_bytes2 = 0;
+                table->compact(nullptr, temp_bytes2, stream);
+                required_temp_bytes = std::max(required_temp_bytes, temp_bytes2);
             }
+
+            std::size_t freeMem, totalMem; 
+            cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+
+            void* temp = nullptr;
+            if(required_temp_bytes < freeMem){
+                cudaMalloc(&temp, required_temp_bytes); CUERR;
+            }else{
+                cudaMallocManaged(&temp, required_temp_bytes); CUERR;
+            }
+
+            for(auto& table : gpuHashTables){
+                table->compact(temp, required_temp_bytes, stream);
+            }
+
+            cudaFree(temp); CUERR;
         }
 
-        void finalize(){
-            compact();
+        void finalize(cudaStream_t stream = 0){
+            compact(stream);
         }
 
         MemoryUsage getMemoryInfo() const{

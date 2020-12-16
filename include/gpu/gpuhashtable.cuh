@@ -14,6 +14,7 @@
 #include <future>
 
 #include <cooperative_groups.h>
+#include <cub/cub.cuh>
 
 namespace cg = cooperative_groups;
 
@@ -405,43 +406,58 @@ namespace gpu{
             return gpuMvTable->num_keys(stream);
         }
 
-        void compact(){
+        void compact(
+            void* d_temp,
+            std::size_t& temp_bytes,
+            cudaStream_t stream = 0
+        ){
+            Index numUniqueKeys = gpuMvTable->num_keys(stream);
+            Index numValuesInTable = gpuMvTable->num_values(stream);
+
+            const std::size_t batchsize = 100000;
+            const std::size_t iters =  SDIV(numUniqueKeys, batchsize);
+
+            void* temp_allocations[4];
+            std::size_t temp_allocation_sizes[4];
+            
+            temp_allocation_sizes[0] = sizeof(Key) * numUniqueKeys; // h_uniqueKeys
+            temp_allocation_sizes[1] = sizeof(Index) * (numUniqueKeys+1); // h_compactOffsetTmp
+            temp_allocation_sizes[2] = sizeof(int) * batchsize; // h_ids
+            temp_allocation_sizes[3] = sizeof(Value) * numValuesInTable; // h_compactValues
+            
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                d_temp,
+                temp_bytes,
+                temp_allocations,
+                temp_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
+
+            if(d_temp == nullptr){
+                return;
+            }
+
             if(isCompact) return;
 
-            Index numUniqueKeys = gpuMvTable->num_keys();
-
-            helpers::SimpleAllocationPinnedHost<Key, 0> h_uniqueKeys(numUniqueKeys);
-            helpers::SimpleAllocationPinnedHost<Index, 0> h_compactOffsetTmp(numUniqueKeys+1);
-            
+            Key* const d_tmp_uniqueKeys = static_cast<Key*>(temp_allocations[0]);
+            Index* const d_tmp_compactOffset = static_cast<Index*>(temp_allocations[1]);
+            int* const d_tmp_ids = static_cast<int*>(temp_allocations[2]);
+            Value* const d_tmp_compactValues = static_cast<Value*>(temp_allocations[3]);
+   
             gpuMvTable->retrieve_all_keys(
-                h_uniqueKeys,
-                numUniqueKeys
+                d_tmp_uniqueKeys,
+                numUniqueKeys,
+                stream
             ); CUERR;
 
-            Index numRetrievedValues = 0;
-
             retrieve(
-                h_uniqueKeys.data(),
+                d_tmp_uniqueKeys,
                 numUniqueKeys,
-                h_compactOffsetTmp.data(),
-                h_compactOffsetTmp.data() + 1,
-                nullptr,
-                numRetrievedValues,
-                (cudaStream_t)0
-            );
-            cudaStreamSynchronize(0); CUERR;
-
-            helpers::SimpleAllocationPinnedHost<Value, 0> h_compactValues(numRetrievedValues);
-            
-
-            retrieve(
-                h_uniqueKeys.data(),
-                numUniqueKeys,
-                h_compactOffsetTmp.data(),
-                h_compactOffsetTmp.data() + 1,
-                h_compactValues.data(),
-                numRetrievedValues,
-                (cudaStream_t)0
+                d_tmp_compactOffset,
+                d_tmp_compactOffset + 1,
+                d_tmp_compactValues,
+                numValuesInTable,
+                stream
             );
 
             //clear table
@@ -457,42 +473,53 @@ namespace gpu{
             );
 
             d_compactOffsets.resize(numUniqueKeys + 1);
-            d_compactValues.resize(numRetrievedValues);
+            d_compactValues.resize(numValuesInTable);
 
             //copy offsets to gpu, convert from Index to int
-            gpuhashtablekernels::assignmentKernel<<<SDIV(numUniqueKeys+1, 256), 256>>>(
+            gpuhashtablekernels::assignmentKernel
+            <<<SDIV(numUniqueKeys+1, 256), 256, 0, stream>>>(
                 d_compactOffsets.data(), 
-                h_compactOffsetTmp.data(), 
+                d_tmp_compactOffset, 
                 numUniqueKeys+1
             );
-            cudaMemcpyAsync(d_compactValues, h_compactValues, d_compactValues.sizeInBytes(), H2D, 0); CUERR;
+            CUERR;
+            
+            cudaMemcpyAsync(
+                d_compactValues, 
+                d_tmp_compactValues, 
+                d_compactValues.sizeInBytes(), 
+                D2D, 
+                stream
+            ); CUERR;
 
-
-            const std::size_t batchsize = 100000;
-            const std::size_t iters =  SDIV(numUniqueKeys, batchsize);
-            helpers::SimpleAllocationPinnedHost<int> ids(batchsize);
+            std::vector<int> ids(batchsize);
 
             for(std::size_t i = 0; i < iters; i++){
                 const std::size_t begin = i * batchsize;
                 const std::size_t end = std::min((i+1) * batchsize, numUniqueKeys);
                 const std::size_t num = end - begin;
 
-                std::iota(ids.begin(), ids.end(), int(begin));
+                std::iota(ids.data(), ids.data() + num, int(begin));
+                cudaStreamSynchronize(stream); CUERR;
+
+                cudaMemcpyAsync(d_tmp_ids, ids.data(), sizeof(int) * num, H2D, stream); CUERR;
+
                 gpuKeyIndexTable->insert(
-                    h_uniqueKeys + begin,
-                    ids.data(),
+                    d_tmp_uniqueKeys + begin,
+                    d_tmp_ids,
                     num,
-                    (cudaStream_t)0,
+                    stream,
                     warpcore::defaults::probing_length(),
                     nullptr
-                );
-                cudaStreamSynchronize(0); CUERR;
+                );                
             }
 
             numKeys = numUniqueKeys;
-            numValues = numRetrievedValues;
+            numValues = numValuesInTable;
             
             isCompact = true;
+
+            cudaStreamSynchronize(stream); CUERR;
         }
 
         template<class Offset>
