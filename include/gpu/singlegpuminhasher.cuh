@@ -81,7 +81,7 @@ namespace gpu{
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0
-        ) override {
+        ) {
             
             DeviceSwitcher ds(deviceId);
 

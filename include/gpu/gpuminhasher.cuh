@@ -24,15 +24,6 @@ public:
 
     virtual ~GpuMinhasher() = default;
 
-    virtual int constructFromReadStorage(
-        const RuntimeOptions &runtimeOptions,
-        std::uint64_t nReads,
-        const DistributedReadStorage& gpuReadStorage,
-        int upperBoundSequenceLength,
-        int maxNumHashfunctions,
-        int hashFunctionOffset = 0
-    ) = 0;
-
     virtual QueryHandle makeQueryHandle() const = 0;
 
     virtual void query(

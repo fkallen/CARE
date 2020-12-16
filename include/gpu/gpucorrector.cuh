@@ -484,7 +484,7 @@ namespace gpucorrectorkernels{
     class GpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
     public: 
         GpuMinhasherCandidateIdsProvider(const FakeGpuMinhasher& minhasher_) 
-            : minhasher{&minhasher_}, minhashHandle{FakeGpuMinhasher::makeQueryHandle()} {
+            : minhasher{&minhasher_}, minhashHandle{minhasher_.makeQueryHandle()} {
 
         }
     public: //private:
@@ -614,17 +614,8 @@ namespace gpucorrectorkernels{
     class HandleWrapper{};
 
     template<>
-    class HandleWrapper<FakeGpuMinhasher::QueryHandle>{
-        using Handle = FakeGpuMinhasher::QueryHandle;
-    public:
-        static MemoryUsage getMemoryInfo(const Handle& handle){
-            return handle.getMemoryInfo();
-        }
-    };
-
-    template<>
     class HandleWrapper<GpuMinhasher::QueryHandle>{
-        using Handle = SingleGpuMinhasher::QueryHandle;
+        using Handle = GpuMinhasher::QueryHandle;
     public:
         static MemoryUsage getMemoryInfo(const Handle& handle){
             return handle.parent->getMemoryInfo(handle);
@@ -640,8 +631,8 @@ namespace gpucorrectorkernels{
         using Minhasher = FakeGpuMinhasher;
         using Handle = typename Minhasher::QueryHandle;
     public:
-        static Handle makeQueryHandle(const Minhasher& /*minhasher*/){
-            return Minhasher::makeQueryHandle();
+        static Handle makeQueryHandle(const Minhasher& minhasher){
+            return minhasher.makeQueryHandle();
         }
     };
 

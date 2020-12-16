@@ -251,7 +251,7 @@ namespace gpu{
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0
-        ) override {
+        ) {
             
             const int numDevices = deviceIds.size();
             sgpuMinhashers.clear();

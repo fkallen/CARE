@@ -7,6 +7,7 @@
 #include <gpu/cuda_unique.cuh>
 #include <gpu/minhashingkernels.cuh>
 #include <cpuhashtable.hpp>
+#include <gpu/gpuminhasher.cuh>
 
 #include <options.hpp>
 #include <util.hpp>
@@ -35,19 +36,18 @@ namespace gpu{
 
 
     /*
-        Minhasher which can store results in gpu memory and uses the gpu for hash table construction
+        Minhasher which can store query results in gpu memory and uses the gpu to parallelize some portions of the code
         However, hash tables reside on the host
     */
-    class FakeGpuMinhasher{
+    class FakeGpuMinhasher : public GpuMinhasher{
+    public:
+        using Key_t = GpuMinhasher::Key;
+        using Value_t = read_number;
     private:
         using HashTable = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
-    public:
-        using Key_t = kmer_type;
-        using Value_t = read_number;
-
         using Range_t = std::pair<const Value_t*, const Value_t*>;
 
-        struct QueryHandle{
+        struct QueryData{
             static constexpr int overprovisioningPercent = 0;
 
             template<class T>
@@ -90,35 +90,35 @@ namespace gpu{
             std::vector<GpuSegmentedUnique::Handle> segmentedUniqueHandles;
 
 
-            void resize(const FakeGpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
-                const std::size_t maximumResultSize 
-                    = minhasher.getNumResultsPerMapThreshold() * minhasher.getNumberOfMaps() * numSequences;
+            // void resize(const FakeGpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
+            //     const std::size_t maximumResultSize 
+            //         = minhasher.getNumResultsPerMapThreshold() * minhasher.getNumberOfMaps() * numSequences;
 
-                d_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
-                h_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
-                h_candidate_read_ids_tmp.resize(maximumResultSize);
-                d_candidate_read_ids_tmp.resize(maximumResultSize);
+            //     d_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
+            //     h_minhashSignatures.resize(minhasher.getNumberOfMaps() * numSequences);
+            //     h_candidate_read_ids_tmp.resize(maximumResultSize);
+            //     d_candidate_read_ids_tmp.resize(maximumResultSize);
 
-                h_begin_offsets.resize(numSequences+1);
-                d_begin_offsets.resize(numSequences+1);
-                h_end_offsets.resize(numSequences+1);
-                d_end_offsets.resize(numSequences+1);
-                h_global_begin_offsets.resize(numSequences);
-                d_global_begin_offsets.resize(numSequences);
+            //     h_begin_offsets.resize(numSequences+1);
+            //     d_begin_offsets.resize(numSequences+1);
+            //     h_end_offsets.resize(numSequences+1);
+            //     d_end_offsets.resize(numSequences+1);
+            //     h_global_begin_offsets.resize(numSequences);
+            //     d_global_begin_offsets.resize(numSequences);
             
-                allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
-                idsPerChunk.resize(numThreads, 0);   
-                numAnchorsPerChunk.resize(numThreads, 0);
-                idsPerChunkPrefixSum.resize(numThreads, 0);
-                numAnchorsPerChunkPrefixSum.resize(numThreads, 0);
+            //     allRanges.resize(minhasher.getNumberOfMaps() * numSequences);
+            //     idsPerChunk.resize(numThreads, 0);   
+            //     numAnchorsPerChunk.resize(numThreads, 0);
+            //     idsPerChunkPrefixSum.resize(numThreads, 0);
+            //     numAnchorsPerChunkPrefixSum.resize(numThreads, 0);
 
-                d_temp.resize(minhasher.getNumberOfMaps() * numSequences);
-                d_signatureSizePerSequence.resize(numSequences);
-                h_signatureSizePerSequence.resize(numSequences);
+            //     d_temp.resize(minhasher.getNumberOfMaps() * numSequences);
+            //     d_signatureSizePerSequence.resize(numSequences);
+            //     h_signatureSizePerSequence.resize(numSequences);
 
-                d_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
-                h_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
-            }
+            //     d_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
+            //     h_hashFuncIds.resize(minhasher.getNumberOfMaps() * numSequences);
+            // }
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info;
@@ -211,21 +211,10 @@ namespace gpu{
             }
         };
 
-        static QueryHandle makeQueryHandle(){
-            QueryHandle handle;
-            handle.segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();            
+        
+    public:
 
-            cudaGetDevice(&handle.deviceId); CUERR;
-
-            handle.isInitialized = true;
-
-            return handle;
-        }
-
-        static void destroyQueryHandle(QueryHandle& handle){
-            handle.destroy();
-        }
-
+        using QueryHandle = GpuMinhasher::QueryHandle;
 
         FakeGpuMinhasher() : FakeGpuMinhasher(16, 50){
 
@@ -358,6 +347,33 @@ namespace gpu{
 
 
 
+        void constructFromReadStorage(
+            const FileOptions &fileOptions,
+            const RuntimeOptions &runtimeOptions,
+            const MemoryOptions& memoryOptions,
+            std::uint64_t nReads,
+            const CorrectionOptions& correctionOptions,
+            const DistributedReadStorage& gpuReadStorage
+        );
+ 
+
+        QueryHandle makeQueryHandle() const override {
+            auto data = std::make_unique<QueryData>();
+            data->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
+            cudaGetDevice(&data->deviceId); CUERR;
+            data->isInitialized = true;
+
+            std::lock_guard<std::mutex> lg(m);
+            QueryHandle h;
+            h.id = counter++;
+            h.parent = this;
+
+            tempdataVector.emplace_back(std::move(data));
+            return h;
+        }
+
+
+
         void query(
             QueryHandle& handle,
             const unsigned int* d_encodedSequences,
@@ -369,7 +385,7 @@ namespace gpu{
             read_number* d_similarReadIds,
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
-        ) const{
+        ) const override{
             query_impl(
                 handle,
                 nullptr,
@@ -397,7 +413,7 @@ namespace gpu{
             read_number* d_similarReadIds,
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
-        ) const{
+        ) const override{
             query_impl(
                 handle,
                 d_readIds,
@@ -413,6 +429,43 @@ namespace gpu{
             );
         }
 
+        void compact(cudaStream_t stream) override{
+            std::cerr << "FakeGpuMinhasher::compact\n";
+        }
+
+        MemoryUsage getMemoryInfo() const noexcept override{
+            MemoryUsage result;
+
+            result.host = sizeof(HashTable) * minhashTables.size();
+            
+            for(const auto& tableptr : minhashTables){
+                auto m = tableptr->getMemoryInfo();
+                result.host += m.host;
+
+                for(auto pair : m.device){
+                    result.device[pair.first] += pair.second;
+                }
+            }
+
+            return result;
+        }
+
+        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+            return tempdataVector[handle.id]->getMemoryInfo();
+        }
+
+        int getNumResultsPerMapThreshold() const noexcept override{
+            return resultsPerMapThreshold;
+        }
+        
+        int getNumberOfMaps() const noexcept override{
+            return minhashTables.size();
+        }
+
+        void destroy() override{
+            minhashTables.clear();
+        }
+
         void query_impl(
             QueryHandle& handle,
             const read_number* d_readIds,
@@ -426,7 +479,9 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
-            assert(handle.isInitialized);
+            QueryData* const queryData = tempdataVector[handle.id].get();
+
+            assert(queryData->isInitialized);
             if(numSequences == 0) return;
 
             cub::SwitchDevice sd(deviceId);
@@ -442,21 +497,21 @@ namespace gpu{
                 stream
             );
 
-            handle.d_minhashSignatures.resize(
+            queryData->d_minhashSignatures.resize(
                 std::max(
                     getNumberOfMaps() * numSequences, 
                     int(SDIV(cubtempbytes, sizeof(std::uint64_t)))
                 )
             );
-            handle.h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
-            handle.h_begin_offsets.resize(numSequences+1);
-            handle.d_begin_offsets.resize(numSequences+1);
-            handle.h_end_offsets.resize(numSequences+1);
-            handle.d_end_offsets.resize(numSequences+1);
-            handle.h_global_begin_offsets.resize(numSequences);
-            handle.d_global_begin_offsets.resize(numSequences);
+            queryData->h_minhashSignatures.resize(getNumberOfMaps() * numSequences);
+            queryData->h_begin_offsets.resize(numSequences+1);
+            queryData->d_begin_offsets.resize(numSequences+1);
+            queryData->h_end_offsets.resize(numSequences+1);
+            queryData->d_end_offsets.resize(numSequences+1);
+            queryData->h_global_begin_offsets.resize(numSequences);
+            queryData->d_global_begin_offsets.resize(numSequences);
 
-            std::vector<Range_t>& allRanges = handle.allRanges;
+            std::vector<Range_t>& allRanges = queryData->allRanges;
 
             allRanges.resize(getNumberOfMaps() * numSequences);
 
@@ -464,7 +519,7 @@ namespace gpu{
             const int firstHashFunc = 0;
 
             callMinhashSignaturesKernel(
-                handle.d_minhashSignatures.get(),
+                queryData->d_minhashSignatures.get(),
                 hashValuesPitchInElements,
                 d_encodedSequences,
                 encodedSequencePitchInInts,
@@ -477,9 +532,9 @@ namespace gpu{
             );
 
             cudaMemcpyAsync(
-                handle.h_minhashSignatures.get(),
-                handle.d_minhashSignatures.get(),
-                handle.h_minhashSignatures.sizeInBytes(),
+                queryData->h_minhashSignatures.get(),
+                queryData->d_minhashSignatures.get(),
+                queryData->h_minhashSignatures.sizeInBytes(),
                 H2D,
                 stream
             ); CUERR;
@@ -490,7 +545,7 @@ namespace gpu{
 
             nvtx::push_range("queryPrecalculatedSignatures", 6);
             queryPrecalculatedSignatures(
-                handle.h_minhashSignatures.get(),
+                queryData->h_minhashSignatures.get(),
                 allRanges.data(),
                 &myTotalNumberOfPossibleCandidates, 
                 numSequences
@@ -505,21 +560,21 @@ namespace gpu{
 
             constexpr int roundUpTo = 10000;
             const int roundedTotalNum = SDIV(myTotalNumberOfPossibleCandidates, roundUpTo) * roundUpTo;
-            handle.h_candidate_read_ids_tmp.resize(roundedTotalNum);
-            handle.d_candidate_read_ids_tmp.resize(roundedTotalNum);
+            queryData->h_candidate_read_ids_tmp.resize(roundedTotalNum);
+            queryData->d_candidate_read_ids_tmp.resize(roundedTotalNum);
 
 
             //results will be in Current() buffer
-            cub::DoubleBuffer<read_number> d_values_dblbuf(d_similarReadIds, handle.d_candidate_read_ids_tmp.data());
+            cub::DoubleBuffer<read_number> d_values_dblbuf(d_similarReadIds, queryData->d_candidate_read_ids_tmp.data());
 
-            read_number* hostdatabegin = handle.h_candidate_read_ids_tmp.get();
+            read_number* hostdatabegin = queryData->h_candidate_read_ids_tmp.get();
 
             Range_t* const myRanges = allRanges.data();
-            const std::uint64_t* const mySignatures = handle.h_minhashSignatures;
-            int* const h_my_begin_offsets = handle.h_begin_offsets;
-            int* const h_my_end_offsets = handle.h_end_offsets;
-            int* const d_my_begin_offsets = handle.d_begin_offsets;
-            int* const d_my_end_offsets = handle.d_end_offsets;
+            const std::uint64_t* const mySignatures = queryData->h_minhashSignatures;
+            int* const h_my_begin_offsets = queryData->h_begin_offsets;
+            int* const h_my_end_offsets = queryData->h_end_offsets;
+            int* const d_my_begin_offsets = queryData->d_begin_offsets;
+            int* const d_my_end_offsets = queryData->d_end_offsets;
 
             //copy hits from hash tables to pinned memory
             auto* dest = hostdatabegin;    
@@ -528,7 +583,7 @@ namespace gpu{
             for(int sequenceIndex = 0; sequenceIndex < numSequences; sequenceIndex++){
 
                 h_my_begin_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
-                handle.h_global_begin_offsets[sequenceIndex] = std::distance(handle.h_candidate_read_ids_tmp.get(), dest);
+                queryData->h_global_begin_offsets[sequenceIndex] = std::distance(queryData->h_candidate_read_ids_tmp.get(), dest);
 
                 for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
                     const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
@@ -574,7 +629,7 @@ namespace gpu{
             ); CUERR;
 
             GpuSegmentedUnique::unique(
-                handle.segmentedUniqueHandle,
+                queryData->segmentedUniqueHandle,
                 d_values_dblbuf.Current(), //input
                 myTotalNumberOfPossibleCandidates,
                 d_values_dblbuf.Alternate(), //output
@@ -590,8 +645,8 @@ namespace gpu{
             );
 
             cudaMemcpyAsync(
-                handle.d_global_begin_offsets.get(),
-                handle.h_global_begin_offsets.get(),
+                queryData->d_global_begin_offsets.get(),
+                queryData->h_global_begin_offsets.get(),
                 sizeof(int) * numSequences,
                 H2D,
                 stream
@@ -606,14 +661,14 @@ namespace gpu{
                     d_values_dblbuf.Alternate(),
                     numSequences,
                     d_similarReadsPerSequence,
-                    handle.d_global_begin_offsets.data(),
+                    queryData->d_global_begin_offsets.data(),
                     stream
                 );
 
             }
 
             int* d_newOffsets = d_similarReadsPerSequencePrefixSum;
-            void* d_cubTemp = handle.d_minhashSignatures.data();
+            void* d_cubTemp = queryData->d_minhashSignatures.data();
 
             cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
 
@@ -633,7 +688,7 @@ namespace gpu{
                     d_values_out = d_values_dblbuf.Current(),
                     numSequences,
                     d_numValuesPerSequence = d_similarReadsPerSequence,
-                    d_offsets = handle.d_global_begin_offsets.data(),
+                    d_offsets = queryData->d_global_begin_offsets.data(),
                     d_newOffsets
                 ] __device__ (){
 
@@ -657,16 +712,8 @@ namespace gpu{
             int numSequences) const;
 
 
-        int getNumberOfMaps() const{
-            return minhashTables.size();
-        }
-
         int getKmerSize() const{
             return kmerSize;
-        }
-
-        int getNumResultsPerMapThreshold() const{
-            return resultsPerMapThreshold;
         }
 
         std::uint64_t getKmerMask() const{
@@ -675,9 +722,6 @@ namespace gpu{
             return std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - getKmerSize()) * 2);
         }
 
-        MemoryUsage getMemoryInfo() const;
-
-        void destroy();
 
         void writeToStream(std::ostream& os) const;
     
@@ -685,14 +729,7 @@ namespace gpu{
 
         int calculateResultsPerMapThreshold(int coverage);
 
-        void construct(
-            const FileOptions &fileOptions,
-            const RuntimeOptions &runtimeOptions,
-            const MemoryOptions& memoryOptions,
-            std::uint64_t nReads,
-            const CorrectionOptions& correctionOptions,
-            const DistributedReadStorage& gpuReadStorage
-        );
+        
 
         
 
@@ -731,10 +768,13 @@ namespace gpu{
             std::size_t availableMemory
         );
 
+        mutable int counter = 0;
+        mutable std::mutex m{};
 
         int kmerSize;
         int resultsPerMapThreshold;
         std::vector<std::unique_ptr<HashTable>> minhashTables;
+        mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 
 

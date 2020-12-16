@@ -262,28 +262,19 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-#define WARPMIN
+//#define WARPMIN
 
 #ifndef WARPMIN
-        gpu::GpuMinhasher currentGpuMinhasher(
+        gpu::FakeGpuMinhasher currentGpuMinhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );
 #endif
 
 #ifdef WARPMIN
-        gpu::MultiGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength,{0, 0});
+        //gpu::MultiGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength,{0, 0});
+        gpu::SingleGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength);
 
-        // int validNumHashFunctions = sgpuMinhasher.addHashfunctions(correctionOptions.numHashFunctions);
-
-        // sgpuMinhasher.constructFromReadStorage(
-        //     runtimeOptions,
-        //     totalInputFileProperties.nReads,
-        //     readStorage,
-        //     totalInputFileProperties.maxSequenceLength,
-        //     0,
-        //     validNumHashFunctions //correctionOptions.numHashFunctions
-        // );
 
         int validNumHashFunctions = sgpuMinhasher.constructFromReadStorage(
             runtimeOptions,
@@ -322,7 +313,7 @@ namespace care{
 
             std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
         }else{
-            currentGpuMinhasher.construct(
+            currentGpuMinhasher.constructFromReadStorage(
                 fileOptions,
                 runtimeOptions,
                 memoryOptions,

@@ -34,26 +34,6 @@ void FakeGpuMinhasher::queryPrecalculatedSignatures(
 }
 
 
-MemoryUsage FakeGpuMinhasher::getMemoryInfo() const{
-    MemoryUsage result;
-
-    result.host = sizeof(HashTable) * minhashTables.size();
-    
-    for(const auto& tableptr : minhashTables){
-        auto m = tableptr->getMemoryInfo();
-        result.host += m.host;
-
-        for(auto pair : m.device){
-            result.device[pair.first] += pair.second;
-        }
-    }
-
-    return result;
-}
-
-void FakeGpuMinhasher::destroy(){
-    minhashTables.clear();
-}
 
 void FakeGpuMinhasher::writeToStream(std::ostream& os) const{
 
@@ -97,7 +77,7 @@ int FakeGpuMinhasher::calculateResultsPerMapThreshold(int coverage){
 }
 
 
-void FakeGpuMinhasher::construct(
+void FakeGpuMinhasher::constructFromReadStorage(
     const FileOptions &fileOptions,
     const RuntimeOptions &runtimeOptions,
     const MemoryOptions& memoryOptions,
@@ -105,6 +85,7 @@ void FakeGpuMinhasher::construct(
     const CorrectionOptions& correctionOptions,
     const DistributedReadStorage& gpuReadStorage
 ){
+    
     auto& readStorage = gpuReadStorage;
     const auto& deviceIds = runtimeOptions.deviceIds;
 
