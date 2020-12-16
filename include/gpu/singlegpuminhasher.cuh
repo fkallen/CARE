@@ -10,6 +10,7 @@
 #include <cpuhashtable.hpp>
 #include <gpu/gpuhashtable.cuh>
 #include <gpu/kernels.hpp>
+#include <gpu/gpuminhasher.cuh>
 
 
 #include <options.hpp>
@@ -30,17 +31,15 @@
 #include <fstream>
 #include <algorithm>
 #include <numeric>
+#include <mutex>
 
 namespace care{
 namespace gpu{
 
 
-    class SingleGpuMinhasher{
-    public:
-        using Key = kmer_type;
-        using Value = read_number;
-
-        using GpuTable = GpuHashtable<Key, Value>;
+    class SingleGpuMinhasher : public GpuMinhasher{
+    private:
+        using GpuTable = GpuHashtable<Key, read_number>;
 
         using DeviceSwitcher = cub::SwitchDevice;
 
@@ -48,6 +47,25 @@ namespace gpu{
         using HostBuffer = helpers::SimpleAllocationPinnedHost<T, 5>;
         template<class T>
         using DeviceBuffer = helpers::SimpleAllocationDevice<T, 5>;
+
+        struct QueryData{
+            int deviceId;
+            DeviceBuffer<char> d_singletempbuffer;
+            DeviceBuffer<char> d_singlepersistentbuffer;
+
+            MemoryUsage getMemoryInfo() const{
+                MemoryUsage mem{};
+
+                mem.device[deviceId] += d_singletempbuffer.capacityInBytes();
+                mem.device[deviceId] += d_singlepersistentbuffer.capacityInBytes();
+
+                return mem;
+            }
+        };
+
+    public:
+        using Key = kmer_type;
+        using QueryHandle = GpuMinhasher::QueryHandle;
 
 
         SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
@@ -63,7 +81,7 @@ namespace gpu{
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0
-        ){
+        ) override {
             
             DeviceSwitcher ds(deviceId);
 
@@ -458,27 +476,17 @@ namespace gpu{
             }
         }
 
-        struct QueryHandleStruct{
-            int deviceId;
-            DeviceBuffer<char> d_singletempbuffer;
-            DeviceBuffer<char> d_singlepersistentbuffer;
+        QueryHandle makeQueryHandle() const override {
+            auto data = std::make_unique<QueryData>();
+            cudaGetDevice(&data->deviceId); CUERR;
 
-            MemoryUsage getMemoryInfo() const{
-                MemoryUsage mem{};
+            std::lock_guard<std::mutex> lg(m);
+            QueryHandle h;
+            h.id = counter++;
+            h.parent = this;
 
-                mem.device[deviceId] += d_singletempbuffer.capacityInBytes();
-                mem.device[deviceId] += d_singlepersistentbuffer.capacityInBytes();
-
-                return mem;
-            }
-        };
-
-        using QueryHandle = std::shared_ptr<QueryHandleStruct>;
-
-        static QueryHandle makeQueryHandle(){
-            auto ptr = std::make_shared<QueryHandleStruct>();
-            cudaGetDevice(&ptr->deviceId); CUERR;
-            return ptr;
+            tempdataVector.emplace_back(std::move(data));
+            return h;
         }
 
         void query(
@@ -492,7 +500,7 @@ namespace gpu{
             read_number* d_similarReadIds,
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
-        ) const{
+        ) const override {
             query_impl(
                 handle,
                 nullptr,
@@ -520,7 +528,7 @@ namespace gpu{
             read_number* d_similarReadIds,
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
-        ) const{
+        ) const override {
             query_impl(
                 handle,
                 d_readIds,
@@ -536,126 +544,60 @@ namespace gpu{
             );
         }
 
+        void compact(cudaStream_t stream = 0) override {
+            DeviceSwitcher ds(deviceId);
 
-        void query_impl(
-            QueryHandle& queryHandle,
-            const read_number* d_readIds,
-            const unsigned int* d_sequenceData2Bit,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
-            read_number* d_values,
-            int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
-        ) const {
-           
-            int totalNumValues = 0;
+            std::size_t required_temp_bytes = 0;
 
-            std::size_t persistent_storage_bytes = 0;
-            std::size_t temp_storage_bytes = 0;
-
-            determineNumValues(
-                nullptr,
-                persistent_storage_bytes,
-                nullptr,
-                temp_storage_bytes,
-                d_sequenceData2Bit,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                d_numValuesPerSequence,
-                totalNumValues,
-                stream
-            );
-
-            queryHandle->d_singlepersistentbuffer.resize(persistent_storage_bytes);
-            queryHandle->d_singletempbuffer.resize(temp_storage_bytes);
-
-            determineNumValues(
-                queryHandle->d_singlepersistentbuffer.data(),
-                persistent_storage_bytes,
-                queryHandle->d_singletempbuffer.data(),
-                temp_storage_bytes,
-                d_sequenceData2Bit,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                d_numValuesPerSequence,
-                totalNumValues,
-                stream
-            );
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            if(totalNumValues == 0){
-                return;
+            for(auto& table : gpuHashTables){
+                std::size_t temp_bytes2 = 0;
+                table->compact(nullptr, temp_bytes2, stream);
+                required_temp_bytes = std::max(required_temp_bytes, temp_bytes2);
             }
 
-            retrieveValues(
-                queryHandle->d_singlepersistentbuffer.data(),
-                persistent_storage_bytes,
-                nullptr,
-                temp_storage_bytes,
-                d_readIds,
-                numSequences,
-                123456, //unused
-                stream,
-                totalNumValues,
-                123456, //unused
-                d_values,
-                d_numValuesPerSequence,
-                d_offsets //numSequences + 1
-            );
+            std::size_t freeMem, totalMem; 
+            cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
-            std::size_t cubsize = 0;
-            cub::DeviceReduce::Max(
-                nullptr, 
-                cubsize, 
-                d_numValuesPerSequence, 
-                (int*)nullptr, 
-                numSequences, 
-                stream
-            );
-            cubsize = SDIV(cubsize, 4) * 4;
+            void* temp = nullptr;
+            if(required_temp_bytes < freeMem){
+                cudaMalloc(&temp, required_temp_bytes); CUERR;
+            }else{
+                cudaMallocManaged(&temp, required_temp_bytes); CUERR;
+            }
 
-            temp_storage_bytes = std::max(temp_storage_bytes, cubsize + sizeof(int));
+            for(auto& table : gpuHashTables){
+                table->compact(temp, required_temp_bytes, stream);
+            }
 
-            queryHandle->d_singletempbuffer.resize(temp_storage_bytes);
-
-            int* d_maxvalue = (int*)(queryHandle->d_singletempbuffer.data() + cubsize);
-
-            cub::DeviceReduce::Max(
-                queryHandle->d_singletempbuffer.data(), 
-                temp_storage_bytes, 
-                d_numValuesPerSequence, 
-                d_maxvalue, 
-                numSequences, 
-                stream
-            );
-            
-            int sizeOfLargestSegment = 0;
-            cudaMemcpyAsync(&sizeOfLargestSegment, d_maxvalue, sizeof(int), D2H, stream); CUERR;
-            cudaStreamSynchronize(stream);
-
-            retrieveValues(
-                queryHandle->d_singlepersistentbuffer.data(),
-                persistent_storage_bytes,
-                queryHandle->d_singletempbuffer.data(),
-                temp_storage_bytes,
-                d_readIds,
-                numSequences,
-                123456, //unused
-                stream,
-                totalNumValues,
-                sizeOfLargestSegment,
-                d_values,
-                d_numValuesPerSequence,
-                d_offsets //numSequences + 1
-            );
+            cudaFree(temp); CUERR;
         }
 
+        MemoryUsage getMemoryInfo() const noexcept override{
+            MemoryUsage mem{};
+
+            for(const auto& table : gpuHashTables){
+                mem += table->getMemoryInfo();
+            }
+
+            return mem;
+        }
+
+        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+            return tempdataVector[handle.id]->getMemoryInfo();
+        }
+
+        int getNumResultsPerMapThreshold() const noexcept override{
+            return resultsPerMapThreshold;
+        }
+        
+        int getNumberOfMaps() const noexcept override{
+            return gpuHashTables.size();
+        }
+
+        void destroy() override{
+            DeviceSwitcher sd(getDeviceId());
+            gpuHashTables.clear();
+        }
 
         void determineNumValues(
             void* persistent_storage,            
@@ -1064,46 +1006,135 @@ namespace gpu{
         }
 
 
-        void compact(cudaStream_t stream = 0){
-            DeviceSwitcher ds(deviceId);
+        constexpr int getDeviceId() const noexcept{
+            return deviceId;
+        }
 
-            std::size_t required_temp_bytes = 0;
+private:
 
-            for(auto& table : gpuHashTables){
-                std::size_t temp_bytes2 = 0;
-                table->compact(nullptr, temp_bytes2, stream);
-                required_temp_bytes = std::max(required_temp_bytes, temp_bytes2);
+        void query_impl(
+            QueryHandle& queryHandle,
+            const read_number* d_readIds,
+            const unsigned int* d_sequenceData2Bit,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int /*deviceId*/, 
+            cudaStream_t stream,
+            read_number* d_values,
+            int* d_numValuesPerSequence,
+            int* d_offsets //numSequences + 1
+        ) const {
+
+            QueryData* queryData = tempdataVector[queryHandle.id].get();
+           
+            int totalNumValues = 0;
+
+            std::size_t persistent_storage_bytes = 0;
+            std::size_t temp_storage_bytes = 0;
+
+            determineNumValues(
+                nullptr,
+                persistent_storage_bytes,
+                nullptr,
+                temp_storage_bytes,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                d_numValuesPerSequence,
+                totalNumValues,
+                stream
+            );
+
+            queryData->d_singlepersistentbuffer.resize(persistent_storage_bytes);
+            queryData->d_singletempbuffer.resize(temp_storage_bytes);
+
+            determineNumValues(
+                queryData->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                queryData->d_singletempbuffer.data(),
+                temp_storage_bytes,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                d_numValuesPerSequence,
+                totalNumValues,
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            if(totalNumValues == 0){
+                return;
             }
 
-            std::size_t freeMem, totalMem; 
-            cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+            retrieveValues(
+                queryData->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                nullptr,
+                temp_storage_bytes,
+                d_readIds,
+                numSequences,
+                123456, //unused
+                stream,
+                totalNumValues,
+                123456, //unused
+                d_values,
+                d_numValuesPerSequence,
+                d_offsets //numSequences + 1
+            );
 
-            void* temp = nullptr;
-            if(required_temp_bytes < freeMem){
-                cudaMalloc(&temp, required_temp_bytes); CUERR;
-            }else{
-                cudaMallocManaged(&temp, required_temp_bytes); CUERR;
-            }
+            std::size_t cubsize = 0;
+            cub::DeviceReduce::Max(
+                nullptr, 
+                cubsize, 
+                d_numValuesPerSequence, 
+                (int*)nullptr, 
+                numSequences, 
+                stream
+            );
+            cubsize = SDIV(cubsize, 4) * 4;
 
-            for(auto& table : gpuHashTables){
-                table->compact(temp, required_temp_bytes, stream);
-            }
+            temp_storage_bytes = std::max(temp_storage_bytes, cubsize + sizeof(int));
 
-            cudaFree(temp); CUERR;
+            queryData->d_singletempbuffer.resize(temp_storage_bytes);
+
+            int* d_maxvalue = (int*)(queryData->d_singletempbuffer.data() + cubsize);
+
+            cub::DeviceReduce::Max(
+                queryData->d_singletempbuffer.data(), 
+                temp_storage_bytes, 
+                d_numValuesPerSequence, 
+                d_maxvalue, 
+                numSequences, 
+                stream
+            );
+            
+            int sizeOfLargestSegment = 0;
+            cudaMemcpyAsync(&sizeOfLargestSegment, d_maxvalue, sizeof(int), D2H, stream); CUERR;
+            cudaStreamSynchronize(stream);
+
+            retrieveValues(
+                queryData->d_singlepersistentbuffer.data(),
+                persistent_storage_bytes,
+                queryData->d_singletempbuffer.data(),
+                temp_storage_bytes,
+                d_readIds,
+                numSequences,
+                123456, //unused
+                stream,
+                totalNumValues,
+                sizeOfLargestSegment,
+                d_values,
+                d_numValuesPerSequence,
+                d_offsets //numSequences + 1
+            );
         }
 
         void finalize(cudaStream_t stream = 0){
             compact(stream);
-        }
-
-        MemoryUsage getMemoryInfo() const{
-            MemoryUsage mem{};
-
-            for(const auto& table : gpuHashTables){
-                mem += table->getMemoryInfo();
-            }
-
-            return mem;
         }
 
         constexpr int getKmerSize() const noexcept{
@@ -1120,22 +1151,8 @@ namespace gpu{
             return 0.8f;
         }
 
-        constexpr int getNumResultsPerMapThreshold() const noexcept{
-            return resultsPerMapThreshold;
-        }
-        
-        int getNumberOfMaps() const noexcept{
-            return gpuHashTables.size();
-        }
-
-        void destroy(){
-            DeviceSwitcher sd(getDeviceId());
-            gpuHashTables.clear();
-        }
-
-        constexpr int getDeviceId() const noexcept{
-            return deviceId;
-        }
+        mutable int counter = 0;
+        mutable std::mutex m{};
 
         int deviceId{};
         int maxNumKeys{};
@@ -1143,6 +1160,7 @@ namespace gpu{
         int resultsPerMapThreshold{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
+        mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 
 

@@ -623,22 +623,14 @@ namespace gpucorrectorkernels{
     };
 
     template<>
-    class HandleWrapper<SingleGpuMinhasher::QueryHandle>{
+    class HandleWrapper<GpuMinhasher::QueryHandle>{
         using Handle = SingleGpuMinhasher::QueryHandle;
     public:
         static MemoryUsage getMemoryInfo(const Handle& handle){
-            return handle->getMemoryInfo();
+            return handle.parent->getMemoryInfo(handle);
         }
     };
 
-    template<>
-    class HandleWrapper<MultiGpuMinhasher::QueryHandle>{
-        using Handle = MultiGpuMinhasher::QueryHandle;
-    public:
-        static MemoryUsage getMemoryInfo(const Handle& handle){
-            return handle->getMemoryInfo();
-        }
-    };
 
     template<class Minhasher>
     class HandleCreator{};
@@ -658,8 +650,8 @@ namespace gpucorrectorkernels{
         using Minhasher = SingleGpuMinhasher;
         using Handle = typename Minhasher::QueryHandle;
     public:
-        static Handle makeQueryHandle(const Minhasher& /*minhasher*/){
-            return Minhasher::makeQueryHandle();
+        static Handle makeQueryHandle(const Minhasher& minhasher){
+            return minhasher.makeQueryHandle();
         }
     };
 
