@@ -462,7 +462,6 @@ namespace gpu{
             int deviceId;
             DeviceBuffer<char> d_singletempbuffer;
             DeviceBuffer<char> d_singlepersistentbuffer;
-            GpuSegmentedUnique::Handle segmentedUniqueHandle; 
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
@@ -479,7 +478,6 @@ namespace gpu{
         static QueryHandle makeQueryHandle(){
             auto ptr = std::make_shared<QueryHandleStruct>();
             cudaGetDevice(&ptr->deviceId); CUERR;
-            ptr->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle(); 
             return ptr;
         }
 
