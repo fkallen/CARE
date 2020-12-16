@@ -676,13 +676,15 @@ namespace gpucorrectorkernels{
                 stream
             ); CUERR;
 
-            nvtx::push_range("getAnchorReads", 0);
-            getAnchorReads(ecinput, stream);
-            nvtx::pop_range();
+            if(numIds > 0){
+                nvtx::push_range("getAnchorReads", 0);
+                getAnchorReads(ecinput, stream);
+                nvtx::pop_range();
 
-            nvtx::push_range("getCandidateReadIdsWithMinhashing", 1);
-            getCandidateReadIdsWithMinhashing(ecinput, stream);
-            nvtx::pop_range();
+                nvtx::push_range("getCandidateReadIdsWithMinhashing", 1);
+                getCandidateReadIdsWithMinhashing(ecinput, stream);
+                nvtx::pop_range();
+            }            
 
             ecinput.event.record(stream);
             previousBatchFinishedEvent.record(stream);

@@ -5141,33 +5141,25 @@ public:
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(correctionOptions.batchsize, anchorIds.begin());
             anchorIds.erase(readIdsEnd, anchorIds.end());
 
-            if(anchorIds.size() > 0){
+            nvtx::push_range("getFreeInput",1);
+            GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
+            nvtx::pop_range();
 
-                nvtx::push_range("getFreeInput",1);
-                GpuErrorCorrectorInput* const inputPtr = freeInputs.pop();
-                nvtx::pop_range();
+            assert(cudaSuccess == inputPtr->event.query());
 
-                assert(cudaSuccess == inputPtr->event.query());
+            nvtx::push_range("makeErrorCorrectorInput", 0);
+            gpuAnchorHasher.makeErrorCorrectorInput(
+                anchorIds.data(),
+                anchorIds.size(),
+                *inputPtr,
+                hasherStream
+            );
+            nvtx::pop_range();
 
-                nvtx::push_range("makeErrorCorrectorInput", 0);
-                gpuAnchorHasher.makeErrorCorrectorInput(
-                    anchorIds.data(),
-                    anchorIds.size(),
-                    *inputPtr,
-                    hasherStream
-                );
-                nvtx::pop_range();
+            inputPtr->event.synchronize();
 
-                inputPtr->event.synchronize();
-
-                unprocessedInputs.push(inputPtr);
-            }else{
-                unprocessedInputs.push(nullptr);
-            }      
-        }
-
-        for(int i = 0; i < currentConfig.numCorrectors; i++){
-            unprocessedInputs.push(nullptr);
+            unprocessedInputs.push(inputPtr);
+            
         }
 
         activeHasherThreads--;
@@ -5439,6 +5431,7 @@ public:
 
         cudaStreamSynchronize(stream); CUERR;
     };
+
 
     template<class ResultProcessor, class BatchCompletion>
     void outputConstructorThreadFunction(
