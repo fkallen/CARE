@@ -4345,7 +4345,7 @@ class SimpleGpuCorrectionPipeline{
         Threadpool may be used for internal parallelization.
     */
 
-    using AnchorHasher = GpuAnchorHasher<Minhasher, typename Minhasher::QueryHandle>;
+    using AnchorHasher = GpuAnchorHasher;
 public:
     struct RunStatistics{
         double hasherTimeAverage{};
@@ -4934,7 +4934,7 @@ private:
 
 template<class Minhasher>
 class ComplexGpuCorrectionPipeline{
-    using AnchorHasher = GpuAnchorHasher<Minhasher, typename Minhasher::QueryHandle>;
+    using AnchorHasher = GpuAnchorHasher;
 public:
     struct Config{
         int numHashers;
@@ -6148,10 +6148,31 @@ auto runPipeline = [&](int deviceId){
 }
 
 
+MemoryFileFixedSize<EncodedTempCorrectedSequence> 
+correct_gpu(
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const CorrectionOptions& correctionOptions,
+        const RuntimeOptions& runtimeOptions,
+        const FileOptions& fileOptions,
+        const MemoryOptions& memoryOptions,
+        const SequenceFileProperties& sequenceFileProperties,
+        GpuMinhasher& minhasher,
+        DistributedReadStorage& readStorage){
+
+    return correct_gpu_impl(
+        goodAlignmentProperties,
+        correctionOptions,
+        runtimeOptions,
+        fileOptions,
+        memoryOptions,
+        sequenceFileProperties,
+        minhasher,
+        readStorage
+    );
+}
 
 
-
-
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
@@ -6176,7 +6197,9 @@ correct_gpu(
     );
 }
 
-#if 1
+#endif
+
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
@@ -6203,7 +6226,7 @@ correct_gpu(
 
 #endif
 
-#if 1
+#if 0
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(

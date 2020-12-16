@@ -610,53 +610,8 @@ namespace gpucorrectorkernels{
         }  
     };
 
-    template<class Handle>
-    class HandleWrapper{};
-
-    template<>
-    class HandleWrapper<GpuMinhasher::QueryHandle>{
-        using Handle = GpuMinhasher::QueryHandle;
-    public:
-        static MemoryUsage getMemoryInfo(const Handle& handle){
-            return handle.parent->getMemoryInfo(handle);
-        }
-    };
 
 
-    template<class Minhasher>
-    class HandleCreator{};
-
-    template<>
-    class HandleCreator<FakeGpuMinhasher>{
-        using Minhasher = FakeGpuMinhasher;
-        using Handle = typename Minhasher::QueryHandle;
-    public:
-        static Handle makeQueryHandle(const Minhasher& minhasher){
-            return minhasher.makeQueryHandle();
-        }
-    };
-
-    template<>
-    class HandleCreator<SingleGpuMinhasher>{
-        using Minhasher = SingleGpuMinhasher;
-        using Handle = typename Minhasher::QueryHandle;
-    public:
-        static Handle makeQueryHandle(const Minhasher& minhasher){
-            return minhasher.makeQueryHandle();
-        }
-    };
-
-    template<>
-    class HandleCreator<MultiGpuMinhasher>{
-        using Minhasher = MultiGpuMinhasher;
-        using Handle = typename Minhasher::QueryHandle;
-    public:
-        static Handle makeQueryHandle(const Minhasher& minhasher){
-            return minhasher.makeQueryHandle();
-        }
-    };
-
-    template<class Minhasher, class QueryHandle>
     class GpuAnchorHasher{
     public:
 
@@ -664,7 +619,7 @@ namespace gpucorrectorkernels{
 
         GpuAnchorHasher(
             const DistributedReadStorage& gpuReadStorage_,
-            const Minhasher& gpuMinhasher_,
+            const GpuMinhasher& gpuMinhasher_,
             const SequenceFileProperties& sequenceFileProperties_,
             ThreadPool* threadPool_
         ) : 
@@ -675,7 +630,7 @@ namespace gpucorrectorkernels{
         {
             cudaGetDevice(&deviceId); CUERR;
 
-            minhashHandle = HandleCreator<Minhasher>::makeQueryHandle(*gpuMinhasher);
+            minhashHandle = gpuMinhasher->makeQueryHandle();
 
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 
@@ -737,11 +692,9 @@ namespace gpucorrectorkernels{
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info{};
-#if 0            
-            info += minhashHandle.getMemoryInfo();
-#else            
-            info += HandleWrapper<QueryHandle>::getMemoryInfo(minhashHandle);
-#endif            
+       
+            info += gpuMinhasher->getMemoryInfo(minhashHandle);
+          
             info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(anchorSequenceGatherHandle);
             return info;
         } 
@@ -932,12 +885,12 @@ namespace gpucorrectorkernels{
         CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
         const DistributedReadStorage* gpuReadStorage;
-        const Minhasher* gpuMinhasher;
+        const GpuMinhasher* gpuMinhasher;
         const SequenceFileProperties* sequenceFileProperties;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
-        typename Minhasher::QueryHandle minhashHandle;
+        GpuMinhasher::QueryHandle minhashHandle;
     };
 
 

@@ -262,7 +262,7 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-//#define WARPMIN
+#define WARPMIN
 
 #ifndef WARPMIN
         gpu::FakeGpuMinhasher currentGpuMinhasher(
@@ -560,6 +560,13 @@ namespace care{
 
         helpers::CpuTimer step2timer("STEP2");
 
+        gpu::GpuMinhasher* gpuMinhasher = nullptr;
+        #ifndef WARPMIN
+            gpuMinhasher = &currentGpuMinhasher;
+        #else 
+            gpuMinhasher = &sgpuMinhasher;
+        #endif 
+
         auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
             correctionOptions,
@@ -567,11 +574,7 @@ namespace care{
             fileOptions, 
             memoryOptions,
             totalInputFileProperties,
-#ifndef WARPMIN
-            currentGpuMinhasher,
-#else 
-            sgpuMinhasher,
-#endif                        
+            *gpuMinhasher,                       
             readStorage
         );
 
