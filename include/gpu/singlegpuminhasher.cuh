@@ -85,6 +85,23 @@ namespace gpu{
             helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
             helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
 
+            std::size_t insert_temp_size = 0;
+            insert(
+                nullptr,
+                insert_temp_size,
+                (const unsigned int*)nullptr,
+                int(parallelReads),
+                (const int*)nullptr,
+                encodedSequencePitchInInts,
+                (const read_number*)nullptr,
+                0,
+                maxNumHashfunctions,
+                (const int*)nullptr,
+                (cudaStream_t)0
+            );
+
+            helpers::SimpleAllocationDevice<char, 0> d_temp(insert_temp_size);
+
             std::vector<int> usedHashFunctionNumbers;
 
             CudaStream stream{};
@@ -172,6 +189,8 @@ namespace gpu{
                     );
 
                     insert(
+                        d_temp.data(),
+                        insert_temp_size,
                         d_sequenceData,
                         curBatchsize,
                         d_lengths,
@@ -344,6 +363,8 @@ namespace gpu{
         }
 
         void insert(
+            void* d_temp,
+            std::size_t& temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             int numSequences,
             const int* d_sequenceLengths,
@@ -354,15 +375,35 @@ namespace gpu{
             const int* h_hashFunctionNumbers,
             cudaStream_t stream
         ){
+
+            const std::size_t signaturesRowPitchElements = numHashfunctions;
+
+            void* temp_allocations[3];
+            std::size_t temp_allocation_sizes[3];
+            
+            temp_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig
+            temp_allocation_sizes[1] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
+            
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                d_temp,
+                temp_storage_bytes,
+                temp_allocations,
+                temp_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
+
+            if(d_temp == nullptr){
+                return;
+            }
+
             assert(firstHashfunction + numHashfunctions <= int(gpuHashTables.size()));
 
             DeviceSwitcher ds(deviceId);
 
-            const std::size_t signaturesRowPitchElements = numHashfunctions;
-
-            helpers::SimpleAllocationDevice<std::uint64_t> d_sig(numHashfunctions * numSequences);
-            helpers::SimpleAllocationDevice<std::uint64_t> d_sig_trans(numHashfunctions * numSequences);
-            helpers::SimpleAllocationDevice<int> d_hashFunctionNumbers(numHashfunctions);
+            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[0]);
+            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(temp_allocations[1]);
+            int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
             
             cudaMemcpyAsync(
                 d_hashFunctionNumbers, 
@@ -371,13 +412,6 @@ namespace gpu{
                 H2D, 
                 stream
             ); CUERR;
-
-            std::uint64_t* d_signatures = d_sig.data();
-            std::uint64_t* d_signatures_transposed = d_sig_trans.data();
-
-
-            dim3 block(128,1,1);
-            dim3 grid(SDIV(numHashfunctions * numSequences, block.x),1,1);
 
             callMinhashSignaturesKernel(
                 d_signatures,
