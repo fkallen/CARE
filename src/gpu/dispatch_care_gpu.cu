@@ -1,5 +1,5 @@
 #include <dispatch_care.hpp>
-#include <gpu/gpuminhasher.cuh>
+#include <gpu/fakegpuminhasher.cuh>
 
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>

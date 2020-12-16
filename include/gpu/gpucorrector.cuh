@@ -8,7 +8,7 @@
 #include <gpu/cuda_block_select.cuh>
 
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/gpuminhasher.cuh>
+#include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>
 #include <gpu/kernels.hpp>
@@ -483,8 +483,8 @@ namespace gpucorrectorkernels{
 
     class GpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
     public: 
-        GpuMinhasherCandidateIdsProvider(const GpuMinhasher& minhasher_) 
-            : minhasher{&minhasher_}, minhashHandle{GpuMinhasher::makeQueryHandle()} {
+        GpuMinhasherCandidateIdsProvider(const FakeGpuMinhasher& minhasher_) 
+            : minhasher{&minhasher_}, minhashHandle{FakeGpuMinhasher::makeQueryHandle()} {
 
         }
     public: //private:
@@ -492,8 +492,8 @@ namespace gpucorrectorkernels{
             minhasher->getCandidates(minhashHandle, ids, anchor, size);
         }
 
-        const GpuMinhasher* minhasher;
-        mutable GpuMinhasher::QueryHandle minhashHandle;
+        const FakeGpuMinhasher* minhasher;
+        mutable FakeGpuMinhasher::QueryHandle minhashHandle;
     };
 
     class GpuErrorCorrectorInput{
@@ -614,8 +614,8 @@ namespace gpucorrectorkernels{
     class HandleWrapper{};
 
     template<>
-    class HandleWrapper<GpuMinhasher::QueryHandle>{
-        using Handle = GpuMinhasher::QueryHandle;
+    class HandleWrapper<FakeGpuMinhasher::QueryHandle>{
+        using Handle = FakeGpuMinhasher::QueryHandle;
     public:
         static MemoryUsage getMemoryInfo(const Handle& handle){
             return handle.getMemoryInfo();
@@ -644,8 +644,8 @@ namespace gpucorrectorkernels{
     class HandleCreator{};
 
     template<>
-    class HandleCreator<GpuMinhasher>{
-        using Minhasher = GpuMinhasher;
+    class HandleCreator<FakeGpuMinhasher>{
+        using Minhasher = FakeGpuMinhasher;
         using Handle = typename Minhasher::QueryHandle;
     public:
         static Handle makeQueryHandle(const Minhasher& /*minhasher*/){

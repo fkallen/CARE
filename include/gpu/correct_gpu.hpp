@@ -2,7 +2,7 @@
 #define CARE_CORRECT_GPU_HPP
 
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/gpuminhasher.cuh>
+#include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>
 
@@ -56,7 +56,7 @@ correct_gpu(
 	const FileOptions& fileOptions,
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
-	GpuMinhasher& minhasher,
+	FakeGpuMinhasher& minhasher,
 	DistributedReadStorage& readStorage
 );
 

@@ -1,5 +1,5 @@
-#ifndef CARE_GPUMINHASHER_CUH
-#define CARE_GPUMINHASHER_CUH
+#ifndef CARE_FAKEFakeGpuMinhasher_CUH
+#define CARE_FAKEFakeGpuMinhasher_CUH
 
 #include <config.hpp>
 
@@ -34,8 +34,11 @@ namespace gpu{
 
 
 
-
-    class GpuMinhasher{
+    /*
+        Minhasher which can store results in gpu memory and uses the gpu for hash table construction
+        However, hash tables reside on the host
+    */
+    class FakeGpuMinhasher{
     private:
         using HashTable = CpuReadOnlyMultiValueHashTable<kmer_type, read_number>;
     public:
@@ -87,7 +90,7 @@ namespace gpu{
             std::vector<GpuSegmentedUnique::Handle> segmentedUniqueHandles;
 
 
-            void resize(const GpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
+            void resize(const FakeGpuMinhasher& minhasher, std::size_t numSequences, int numThreads = 1){
                 const std::size_t maximumResultSize 
                     = minhasher.getNumResultsPerMapThreshold() * minhasher.getNumberOfMaps() * numSequences;
 
@@ -224,19 +227,19 @@ namespace gpu{
         }
 
 
-        GpuMinhasher() : GpuMinhasher(16, 50){
+        FakeGpuMinhasher() : FakeGpuMinhasher(16, 50){
 
         }
 
-        GpuMinhasher(int kmerSize, int resultsPerMapThreshold)
+        FakeGpuMinhasher(int kmerSize, int resultsPerMapThreshold)
             : kmerSize(kmerSize), resultsPerMapThreshold(resultsPerMapThreshold){
 
         }
 
-        GpuMinhasher(const GpuMinhasher&) = delete;
-        GpuMinhasher(GpuMinhasher&&) = default;
-        GpuMinhasher& operator=(const GpuMinhasher&) = delete;
-        GpuMinhasher& operator=(GpuMinhasher&&) = default;
+        FakeGpuMinhasher(const FakeGpuMinhasher&) = delete;
+        FakeGpuMinhasher(FakeGpuMinhasher&&) = default;
+        FakeGpuMinhasher& operator=(const FakeGpuMinhasher&) = delete;
+        FakeGpuMinhasher& operator=(FakeGpuMinhasher&&) = default;
 
         std::array<std::uint64_t, maximum_number_of_maps> 
         hostminhashfunction(const char* sequence, int sequenceLength, int kmerLength, int numHashFuncs) const noexcept{
@@ -649,7 +652,7 @@ namespace gpu{
 
         void queryPrecalculatedSignatures(
             const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-            GpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
+            FakeGpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
             int* totalNumResultsInRanges, 
             int numSequences) const;
 

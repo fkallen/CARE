@@ -4188,8 +4188,8 @@ correct_gpu(
 
 
 #include <gpu/gpucorrector.cuh>
-#include <gpu/gpuminhasher.cuh>
 #include <gpu/distributedreadstorage.hpp>
+#include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>
 
@@ -6161,7 +6161,7 @@ correct_gpu(
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        GpuMinhasher& minhasher,
+        FakeGpuMinhasher& minhasher,
         DistributedReadStorage& readStorage){
 
     return correct_gpu_impl(

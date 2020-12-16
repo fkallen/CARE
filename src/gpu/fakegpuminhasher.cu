@@ -1,4 +1,4 @@
-#include <gpu/gpuminhasher.cuh>
+#include <gpu/fakegpuminhasher.cuh>
 #include <hpc_helpers.cuh>
 #include <gpu/kernels.hpp>
 
@@ -9,9 +9,9 @@ namespace care{
         
 
 
-void GpuMinhasher::queryPrecalculatedSignatures(
+void FakeGpuMinhasher::queryPrecalculatedSignatures(
     const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-    GpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
+    FakeGpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
     int* totalNumResultsInRanges, 
     int numSequences) const{ 
     
@@ -20,7 +20,7 @@ void GpuMinhasher::queryPrecalculatedSignatures(
 
     for(int i = 0; i < numSequences; i++){
         const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
-        GpuMinhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
+        FakeGpuMinhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
 
         for(int map = 0; map < getNumberOfMaps(); ++map){
             kmer_type key = signature[map] & kmer_mask;
@@ -34,7 +34,7 @@ void GpuMinhasher::queryPrecalculatedSignatures(
 }
 
 
-MemoryUsage GpuMinhasher::getMemoryInfo() const{
+MemoryUsage FakeGpuMinhasher::getMemoryInfo() const{
     MemoryUsage result;
 
     result.host = sizeof(HashTable) * minhashTables.size();
@@ -51,11 +51,11 @@ MemoryUsage GpuMinhasher::getMemoryInfo() const{
     return result;
 }
 
-void GpuMinhasher::destroy(){
+void FakeGpuMinhasher::destroy(){
     minhashTables.clear();
 }
 
-void GpuMinhasher::writeToStream(std::ostream& os) const{
+void FakeGpuMinhasher::writeToStream(std::ostream& os) const{
 
     os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
     os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
@@ -68,7 +68,7 @@ void GpuMinhasher::writeToStream(std::ostream& os) const{
     }
 }
 
-int GpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
+int FakeGpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
     destroy();
 
     is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
@@ -89,7 +89,7 @@ int GpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
     return mapsToLoad;
 }
 
-int GpuMinhasher::calculateResultsPerMapThreshold(int coverage){
+int FakeGpuMinhasher::calculateResultsPerMapThreshold(int coverage){
     int result = int(coverage * 2.5f);
     result = std::min(result, int(std::numeric_limits<BucketSize>::max()));
     result = std::max(10, result);
@@ -97,7 +97,7 @@ int GpuMinhasher::calculateResultsPerMapThreshold(int coverage){
 }
 
 
-void GpuMinhasher::construct(
+void FakeGpuMinhasher::construct(
     const FileOptions &fileOptions,
     const RuntimeOptions &runtimeOptions,
     const MemoryOptions& memoryOptions,
@@ -442,13 +442,13 @@ void GpuMinhasher::construct(
 
 
 
-GpuMinhasher::Range_t GpuMinhasher::queryMap(int id, const Key_t& key) const{
+FakeGpuMinhasher::Range_t FakeGpuMinhasher::queryMap(int id, const Key_t& key) const{
     HashTable::QueryResult qr = minhashTables[id]->query(key);
 
     return std::make_pair(qr.valuesBegin, qr.valuesBegin + qr.numValues);
 }
 
-void GpuMinhasher::addHashTable(HashTable&& hm){
+void FakeGpuMinhasher::addHashTable(HashTable&& hm){
     minhashTables.emplace_back(std::make_unique<HashTable>(std::move(hm)));
 }
 
@@ -456,7 +456,7 @@ void GpuMinhasher::addHashTable(HashTable&& hm){
 
 
 std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
+FakeGpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
     int numTables, 
     int firstTableId,
     std::int64_t numberOfReads,
@@ -637,7 +637,7 @@ GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
 
 
 
-int GpuMinhasher::loadConstructedTablesFromFile(
+int FakeGpuMinhasher::loadConstructedTablesFromFile(
     const std::string& filename,
     int numTablesToLoad, 
     std::size_t availableMemory
