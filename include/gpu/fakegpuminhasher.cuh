@@ -364,9 +364,8 @@ namespace gpu{
             data->isInitialized = true;
 
             std::lock_guard<std::mutex> lg(m);
-            QueryHandle h;
-            h.id = counter++;
-            h.parent = this;
+            const int handleid = counter++;
+            QueryHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
@@ -451,7 +450,7 @@ namespace gpu{
         }
 
         MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
-            return tempdataVector[handle.id]->getMemoryInfo();
+            return tempdataVector[handle.getId()]->getMemoryInfo();
         }
 
         int getNumResultsPerMapThreshold() const noexcept override{
@@ -479,7 +478,7 @@ namespace gpu{
             int* d_similarReadsPerSequence,
             int* d_similarReadsPerSequencePrefixSum
         ) const{
-            QueryData* const queryData = tempdataVector[handle.id].get();
+            QueryData* const queryData = tempdataVector[handle.getId()].get();
 
             assert(queryData->isInitialized);
             if(numSequences == 0) return;

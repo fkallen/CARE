@@ -340,9 +340,8 @@ namespace gpu{
             CUERR;
 
             std::lock_guard<std::mutex> lg(m);
-            QueryHandle h;
-            h.id = counter++;
-            h.parent = this;
+            const int handleid = counter++;
+            QueryHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(ptr));
 
@@ -423,7 +422,7 @@ namespace gpu{
         }
 
         MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
-            return tempdataVector[handle.id]->getMemoryInfo();
+            return tempdataVector[handle.getId()]->getMemoryInfo();
         }
 
         int getNumResultsPerMapThreshold() const noexcept override{
@@ -469,7 +468,7 @@ private:
 
             DeviceSwitcher globalds(deviceId);
 
-            QueryData* const queryData = tempdataVector[queryHandle.id].get();
+            QueryData* const queryData = tempdataVector[queryHandle.getId()].get();
 
             auto& callerData = queryData->callerDataMap[deviceId]; //Implicit creation of node is safe because deviceId is currently set
             auto& callerEvent = callerData.event;

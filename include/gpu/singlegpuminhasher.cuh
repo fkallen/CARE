@@ -481,9 +481,8 @@ namespace gpu{
             cudaGetDevice(&data->deviceId); CUERR;
 
             std::lock_guard<std::mutex> lg(m);
-            QueryHandle h;
-            h.id = counter++;
-            h.parent = this;
+            const int handleid = counter++;
+            QueryHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
@@ -583,7 +582,7 @@ namespace gpu{
         }
 
         MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
-            return tempdataVector[handle.id]->getMemoryInfo();
+            return tempdataVector[handle.getId()]->getMemoryInfo();
         }
 
         int getNumResultsPerMapThreshold() const noexcept override{
@@ -1026,7 +1025,7 @@ private:
             int* d_offsets //numSequences + 1
         ) const {
 
-            QueryData* queryData = tempdataVector[queryHandle.id].get();
+            QueryData* queryData = tempdataVector[queryHandle.getId()].get();
            
             int totalNumValues = 0;
 

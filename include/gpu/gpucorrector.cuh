@@ -626,11 +626,10 @@ namespace gpucorrectorkernels{
             gpuReadStorage{&gpuReadStorage_},
             gpuMinhasher{&gpuMinhasher_},
             sequenceFileProperties{&sequenceFileProperties_},
-            threadPool{threadPool_}
+            threadPool{threadPool_},
+            minhashHandle{gpuMinhasher->makeQueryHandle()}
         {
-            cudaGetDevice(&deviceId); CUERR;
-
-            minhashHandle = gpuMinhasher->makeQueryHandle();
+            cudaGetDevice(&deviceId); CUERR;            
 
             maxCandidatesPerRead = gpuMinhasher->getNumResultsPerMapThreshold() * gpuMinhasher->getNumberOfMaps();
 

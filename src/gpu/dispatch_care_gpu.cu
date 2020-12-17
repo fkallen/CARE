@@ -1,8 +1,6 @@
 #include <dispatch_care.hpp>
+#include <gpu/gpuminhasherconstruction.cuh>
 #include <gpu/fakegpuminhasher.cuh>
-
-#include <gpu/singlegpuminhasher.cuh>
-#include <gpu/multigpuminhasher.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
@@ -261,6 +259,58 @@ namespace care{
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
+
+#if 1 
+
+        auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            correctionOptions,
+            totalInputFileProperties,
+            readStorage,
+            gpu::GpuMinhasherType::Single
+        );
+
+        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+
+        std::cout << "GpuMinhasher can use " << gpuMinhasher->getNumberOfMaps() << " maps\n";
+
+        if(gpuMinhasher->getNumberOfMaps() <= 0){
+            std::cout << "Cannot construct a single gpu hashtable. Abort!" << std::endl;
+            return;
+        }
+
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        if(minhasherAndType.second == gpu::GpuMinhasherType::Fake){
+
+            gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
+            assert(fakeGpuMinhasher != nullptr);
+
+            if(fileOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+                std::ofstream os(fileOptions.save_hashtables_to);
+                assert((bool)os);
+                helpers::CpuTimer timer("save_to_file");
+                fakeGpuMinhasher->writeToStream(os);
+                timer.print();
+
+                std::cout << "Saved minhasher" << std::endl;
+            }
+
+        }
+
+        printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");
+
+
+#else
 
 #define WARPMIN
 
@@ -554,18 +604,11 @@ namespace care{
         currentGpuMinhasher.destroy();
 #endif
 
-
+#endif
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
         helpers::CpuTimer step2timer("STEP2");
-
-        gpu::GpuMinhasher* gpuMinhasher = nullptr;
-        #ifndef WARPMIN
-            gpuMinhasher = &currentGpuMinhasher;
-        #else 
-            gpuMinhasher = &sgpuMinhasher;
-        #endif 
 
         auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
@@ -582,11 +625,7 @@ namespace care{
 
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
 
-        #ifndef WARPMIN
-            currentGpuMinhasher.destroy();
-        #else 
-            sgpuMinhasher.destroy();
-        #endif 
+        gpuMinhasher->destroy();
 
         readStorage.destroy();
 

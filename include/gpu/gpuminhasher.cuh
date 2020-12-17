@@ -15,9 +15,20 @@ namespace gpu{
 
 class GpuMinhasher{
 public:
-    struct QueryHandle{
+    class QueryHandle{
+    friend class GpuMinhasher;
+    public:
+
+        int getId() const noexcept{
+            return id;
+        }
+
+    private:
+        QueryHandle() = default;
+        QueryHandle(int i) : id(i){}
+
         int id;
-        const GpuMinhasher* parent;
+        //const GpuMinhasher* parent;
     };
 
     using Key = kmer_type;
@@ -64,6 +75,11 @@ public:
     virtual int getNumberOfMaps() const noexcept = 0;
 
     virtual void destroy() = 0;
+
+protected:
+    QueryHandle constructHandle(int id) const{
+        return QueryHandle{id};
+    }
 
 };
 
