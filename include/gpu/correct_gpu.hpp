@@ -3,12 +3,10 @@
 
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
-#include <gpu/fakegpuminhasher.cuh>
-#include <gpu/singlegpuminhasher.cuh>
-#include <gpu/multigpuminhasher.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
+#include <memoryfile.hpp>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -20,49 +18,6 @@
 
 namespace care {
 namespace gpu {
-
-#if 0
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu(
-	const GoodAlignmentProperties& goodAlignmentProperties,
-	const CorrectionOptions& correctionOptions,
-	const RuntimeOptions& runtimeOptions,
-	const FileOptions& fileOptions,
-	const MemoryOptions& memoryOptions,
-	const SequenceFileProperties& sequenceFileProperties,
-	SingleGpuMinhasher& minhasher,
-	DistributedReadStorage& readStorage
-);
-#endif
-
-#if 0
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu(
-	const GoodAlignmentProperties& goodAlignmentProperties,
-	const CorrectionOptions& correctionOptions,
-	const RuntimeOptions& runtimeOptions,
-	const FileOptions& fileOptions,
-	const MemoryOptions& memoryOptions,
-	const SequenceFileProperties& sequenceFileProperties,
-	MultiGpuMinhasher& minhasher,
-	DistributedReadStorage& readStorage
-);
-#endif
-
-#if 0
-MemoryFileFixedSize<EncodedTempCorrectedSequence> 
-correct_gpu(
-	const GoodAlignmentProperties& goodAlignmentProperties,
-	const CorrectionOptions& correctionOptions,
-	const RuntimeOptions& runtimeOptions,
-	const FileOptions& fileOptions,
-	const MemoryOptions& memoryOptions,
-	const SequenceFileProperties& sequenceFileProperties,
-	FakeGpuMinhasher& minhasher,
-	DistributedReadStorage& readStorage
-);
-#endif
-
 
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 

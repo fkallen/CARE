@@ -262,7 +262,7 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-//#define WARPMIN
+#define WARPMIN
 
 #ifndef WARPMIN
         gpu::FakeGpuMinhasher currentGpuMinhasher(
