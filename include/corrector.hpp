@@ -1191,11 +1191,14 @@ private:
                     task.alignmentOverlaps[insertpos] = task.alignmentOverlaps[i];
                     task.alignmentWeights[insertpos] = task.alignmentWeights[i];
 
-                    std::copy_n(
-                        task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
-                        qualityPitchInBytes,
-                        task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
-                    );
+                    if(correctionOptions->useQualityScores){
+                        std::copy_n(
+                            task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
+                            qualityPitchInBytes,
+                            task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
+                        );
+                    }
+
                     std::copy_n(
                         task.decodedCandidateSequences.data() + i * size_t(decodedSequencePitchInBytes),
                         decodedSequencePitchInBytes,
@@ -1226,10 +1229,14 @@ private:
                 task.alignments.begin() + insertpos, 
                 task.alignments.end()
             );
-            task.candidateQualities.erase(
-                task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
-                task.candidateQualities.end()
-            );
+
+            if(correctionOptions->useQualityScores){
+                task.candidateQualities.erase(
+                    task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
+                    task.candidateQualities.end()
+                );
+            }
+            
             task.decodedCandidateSequences.erase(
                 task.decodedCandidateSequences.begin() + decodedSequencePitchInBytes * insertpos, 
                 task.decodedCandidateSequences.end()
