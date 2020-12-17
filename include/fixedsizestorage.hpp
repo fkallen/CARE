@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <memory>
 #include <cstdint>
+#include <util.hpp>
+
+#include <hpc_helpers.cuh>
 
 namespace care{
 
@@ -203,6 +206,99 @@ namespace care{
             };
 
             std::sort(offsetsBegin, offsetsEnd, offsetcomparator);
+        }
+
+
+        /*
+            Key ExtractKey::operator() (const std::uint8_t* ptr1)
+            returns true if operation was successful, else false.
+        */
+        template<class IndexType, class Key, class ExtractKey, class KeyComparator>
+        bool trySortByKeyFast_impl(
+            ExtractKey extractKey,
+            KeyComparator keyComparator,
+            std::size_t memoryForSortingInBytes
+        ){
+            if(getNumStoredElements() == 0){
+                return true;
+            }
+
+            if(std::size_t(getNumStoredElements()) > std::size_t(std::numeric_limits<IndexType>::max())){
+                return false;
+            }
+
+            std::int64_t numInMemory = getNumStoredElements();
+            std::size_t sizeOfKeys = SDIV(sizeof(Key) * numInMemory, sizeof(std::size_t)) * sizeof(std::size_t);
+            std::size_t sizeOfIndices = SDIV(sizeof(IndexType) * numInMemory, sizeof(std::size_t)) * sizeof(std::size_t);
+            std::size_t sizeOfOffsets = SDIV(sizeof(std::size_t) * numInMemory, sizeof(std::size_t)) * sizeof(std::size_t);
+
+            if(std::size_t(std::max(sizeOfOffsets,sizeOfKeys)) + std::size_t(sizeOfIndices) + sizeof(std::size_t) >= memoryForSortingInBytes){
+                std::cerr << sizeOfOffsets << " " <<  sizeOfKeys << " " <<  sizeOfIndices << " " << memoryForSortingInBytes << "\n";
+                return false;
+            }
+
+            auto buffer = std::make_unique<char[]>(sizeOfIndices + std::max(sizeOfOffsets, sizeOfKeys));
+            IndexType* const indices = (IndexType*)(buffer.get());
+            Key* const keys = (Key*)(((char*)indices) + sizeOfIndices);
+            std::size_t* const newoffsets = (std::size_t*)(((char*)indices) + sizeOfIndices);
+
+            helpers::CpuTimer timer1("extractkeys");
+
+            for(std::int64_t i = 0; i < numInMemory; i++){
+                const std::size_t offset = getElementOffsets()[i];
+                const std::uint8_t* ptr = getElementsData() + offset;
+
+                keys[i] = extractKey(ptr);
+            }
+            timer1.stop();
+            timer1.print();
+
+            helpers::CpuTimer timer2("sort indices");
+
+            std::iota(indices, indices + numInMemory, IndexType(0));
+
+            std::sort(
+                indices, indices + numInMemory,
+                [&](const auto& l, const auto& r){
+                    return keyComparator(keys[l], keys[r]);
+                }
+            );
+
+            timer2.stop();
+            timer2.print();
+
+            //keys are no longer used. their memory is reused by newoffsets
+
+            helpers::CpuTimer timer3("permute");
+            for(std::int64_t i = 0; i < numInMemory; i++){
+                newoffsets[i] = offsetsBegin[indices[i]];
+            }
+            std::copy_n(newoffsets, numInMemory, offsetsBegin);
+            //permute(offsetsBegin, indices.data(), indices.size());
+
+            timer3.stop();
+            timer3.print();
+
+            return true;
+        }
+
+        //returns true if operation was successful, else false. Does not work with elements in file
+        template<class Key, class ExtractKey, class KeyComparator>
+        bool trySortByKeyFast(
+            ExtractKey extractKey,
+            KeyComparator keyComparator,
+            std::size_t memoryForSortingInBytes
+        ){
+
+            if(getNumStoredElements() == 0){
+                return true;
+            }
+
+            if(getNumStoredElements() > std::int64_t(std::numeric_limits<std::uint32_t>::max())){
+                return trySortByKeyFast_impl<std::uint64_t, Key, ExtractKey, KeyComparator>(extractKey, keyComparator, memoryForSortingInBytes);
+            }else{
+                return trySortByKeyFast_impl<std::uint32_t, Key, ExtractKey, KeyComparator>(extractKey, keyComparator, memoryForSortingInBytes);
+            }
         }
 
         //Func::operator()(const std::uint8_t* ptr) ptr points to first byte of object

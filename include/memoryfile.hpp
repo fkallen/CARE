@@ -226,6 +226,27 @@ struct MemoryFileFixedSize{
         return getNumElementsInMemory() + getNumElementsInFile();
     }
 
+    //returns true if operation was successful, else false. Does not work with elements in file
+    template<class Key, class ExtractKey, class KeyComparator>
+    bool trySortByKeyFast(
+        ExtractKey extractKey,
+        KeyComparator keyComparator,
+        std::size_t memoryForSortingInBytes
+    ){
+        if(getNumElementsInFile() > 0){
+            return false;
+        }
+        if(getNumElementsInMemory() == 0){
+            return true;
+        }
+
+        std::cerr << "Try sorting memory file fast:";
+        std::cerr << " elements in memory = " << getNumElementsInMemory() << "\n";
+
+        return memoryStorage.template trySortByKeyFast<Key>(extractKey, keyComparator, memoryForSortingInBytes);
+    }
+
+
     template<class Ptrcomparator, class TComparator>
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, Ptrcomparator&& ptrcomparator, TComparator&& elementcomparator){
     //void sort(const std::string& tempdir){

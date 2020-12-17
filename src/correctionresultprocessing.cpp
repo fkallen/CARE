@@ -551,7 +551,7 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
 
 
 
-
+#if 0
 
 template<class MemoryFile_t>
 void constructOutputFileFromCorrectionResults_impl(
@@ -561,7 +561,8 @@ void constructOutputFileFromCorrectionResults_impl(
                     std::size_t memoryForSorting,
                     FileFormat outputFormat,
                     const std::vector<std::string>& outputfiles,
-                    bool isSorted){
+                    bool isSorted)
+{
 
     assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
 
@@ -772,8 +773,7 @@ void constructOutputFileFromCorrectionResults_impl(
     mergeTimer.print();
 }
 
-
-
+#endif
 
 
 

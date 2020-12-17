@@ -80,8 +80,26 @@ namespace care{
                 return l.getReadId() < r.getReadId();
             };
 
+            auto extractKey = [](const std::uint8_t* ptr){
+                using ValueType = typename MemoryFile_t::ValueType;
+
+                const read_number id = ValueType::parseReadId(ptr);
+                
+                return id;
+            };
+
+            auto keyComparator = std::less<read_number>{};
+
             helpers::CpuTimer timer("sort_results_by_read_id");
-            partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+
+            bool fastSuccess = partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
+
+            if(!fastSuccess){            
+                partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+            }else{
+                std::cerr << "fast sort worked!\n";
+            }
+
             timer.print();
         }
 
