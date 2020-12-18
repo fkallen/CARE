@@ -1,3 +1,5 @@
+#ifdef CARE_HAS_WARPCORE
+
 #ifndef CARE_GPUHASHTABLE_CUH
 #define CARE_GPUHASHTABLE_CUH
 
@@ -796,3 +798,5 @@ namespace gpu{
 
 
 #endif
+
+#endif //#ifdef CARE_HAS_WARPCORE

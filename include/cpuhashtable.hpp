@@ -594,7 +594,7 @@ namespace cpuhashtabledetail{
             }
         };
      
-
+    #ifdef CARE_HAS_WARPCORE
         template<class Key, class Value, class PsInt>
         struct WarpcoreTransformer{
             using GpuMultiValueHashTable = care::gpu::GpuHashtable<Key, Value>;
@@ -802,6 +802,8 @@ namespace cpuhashtabledetail{
                             //Try to build a warpcore hashtable and copy it back to cpu
 
         };
+    #endif // #ifdef CARE_HAS_WARPCORE
+    
     #endif
 }
 

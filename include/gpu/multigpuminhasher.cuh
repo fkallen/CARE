@@ -1,3 +1,5 @@
+#ifdef CARE_HAS_WARPCORE
+
 #ifndef CARE_MULTI_GPU_MINHASHER_CUH
 #define CARE_MULTI_GPU_MINHASHER_CUH
 
@@ -1039,3 +1041,5 @@ private:
 
 
 #endif
+
+#endif //#ifdef CARE_HAS_WARPCORE

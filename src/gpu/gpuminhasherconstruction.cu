@@ -53,7 +53,7 @@ namespace gpu{
             return gpuMinhasher;
         }
 
-
+    #ifdef CARE_HAS_WARPCORE
         std::unique_ptr<SingleGpuMinhasher>
         constructSingleGpuMinhasherFromGpuReadStorage(
             const CorrectionOptions& correctionOptions,
@@ -108,7 +108,7 @@ namespace gpu{
 
             return gpuMinhasher;
         }
-
+    #endif
     
         std::pair<std::unique_ptr<GpuMinhasher>, GpuMinhasherType>
         constructGpuMinhasherFromGpuReadStorage(
@@ -132,6 +132,7 @@ namespace gpu{
                     ),
                     GpuMinhasherType::Fake
                 );
+            #ifdef CARE_HAS_WARPCORE
             }else if(requestedType == GpuMinhasherType::Single){
                 return std::make_pair(
                     constructSingleGpuMinhasherFromGpuReadStorage(
@@ -156,6 +157,7 @@ namespace gpu{
                     ),
                     GpuMinhasherType::Multi
                 );
+            #endif
             }else{
                 return std::make_pair(
                     constructFakeGpuMinhasherFromGpuReadStorage(
