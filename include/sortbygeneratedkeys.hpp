@@ -10,7 +10,10 @@
 #include <iostream>
 
 #include <thrust/sort.h>
+
+#ifdef __CUDACC__
 #include <cub/cub.cuh>
+#endif
 
 /*
     KeyType KeyGenerator::operator()(IndexType i)  returns i-th key
