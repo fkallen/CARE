@@ -1302,7 +1302,7 @@ void constructOutputFileFromCorrectionResults(
     const std::vector<std::string>& outputfiles,
     bool isSorted
 ){
-                        
+    
     //constructOutputFileFromCorrectionResults2_impl(
     // constructOutputFileFromCorrectionResults_multithreading_impl(
     //     tempdir, 
