@@ -274,6 +274,8 @@ namespace care{
 
         gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
 
+        buildMinhasherTimer.print();
+
         std::cout << "GpuMinhasher can use " << gpuMinhasher->getNumberOfMaps() << " maps\n";
 
         if(gpuMinhasher->getNumberOfMaps() <= 0){
@@ -307,7 +309,9 @@ namespace care{
 
         }
 
-        printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");
+        printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");        
+
+        step1timer.print();
 
 
 #else

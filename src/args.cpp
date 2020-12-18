@@ -122,6 +122,10 @@ namespace args{
 
         result.canUseGpu = result.deviceIds.size() > 0;
 
+        if(pr.count("warpcore")){
+            result.warpcore = pr["warpcore"].as<int>();
+        }
+
         return result;
 	}
 

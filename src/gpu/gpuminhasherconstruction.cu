@@ -120,7 +120,7 @@ namespace gpu{
             const DistributedReadStorage& gpuReadStorage,
             GpuMinhasherType requestedType
         ){
-            if(requestedType == GpuMinhasherType::Fake){
+            if(requestedType == GpuMinhasherType::Fake || runtimeOptions.warpcore == 0){
                 return std::make_pair(
                     constructFakeGpuMinhasherFromGpuReadStorage(
                         correctionOptions,
