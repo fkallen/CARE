@@ -220,8 +220,8 @@ namespace gpu{
 
         }
 
-        FakeGpuMinhasher(int kmerSize, int resultsPerMapThreshold)
-            : kmerSize(kmerSize), resultsPerMapThreshold(resultsPerMapThreshold){
+        FakeGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
+            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey){
 
         }
 
@@ -730,16 +730,36 @@ namespace gpu{
 
         
 
-        
+        int addHashfunctions(int numExtraFunctions){
+            // std::vector<std::unique_ptr<HashTable>> minhashTables;
+
+            int added = 0;
+            int cur = minhashTables.size();
+
+            assert(!(numExtraFunctions + cur > 64));
+
+            for(int i = 0; i < numExtraFunctions; i++){
+                try{
+                    auto ptr = std::make_unique<HashTable>(maxNumKeys);
+
+                    minhashTables.emplace_back(std::move(ptr));
+                    added++;
+                }catch(...){
+
+                }
+            }
+
+            return added;
+        }    
 
 
 
-    private:
-        
+private:
+    
 
-        Range_t queryMap(int id, const Key_t& key) const;
+    Range_t queryMap(int id, const Key_t& key) const;
 
-        void addHashTable(HashTable&& hm);        
+    void addHashTable(HashTable&& hm);        
 
         std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
         constructTablesAAA(
@@ -770,9 +790,10 @@ namespace gpu{
         mutable int counter = 0;
         mutable std::mutex m{};
 
-        int kmerSize;
-        int resultsPerMapThreshold;
-        std::vector<std::unique_ptr<HashTable>> minhashTables;
+        int maxNumKeys{};
+        int kmerSize{};
+        int resultsPerMapThreshold{};
+        std::vector<std::unique_ptr<HashTable>> minhashTables{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 
