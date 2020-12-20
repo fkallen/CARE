@@ -216,7 +216,7 @@ namespace gpu{
 
         using QueryHandle = GpuMinhasher::QueryHandle;
 
-        FakeGpuMinhasher() : FakeGpuMinhasher(16, 50){
+        FakeGpuMinhasher() : FakeGpuMinhasher(0, 50, 16){
 
         }
 
@@ -430,6 +430,11 @@ namespace gpu{
 
         void compact(cudaStream_t stream) override{
             std::cerr << "FakeGpuMinhasher::compact\n";
+            int id;
+            cudaGetDevice(&id); CUERR;
+            for(auto& ptr : minhashTables){
+                ptr->finalize(getNumResultsPerMapThreshold(), {id});
+            }
         }
 
         MemoryUsage getMemoryInfo() const noexcept override{
@@ -463,6 +468,10 @@ namespace gpu{
 
         void destroy() override{
             minhashTables.clear();
+        }
+
+        void finalize(cudaStream_t stream = 0){
+            compact(stream);
         }
 
         void query_impl(
@@ -750,9 +759,127 @@ namespace gpu{
             }
 
             return added;
-        }    
+        } 
 
+        void insert(
+            void* d_temp,
+            std::size_t& temp_storage_bytes,
+            const unsigned int* d_sequenceData2Bit,
+            int numSequences,
+            const int* d_sequenceLengths,
+            std::size_t encodedSequencePitchInInts,
+            const read_number* d_readIds,
+            int firstHashfunction,
+            int numHashfunctions,
+            const int* h_hashFunctionNumbers,
+            cudaStream_t stream
+        ){
+            ThreadPool::ParallelForHandle pforHandle{};
 
+            ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
+
+            const std::size_t signaturesRowPitchElements = numHashfunctions;
+
+            void* temp_allocations[3];
+            std::size_t temp_allocation_sizes[3];
+            
+            temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
+            temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
+            temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
+            
+            cudaError_t cubstatus = cub::AliasTemporaries(
+                d_temp,
+                temp_storage_bytes,
+                temp_allocations,
+                temp_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
+
+            if(d_temp == nullptr){
+                return;
+            }
+
+            assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
+
+            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[0]);
+            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(temp_allocations[1]);
+            int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
+
+            cudaMemcpyAsync(
+                d_hashFunctionNumbers, 
+                h_hashFunctionNumbers, 
+                sizeof(int) * numHashfunctions, 
+                H2D, 
+                stream
+            ); CUERR;
+
+            callMinhashSignaturesKernel(
+                d_signatures,
+                signaturesRowPitchElements,
+                d_sequenceData2Bit,
+                encodedSequencePitchInInts,
+                numSequences,
+                d_sequenceLengths,
+                getKmerSize(),
+                numHashfunctions,
+                d_hashFunctionNumbers,
+                stream
+            ); CUERR;
+
+            helpers::call_transpose_kernel(
+                d_signatures_transposed, 
+                d_signatures, 
+                numSequences, 
+                signaturesRowPitchElements, 
+                signaturesRowPitchElements,
+                stream
+            );
+
+            std::vector<std::uint64_t> h_signatures_transposed(signaturesRowPitchElements * numSequences);
+            std::vector<read_number> h_readIds(numSequences);
+
+            cudaMemcpyAsync(
+                h_signatures_transposed.data(), 
+                d_signatures_transposed, 
+                sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                h_readIds.data(), 
+                d_readIds, 
+                sizeof(read_number) * numSequences, 
+                D2H, 
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            auto loopbody = [&](auto begin, auto end, int /*threadid*/){
+                for(int h = begin; h < end; h++){
+
+                    std::uint64_t* const hashesBegin = &h_signatures_transposed[h * numSequences];
+
+                    std::for_each(
+                        hashesBegin, hashesBegin + numSequences,
+                        [kmermask = getKmerMask()](auto& hash){
+                            hash &= kmermask;
+                        }
+                    );
+
+                    minhashTables[firstHashfunction + h]->insert(
+                        hashesBegin, h_readIds.data(), numSequences
+                    );
+                }
+            };
+
+            forLoopExecutor(0, numHashfunctions, loopbody);
+        }   
+
+        void setThreadPool(ThreadPool* tp){
+            threadPool = tp;
+        }
 
 private:
     
@@ -793,6 +920,7 @@ private:
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};
+        ThreadPool* threadPool;
         std::vector<std::unique_ptr<HashTable>> minhashTables{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };

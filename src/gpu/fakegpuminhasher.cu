@@ -435,14 +435,20 @@ void FakeGpuMinhasher::constructFromReadStorage(
     auto& readStorage = gpuReadStorage;
     const auto& deviceIds = runtimeOptions.deviceIds;
 
+    int deviceId = deviceIds[0];
+
+    cub::SwitchDevice sd{deviceId};
+
     const int requestedNumberOfMaps = correctionOptions.numHashFunctions;
 
     const read_number numReads = readStorage.getNumberOfReads();
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
 
     auto sequencehandle = readStorage.makeGatherHandleSequences();
-    std::size_t sequencepitch = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(int);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(unsigned int);
 
+    constexpr read_number parallelReads = 1000000;
+    const int numIters = SDIV(numReads, parallelReads);
 
     const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
     std::size_t totalLimit = memoryOptions.memoryTotalLimit;
@@ -466,7 +472,156 @@ void FakeGpuMinhasher::constructFromReadStorage(
     std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
 
+#if 0
 
+    const int hashFunctionOffset = 0;
+
+    
+    std::vector<int> usedHashFunctionNumbers;
+    
+    helpers::SimpleAllocationDevice<unsigned int, 1> d_sequenceData(encodedSequencePitchInInts * parallelReads);
+    helpers::SimpleAllocationDevice<int, 0> d_lengths(parallelReads);
+    
+    helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
+    helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
+    
+    std::size_t insert_temp_size = 0;
+    insert(
+        nullptr,
+        insert_temp_size,
+        (const unsigned int*)nullptr,
+        int(parallelReads),
+        (const int*)nullptr,
+        encodedSequencePitchInInts,
+        (const read_number*)nullptr,
+        0,
+        requestedNumberOfMaps,
+        (const int*)nullptr,
+        (cudaStream_t)0,
+        nullptr
+    );
+    
+    helpers::SimpleAllocationDevice<char, 0> d_temp(insert_temp_size);
+    
+    CudaStream stream{};
+    ThreadPool tp(runtimeOptions.threads);
+
+    setThreadPool(&tp);
+    
+    std::size_t bytesOfCachedConstructedTables = 0;
+    int remainingHashFunctions = requestedNumberOfMaps;
+    bool keepGoing = true;
+
+    while(remainingHashFunctions > 0 && keepGoing){
+        int maxNumTablesInIteration = 0;
+
+        auto updateMaxNumTables = [&](){
+            // (1 kmer + readid) per read
+            std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * numReads;
+            maxNumTablesInIteration = (maxMemoryForTables - bytesOfCachedConstructedTables) / requiredMemPerTable;
+            maxNumTablesInIteration -= 2; // keep free memory of 2 tables to perform transformation 
+            std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
+            std::cerr << "maxNumTables = " << maxNumTablesInIteration << "\n";
+            
+            std::cerr << "requiredMemPerTable: " << requiredMemPerTable << ", bytesOfCachedConstructedTables: " << bytesOfCachedConstructedTables << ", maxMemoryForTables: " << maxMemoryForTables << ", maxNumTables: " << maxNumTablesInIteration << "\n";
+        };
+
+        updateMaxNumTables();
+
+        if(maxNumTablesInIteration < 1){
+            keepGoing = false;
+            break;
+        }
+
+        const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
+        int addedHashFunctions = addHashfunctions(maxNumTablesInIteration);
+
+        if(addedHashFunctions == 0){
+            keepGoing = false;
+            break;
+        }
+
+        std::cout << "Constructing maps: ";
+        for(int i = 0; i < addedHashFunctions; i++){
+            std::cout << (alreadyExistingHashFunctions + i) << "(" << (hashFunctionOffset + alreadyExistingHashFunctions + i) << ") ";
+        }
+        std::cout << '\n';
+
+        std::vector<int> h_hashfunctionNumbers(addedHashFunctions);
+        std::iota(
+            h_hashfunctionNumbers.begin(),
+            h_hashfunctionNumbers.end(),
+            alreadyExistingHashFunctions + hashFunctionOffset
+        );
+
+        usedHashFunctionNumbers.insert(usedHashFunctionNumbers.end(), h_hashfunctionNumbers.begin(), h_hashfunctionNumbers.end());
+
+        for (int iter = 0; iter < numIters; iter++){
+            read_number readIdBegin = iter * parallelReads;
+            read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+            const std::size_t curBatchsize = readIdEnd - readIdBegin;
+
+            std::iota(h_indices.get(), h_indices.get() + curBatchsize, readIdBegin);
+
+            cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
+
+            gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
+                nullptr, //threadpool
+                sequencehandle,
+                d_sequenceData,
+                encodedSequencePitchInInts,
+                h_indices,
+                d_indices,
+                curBatchsize,
+                deviceId,
+                stream
+            );
+        
+            gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                deviceId,
+                d_indices,
+                curBatchsize,
+                stream
+            );
+
+            insert(
+                d_temp.data(),
+                insert_temp_size,
+                d_sequenceData,
+                curBatchsize,
+                d_lengths,
+                encodedSequencePitchInInts,
+                d_indices,
+                alreadyExistingHashFunctions,
+                addedHashFunctions,
+                h_hashfunctionNumbers.data(),
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            //progressThread.addProgress(curBatchsize);
+        }
+
+        std::cerr << "Compacting\n";
+        finalize();
+
+        bytesOfCachedConstructedTables = 0;
+        for(const auto& ptr : minhashTables){
+            auto memusage = ptr->getMemoryInfo();
+            bytesOfCachedConstructedTables += memusage.host;
+        }
+
+        //progressThread.finished();
+
+        remainingHashFunctions -= addedHashFunctions;
+    }
+
+    setThreadPool(nullptr);
+
+#else
     int numConstructedTables = 0;
     std::vector<HashTable> cachedConstructedTables;
     std::size_t bytesOfCachedConstructedTables = 0;
@@ -555,6 +710,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
 
     std::cout << "Can use " << usableNumMaps 
         << " out of specified " << requestedNumberOfMaps << " maps\n";
+#endif        
 }
 
 #endif

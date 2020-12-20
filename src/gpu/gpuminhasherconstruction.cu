@@ -27,8 +27,9 @@ namespace gpu{
             const DistributedReadStorage& gpuReadStorage
         ){
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
-                correctionOptions.kmerlength, 
-                calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+                totalInputFileProperties.nReads,
+                calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
+                correctionOptions.kmerlength
             );
 
             if(fileOptions.load_hashtables_from != ""){

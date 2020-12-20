@@ -401,8 +401,8 @@ namespace gpu{
             void* temp_allocations[3];
             std::size_t temp_allocation_sizes[3];
             
-            temp_allocation_sizes[0] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig
-            temp_allocation_sizes[1] = sizeof(std::uint64_t) * numHashfunctions * numSequences; // d_sig_trans
+            temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
+            temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
             temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             
             cudaError_t cubstatus = cub::AliasTemporaries(

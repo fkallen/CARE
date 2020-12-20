@@ -889,6 +889,8 @@ namespace cpuhashtabledetail{
         ){
             assert(keys.size() == vals.size());
 
+            if(isInit) return;
+
             std::vector<read_number> countsPrefixSum;
             values = std::move(vals);
 
