@@ -429,7 +429,6 @@ namespace gpu{
         }
 
         void compact(cudaStream_t stream) override{
-            std::cerr << "FakeGpuMinhasher::compact\n";
             int id;
             cudaGetDevice(&id); CUERR;
             for(auto& ptr : minhashTables){
@@ -740,12 +739,8 @@ namespace gpu{
         
 
         int addHashfunctions(int numExtraFunctions){
-            // std::vector<std::unique_ptr<HashTable>> minhashTables;
-
             int added = 0;
-            int cur = minhashTables.size();
-
-            std::cerr << "addHashfunctions. numExtraFunctions: " << numExtraFunctions << ", cur: " << cur << "\n";
+            const int cur = minhashTables.size();
 
             assert(!(numExtraFunctions + cur > 64));
 
@@ -760,10 +755,6 @@ namespace gpu{
             numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
             numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
             //maxNumTablesInIteration = std::min(numTablesToConstruct, 4);
-            std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
-            std::cerr << "maxNumTables = " << numTablesToConstruct << "\n";
-            
-//            std::cerr << "requiredMemPerTable: " << requiredMemPerTable << ", bytesOfCachedConstructedTables: " << bytesOfCachedConstructedTables << ", maxMemoryForTables: " << maxMemoryForTables << ", numTablesToConstruct: " << numTablesToConstruct << "\n";
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{
@@ -903,38 +894,11 @@ namespace gpu{
             memoryLimit = limit;
         }
 
-private:
-    
+    private:
+        
 
     Range_t queryMap(int id, const Key_t& key) const;
 
-    void addHashTable(HashTable&& hm);        
-
-        std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-        constructTablesAAA(
-            int numTables, 
-            int firstTableId,
-            std::int64_t numberOfReads,
-            int upperBoundSequenceLength,
-            const RuntimeOptions& runtimeOptions,
-            const DistributedReadStorage& readStorage
-        );
-
-        std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
-        computeKeyValuePairsForHashtableUsingGpu(
-            int numTables, 
-            int firstTableId,
-            std::int64_t numberOfReads,
-            int upperBoundSequenceLength,
-            const RuntimeOptions& runtimeOptions,
-            const DistributedReadStorage& readStorage
-        );      
-
-        int loadConstructedTablesFromFile(
-            const std::string& filename,
-            int numTablesToLoad, 
-            std::size_t availableMemory
-        );
 
         mutable int counter = 0;
         mutable std::mutex m{};
