@@ -745,6 +745,8 @@ namespace gpu{
             int added = 0;
             int cur = minhashTables.size();
 
+            std::cerr << "addHashfunctions. numExtraFunctions: " << numExtraFunctions << ", cur: " << cur << "\n";
+
             assert(!(numExtraFunctions + cur > 64));
 
             for(int i = 0; i < numExtraFunctions; i++){

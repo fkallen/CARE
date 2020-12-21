@@ -472,7 +472,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
     std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
 
 
-#if 0
+#if 1
 
     const int hashFunctionOffset = 0;
 
@@ -497,8 +497,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
         0,
         requestedNumberOfMaps,
         (const int*)nullptr,
-        (cudaStream_t)0,
-        nullptr
+        (cudaStream_t)0
     );
     
     helpers::SimpleAllocationDevice<char, 0> d_temp(insert_temp_size);
@@ -520,6 +519,8 @@ void FakeGpuMinhasher::constructFromReadStorage(
             std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * numReads;
             maxNumTablesInIteration = (maxMemoryForTables - bytesOfCachedConstructedTables) / requiredMemPerTable;
             maxNumTablesInIteration -= 2; // keep free memory of 2 tables to perform transformation 
+            maxNumTablesInIteration = std::min(maxNumTablesInIteration, remainingHashFunctions);
+            //maxNumTablesInIteration = std::min(maxNumTablesInIteration, 4);
             std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
             std::cerr << "maxNumTables = " << maxNumTablesInIteration << "\n";
             
