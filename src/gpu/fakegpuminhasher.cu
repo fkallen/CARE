@@ -506,13 +506,14 @@ void FakeGpuMinhasher::constructFromReadStorage(
     ThreadPool tp(runtimeOptions.threads);
 
     setThreadPool(&tp);
+    setMemoryLimitForConstruction(maxMemoryForTables);
     
-    std::size_t bytesOfCachedConstructedTables = 0;
+    //std::size_t bytesOfCachedConstructedTables = 0;
     int remainingHashFunctions = requestedNumberOfMaps;
     bool keepGoing = true;
 
     while(remainingHashFunctions > 0 && keepGoing){
-        int maxNumTablesInIteration = 0;
+        /*int maxNumTablesInIteration = 0;
 
         auto updateMaxNumTables = [&](){
             // (1 kmer + readid) per read
@@ -532,10 +533,10 @@ void FakeGpuMinhasher::constructFromReadStorage(
         if(maxNumTablesInIteration < 1){
             keepGoing = false;
             break;
-        }
+        }*/
 
         const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
-        int addedHashFunctions = addHashfunctions(maxNumTablesInIteration);
+        int addedHashFunctions = addHashfunctions(remainingHashFunctions);
 
         if(addedHashFunctions == 0){
             keepGoing = false;
@@ -609,11 +610,11 @@ void FakeGpuMinhasher::constructFromReadStorage(
         std::cerr << "Compacting\n";
         finalize();
 
-        bytesOfCachedConstructedTables = 0;
+        /*bytesOfCachedConstructedTables = 0;
         for(const auto& ptr : minhashTables){
             auto memusage = ptr->getMemoryInfo();
             bytesOfCachedConstructedTables += memusage.host;
-        }
+        }*/
 
         //progressThread.finished();
 

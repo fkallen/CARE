@@ -749,7 +749,23 @@ namespace gpu{
 
             assert(!(numExtraFunctions + cur > 64));
 
-            for(int i = 0; i < numExtraFunctions; i++){
+            std::size_t bytesOfCachedConstructedTables = 0;
+            for(const auto& ptr : minhashTables){
+                auto memusage = ptr->getMemoryInfo();
+                bytesOfCachedConstructedTables += memusage.host;
+            }
+
+            std::size_t requiredMemPerTable = (sizeof(kmer_type) + sizeof(read_number)) * maxNumKeys;
+            int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
+            numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
+            numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
+            //maxNumTablesInIteration = std::min(numTablesToConstruct, 4);
+            std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
+            std::cerr << "maxNumTables = " << numTablesToConstruct << "\n";
+            
+//            std::cerr << "requiredMemPerTable: " << requiredMemPerTable << ", bytesOfCachedConstructedTables: " << bytesOfCachedConstructedTables << ", maxMemoryForTables: " << maxMemoryForTables << ", numTablesToConstruct: " << numTablesToConstruct << "\n";
+
+            for(int i = 0; i < numTablesToConstruct; i++){
                 try{
                     auto ptr = std::make_unique<HashTable>(maxNumKeys);
 
@@ -883,6 +899,10 @@ namespace gpu{
             threadPool = tp;
         }
 
+        void setMemoryLimitForConstruction(std::size_t limit){
+            memoryLimit = limit;
+        }
+
 private:
     
 
@@ -923,6 +943,7 @@ private:
         int kmerSize{};
         int resultsPerMapThreshold{};
         ThreadPool* threadPool;
+        std::size_t memoryLimit;
         std::vector<std::unique_ptr<HashTable>> minhashTables{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
