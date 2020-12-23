@@ -397,61 +397,6 @@ namespace gpu{
             return h;
         }
 
-        void query(
-            QueryHandle& handle,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override {
-            query_impl(
-                handle,
-                nullptr,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
-        void queryExcludingSelf(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override {
-            query_impl(
-                handle,
-                d_readIds,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
         void compact(cudaStream_t stream = 0) override {
             DeviceSwitcher ds(deviceId);
 
@@ -558,18 +503,15 @@ namespace gpu{
             queryData->d_numValuesPerSequence = d_numValuesPerSequence;
         }
 
-
-
         void retrieveValues(
             QueryHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
             int totalNumValues,
             read_number* d_values,
             int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream
         ) const override {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
@@ -586,13 +528,12 @@ namespace gpu{
                 temp_storage_bytes,
                 d_readIds,
                 numSequences,
-                123456, //unused
-                stream,
                 totalNumValues,
                 123456, //unused
                 d_values,
                 d_numValuesPerSequence,
-                d_offsets //numSequences + 1
+                d_offsets, //numSequences + 1
+                stream
             );
 
             std::size_t cubsize = 0;
@@ -631,13 +572,12 @@ namespace gpu{
                 temp_storage_bytes,
                 d_readIds,
                 numSequences,
-                123456, //unused
-                stream,
                 totalNumValues,
                 sizeOfLargestSegment,
                 d_values,
                 d_numValuesPerSequence,
-                d_offsets //numSequences + 1
+                d_offsets, //numSequences + 1
+                stream
             );
 
         }
@@ -809,13 +749,12 @@ namespace gpu{
             std::size_t& temp_storage_bytes,
             const read_number* d_readIds,
             int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
             int totalNumValues,
             int sizeOfLargestSegment,
             read_number* d_values,
             int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream
         ) const {
             assert(persistentbufferFromNumValues != nullptr);
 
@@ -1057,56 +996,6 @@ namespace gpu{
         }
 
 private:
-
-        void query_impl(
-            QueryHandle& queryHandle,
-            const read_number* d_readIds,
-            const unsigned int* d_sequenceData2Bit,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
-            read_number* d_values,
-            int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
-        ) const {
-
-            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
-           
-            int totalNumValues = 0;
-
-            determineNumValues(
-                queryHandle,
-                d_sequenceData2Bit,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                d_numValuesPerSequence,
-                totalNumValues,
-                stream
-            );
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            if(totalNumValues == 0){
-                return;
-            }
-
-            retrieveValues(
-                queryHandle,
-                d_readIds,
-                numSequences,
-                123456, //unused
-                stream,
-                totalNumValues,
-                d_values,
-                d_numValuesPerSequence,
-                d_offsets //numSequences + 1
-            );
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
-        }
 
         void finalize(cudaStream_t stream = 0){
             compact(stream);

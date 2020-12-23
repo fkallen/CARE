@@ -404,61 +404,6 @@ namespace gpu{
             return h;
         }
 
-        void query(
-            QueryHandle& handle,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override {
-            query_impl(
-                handle,
-                nullptr,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
-        void queryExcludingSelf(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override{
-            query_impl(
-                handle,
-                d_readIds,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
         void determineNumValues(
             QueryHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
@@ -532,12 +477,11 @@ namespace gpu{
             QueryHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
             int totalNumValues,
             read_number* d_values,
             int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream
         ) const override {
             if(numSequences == 0){
                 return;
@@ -551,7 +495,6 @@ namespace gpu{
 
             int currentDeviceId = 0;
             cudaGetDevice(&currentDeviceId); CUERR;
-
 
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
@@ -658,110 +601,6 @@ private:
                 DeviceSwitcher ds(usableDeviceIds[d]);                
                 queryData->streams[d].waitEvent(callerEvent, 0);
             }
-        }
-
-
-        void query_impl(
-            QueryHandle& queryHandle,
-            const read_number* d_readIds,
-            const unsigned int* d_sequenceData2Bit,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_values,
-            int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
-        ) const {
-            if(numSequences == 0){
-                return;
-            }
-
-            DeviceSwitcher globalds(deviceId);
-
-            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
-
-            auto& callerData = queryData->callerDataMap[deviceId]; //Implicit creation of node is safe because deviceId is currently set
-            auto& callerEvent = callerData.event;
-            callerEvent.synchronize(); //Ensure that handle is not in use by a previous call (may need to reallocate memory)
-
-            queryData->numSequences = numSequences;
-            queryData->callerDeviceId = deviceId;
-            queryData->encodedSequencePitchInInts = encodedSequencePitchInInts;
-            queryData->d_readIds = d_readIds;
-            queryData->d_sequenceData2Bit = d_sequenceData2Bit;
-            queryData->d_sequenceLengths = d_sequenceLengths;
-
-            const int numUsable = usableDeviceIds.size();
-            queryData->pinnedData.resize(2*numUsable + numUsable + 1);
-
-            std::size_t cubsize = 0;
-            cub::DeviceReduce::Max(
-                nullptr, 
-                cubsize, 
-                (int*)nullptr, 
-                (int*)nullptr, 
-                numSequences, 
-                stream
-            );
-            cubsize = SDIV(cubsize, 4) * 4;
-
-            //Create dependency for internal streams
-            callerEvent.record(stream);
-            for(int d = 0; d < numUsable; d++){
-                DeviceSwitcher ds(usableDeviceIds[d]);                
-                queryData->streams[d].waitEvent(callerEvent, 0);
-            }
-
-            resizeRemoteInputBuffers(queryData);          
-
-            broadcastInputToRemote(queryData);
-            
-            resizeRemoteNumValuesBuffers(queryData);
-
-            determineNumValuesOnEachGpu(queryData);
-            
-            retrieveValuesOnEachGpu(queryData);
-                        
-            //early exit if there is only one minhasher. Simply copy remote results to destination buffers and return
-            // if(numUsable == 1){        
-            //     copyRemoteResultsToCaller(queryData, 0, d_values, d_numValuesPerSequence, d_offsets);
-
-            //     cudaStreamWaitEvent(stream, queryData->events[0], 0); CUERR; //join the internal stream
-
-            //     return;
-            // }
-
-            queryData->totalNumValues = 0;
-            for(int d = 0; d < numUsable; d++){
-                const int* const myPinnedData = queryData->pinnedData + 2*d;
-                queryData->totalNumValues += myPinnedData[0];
-            }
-
-            resizeCallerData(queryData);            
-
-            int* const h_numPerGpu_ps = &queryData->pinnedData[2*numUsable];
-            h_numPerGpu_ps[0] = 0;
-            for(int d = 0; d < numUsable-1; d++){
-                const int numValues = queryData->pinnedData[2*d];
-                h_numPerGpu_ps[d+1] = h_numPerGpu_ps[d] + numValues;
-            }
-            cudaMemcpyAsync(callerData.d_offsets_tmp.data(), h_numPerGpu_ps, sizeof(int) * numUsable, H2D, stream); CUERR;
-
-            copyRemoteResultsToCallerData(queryData);
-
-            joinInternalStreams(queryData, stream);
-
-            combineResults(
-                queryData, 
-                d_values, 
-                d_numValuesPerSequence, 
-                d_offsets, 
-                stream
-            );
-
-            callerEvent.record(stream); CUERR;
         }
 
         std::size_t getRequiredCubTempSizeForResultMerging(int numSequences) const noexcept{
@@ -1043,14 +882,13 @@ private:
                     nullptr,
                     temp_storage_bytes,
                     myReadIds,
-                    numSequences,
-                    123456, //unused
-                    myStream,
+                    numSequences,                    
                     totalNumValues,
                     123456, //largest segment unused for dry-run
                     myValues,
                     myNumValuesPerSequence,
-                    myOffsets //numSequences + 1
+                    myOffsets, //numSequences + 1
+                    myStream
                 );
 
                 queryHandle->remotedataPerGpu[d].d_temp.resize(temp_storage_bytes);
@@ -1062,13 +900,12 @@ private:
                     temp_storage_bytes,
                     myReadIds,
                     numSequences,
-                    123456, //unused
-                    myStream,
                     totalNumValues,
                     largestSegment,
                     myValues,
                     myNumValuesPerSequence,
-                    myOffsets //numSequences + 1
+                    myOffsets, //numSequences + 1
+                    myStream
                 );
             }
         }

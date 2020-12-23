@@ -37,33 +37,6 @@ public:
 
     virtual QueryHandle makeQueryHandle() const = 0;
 
-    virtual void query(
-        QueryHandle& handle,
-        const unsigned int* d_encodedSequences,
-        std::size_t encodedSequencePitchInInts,
-        const int* d_sequenceLengths,
-        int numSequences,
-        int deviceId, 
-        cudaStream_t stream,
-        read_number* d_similarReadIds,
-        int* d_similarReadsPerSequence,
-        int* d_similarReadsPerSequencePrefixSum
-    ) const = 0;
-
-    virtual void queryExcludingSelf(
-        QueryHandle& handle,
-        const read_number* d_readIds,
-        const unsigned int* d_encodedSequences,
-        std::size_t encodedSequencePitchInInts,
-        const int* d_sequenceLengths,
-        int numSequences,
-        int deviceId, 
-        cudaStream_t stream,
-        read_number* d_similarReadIds,
-        int* d_similarReadsPerSequence,
-        int* d_similarReadsPerSequencePrefixSum
-    ) const = 0;
-
     virtual void determineNumValues(
         QueryHandle& queryHandle,
         const unsigned int* d_sequenceData2Bit,
@@ -79,12 +52,11 @@ public:
         QueryHandle& queryHandle,
         const read_number* d_readIds,
         int numSequences,
-        int deviceId, 
-        cudaStream_t stream,
         int totalNumValues,
         read_number* d_values,
         int* d_numValuesPerSequence,
-        int* d_offsets //numSequences + 1
+        int* d_offsets, //numSequences + 1
+        cudaStream_t stream
     ) const = 0;
 
     virtual void compact(cudaStream_t stream) = 0;

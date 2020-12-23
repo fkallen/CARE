@@ -4,9 +4,10 @@
 
 #include <gpu/gpucorrector.cuh>
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/fakegpuminhasher.cuh>
-#include <gpu/singlegpuminhasher.cuh>
-#include <gpu/multigpuminhasher.cuh>
+#include <gpu/gpuminhasher.cuh>
+// #include <gpu/fakegpuminhasher.cuh>
+// #include <gpu/singlegpuminhasher.cuh>
+// #include <gpu/multigpuminhasher.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>

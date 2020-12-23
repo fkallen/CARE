@@ -381,63 +381,6 @@ namespace gpu{
             return h;
         }
 
-
-
-        void query(
-            QueryHandle& handle,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override{
-            query_impl(
-                handle,
-                nullptr,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
-        void queryExcludingSelf(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const override{
-            query_impl(
-                handle,
-                d_readIds,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                deviceId,
-                stream, 
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum
-            );
-        }
-
         void determineNumValues(
             QueryHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
@@ -543,12 +486,11 @@ namespace gpu{
             QueryHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
-            int /*deviceId*/, 
-            cudaStream_t stream,
             int totalNumValues,
             read_number* d_values,
             int* d_numValuesPerSequence,
-            int* d_offsets //numSequences + 1
+            int* d_offsets, //numSequences + 1
+            cudaStream_t stream
         ) const override {
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
@@ -815,54 +757,6 @@ namespace gpu{
             compact(stream);
         }
 
-        void query_impl(
-            QueryHandle& queryHandle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
-            std::size_t encodedSequencePitchInInts,
-            const int* d_sequenceLengths,
-            int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const{
-            QueryData* queryData = getQueryDataFromHandle(queryHandle);
-           
-            int totalNumValues = 0;
-
-            determineNumValues(
-                queryHandle,
-                d_encodedSequences,
-                encodedSequencePitchInInts,
-                d_sequenceLengths,
-                numSequences,
-                d_similarReadsPerSequence,
-                totalNumValues,
-                stream
-            );
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            if(totalNumValues == 0){
-                return;
-            }
-
-            retrieveValues(
-                queryHandle,
-                d_readIds,
-                numSequences,
-                123456, //unused
-                stream,
-                totalNumValues,
-                d_similarReadIds,
-                d_similarReadsPerSequence,
-                d_similarReadsPerSequencePrefixSum //numSequences + 1
-            );
-
-            queryData->previousStage = QueryData::Stage::Retrieve;
-        }
 
         void queryPrecalculatedSignatures(
             const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence

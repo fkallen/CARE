@@ -8,9 +8,10 @@
 #include <gpu/cuda_block_select.cuh>
 
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/fakegpuminhasher.cuh>
-#include <gpu/singlegpuminhasher.cuh>
-#include <gpu/multigpuminhasher.cuh>
+// #include <gpu/fakegpuminhasher.cuh>
+// #include <gpu/singlegpuminhasher.cuh>
+// #include <gpu/multigpuminhasher.cuh>
+#include <gpu/gpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
@@ -481,20 +482,6 @@ namespace gpucorrectorkernels{
         DistributedReadStorage::GatherHandleQualities qualityGatherHandle;
     };
 
-    class GpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
-    public: 
-        GpuMinhasherCandidateIdsProvider(const FakeGpuMinhasher& minhasher_) 
-            : minhasher{&minhasher_}, minhashHandle{minhasher_.makeQueryHandle()} {
-
-        }
-    public: //private:
-        void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const override{
-            minhasher->getCandidates(minhashHandle, ids, anchor, size);
-        }
-
-        const FakeGpuMinhasher* minhasher;
-        mutable FakeGpuMinhasher::QueryHandle minhashHandle;
-    };
 
     class GpuErrorCorrectorInput{
     public:
@@ -754,19 +741,9 @@ namespace gpucorrectorkernels{
         }
 
         void getCandidateReadIdsWithMinhashing(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
-            ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
-
-            // helpers::SimpleAllocationPinnedHost<read_number> d_candidate_read_idsAAAA(ecinput.d_candidate_read_ids.size());
-            // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchorAAAA(ecinput.d_candidates_per_anchor.size());
-            // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchor_prefixsumAAAA(ecinput.d_candidates_per_anchor_prefixsum.size());
-
-#if 1
-            const MultiGpuMinhasher* sgm = dynamic_cast<const MultiGpuMinhasher*>(gpuMinhasher);
-            assert(sgm != nullptr);
-
             int totalNumValues = 0;
 
-            sgm->determineNumValues(
+            gpuMinhasher->determineNumValues(
                 minhashHandle,
                 ecinput.d_anchor_sequences_data.get(),
                 encodedSequencePitchInInts,
@@ -788,53 +765,16 @@ namespace gpucorrectorkernels{
                 return;
             }
 
-            sgm->retrieveValues(
+            gpuMinhasher->retrieveValues(
                 minhashHandle,
                 ecinput.d_anchorReadIds.get(),
-                (*ecinput.h_numAnchors.get()),
-                123456, //unused
-                stream,
+                (*ecinput.h_numAnchors.get()),                
                 totalNumValues,
                 ecinput.d_candidate_read_ids.get(),
                 ecinput.d_candidates_per_anchor.get(),
-                ecinput.d_candidates_per_anchor_prefixsum.get()
+                ecinput.d_candidates_per_anchor_prefixsum.get(),
+                stream
             );
-
-#else
-            gpuMinhasher->queryExcludingSelf(
-                minhashHandle,
-                ecinput.d_anchorReadIds.get(),
-                ecinput.d_anchor_sequences_data.get(),
-                encodedSequencePitchInInts,
-                ecinput.d_anchor_sequences_lengths.get(),
-                (*ecinput.h_numAnchors.get()),
-                deviceId, 
-                stream,
-                ecinput.d_candidate_read_ids.get(),
-                ecinput.d_candidates_per_anchor.get(),
-                ecinput.d_candidates_per_anchor_prefixsum.get()
-            );
-#endif 
-
-            // cudaMemset(d_candidate_read_idsAAAA.get(), 0, d_candidate_read_idsAAAA.sizeInBytes());
-            // cudaMemset(d_candidates_per_anchorAAAA.get(), 0, d_candidates_per_anchorAAAA.sizeInBytes());
-            // cudaMemset(d_candidates_per_anchor_prefixsumAAAA.get(), 0, d_candidates_per_anchor_prefixsumAAAA.sizeInBytes());
-
-            // gpuMinhasher->getIdsOfSimilarReadsNormalExcludingSelfNew(
-            //     minhashHandle,
-            //     ecinput.d_anchorReadIds.get(),
-            //     ecinput.h_anchorReadIds.get(),
-            //     ecinput.d_anchor_sequences_data.get(),
-            //     encodedSequencePitchInInts,
-            //     ecinput.d_anchor_sequences_lengths.get(),
-            //     (*ecinput.h_numAnchors.get()),
-            //     deviceId, 
-            //     stream,
-            //     forLoopExecutor,
-            //     d_candidate_read_idsAAAA.get(),
-            //     d_candidates_per_anchorAAAA.get(),
-            //     d_candidates_per_anchor_prefixsumAAAA.get()
-            // );
 
             gpucorrectorkernels::copyMinhashResultsKernel<<<640, 256, 0, stream>>>(
                 ecinput.d_numCandidates.get(),
@@ -845,96 +785,23 @@ namespace gpucorrectorkernels{
                 *ecinput.h_numAnchors.get()
             ); CUERR;
 
-            /* cudaStreamSynchronize(stream); CUERR;
-             std::vector<int> vec((1 + *ecinput.h_numAnchors));
-             cudaMemcpyAsync(vec.data(), ecinput.d_candidates_per_anchor_prefixsum, sizeof(int) * (1 + *ecinput.h_numAnchors), D2H, stream);
-             std::vector<int> vec2((*ecinput.h_numAnchors));
-             cudaMemcpyAsync(vec2.data(), ecinput.d_candidates_per_anchor, sizeof(int) * (*ecinput.h_numAnchors), D2H, stream);
+            //  cudaStreamSynchronize(stream); CUERR;
+            //  std::vector<int> vec((1 + *ecinput.h_numAnchors));
+            //  cudaMemcpyAsync(vec.data(), ecinput.d_candidates_per_anchor_prefixsum, sizeof(int) * (1 + *ecinput.h_numAnchors), D2H, stream);
+            //  std::vector<int> vec2((*ecinput.h_numAnchors));
+            //  cudaMemcpyAsync(vec2.data(), ecinput.d_candidates_per_anchor, sizeof(int) * (*ecinput.h_numAnchors), D2H, stream);
 
-            std::cerr << *ecinput.h_numCandidates << "\n";
-             for(int i = 0; i < (1 + *ecinput.h_numAnchors); i++){
-                 std::cerr << vec[i] << " ";
-             }
-             std::cerr << "\n";
+            // std::cerr << *ecinput.h_numCandidates << "\n";
+            //  for(int i = 0; i < (1 + *ecinput.h_numAnchors); i++){
+            //      std::cerr << vec[i] << " ";
+            //  }
+            //  std::cerr << "\n";
 
-             for(int i = 0; i < (*ecinput.h_numAnchors); i++){
-                 std::cerr << vec2[i] << " ";
-             }
-             std::cerr << "\n";
-
-            for(int i = 0; i < *ecinput.h_numCandidates; i++){
-                std::cerr << ecinput.h_candidate_read_ids[i] << " ";
-            }
-            std::cerr << "\n";*/
-
-            // cudaStreamSynchronize(stream); CUERR;
-
-            // bool error = false;
-
-            // for(int i = 0; i < *ecinput.h_numAnchors.get() && !error; i++){
-            //     if(ecinput.d_candidates_per_anchor[i] != d_candidates_per_anchorAAAA[i]){
-            //         error = true;
-            //         std::cerr << "error A " << i << "\n";
-            //         break;
-            //     }
-            // }
-
-            // for(int i = 0; i < (*ecinput.h_numAnchors.get()) + 1 && !error; i++){
-            //     if(ecinput.d_candidates_per_anchor_prefixsum[i] != d_candidates_per_anchor_prefixsumAAAA[i]){
-            //         error = true;
-            //         std::cerr << "error B " << i << "\n";
-            //         break;
-            //     }
-            // }
-
-            // for(int i = 0; i < ecinput.d_candidates_per_anchor_prefixsum[(*ecinput.h_numAnchors.get())] && !error; i++){
-            //     if(ecinput.h_candidate_read_ids[i] != d_candidate_read_idsAAAA[i]){
-            //         error = true;
-            //         std::cerr << "error C " << i << "\n";
-            //         break;
-            //     }
-            // }
-
-            // if(error){
-
-            //     std::cerr << "d_candidates_per_anchor orig\n";
-            //     for(int i = 0; i < *ecinput.h_numAnchors.get(); i++){
-            //         std::cerr << ecinput.d_candidates_per_anchor[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     std::cerr << "d_candidates_per_anchor new\n";
-            //     for(int i = 0; i < *ecinput.h_numAnchors.get(); i++){
-            //         std::cerr << d_candidates_per_anchorAAAA[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     std::cerr << "d_candidates_per_anchor_prefixsum orig\n";
-            //     for(int i = 0; i < (*ecinput.h_numAnchors.get())+1; i++){
-            //         std::cerr << ecinput.d_candidates_per_anchor_prefixsum[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     std::cerr << "d_candidates_per_anchor_prefixsum new\n";
-            //     for(int i = 0; i < (*ecinput.h_numAnchors.get())+1; i++){
-            //         std::cerr << d_candidates_per_anchor_prefixsumAAAA[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     std::cerr << "d_candidates orig\n";
-            //     for(int i = 0; i < ecinput.d_candidates_per_anchor_prefixsum[(*ecinput.h_numAnchors.get())]; i++){
-            //         std::cerr << ecinput.h_candidate_read_ids[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     std::cerr << "d_candidates new\n";
-            //     for(int i = 0; i < d_candidates_per_anchor_prefixsumAAAA[(*ecinput.h_numAnchors.get())]; i++){
-            //         std::cerr << d_candidate_read_idsAAAA[i] << ",";
-            //     }
-            //     std::cerr << "\n";
-
-            //     assert(false);
-            // }
+            //  for(int i = 0; i < (*ecinput.h_numAnchors); i++){
+            //      std::cerr << vec2[i] << " ";
+            //  }
+            //  std::cerr << "\n";
+           
 
             
         }
