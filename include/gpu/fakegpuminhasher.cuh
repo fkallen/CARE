@@ -18,6 +18,8 @@
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
 
+#include <sharedmutex.hpp>
+
 
 #include <vector>
 #include <memory>
@@ -25,7 +27,6 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
-
 
 #include <cub/cub.cuh>
 
@@ -56,8 +57,16 @@ namespace gpu{
             template<class T>
             using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T, overprovisioningPercent>;
 
+            enum class Stage{
+                None,
+                NumValues,
+                Retrieve
+            };
+
+
             bool isInitialized = false;
             int deviceId;
+            Stage previousStage = Stage::None;
 
             DeviceBuffer<std::uint64_t> d_minhashSignatures;
             PinnedBuffer<std::uint64_t> h_minhashSignatures;            
@@ -363,7 +372,8 @@ namespace gpu{
             cudaGetDevice(&data->deviceId); CUERR;
             data->isInitialized = true;
 
-            std::lock_guard<std::mutex> lg(m);
+            //std::unique_lock<std::shared_mutex> lock(sharedmutex);
+            std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
             QueryHandle h = constructHandle(handleid);
 
@@ -428,70 +438,20 @@ namespace gpu{
             );
         }
 
-        void compact(cudaStream_t stream) override{
-            int id;
-            cudaGetDevice(&id); CUERR;
-            for(auto& ptr : minhashTables){
-                ptr->finalize(getNumResultsPerMapThreshold(), {id});
-            }
-        }
-
-        MemoryUsage getMemoryInfo() const noexcept override{
-            MemoryUsage result;
-
-            result.host = sizeof(HashTable) * minhashTables.size();
-            
-            for(const auto& tableptr : minhashTables){
-                auto m = tableptr->getMemoryInfo();
-                result.host += m.host;
-
-                for(auto pair : m.device){
-                    result.device[pair.first] += pair.second;
-                }
-            }
-
-            return result;
-        }
-
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
-            return tempdataVector[handle.getId()]->getMemoryInfo();
-        }
-
-        int getNumResultsPerMapThreshold() const noexcept override{
-            return resultsPerMapThreshold;
-        }
-        
-        int getNumberOfMaps() const noexcept override{
-            return minhashTables.size();
-        }
-
-        void destroy() override{
-            minhashTables.clear();
-        }
-
-        void finalize(cudaStream_t stream = 0){
-            compact(stream);
-        }
-
-        void query_impl(
-            QueryHandle& handle,
-            const read_number* d_readIds,
-            const unsigned int* d_encodedSequences,
+        void determineNumValues(
+            QueryHandle& queryHandle,
+            const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
             int numSequences,
-            int deviceId, 
-            cudaStream_t stream,
-            read_number* d_similarReadIds,
-            int* d_similarReadsPerSequence,
-            int* d_similarReadsPerSequencePrefixSum
-        ) const{
-            QueryData* const queryData = tempdataVector[handle.getId()].get();
+            int* d_numValuesPerSequence,
+            int& totalNumValues,
+            cudaStream_t stream
+        ) const override {
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
             assert(queryData->isInitialized);
             if(numSequences == 0) return;
-
-            cub::SwitchDevice sd(deviceId);
 
             std::size_t cubtempbytes = 0;
 
@@ -528,7 +488,7 @@ namespace gpu{
             callMinhashSignaturesKernel(
                 queryData->d_minhashSignatures.get(),
                 hashValuesPitchInElements,
-                d_encodedSequences,
+                d_sequenceData2Bit,
                 encodedSequencePitchInInts,
                 numSequences,
                 d_sequenceLengths,
@@ -548,31 +508,109 @@ namespace gpu{
     
             cudaStreamSynchronize(stream); CUERR; //wait for D2H transfers of signatures
 
-            int myTotalNumberOfPossibleCandidates = 0;
-
             nvtx::push_range("queryPrecalculatedSignatures", 6);
             queryPrecalculatedSignatures(
                 queryData->h_minhashSignatures.get(),
                 allRanges.data(),
-                &myTotalNumberOfPossibleCandidates, 
+                &totalNumValues, 
                 numSequences
             );
             nvtx::pop_range();
 
-            if(myTotalNumberOfPossibleCandidates == 0){
-                cudaMemsetAsync(d_similarReadsPerSequence, 0, sizeof(int) * numSequences, stream);
-                cudaMemsetAsync(d_similarReadsPerSequencePrefixSum, 0, sizeof(int) * (numSequences + 1), stream);
+            std::vector<int> numValuesPerSequence(numSequences);
+
+            for(int sequenceIndex = 0; sequenceIndex < numSequences; sequenceIndex++){
+
+                int num = 0;
+
+                for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
+                    const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
+                    
+                    const auto& range = allRanges[k];
+                    if(std::distance(range.first, range.second) <= getNumResultsPerMapThreshold())
+                        num += std::distance(range.first, range.second);
+                }
+
+                numValuesPerSequence[sequenceIndex] = num;
+            }
+
+            cudaMemcpyAsync(d_numValuesPerSequence, numValuesPerSequence.data(), sizeof(int) * numSequences, H2D, stream); CUERR;
+
+            queryData->previousStage = QueryData::Stage::NumValues;
+        }
+
+        void retrieveValues(
+            QueryHandle& queryHandle,
+            const read_number* d_readIds,
+            int numSequences,
+            int /*deviceId*/, 
+            cudaStream_t stream,
+            int totalNumValues,
+            read_number* d_values,
+            int* d_numValuesPerSequence,
+            int* d_offsets //numSequences + 1
+        ) const override {
+            QueryData* const queryData = getQueryDataFromHandle(queryHandle);
+
+            assert(queryData->isInitialized);
+            if(numSequences == 0) return;
+
+            assert(queryData->previousStage == QueryData::Stage::NumValues);
+
+            std::size_t cubtempbytes = 0;
+            cub::DeviceScan::InclusiveSum(
+                nullptr,
+                cubtempbytes,
+                (int*) nullptr,
+                (int*) nullptr,
+                numSequences,
+                stream
+            );
+
+            std::size_t segmentedUniqueTempBytes = 0;
+            GpuSegmentedUnique::unique(
+                nullptr,
+                segmentedUniqueTempBytes,
+                (read_number*)nullptr,
+                totalNumValues,
+                (read_number*)nullptr,
+                d_numValuesPerSequence,
+                numSequences,
+                0,
+                (int*)nullptr,
+                (int*)nullptr,
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+
+            queryData->d_minhashSignatures.resize(
+                std::max(
+                    int(SDIV(segmentedUniqueTempBytes, sizeof(std::uint64_t))),
+                    int(SDIV(cubtempbytes, sizeof(std::uint64_t)))
+                )
+            );
+
+            void* d_temp = queryData->d_minhashSignatures.data();
+
+            std::vector<Range_t>& allRanges = queryData->allRanges;
+
+            //std::cerr << "totalNumValues: " << totalNumValues << "\n";
+
+            if(totalNumValues == 0){
+                cudaMemsetAsync(d_numValuesPerSequence, 0, sizeof(int) * numSequences, stream);
+                cudaMemsetAsync(d_offsets, 0, sizeof(int) * (numSequences + 1), stream);
                 return;
             }
 
             constexpr int roundUpTo = 10000;
-            const int roundedTotalNum = SDIV(myTotalNumberOfPossibleCandidates, roundUpTo) * roundUpTo;
+            const int roundedTotalNum = SDIV(totalNumValues, roundUpTo) * roundUpTo;
             queryData->h_candidate_read_ids_tmp.resize(roundedTotalNum);
             queryData->d_candidate_read_ids_tmp.resize(roundedTotalNum);
 
 
             //results will be in Current() buffer
-            cub::DoubleBuffer<read_number> d_values_dblbuf(d_similarReadIds, queryData->d_candidate_read_ids_tmp.data());
+            cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, queryData->d_candidate_read_ids_tmp.data());
 
             read_number* hostdatabegin = queryData->h_candidate_read_ids_tmp.get();
 
@@ -614,7 +652,7 @@ namespace gpu{
             cudaMemcpyAsync(
                 d_values_dblbuf.Current(),
                 hostdatabegin,
-                sizeof(read_number) * myTotalNumberOfPossibleCandidates,
+                sizeof(read_number) * totalNumValues,
                 H2D,
                 stream
             ); CUERR;
@@ -635,12 +673,30 @@ namespace gpu{
                 stream
             ); CUERR;
 
+            /*
+            GpuSegmentedUnique::unique(
+                d_uniquetemp,
+                temp_allocation_sizes[2],
+                d_values_dblbuf.Current(), //input values
+                totalNumValues,
+                d_values_dblbuf.Alternate(), //output values
+                d_numValuesPerSequence, //output segment sizes
+                numSequences,
+                sizeOfLargestSegment,
+                d_offsets, //device accessible
+                d_end_offsets, //device accessible
+                0,
+                sizeof(read_number) * 8,
+                stream
+            );
+            */
+
             GpuSegmentedUnique::unique(
                 queryData->segmentedUniqueHandle,
                 d_values_dblbuf.Current(), //input
-                myTotalNumberOfPossibleCandidates,
+                totalNumValues,
                 d_values_dblbuf.Alternate(), //output
-                d_similarReadsPerSequence,
+                d_numValuesPerSequence,
                 numSequences,
                 d_my_begin_offsets, //device accessible
                 d_my_end_offsets, //device accessible
@@ -667,14 +723,14 @@ namespace gpu{
                     d_readIds,
                     d_values_dblbuf.Alternate(),
                     numSequences,
-                    d_similarReadsPerSequence,
+                    d_numValuesPerSequence,
                     queryData->d_global_begin_offsets.data(),
                     stream
                 );
 
             }
 
-            int* d_newOffsets = d_similarReadsPerSequencePrefixSum;
+            int* d_newOffsets = d_offsets;
             void* d_cubTemp = queryData->d_minhashSignatures.data();
 
             cudaMemsetAsync(d_newOffsets, 0, sizeof(int), stream); CUERR;
@@ -682,7 +738,7 @@ namespace gpu{
             cub::DeviceScan::InclusiveSum(
                 d_cubTemp,
                 cubtempbytes,
-                d_similarReadsPerSequence,
+                d_numValuesPerSequence,
                 d_newOffsets + 1,
                 numSequences,
                 stream
@@ -694,7 +750,7 @@ namespace gpu{
                     d_values_in = d_values_dblbuf.Alternate(),
                     d_values_out = d_values_dblbuf.Current(),
                     numSequences,
-                    d_numValuesPerSequence = d_similarReadsPerSequence,
+                    d_numValuesPerSequence,
                     d_offsets = queryData->d_global_begin_offsets.data(),
                     d_newOffsets
                 ] __device__ (){
@@ -710,6 +766,102 @@ namespace gpu{
                     }
                 }
             ); CUERR;
+
+            queryData->previousStage = QueryData::Stage::Retrieve;
+        }
+
+        void compact(cudaStream_t stream) override{
+            int id;
+            cudaGetDevice(&id); CUERR;
+            for(auto& ptr : minhashTables){
+                ptr->finalize(getNumResultsPerMapThreshold(), {id});
+            }
+        }
+
+        MemoryUsage getMemoryInfo() const noexcept override{
+            MemoryUsage result;
+
+            result.host = sizeof(HashTable) * minhashTables.size();
+            
+            for(const auto& tableptr : minhashTables){
+                auto m = tableptr->getMemoryInfo();
+                result.host += m.host;
+
+                for(auto pair : m.device){
+                    result.device[pair.first] += pair.second;
+                }
+            }
+
+            return result;
+        }
+
+        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+            return getQueryDataFromHandle(handle)->getMemoryInfo();
+        }
+
+        int getNumResultsPerMapThreshold() const noexcept override{
+            return resultsPerMapThreshold;
+        }
+        
+        int getNumberOfMaps() const noexcept override{
+            return minhashTables.size();
+        }
+
+        void destroy() override{
+            minhashTables.clear();
+        }
+
+        void finalize(cudaStream_t stream = 0){
+            compact(stream);
+        }
+
+        void query_impl(
+            QueryHandle& queryHandle,
+            const read_number* d_readIds,
+            const unsigned int* d_encodedSequences,
+            std::size_t encodedSequencePitchInInts,
+            const int* d_sequenceLengths,
+            int numSequences,
+            int deviceId, 
+            cudaStream_t stream,
+            read_number* d_similarReadIds,
+            int* d_similarReadsPerSequence,
+            int* d_similarReadsPerSequencePrefixSum
+        ) const{
+            QueryData* queryData = getQueryDataFromHandle(queryHandle);
+           
+            int totalNumValues = 0;
+
+            determineNumValues(
+                queryHandle,
+                d_encodedSequences,
+                encodedSequencePitchInInts,
+                d_sequenceLengths,
+                numSequences,
+                d_similarReadsPerSequence,
+                totalNumValues,
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            if(totalNumValues == 0){
+                return;
+            }
+
+            retrieveValues(
+                queryHandle,
+                d_readIds,
+                numSequences,
+                123456, //unused
+                stream,
+                totalNumValues,
+                d_similarReadIds,
+                d_similarReadsPerSequence,
+                d_similarReadsPerSequencePrefixSum //numSequences + 1
+            );
+
+            queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
         void queryPrecalculatedSignatures(
@@ -895,13 +1047,19 @@ namespace gpu{
         }
 
     private:
+
+        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+            std::shared_lock<SharedMutex> lock(sharedmutex);
+
+            return tempdataVector[queryHandle.getId()].get();
+        }
         
 
-    Range_t queryMap(int id, const Key_t& key) const;
+        Range_t queryMap(int id, const Key_t& key) const;
 
 
         mutable int counter = 0;
-        mutable std::mutex m{};
+        mutable SharedMutex sharedmutex{};
 
         int maxNumKeys{};
         int kmerSize{};

@@ -64,6 +64,29 @@ public:
         int* d_similarReadsPerSequencePrefixSum
     ) const = 0;
 
+    virtual void determineNumValues(
+        QueryHandle& queryHandle,
+        const unsigned int* d_sequenceData2Bit,
+        std::size_t encodedSequencePitchInInts,
+        const int* d_sequenceLengths,
+        int numSequences,
+        int* d_numValuesPerSequence,
+        int& totalNumValues,
+        cudaStream_t stream
+    ) const = 0;
+
+    virtual void retrieveValues(
+        QueryHandle& queryHandle,
+        const read_number* d_readIds,
+        int numSequences,
+        int deviceId, 
+        cudaStream_t stream,
+        int totalNumValues,
+        read_number* d_values,
+        int* d_numValuesPerSequence,
+        int* d_offsets //numSequences + 1
+    ) const = 0;
+
     virtual void compact(cudaStream_t stream) = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;

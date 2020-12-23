@@ -640,6 +640,16 @@ namespace gpucorrectorkernels{
             anchorSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
         }
 
+        ~GpuAnchorHasher(){
+            std::cerr << "GpuAnchorHasher::~GpuAnchorHasher(). Memory of minhash handle: ";
+            auto memoryUsage = gpuMinhasher->getMemoryInfo(minhashHandle);
+            std::cerr << memoryUsage.host;
+            for(auto pair : memoryUsage.device){
+                std::cerr << ", [" << pair.first << "] " << pair.second;
+            }
+            std::cerr << "\n";
+        }
+
         void makeErrorCorrectorInput(
             const read_number* anchorIds,
             int numIds,
@@ -750,6 +760,47 @@ namespace gpucorrectorkernels{
             // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchorAAAA(ecinput.d_candidates_per_anchor.size());
             // helpers::SimpleAllocationPinnedHost<int> d_candidates_per_anchor_prefixsumAAAA(ecinput.d_candidates_per_anchor_prefixsum.size());
 
+#if 1
+            const MultiGpuMinhasher* sgm = dynamic_cast<const MultiGpuMinhasher*>(gpuMinhasher);
+            assert(sgm != nullptr);
+
+            int totalNumValues = 0;
+
+            sgm->determineNumValues(
+                minhashHandle,
+                ecinput.d_anchor_sequences_data.get(),
+                encodedSequencePitchInInts,
+                ecinput.d_anchor_sequences_lengths.get(),
+                (*ecinput.h_numAnchors.get()),
+                ecinput.d_candidates_per_anchor.get(),
+                totalNumValues,
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            ecinput.d_candidate_read_ids.resize(totalNumValues);
+            ecinput.h_candidate_read_ids.resize(totalNumValues);
+
+            if(totalNumValues == 0){
+                cudaMemsetAsync(ecinput.d_candidates_per_anchor.get(), 0, sizeof(int) * (*ecinput.h_numAnchors), stream); CUERR;
+                cudaMemsetAsync(ecinput.d_candidates_per_anchor_prefixsum.get(), 0, sizeof(int) * (1 + (*ecinput.h_numAnchors)), stream); CUERR;
+                return;
+            }
+
+            sgm->retrieveValues(
+                minhashHandle,
+                ecinput.d_anchorReadIds.get(),
+                (*ecinput.h_numAnchors.get()),
+                123456, //unused
+                stream,
+                totalNumValues,
+                ecinput.d_candidate_read_ids.get(),
+                ecinput.d_candidates_per_anchor.get(),
+                ecinput.d_candidates_per_anchor_prefixsum.get()
+            );
+
+#else
             gpuMinhasher->queryExcludingSelf(
                 minhashHandle,
                 ecinput.d_anchorReadIds.get(),
@@ -763,6 +814,7 @@ namespace gpucorrectorkernels{
                 ecinput.d_candidates_per_anchor.get(),
                 ecinput.d_candidates_per_anchor_prefixsum.get()
             );
+#endif 
 
             // cudaMemset(d_candidate_read_idsAAAA.get(), 0, d_candidate_read_idsAAAA.sizeInBytes());
             // cudaMemset(d_candidates_per_anchorAAAA.get(), 0, d_candidates_per_anchorAAAA.sizeInBytes());
@@ -793,20 +845,27 @@ namespace gpucorrectorkernels{
                 *ecinput.h_numAnchors.get()
             ); CUERR;
 
-            // cudaStreamSynchronize(stream); CUERR;
-            // std::vector<int> vec((1 + *ecinput.h_numAnchors));
-            // cudaMemcpyAsync(vec.data(), ecinput.d_candidates_per_anchor_prefixsum, sizeof(int) * (1 + *ecinput.h_numAnchors), D2H, stream);
+            /* cudaStreamSynchronize(stream); CUERR;
+             std::vector<int> vec((1 + *ecinput.h_numAnchors));
+             cudaMemcpyAsync(vec.data(), ecinput.d_candidates_per_anchor_prefixsum, sizeof(int) * (1 + *ecinput.h_numAnchors), D2H, stream);
+             std::vector<int> vec2((*ecinput.h_numAnchors));
+             cudaMemcpyAsync(vec2.data(), ecinput.d_candidates_per_anchor, sizeof(int) * (*ecinput.h_numAnchors), D2H, stream);
 
-            // std::cerr << *ecinput.h_numCandidates << "\n";
-            // for(int i = 0; i < (1 + *ecinput.h_numAnchors); i++){
-            //     std::cerr << vec[i] << " ";
-            // }
-            // std::cerr << "\n";
+            std::cerr << *ecinput.h_numCandidates << "\n";
+             for(int i = 0; i < (1 + *ecinput.h_numAnchors); i++){
+                 std::cerr << vec[i] << " ";
+             }
+             std::cerr << "\n";
 
-            // for(int i = 0; i < *ecinput.h_numCandidates; i++){
-            //     std::cerr << ecinput.h_candidate_read_ids[i] << " ";
-            // }
-            // std::cerr << "\n";
+             for(int i = 0; i < (*ecinput.h_numAnchors); i++){
+                 std::cerr << vec2[i] << " ";
+             }
+             std::cerr << "\n";
+
+            for(int i = 0; i < *ecinput.h_numCandidates; i++){
+                std::cerr << ecinput.h_candidate_read_ids[i] << " ";
+            }
+            std::cerr << "\n";*/
 
             // cudaStreamSynchronize(stream); CUERR;
 
