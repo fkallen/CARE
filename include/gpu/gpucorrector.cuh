@@ -18,7 +18,7 @@
 
 #include <corrector_common.hpp>
 #include <threadpool.hpp>
-#include <minhasher.hpp>
+
 #include <options.hpp>
 #include <correctionresultprocessing.hpp>
 #include <memorymanagement.hpp>

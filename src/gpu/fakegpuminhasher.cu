@@ -69,14 +69,6 @@ int FakeGpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
     return mapsToLoad;
 }
 
-int FakeGpuMinhasher::calculateResultsPerMapThreshold(int coverage){
-    int result = int(coverage * 2.5f);
-    result = std::min(result, int(std::numeric_limits<BucketSize>::max()));
-    result = std::max(10, result);
-    return result;
-}
-
-
 void FakeGpuMinhasher::constructFromReadStorage(
     const FileOptions &fileOptions,
     const RuntimeOptions &runtimeOptions,

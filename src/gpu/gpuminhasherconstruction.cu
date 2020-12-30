@@ -5,7 +5,7 @@
 #include <gpu/fakegpuminhasher.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/multigpuminhasher.cuh>
-#include <minhasher.hpp>
+#include <minhasherlimit.hpp>
 
 #include <options.hpp>
 

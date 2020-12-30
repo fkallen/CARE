@@ -938,7 +938,7 @@ namespace cpuhashtabledetail{
             isInit = true;
         }
 
-        void insert(Key* keys, Value* values, int N){
+        void insert(const Key* keys, const Value* values, int N){
             assert(keys != nullptr);
             assert(values != nullptr);
             assert(buildMaxNumValues >= buildkeys.size() + N);

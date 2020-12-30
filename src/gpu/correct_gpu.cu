@@ -49,6 +49,8 @@ public:
         ResultProcessor processResults,
         BatchCompletion batchCompleted
     ) const {
+        assert(false);
+#if 0                
         //const int threadId = omp_get_thread_num();
 
         const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
@@ -148,7 +150,7 @@ public:
             batchCompleted(batchReadIds.size()); 
             
         } //while unprocessed reads exist loop end   
-
+#endif
     }
 };
 

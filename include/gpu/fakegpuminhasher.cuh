@@ -1,5 +1,5 @@
-#ifndef CARE_FAKEFakeGpuMinhasher_CUH
-#define CARE_FAKEFakeGpuMinhasher_CUH
+#ifndef CARE_FAKEGPUMINHASHER_CUH
+#define CARE_FAKEGPUMINHASHER_CUH
 
 #include <config.hpp>
 
@@ -778,11 +778,7 @@ namespace gpu{
 
         void writeToStream(std::ostream& os) const;
     
-        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());
-
-        int calculateResultsPerMapThreshold(int coverage);
-
-        
+        int loadFromStream(std::ifstream& is, int numMapsUpperLimit = std::numeric_limits<int>::max());       
 
         int addHashfunctions(int numExtraFunctions){
             int added = 0;
