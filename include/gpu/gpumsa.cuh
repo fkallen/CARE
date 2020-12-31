@@ -191,6 +191,7 @@ namespace gpu{
             for(int intIndex = group.thread_rank(); intIndex < fullInts; intIndex += group.size()){
                 const unsigned int currentDataInt = sequence[intIndex];
 
+                #pragma unroll
                 for(int k = 0; k < 4; k++){
                     alignas(4) char currentFourQualities[4];
 
@@ -200,6 +201,7 @@ namespace gpu{
                         *((int*)&currentFourQualities[0]) = ((const int*)quality)[intIndex * 4 + k];
                     }
 
+                    #pragma unroll
                     for(int l = 0; l < 4; l++){
                         const int posInInt = k * 4 + l;
 
@@ -433,6 +435,157 @@ namespace gpu{
                         canUseQualityScores
                     );
 
+                }
+            }
+        }
+
+
+        template<class ThreadGroup, class Selector>
+        __device__ __forceinline__
+        void removeCandidates_verticalthreads(
+            ThreadGroup& group,
+            Selector shouldBeRemoved, //remove candidate myIndices[i] if shouldBeRemoved(i) == true
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myOverlaps,
+            const int* __restrict__ myNops,
+            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const unsigned int* __restrict__ myCandidateSequencesData, //not transposed
+            const char* __restrict__ myCandidateQualities, //not transposed
+            const int* __restrict__ myCandidateLengths,
+            const int* __restrict__ myIndices,
+            int numIndices,
+            bool canUseQualityScores, 
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            float desiredAlignmentMaxErrorRate
+        ){      
+
+            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+            const int msasize = columnProperties->lastColumn_excl;
+
+            //blocked arrangement. each thread is responsible for a number of consecutve columns in msa
+            constexpr int itemsPerThread = 3;
+
+            float myweights[4][itemsPerThread];
+            int mycounts[4][itemsPerThread];
+
+            const int numBlocks = SDIV(msasize, itemsPerThread * group.size());
+
+            for(int block = 0; block < numBlocks; block++){
+
+                #pragma unroll
+                for(int i = 0; i < itemsPerThread; i++){
+                    myweights[0][i] = 0.0f;
+                    myweights[1][i] = 0.0f;
+                    myweights[2][i] = 0.0f;
+                    myweights[3][i] = 0.0f;
+                    mycounts[0][i] = 0;
+                    mycounts[1][i] = 0;
+                    mycounts[2][i] = 0;
+                    mycounts[3][i] = 0;
+                }
+
+                const int myFirstColumn = block * group.size() * itemsPerThread + group.thread_rank() * itemsPerThread;
+                const int myLastColumnExcl = min(msasize, block * group.size() * itemsPerThread + (1+group.thread_rank()) * itemsPerThread);
+                            
+                for(int indexInList = 0; indexInList < numIndices; indexInList += 1){
+
+                    if(shouldBeRemoved(indexInList)){
+
+                        const int localCandidateIndex = myIndices[indexInList];
+                        const int shift = myShifts[localCandidateIndex];
+                        const int queryLength = myCandidateLengths[localCandidateIndex];
+                        
+
+                        bool IcanProcessCandidate = false;
+                        #pragma unroll
+                        for(int i = 0; i < itemsPerThread; i++){
+                            const int positionOfColumnInCandidate = myFirstColumn - (subjectColumnsBegin_incl + shift) + i;
+                            if(positionOfColumnInCandidate >= 0 && positionOfColumnInCandidate < queryLength){
+                                IcanProcessCandidate = true;
+                            }
+                        }
+
+                        if(IcanProcessCandidate){
+                            //get required data for processing
+                            const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];     
+                            
+                        
+                            const unsigned int* const query = myCandidateSequencesData + localCandidateIndex * encodedSequencePitchInInts;
+
+                            const char* const queryQualityScore = myCandidateQualities + std::size_t(localCandidateIndex) * qualityPitchInBytes;
+
+                            const int query_alignment_overlap = myOverlaps[localCandidateIndex];
+                            const int query_alignment_nops = myNops[localCandidateIndex];
+
+                            const float overlapweight = calculateOverlapWeight(
+                                subjectLength, 
+                                query_alignment_nops, 
+                                query_alignment_overlap,
+                                desiredAlignmentMaxErrorRate
+                            );
+
+                            assert(overlapweight <= 1.0f);
+                            assert(overlapweight >= 0.0f);
+                            assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
+
+                            const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+                            const bool isForward = flag == BestAlignment_t::Forward; 
+                                                       
+
+                            #pragma unroll
+                            for(int i = 0; i < itemsPerThread; i++){
+                                const int positionOfColumnInCandidate = myFirstColumn - defaultcolumnoffset + i;
+                                if(positionOfColumnInCandidate >= 0 && positionOfColumnInCandidate < queryLength){
+                                    //process
+
+                                    int positionInCandidate = positionOfColumnInCandidate;
+                                    if(!isForward){
+                                        positionInCandidate = queryLength - 1 - positionOfColumnInCandidate;
+                                    }
+
+                                    std::int8_t encodedBaseAsInt = SequenceHelpers::getEncodedNuc2Bit(query, queryLength, positionInCandidate);
+                                    if(!isForward){
+                                        encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
+                                    }
+                                    const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[positionInCandidate]) * overlapweight : overlapweight;
+
+                                    assert(weight != 0);
+                                    constexpr int doAdd = false;
+                                    if(encodedBaseAsInt == 0){
+                                        myweights[0][i] += (doAdd ? weight : -weight);
+                                        mycounts[0][i] += (doAdd ? 1 : -1);
+                                    } else if(encodedBaseAsInt == 1){
+                                        myweights[1][i] += (doAdd ? weight : -weight);
+                                        mycounts[1][i] += (doAdd ? 1 : -1);
+                                    } else if(encodedBaseAsInt == 2){
+                                        myweights[2][i] += (doAdd ? weight : -weight);
+                                        mycounts[2][i] += (doAdd ? 1 : -1);
+                                    } else if(encodedBaseAsInt == 3){
+                                        myweights[3][i] += (doAdd ? weight : -weight);
+                                        mycounts[3][i] += (doAdd ? 1 : -1);
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                }
+            
+                #pragma unroll
+                for(int i = 0; i < itemsPerThread; i++){
+                    if(myFirstColumn + i <= msasize){
+                        int sumcounts = 0;
+                        #pragma unroll
+                        for(int b = 0; b < 4; b++){
+                            counts[b * columnPitchInElements + myFirstColumn + i] += mycounts[b][i];
+                            weights[b * columnPitchInElements + myFirstColumn + i] += myweights[b][i];
+                            sumcounts += mycounts[b][i];
+                        }
+                        coverages[myFirstColumn + i] += sumcounts;
+                    }
                 }
             }
         }

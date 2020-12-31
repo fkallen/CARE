@@ -67,21 +67,31 @@ namespace care{
 
 
         if(!isSorted){
-            auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-                using ValueType = typename MemoryFile_t::ValueType;
-
-                const read_number id1 = ValueType::parseReadId(ptr1);
-                const read_number id2 = ValueType::parseReadId(ptr2);
-                
-                return id1 < id2;
-            };
 
             auto elementcomparator = [](const auto& l, const auto& r){
                 return l.getReadId() < r.getReadId();
             };
 
+            auto extractKey = [](const std::uint8_t* ptr){
+                using ValueType = typename MemoryFile_t::ValueType;
+
+                const read_number id = ValueType::parseReadId(ptr);
+                
+                return id;
+            };
+
+            auto keyComparator = std::less<read_number>{};
+
             helpers::CpuTimer timer("sort_results_by_read_id");
-            partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+
+            bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
+
+            if(!fastSuccess){            
+                partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
+            }else{
+                std::cerr << "fast sort worked!\n";
+            }
+
             timer.print();
         }
 

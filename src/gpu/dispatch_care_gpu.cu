@@ -1,11 +1,11 @@
 #include <dispatch_care.hpp>
-#include <gpu/gpuminhasher.cuh>
+#include <gpu/gpuminhasherconstruction.cuh>
+#include <gpu/fakegpuminhasher.cuh>
 
 #include <config.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-#include <minhasher.hpp>
-//#include <build.hpp>
+
 #include <gpu/distributedreadstorage.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
@@ -107,6 +107,8 @@ namespace care{
             std::cout << "No device ids found. Abort!" << std::endl;
             return;
         }
+
+        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
@@ -256,21 +258,115 @@ namespace care{
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
-        gpu::GpuMinhasher newGpuMinhasher(
+
+#if 1 
+
+        auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            correctionOptions,
+            totalInputFileProperties,
+            readStorage,
+            gpu::GpuMinhasherType::Single
+        );
+
+        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+
+        buildMinhasherTimer.print();
+
+        std::cout << "GpuMinhasher can use " << gpuMinhasher->getNumberOfMaps() << " maps\n";
+
+        if(gpuMinhasher->getNumberOfMaps() <= 0){
+            std::cout << "Cannot construct a single gpu hashtable. Abort!" << std::endl;
+            return;
+        }
+
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != gpuMinhasher->getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        if(minhasherAndType.second == gpu::GpuMinhasherType::Fake){
+
+            gpu::FakeGpuMinhasher* fakeGpuMinhasher = dynamic_cast<gpu::FakeGpuMinhasher*>(gpuMinhasher);
+            assert(fakeGpuMinhasher != nullptr);
+
+            if(fileOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+                std::ofstream os(fileOptions.save_hashtables_to);
+                assert((bool)os);
+                helpers::CpuTimer timer("save_to_file");
+                fakeGpuMinhasher->writeToStream(os);
+                timer.print();
+
+                std::cout << "Saved minhasher" << std::endl;
+            }
+
+        }
+
+        printDataStructureMemoryUsage(*gpuMinhasher, "hash tables");        
+
+        step1timer.print();
+
+
+#else
+
+#define WARPMIN
+
+#ifndef WARPMIN
+        gpu::FakeGpuMinhasher currentGpuMinhasher(
             correctionOptions.kmerlength, 
             calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
         );
+#endif
 
+#ifdef WARPMIN
+        //gpu::MultiGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength,{0, 0});
+        gpu::SingleGpuMinhasher sgpuMinhasher(totalInputFileProperties.nReads, calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), correctionOptions.kmerlength);
+
+
+        int validNumHashFunctions = sgpuMinhasher.constructFromReadStorage(
+            runtimeOptions,
+            totalInputFileProperties.nReads,
+            readStorage,
+            totalInputFileProperties.maxSequenceLength,
+            correctionOptions.numHashFunctions
+        );
+
+        if(validNumHashFunctions == 0){
+            std::cout << "Cannot construct a single gpu hashtable. Abort!" << std::endl;
+            return;
+        }
+
+        std::cerr << "warpcore minhasher can use " << validNumHashFunctions << " maps\n";
+
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != sgpuMinhasher.getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
+
+        
+
+#endif
+
+#ifndef WARPMIN
         if(fileOptions.load_hashtables_from != ""){
 
             std::ifstream is(fileOptions.load_hashtables_from);
             assert((bool)is);
 
-            const int loadedMaps = newGpuMinhasher.loadFromStream(is, correctionOptions.numHashFunctions);
+            const int loadedMaps = currentGpuMinhasher.loadFromStream(is, correctionOptions.numHashFunctions);
 
             std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
         }else{
-            newGpuMinhasher.construct(
+            currentGpuMinhasher.constructFromReadStorage(
                 fileOptions,
                 runtimeOptions,
                 memoryOptions,
@@ -280,7 +376,7 @@ namespace care{
             );
 
             if(correctionOptions.mustUseAllHashfunctions 
-                && correctionOptions.numHashFunctions != newGpuMinhasher.getNumberOfMaps()){
+                && correctionOptions.numHashFunctions != currentGpuMinhasher.getNumberOfMaps()){
                 std::cout << "Cannot use specified number of hash functions (" 
                     << correctionOptions.numHashFunctions <<")\n";
                 std::cout << "Abort!\n";
@@ -293,19 +389,225 @@ namespace care{
             std::ofstream os(fileOptions.save_hashtables_to);
             assert((bool)os);
             helpers::CpuTimer timer("save_to_file");
-            newGpuMinhasher.writeToStream(os);
+            currentGpuMinhasher.writeToStream(os);
             timer.print();
 
     		std::cout << "Saved minhasher" << std::endl;
         }
 
-        printDataStructureMemoryUsage(newGpuMinhasher, "hash tables");
-
-
-
+        printDataStructureMemoryUsage(currentGpuMinhasher, "hash tables");
+#endif
         buildMinhasherTimer.print();
 
         step1timer.print();
+
+#if 0        
+        //compare minhashers
+
+        {
+            CudaStream stream;
+            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(totalInputFileProperties.maxSequenceLength);
+            int batchsize = 1500;
+
+            const int batches = SDIV(totalInputFileProperties.nReads, batchsize);
+
+            gpu::GpuMinhasher::QueryHandle queryHandle1 = gpu::GpuMinhasher::makeQueryHandle();
+            gpu::SingleGpuMinhasher::QueryHandle queryHandle2 = gpu::SingleGpuMinhasher::makeQueryHandle();
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_readIds(batchsize);
+            helpers::SimpleAllocationDevice<read_number> d_readIds(batchsize);
+            helpers::SimpleAllocationDevice<int> d_sequenceLengths(batchsize);
+            helpers::SimpleAllocationDevice<unsigned int> d_encodedSequences(batchsize * encodedSequencePitchInInts);
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_similarReadIds(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequence(batchsize);
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum(batchsize+1);
+
+            helpers::SimpleAllocationPinnedHost<read_number> h_similarReadIds2(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequence2(batchsize);
+            helpers::SimpleAllocationPinnedHost<int> h_similarReadsPerSequencePrefixSum2(batchsize+1);
+
+            helpers::SimpleAllocationDevice<read_number> d_similarReadIds(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequence(batchsize);
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequencePrefixSum(batchsize+1);
+
+            helpers::SimpleAllocationDevice<read_number> d_similarReadIds2(batchsize * 48 * calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage));
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequence2(batchsize);
+            helpers::SimpleAllocationDevice<int> d_similarReadsPerSequencePrefixSum2(batchsize+1);
+
+            helpers::GpuTimer currentMinhasherTimer(stream, "current minhasher", 0);
+            helpers::GpuTimer warpcoreMinhasherTimer(stream, "warpcore minhasher", 0);
+
+            auto sequencehandle = readStorage.makeGatherHandleSequences();
+            std::cerr << "Checking hashes\n";
+            for(int batch = 0; batch < batches; batch++){
+
+                const int bbegin = batch * batchsize;
+                const int bend = std::min(int(totalInputFileProperties.nReads), (batch+1) * batchsize);
+                const int bsize = bend - bbegin;
+
+                for(int i = 0; i < bsize; i++){
+                    h_readIds[i] = bbegin + i;
+                }
+
+                cudaMemcpyAsync(d_readIds, h_readIds, h_readIds.sizeInBytes(), H2D, stream); CUERR;
+
+                readStorage.gatherSequenceDataToGpuBufferAsync(
+                    nullptr,
+                    sequencehandle,
+                    d_encodedSequences,
+                    encodedSequencePitchInInts,
+                    h_readIds,
+                    d_readIds,
+                    bsize,
+                    0,
+                    stream
+                );
+            
+                readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                    d_sequenceLengths,
+                    0,
+                    d_readIds,
+                    bsize,
+                    stream
+                );               
+
+                currentMinhasherTimer.start();
+
+                ForLoopExecutor forLoopExecutor(nullptr, nullptr);
+                helpers::CpuTimer oldTimer("oldTimer");
+                nvtx::push_range("oldminhasher", 0);
+                currentGpuMinhasher.getIdsOfSimilarReadsNormalExcludingSelfNew(
+                    queryHandle1,
+                    d_readIds,
+                    h_readIds,
+                    d_encodedSequences,
+                    encodedSequencePitchInInts,
+                    d_sequenceLengths,
+                    bsize,
+                    0, 
+                    stream,
+                    forLoopExecutor,
+                    d_similarReadIds,
+                    d_similarReadsPerSequence,
+                    d_similarReadsPerSequencePrefixSum
+                );
+                nvtx::pop_range();
+
+                cudaStreamSynchronize(stream); CUERR;
+                oldTimer.stop();
+                //oldTimer.print();
+                currentMinhasherTimer.stop();
+
+                warpcoreMinhasherTimer.start();
+
+                helpers::CpuTimer newTimer("newTimer");
+                nvtx::push_range("newminhasher", 0);
+                #if 0
+                sgpuMinhasher.queryExcludingSelf(
+                    queryHandle2,
+                    d_similarReadIds2,
+                    d_similarReadsPerSequence2,
+                    d_similarReadsPerSequencePrefixSum2,
+                    d_encodedSequences,
+                    bsize,
+                    d_sequenceLengths,
+                    encodedSequencePitchInInts,
+                    d_readIds,
+                    stream
+                );
+                #else
+                sgpuMinhasher.getIdsOfSimilarReadsNormalExcludingSelfNew(
+                    queryHandle2,
+                    d_readIds,
+                    h_readIds,
+                    d_encodedSequences,
+                    encodedSequencePitchInInts,
+                    d_sequenceLengths,
+                    bsize,
+                    0, 
+                    stream,
+                    forLoopExecutor,
+                    d_similarReadIds2,
+                    d_similarReadsPerSequence2,
+                    d_similarReadsPerSequencePrefixSum2
+                );
+                #endif
+                nvtx::pop_range();            
+
+                cudaStreamSynchronize(stream); CUERR;
+                newTimer.stop();
+                //newTimer.print();
+                warpcoreMinhasherTimer.stop();
+
+                cudaMemcpyAsync(h_similarReadIds, d_similarReadIds, d_similarReadIds.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequence, d_similarReadsPerSequence, d_similarReadsPerSequence.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequencePrefixSum, d_similarReadsPerSequencePrefixSum, d_similarReadsPerSequencePrefixSum.sizeInBytes(), D2H, stream); CUERR;
+
+                cudaMemcpyAsync(h_similarReadIds2, d_similarReadIds2, d_similarReadIds2.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequence2, d_similarReadsPerSequence2, d_similarReadsPerSequence2.sizeInBytes(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_similarReadsPerSequencePrefixSum2, d_similarReadsPerSequencePrefixSum2, d_similarReadsPerSequencePrefixSum2.sizeInBytes(), D2H, stream); CUERR;
+
+                cudaDeviceSynchronize(); CUERR;
+
+                for(int i = 0; i < bsize; i++){
+                //for(int i = 0; i < std::min(10, bsize); i++){
+                    // std::cerr << h_similarReadsPerSequence[i] << " , " << h_similarReadsPerSequence2[i] << "\n";
+                    // for(int p = 0; p < h_similarReadsPerSequence[i]; p++){
+                    //     std::cerr << h_similarReadIds[h_similarReadsPerSequencePrefixSum[i] + p] << ", ";
+                    // }
+                    // std::cerr << " AAA\n";
+
+                    // for(int p = 0; p < h_similarReadsPerSequence2[i]; p++){
+                    //     std::cerr << h_similarReadIds2[h_similarReadsPerSequencePrefixSum2[i] + p] << ", ";
+                    // }
+                    // std::cerr << " BBB\n";
+
+                    if(!(h_similarReadsPerSequence[i] == h_similarReadsPerSequence2[i])){
+                        std::cerr << "error batch " << batch << ", i = " << i << "\n";
+                        std::cerr << h_similarReadsPerSequence[i] << " != " << h_similarReadsPerSequence2[i] << "\n";
+                    }
+                    assert(h_similarReadsPerSequence[i] == h_similarReadsPerSequence2[i]);
+
+                    if(!(h_similarReadsPerSequencePrefixSum[i] == h_similarReadsPerSequencePrefixSum2[i])){
+                        std::cerr << "error prefixsum batch " << batch << ", i = " << i << "\n";
+                        std::cerr << h_similarReadsPerSequencePrefixSum[i] << " != " << h_similarReadsPerSequencePrefixSum2[i] << "\n";
+                    }
+                    assert(h_similarReadsPerSequencePrefixSum[i] == h_similarReadsPerSequencePrefixSum2[i]);
+                    
+                    for(int p = 0; p < h_similarReadsPerSequence[i]; p++){
+                        auto old = h_similarReadIds[h_similarReadsPerSequencePrefixSum[i] + p];
+                        auto notold = h_similarReadIds2[h_similarReadsPerSequencePrefixSum2[i] + p];
+
+                        if(!(old == notold)){
+                            std::cerr << "error batch " << batch << ", i = " << i << ", p = " << p << "\n";
+                            std::cerr << old << " != " << notold << "\n";
+                        }
+                        assert(old == notold);
+                    }
+                }
+
+                if(batch % (SDIV(batches,20)) == 0){
+                    std::cerr << batch << "/ " << batches << "\n";
+                }
+            }
+
+            std::cerr << "Checking hashes done\n";
+            currentMinhasherTimer.print();
+            warpcoreMinhasherTimer.print();
+
+        }
+
+#endif
+
+
+
+//#ifdef WARPMIN
+#if 0
+        currentGpuMinhasher.destroy();
+#endif
+
+#endif
 
         std::cout << "STEP 2: Error correction" << std::endl;
 
@@ -318,8 +620,7 @@ namespace care{
             fileOptions, 
             memoryOptions,
             totalInputFileProperties,
-            //minhasher, 
-            newGpuMinhasher,
+            *gpuMinhasher,                       
             readStorage
         );
 
@@ -327,7 +628,8 @@ namespace care{
 
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
 
-        newGpuMinhasher.destroy();
+        gpuMinhasher->destroy();
+
         readStorage.destroy();
 
         //Merge corrected reads with input file to generate output file

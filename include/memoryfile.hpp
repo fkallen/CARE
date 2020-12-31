@@ -226,23 +226,41 @@ struct MemoryFileFixedSize{
         return getNumElementsInMemory() + getNumElementsInFile();
     }
 
-    template<class Ptrcomparator, class TComparator>
-    void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, Ptrcomparator&& ptrcomparator, TComparator&& elementcomparator){
-    //void sort(const std::string& tempdir){
+    //returns true if operation was successful, else false. Does not work with elements in file
+    template<class Key, class ExtractKey, class KeyComparator>
+    bool trySortByKeyFast(
+        ExtractKey extractKey,
+        KeyComparator keyComparator,
+        std::size_t memoryForSortingInBytes
+    ){
+        if(getNumElementsInFile() > 0){
+            return false;
+        }
+        if(getNumElementsInMemory() == 0){
+            return true;
+        }
+
+        std::cerr << "Try sorting memory file fast:";
+        std::cerr << " elements in memory = " << getNumElementsInMemory() << "\n";
+
+        return memoryStorage.template trySortByKeyFast<Key>(extractKey, keyComparator, memoryForSortingInBytes);
+    }
+
+
+    template<class ExtractKey, class KeyComparator, class TComparator>
+    void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
+        //using Key = decltype(extractKey(nullptr));
+
         std::cerr << "Sorting memory file:";
         std::cerr << " elements in memory = " << getNumElementsInMemory();
         std::cerr << " elements in file = " << getNumElementsInFile();
         std::cerr << '\n';
 
-        // auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-        //     return ptrcomparator(memoryStorage.getElementsData() + elementOffset1, memoryStorage.getElementsData() + elementOffset2);
-        // };
-
         bool success = false;
 
         try{
             if(getNumElementsInFile() == 0){
-                memoryStorage.sort(ptrcomparator);
+                memoryStorage.sort(memoryForSortingInBytes, extractKey, keyComparator);
                 success = true;
             }
         }catch(...){
@@ -252,7 +270,6 @@ struct MemoryFileFixedSize{
         if(success){
             return;
         }
-
 
 
         //if all elements from memory and file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
@@ -290,17 +307,23 @@ struct MemoryFileFixedSize{
                     const bool inserted = newMemoryStorage.insert(*element, serialize);
                     assert(inserted);
                 }
-
-                newMemoryStorage.sort(ptrcomparator);
-
+                const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
+                memoryStorage.destroy();
                 std::swap(memoryStorage, newMemoryStorage);
+                memoryForSortingInBytes = memoryForSortingInBytes - requiredMemForAllElements + oldOccupiedBytes;
+
+                std::cerr << "Loaded every element from file to memory. memoryForSortingInBytes = " << memoryForSortingInBytes << "\n";
+
+                memoryStorage.sort(memoryForSortingInBytes, extractKey, keyComparator);
+
                 numStoredElementsInFile = 0;
                 outputstream = std::ofstream(filename, std::ios::binary);
             }
         }catch(...){
 
         }
-
+     
+    
         if(success){
             return;
         }
@@ -316,14 +339,12 @@ struct MemoryFileFixedSize{
         std::size_t numElements = getNumElements();
         numStoredElementsInFile = numElements;
         
+        const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
         memoryStorage.destroy();
 
-        memoryForSortingInBytes += memoryStorage.getSizeInBytes();
+        memoryForSortingInBytes += oldOccupiedBytes;
 
         //perform mergesort on file
-        auto wrapperptrcomparator = [&](const std::uint8_t* l, const std::uint8_t* r){
-            return ptrcomparator(l, r);
-        };
 
         auto wrappercomparator = [&](const auto& l, const auto& r){
             return elementcomparator(l.data, r.data);
@@ -335,12 +356,13 @@ struct MemoryFileFixedSize{
                         {filename}, 
                         filename+"2",
                         memoryForSortingInBytes,
-                        wrapperptrcomparator,
+                        extractKey, keyComparator,
                         wrappercomparator);
 
         filehelpers::renameFileSameMount(filename+"2", filename);
 
         outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);
+#        
     }
 
 private:

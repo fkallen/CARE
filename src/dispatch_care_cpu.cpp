@@ -7,10 +7,12 @@
 
 #include <correct_cpu.hpp>
 
-#include <minhasher.hpp>
+#include <minhasherlimit.hpp>
 
 #include <correctionresultprocessing.hpp>
 #include <sequencehelpers.hpp>
+#include <cpuminhasherconstruction.hpp>
+#include <ordinaryminhasher.hpp>
 
 #include <vector>
 #include <iostream>
@@ -192,54 +194,54 @@ namespace care{
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
-        Minhasher minhasher(
-            correctionOptions.kmerlength, 
-            calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage)
+        auto minhasherAndType = constructCpuMinhasherFromCpuReadStorage(
+            fileOptions,
+            runtimeOptions,
+            memoryOptions,
+            correctionOptions,
+            totalInputFileProperties,
+            readStorage,
+            CpuMinhasherType::Ordinary
         );
 
-        if(fileOptions.load_hashtables_from != ""){
-
-            std::ifstream is(fileOptions.load_hashtables_from);
-            assert((bool)is);
-
-            const int loadedMaps = minhasher.loadFromStream(is, correctionOptions.numHashFunctions);
-
-            std::cout << "Loaded " << loadedMaps << " hash tables from " << fileOptions.load_hashtables_from << std::endl;
-        }else{
-            minhasher.construct(
-                fileOptions,
-                runtimeOptions,
-                memoryOptions,
-                totalInputFileProperties.nReads, 
-                correctionOptions,
-                readStorage
-            );
-
-            if(correctionOptions.mustUseAllHashfunctions 
-                && correctionOptions.numHashFunctions != minhasher.getNumberOfMaps()){
-                std::cout << "Cannot use specified number of hash functions (" 
-                    << correctionOptions.numHashFunctions <<")\n";
-                std::cout << "Abort!\n";
-                return;
-            }
-        }
+        CpuMinhasher* const cpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
-        if(fileOptions.save_hashtables_to != "") {
-            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
-            std::ofstream os(fileOptions.save_hashtables_to);
-            assert((bool)os);
-            helpers::CpuTimer timer("save_to_file");
-            minhasher.writeToStream(os);
-            timer.print();
+        std::cout << "CpuMinhasher can use " << cpuMinhasher->getNumberOfMaps() << " maps\n";
 
-    		std::cout << "Saved minhasher" << std::endl;
+        if(cpuMinhasher->getNumberOfMaps() <= 0){
+            std::cout << "Cannot construct a single cpu hashtable. Abort!" << std::endl;
+            return;
         }
 
+        if(correctionOptions.mustUseAllHashfunctions 
+            && correctionOptions.numHashFunctions != cpuMinhasher->getNumberOfMaps()){
+            std::cout << "Cannot use specified number of hash functions (" 
+                << correctionOptions.numHashFunctions <<")\n";
+            std::cout << "Abort!\n";
+            return;
+        }
 
+        if(minhasherAndType.second == CpuMinhasherType::Ordinary){
 
-        printDataStructureMemoryUsage(minhasher, "hash tables");
+            OrdinaryCpuMinhasher* ordinaryCpuMinhasher = dynamic_cast<OrdinaryCpuMinhasher*>(cpuMinhasher);
+            assert(ordinaryCpuMinhasher != nullptr);
+
+            if(fileOptions.save_hashtables_to != "") {
+                std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+                std::ofstream os(fileOptions.save_hashtables_to);
+                assert((bool)os);
+                helpers::CpuTimer timer("save_to_file");
+                ordinaryCpuMinhasher->writeToStream(os);
+                timer.print();
+
+                std::cout << "Saved minhasher" << std::endl;
+            }
+
+        }
+
+        printDataStructureMemoryUsage(*cpuMinhasher, "hash tables");
 
         step1Timer.print();
 
@@ -254,7 +256,7 @@ namespace care{
             fileOptions, 
             memoryOptions, 
             totalInputFileProperties,
-            minhasher, 
+            *cpuMinhasher, 
             //readStorage
             readStorage
         );
@@ -263,7 +265,7 @@ namespace care{
 
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2Timer.elapsed()) << " reads/second.\n";
 
-        minhasher.destroy();
+        cpuMinhasher->destroy();
         readStorage.destroy();
 
         const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;

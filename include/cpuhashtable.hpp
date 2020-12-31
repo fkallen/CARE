@@ -26,6 +26,7 @@
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
+#include <gpu/gpuhashtable.cuh>
 #include <cooperative_groups.h>
 #endif
 
@@ -593,6 +594,216 @@ namespace cpuhashtabledetail{
             }
         };
      
+    #ifdef CARE_HAS_WARPCORE
+        template<class Key, class Value, class PsInt>
+        struct WarpcoreTransformer{
+            using GpuMultiValueHashTable = care::gpu::GpuHashtable<Key, Value>;
+            
+            struct Result{
+                bool success;
+            };
+
+            static Result execute(
+                std::vector<Key>& keys, 
+                std::vector<Value>& values, 
+                std::vector<PsInt>& countsPrefixSum, 
+                const std::vector<int>& deviceIds,
+                int maxValuesPerKey,
+                bool valuesOfSameKeyMustBeSorted = true
+            ){
+
+                assert(keys.size() == values.size());
+                assert(std::numeric_limits<PsInt>::max() >= keys.size());
+                assert(deviceIds.size() > 0);
+
+                if(keys.empty()){
+                    std::cerr << "Want to transform empty map!\n";
+                    assert(false);
+                    //return true;
+                }
+
+                int oldDeviceId;
+                cudaError_t setupStatus = cudaGetDevice(&oldDeviceId);
+                if(setupStatus != cudaSuccess) //we cannot recover from this.
+                    throw std::runtime_error("Could not query current device id!");
+
+                setupStatus = cudaSetDevice(deviceIds.front()); //TODO choose appropriate id from deviceIds
+                if(setupStatus != cudaSuccess) //we cannot recover from this.
+                    throw std::runtime_error("Could not set device id!");
+
+                CudaStream stream;
+
+                constexpr float load = 0.8f;
+                std::size_t tablecapacity = keys.size() / load;
+                
+                auto gputable = std::make_unique<GpuMultiValueHashTable>(
+                    keys.size(), load, (maxValuesPerKey + 1)
+                );
+
+                warpcore::Status tablestatus = gputable->pop_status(stream);
+                cudaStreamSynchronize(stream); CUERR;
+                if(tablestatus.has_any_errors()){
+                    Result res;
+                    res.success = false;
+                    return res;
+                }
+
+                auto deallocVector = [](auto& vec){
+                    using T = typename std::remove_reference<decltype(vec)>::type;
+                    T tmp{};
+                    vec.swap(tmp);
+                };
+
+                constexpr int numstreams = 3;
+                const std::size_t batchsize = 1000000;
+                const std::size_t iters =  SDIV(keys.size(), batchsize);
+                std::array<helpers::SimpleAllocationPinnedHost<Key>, numstreams> h_keys_array{};
+                std::array<helpers::SimpleAllocationDevice<Key>, numstreams> d_keys_array{};
+                std::array<helpers::SimpleAllocationPinnedHost<Value>, numstreams> h_values_array{};
+                std::array<helpers::SimpleAllocationDevice<Value>, numstreams> d_values_array{};
+                std::array<CudaStream, numstreams> stream_array{};
+
+                for(int i = 0; i < numstreams; i++){
+                    h_keys_array[i].resize(std::min(batchsize, keys.size()));
+                    d_keys_array[i].resize(std::min(batchsize, keys.size()));
+                    h_values_array[i].resize(std::min(batchsize, keys.size()));
+                    d_values_array[i].resize(std::min(batchsize, keys.size()));
+                }
+
+                //std::ofstream cpukeysoutput("cpukeysoutput.txt");
+#if 1
+                // for(std::size_t i = 0; i < numstreams - 1; i++){
+                //     const std::size_t begin = i * batchsize;
+                //     const std::size_t end = std::min((i+1) * batchsize, keys.size());
+                //     const std::size_t num = end - begin;
+
+                //     const int which = i % numstreams;
+
+                //     std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
+                //     cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                //     care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
+                //     std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
+                //     cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    
+                //     gputable->insert(
+                //         d_keys_array[which].data(),
+                //         d_values_array[which].data(),
+                //         num,
+                //         stream_array[which],
+                //         nullptr
+                //     );
+                // }                
+
+                for(std::size_t i = 0; i < iters; i++){
+                    const std::size_t begin = i * batchsize;
+                    const std::size_t end = std::min((i+1) * batchsize, keys.size());
+                    const std::size_t num = end - begin;
+
+                    const int which = i % numstreams;
+                    cudaStreamSynchronize(stream_array[which]); CUERR;
+
+                    std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
+                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
+                    std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
+                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    
+                    gputable->insert(
+                        d_keys_array[which].data(),
+                        d_values_array[which].data(),
+                        num,
+                        stream_array[which],
+                        nullptr
+                    );
+                }
+
+                for(int i = 0; i < numstreams; i++){
+                    cudaStreamSynchronize(stream_array[i]); CUERR;
+                }
+
+#else
+                for(std::size_t i = 0; i < 1; i++){
+                    const std::size_t begin = i * batchsize;
+                    const std::size_t end = std::min((i+1) * batchsize, keys.size());
+                    const std::size_t num = end - begin;
+
+                    const int which = i % 2;
+                    cudaStreamSynchronize(stream_array[which]); CUERR;
+
+                    std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
+                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
+                    std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
+                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    
+                    gputable->insert(
+                        d_keys_array[which].data(),
+                        d_values_array[which].data(),
+                        num,
+                        stream_array[which],
+                        nullptr
+                    );
+                }                
+
+                for(std::size_t i = 1; i < iters; i++){
+                    const std::size_t begin = i * batchsize;
+                    const std::size_t end = std::min((i+1) * batchsize, keys.size());
+                    const std::size_t num = end - begin;
+
+                    const int which = i % 2;
+                    cudaStreamSynchronize(stream_array[which]); CUERR;
+
+                    std::copy_n(keys.begin() + begin, num, h_keys_array[which].begin());
+                    cudaMemcpyAsync(d_keys_array[which].data(), h_keys_array[which].data(), sizeof(Key) * num, H2D, stream_array[which]); CUERR;
+                    care::gpu::fixKeysForGpuHashTable(d_keys_array[which].data(), num, stream_array[which]);
+                    std::copy_n(values.begin() + begin, num, h_values_array[which].begin());
+                    cudaMemcpyAsync(d_values_array[which].data(), h_values_array[which].data(), sizeof(Value) * num, H2D, stream_array[which]); CUERR;
+                    
+                    gputable->insert(
+                        d_keys_array[which].data(),
+                        d_values_array[which].data(),
+                        num,
+                        stream_array[which],
+                        nullptr
+                    );
+                }
+
+                cudaStreamSynchronize(stream_array[0]); CUERR;
+                cudaStreamSynchronize(stream_array[1]); CUERR;
+#endif                
+
+                tablestatus = gputable->pop_status(stream);
+                cudaStreamSynchronize(stream); CUERR;
+                if(tablestatus.has_any_errors()){
+                    Result res;
+                    res.success = false;
+                    return res;
+                }
+
+                deallocVector(keys);
+                deallocVector(countsPrefixSum);
+
+                std::size_t numUniqueKeys = gputable->getNumUniqueKeys();
+                keys.resize(numUniqueKeys);
+                countsPrefixSum.resize(numUniqueKeys+1);
+
+                std::cerr << "start compaction\n";
+                gputable->compactIntoHostBuffers(keys.data(), values.data(), countsPrefixSum.data());
+                std::cerr << "end compaction\n";
+
+                setupStatus = cudaSetDevice(oldDeviceId);
+                if(setupStatus != cudaSuccess) //we cannot recover from this.
+                    throw std::runtime_error("Could not revert device id!");
+
+                Result res;
+                res.success = true;
+                return res;
+            }
+                            //Try to build a warpcore hashtable and copy it back to cpu
+
+        };
+    #endif // #ifdef CARE_HAS_WARPCORE
+    
     #endif
 }
 
@@ -678,6 +889,8 @@ namespace cpuhashtabledetail{
         ){
             assert(keys.size() == vals.size());
 
+            if(isInit) return;
+
             std::vector<read_number> countsPrefixSum;
             values = std::move(vals);
 
@@ -725,7 +938,7 @@ namespace cpuhashtabledetail{
             isInit = true;
         }
 
-        void insert(Key* keys, Value* values, int N){
+        void insert(const Key* keys, const Value* values, int N){
             assert(keys != nullptr);
             assert(values != nullptr);
             assert(buildMaxNumValues >= buildkeys.size() + N);

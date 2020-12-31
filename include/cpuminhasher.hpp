@@ -1,22 +1,16 @@
-#ifndef CARE_GPUMINHASHER_CUH
-#define CARE_GPUMINHASHER_CUH
-
-
-#ifdef __NVCC__
+#ifndef CARE_CPUMINHASHER_HPP
+#define CARE_CPUMINHASHER_HPP
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
-#include <gpu/distributedreadstorage.hpp>
-
 #include <cstdint>
 
 namespace care{
-namespace gpu{
 
-class GpuMinhasher{
+class CpuMinhasher{
 public:
     class QueryHandle{
-    friend class GpuMinhasher;
+    friend class CpuMinhasher;
     public:
 
         int getId() const noexcept{
@@ -28,38 +22,35 @@ public:
         QueryHandle(int i) : id(i){}
 
         int id;
-        //const GpuMinhasher* parent;
     };
 
     using Key = kmer_type;
 
-    virtual ~GpuMinhasher() = default;
+    virtual ~CpuMinhasher() = default;
 
     virtual QueryHandle makeQueryHandle() const = 0;
 
     virtual void determineNumValues(
         QueryHandle& queryHandle,
-        const unsigned int* d_sequenceData2Bit,
+        const unsigned int* h_sequenceData2Bit,
         std::size_t encodedSequencePitchInInts,
-        const int* d_sequenceLengths,
+        const int* h_sequenceLengths,
         int numSequences,
-        int* d_numValuesPerSequence,
-        int& totalNumValues,
-        cudaStream_t stream
+        int* h_numValuesPerSequence,
+        int& totalNumValues
     ) const = 0;
 
     virtual void retrieveValues(
         QueryHandle& queryHandle,
-        const read_number* d_readIds,
+        const read_number* h_readIds,
         int numSequences,
         int totalNumValues,
-        read_number* d_values,
-        int* d_numValuesPerSequence,
-        int* d_offsets, //numSequences + 1
-        cudaStream_t stream
+        read_number* h_values,
+        int* h_numValuesPerSequence,
+        int* h_offsets //numSequences + 1
     ) const = 0;
 
-    virtual void compact(cudaStream_t stream) = 0;
+    virtual void compact() = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
@@ -80,9 +71,10 @@ protected:
 
 
 
-} //namespace gpu
-} //namespace care
+}
 
 
-#endif
+
+
+
 #endif

@@ -5,6 +5,8 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpumsa.cuh>
 
+#include <gpu/minhashingkernels.cuh>
+
 #include <bestalignment.hpp>
 #include <correctionresultprocessing.hpp>
 
@@ -453,6 +455,9 @@ void callConversionKernel2BitTo2BitHiLoTT(
             int maxNumSequences,
             cudaStream_t stream,
             KernelLaunchHandle& handle);            
+
+
+
 
 
 

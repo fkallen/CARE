@@ -37,6 +37,7 @@ namespace care{
 		int threads = 1;
         bool showProgress = false;
         bool canUseGpu = false;
+        int warpcore = 0;
         std::vector<int> deviceIds;
 	};
 

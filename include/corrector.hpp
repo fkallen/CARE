@@ -5,7 +5,8 @@
 
 #include <options.hpp>
 
-#include <minhasher.hpp>
+#include <cpuminhasher.hpp>
+
 #include <readstorage.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
@@ -69,26 +70,6 @@ namespace care{
         mutable cpu::ContiguousReadStorage::GatherHandle gatherHandle{};
     };
 
-    class CpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
-    public: 
-        CpuMinhasherCandidateIdsProvider(const Minhasher& minhasher_) : minhasher{&minhasher_} {
-
-        }
-    private:
-        void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const override{
-            minhasher->getCandidates_any_map(
-                minhashHandle,
-                anchor,
-                size,
-                0
-            );
-
-            std::swap(ids, minhashHandle.allUniqueResults);
-        }
-
-        const Minhasher* minhasher;
-        mutable Minhasher::Handle minhashHandle;
-    };
 
 class CpuErrorCorrector{
 public:
@@ -190,7 +171,8 @@ public:
         std::size_t qualityPitchInBytes_,
         const CorrectionOptions& correctionOptions_,
         const GoodAlignmentProperties& goodAlignmentProperties_,
-        const CandidateIdsProvider& candidateIdsProvider_,
+        //const CandidateIdsProvider& candidateIdsProvider_,
+        const CpuMinhasher* minhasher_,
         ReadProvider& readProvider_,
         ReadCorrectionFlags& correctionFlags_
     ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
@@ -198,7 +180,9 @@ public:
         qualityPitchInBytes(qualityPitchInBytes_),
         correctionOptions(&correctionOptions_),
         goodAlignmentProperties(&goodAlignmentProperties_),
-        candidateIdsProvider(&candidateIdsProvider_),
+        //candidateIdsProvider(&candidateIdsProvider_),
+        minhasher{minhasher_},
+        minhashHandle{minhasher_->makeQueryHandle()},
         readProvider(&readProvider_),
         correctionFlags(&correctionFlags_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
@@ -646,11 +630,38 @@ private:
 
             assert(task.input.anchorLength == int(task.decodedAnchor.size()));
 
-            candidateIdsProvider->getCandidates(
-                task.candidateReadIds,
-                task.decodedAnchor.data(),
-                task.decodedAnchor.size()
+            // candidateIdsProvider->getCandidates(
+            //     task.candidateReadIds,
+            //     task.decodedAnchor.data(),
+            //     task.decodedAnchor.size()
+            // );
+            int numPerSequence = 0;
+            int maxnumcandidates = 0;
+            std::array<int, 2> offsets;
+
+            minhasher->determineNumValues(
+                minhashHandle,
+                task.input.encodedAnchor,
+                encodedSequencePitchInInts,
+                &task.input.anchorLength,
+                1,
+                &numPerSequence,
+                maxnumcandidates
             );
+
+            task.candidateReadIds.resize(maxnumcandidates);
+
+            minhasher->retrieveValues(
+                minhashHandle,
+                nullptr,
+                1,
+                maxnumcandidates,
+                task.candidateReadIds.data(),
+                &numPerSequence,
+                offsets.data()
+            );
+
+            task.candidateReadIds.erase(task.candidateReadIds.begin() + numPerSequence, task.candidateReadIds.end());
 
             //remove self
             auto readIdPos = std::lower_bound(task.candidateReadIds.begin(),
@@ -701,11 +712,39 @@ private:
             //exclude anchors with ambiguous bases
             if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
-                candidateIdsProvider->getCandidates(
-                    candidateIds,
-                    decodedAnchor.data(),
-                    decodedAnchor.size()
+                // candidateIdsProvider->getCandidates(
+                //     candidateIds,
+                //     decodedAnchor.data(),
+                //     decodedAnchor.size()
+                // );
+
+                int numPerSequence = 0;
+                int maxnumcandidates = 0;
+                std::array<int, 2> offsets;
+
+                minhasher->determineNumValues(
+                    minhashHandle,
+                    multiInput.encodedAnchors[i],
+                    encodedSequencePitchInInts,
+                    &readlength,
+                    1,
+                    &numPerSequence,
+                    maxnumcandidates
                 );
+
+                candidateIds.resize(maxnumcandidates);
+
+                minhasher->retrieveValues(
+                    minhashHandle,
+                    nullptr,
+                    1,
+                    maxnumcandidates,
+                    candidateIds.data(),
+                    &numPerSequence,
+                    offsets.data()
+                );
+
+                candidateIds.erase(candidateIds.begin() + numPerSequence, candidateIds.end());
 
                 //remove self
                 auto readIdPos = std::lower_bound(candidateIds.begin(),
@@ -1446,7 +1485,9 @@ private:
 
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
-    const CandidateIdsProvider* candidateIdsProvider{};
+    const CpuMinhasher* minhasher;
+    mutable CpuMinhasher::QueryHandle minhashHandle;
+    //const CandidateIdsProvider* candidateIdsProvider{};
     ReadProvider* readProvider{};
 
     ReadCorrectionFlags* correctionFlags{};

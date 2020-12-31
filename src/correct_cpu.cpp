@@ -7,7 +7,7 @@
 
 #include "options.hpp"
 
-#include <minhasher.hpp>
+
 #include <readstorage.hpp>
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
@@ -24,7 +24,7 @@
 
 #define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
-
+#include <cpuminhasher.hpp>
 
 #include <array>
 #include <chrono>
@@ -54,7 +54,8 @@ correct_cpu(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const SequenceFileProperties& sequenceFileProperties,
-    Minhasher& minhasher,
+    //Minhasher& minhasher,
+    CpuMinhasher& minhasher,
     cpu::ContiguousReadStorage& readStorage
 ){
 
@@ -147,7 +148,7 @@ correct_cpu(
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 
         std::unique_ptr<ReadProvider> readProvider = std::make_unique<CpuReadStorageReadProvider>(readStorage);
-        std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<CpuMinhasherCandidateIdsProvider>(minhasher);
+        //std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<CpuMinhasherCandidateIdsProvider>(minhasher);
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
@@ -155,7 +156,8 @@ correct_cpu(
             qualityPitchInBytes,
             correctionOptions,
             goodAlignmentProperties,
-            *candidateIdsProvider,
+            //*candidateIdsProvider,
+            &minhasher,
             *readProvider,
             correctionFlags
         );
