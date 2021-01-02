@@ -111,6 +111,8 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
 
     std::size_t requiredBytes = 2 * sizeOfKeys + sizeOfValues;
 
+    std::cerr << "requiredBytes: " << requiredBytes << ", memoryLimitBytes: " << memoryLimitBytes << '\n';
+
     if(requiredBytes >= memoryLimitBytes){
         std::cerr << sizeOfValues << " " <<  sizeOfKeys << " " << memoryLimitBytes << "\n";
         return false;
@@ -202,6 +204,8 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     std::size_t freeMem,totalMem;
     cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+
+    std::cerr << "free gpu mem: " << freeMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
 
     void* temp_storage = nullptr;
     if(freeMem > temp_storage_bytes){
