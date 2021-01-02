@@ -351,12 +351,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                     std::swap(readWithId.read.sequence, anchorIter->sequence);
                 }
 
-                if(!isValidSequence(readWithId.read.sequence)){
-                    std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                            << " with header " << readWithId.read.header
-                            << "does contain an invalid DNA base!\n"
-                            << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
-                }
+                // if(!isValidSequence(readWithId.read.sequence)){
+                //     std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                //             << " with header " << readWithId.read.header
+                //             << " does contain an invalid DNA base!\n"
+                //             << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
+                // }
 
                 //assert(anchorIter->sequence.size() == originalSequence.size());
                 CombinedCorrectionResult result;
