@@ -241,8 +241,8 @@ private:
                 //std::cerr << "lengthToHash = " << lengthToHash << "\n";
 
                 std::vector<char> buf(task.currentAnchorLength);
-                decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
-                encodeSequence2Bit(
+                SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+                SequenceHelpers::encodeSequence2Bit(
                     h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
                     buf.data() + task.currentAnchorLength - lengthToHash, 
                     lengthToHash
@@ -266,10 +266,8 @@ private:
             H2D,
             stream
         ); CUERR;
-
-        #endif
-
-        gpuMinhasher->getIdsOfSimilarReads(
+        
+        gpuMinhasher->query(
             gpuMinhashHandle,
             d_subjectSequencesData.get(), //device accessible
             encodedSequencePitchInInts2Bit,
@@ -277,7 +275,6 @@ private:
             numIndices,
             deviceId, 
             stream,
-            SequentialForLoopExecutor{},
             d_candidateReadIds.get(), //device accessible
             d_numCandidatesPerAnchor.get(), //device accessible
             d_numCandidatesPerAnchorPrefixSum.get() //device accessible

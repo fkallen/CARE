@@ -5,7 +5,7 @@
 
 #include <bestalignment.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <hostdevicefunctions.cuh>
 
@@ -153,10 +153,6 @@ namespace gpu{
         const int n_subjects = *numAnchorsPtr;
         const int n_candidates = *numCandidatesPtr;
 
-        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
-        };
-
         auto no_bank_conflict_index = [](int logical_index) -> int {
             return logical_index * blockDim.x;
         };
@@ -255,7 +251,7 @@ namespace gpu{
             const int candidateIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
 
             const int subjectbases = subjectSequencesLength[subjectIndex];
-            const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
+            const int subjectints = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectbases);
             const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
 
             //save subject in shared memory (in parallel, per tile)
@@ -271,7 +267,7 @@ namespace gpu{
             if(candidateIndex < maxCandidateIndex_excl){
                 if(!(removeAmbiguousAnchors && anchorContainsN[subjectIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
                     const int querybases = candidateSequencesLength[candidateIndex];
-                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
                     const int totalbases = subjectbases + querybases;
                     const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
@@ -299,7 +295,7 @@ namespace gpu{
                         const bool isReverseComplement = orientation == 1;
 
                         if(isReverseComplement) {
-                            make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
+                            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo(queryBackup, querybases, no_bank_conflict_index);
                         }
 
                         //begin SHD algorithm
@@ -453,7 +449,7 @@ namespace gpu{
         const int n_candidates = *numCandidatesPtr;
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
+            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
         };
 
         auto no_bank_conflict_index = [](int logical_index) -> int {
@@ -554,7 +550,7 @@ namespace gpu{
             const int candidateIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
 
             const int subjectbases = subjectSequencesLength[subjectIndex];
-            const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
+            const int subjectints = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectbases);
             const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
 
             //save subject in shared memory (in parallel, per tile)
@@ -570,7 +566,7 @@ namespace gpu{
             if(candidateIndex < maxCandidateIndex_excl){
                 if(!(removeAmbiguousAnchors && anchorContainsN[subjectIndex]) && !(removeAmbiguousCandidates && candidateContainsN[candidateIndex])){
                     const int querybases = candidateSequencesLength[candidateIndex];
-                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
                     const int totalbases = subjectbases + querybases;
                     const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
@@ -698,7 +694,6 @@ namespace gpu{
             }
         }
     }
-
 
 
     /*
@@ -892,39 +887,31 @@ namespace gpu{
         unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
 
         auto reverseComplementQuery = [&](int querylength, int validInts){
-            auto reverse_complement_int = [](auto n) {
-                n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
-                n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
-                n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
-                n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
-                n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
-                return ~n;
-            };
 
             constexpr int N = maxValidIntsPerSequence / 2;
 
             #pragma unroll
             for(int i = 0; i < N/2; ++i){
-                const unsigned int hifront = reverse_complement_int(queryBackupHi[i]);
-                const unsigned int hiback = reverse_complement_int(queryBackupHi[N - 1 - i]);
+                const unsigned int hifront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[i]);
+                const unsigned int hiback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[N - 1 - i]);
                 queryBackupHi[i] = hiback;
                 queryBackupHi[N - 1 - i] = hifront;
     
-                const unsigned int lofront = reverse_complement_int(queryBackupLo[i]);
-                const unsigned int loback = reverse_complement_int(queryBackupLo[N - 1 - i]);
+                const unsigned int lofront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[i]);
+                const unsigned int loback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[N - 1 - i]);
                 queryBackupLo[i] = loback;
                 queryBackupLo[N - 1 - i] = lofront;
             }
 
             if(N % 2 == 1){
                 constexpr int middleindex = N/2;
-                queryBackupHi[middleindex] = reverse_complement_int(queryBackupHi[middleindex]);
-                queryBackupLo[middleindex] = reverse_complement_int(queryBackupLo[middleindex]);
+                queryBackupHi[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[middleindex]);
+                queryBackupLo[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[middleindex]);
             }
 
             //fix unused data
 
-            const int unusedInts = N - getEncodedNumInts2BitHiLo(querylength) / 2;
+            const int unusedInts = N - SequenceHelpers::getEncodedNumInts2BitHiLo(querylength) / 2;
             if(unusedInts > 0){
                 for(int iter = 0; iter < unusedInts; iter++){
                     #pragma unroll
@@ -984,8 +971,8 @@ namespace gpu{
 
                     //begin SHD algorithm
 
-                    const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
-                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int subjectints = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectbases);
+                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
                     const int totalbases = subjectbases + querybases;
                     const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
@@ -1312,39 +1299,31 @@ namespace gpu{
         unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
 
         auto reverseComplementQuery = [&](int querylength, int validInts){
-            auto reverse_complement_int = [](auto n) {
-                n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
-                n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
-                n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
-                n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
-                n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
-                return ~n;
-            };
 
             constexpr int N = maxValidIntsPerSequence / 2;
 
             #pragma unroll
             for(int i = 0; i < N/2; ++i){
-                const unsigned int hifront = reverse_complement_int(queryBackupHi[i]);
-                const unsigned int hiback = reverse_complement_int(queryBackupHi[N - 1 - i]);
+                const unsigned int hifront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[i]);
+                const unsigned int hiback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[N - 1 - i]);
                 queryBackupHi[i] = hiback;
                 queryBackupHi[N - 1 - i] = hifront;
     
-                const unsigned int lofront = reverse_complement_int(queryBackupLo[i]);
-                const unsigned int loback = reverse_complement_int(queryBackupLo[N - 1 - i]);
+                const unsigned int lofront = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[i]);
+                const unsigned int loback = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[N - 1 - i]);
                 queryBackupLo[i] = loback;
                 queryBackupLo[N - 1 - i] = lofront;
             }
 
             if(N % 2 == 1){
                 constexpr int middleindex = N/2;
-                queryBackupHi[middleindex] = reverse_complement_int(queryBackupHi[middleindex]);
-                queryBackupLo[middleindex] = reverse_complement_int(queryBackupLo[middleindex]);
+                queryBackupHi[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupHi[middleindex]);
+                queryBackupLo[middleindex] = SequenceHelpers::reverseComplementInt2BitHiLoHalf(queryBackupLo[middleindex]);
             }
 
             //fix unused data
 
-            const int unusedInts = N - getEncodedNumInts2BitHiLo(querylength) / 2;
+            const int unusedInts = N - SequenceHelpers::getEncodedNumInts2BitHiLo(querylength) / 2;
             if(unusedInts > 0){
                 for(int iter = 0; iter < unusedInts; iter++){
                     #pragma unroll
@@ -1404,8 +1383,8 @@ namespace gpu{
 
                     //begin SHD algorithm
 
-                    const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
-                    const int queryints = getEncodedNumInts2BitHiLo(querybases);
+                    const int subjectints = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectbases);
+                    const int queryints = SequenceHelpers::getEncodedNumInts2BitHiLo(querybases);
                     const int totalbases = subjectbases + querybases;
                     const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
@@ -1687,7 +1666,7 @@ namespace gpu{
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
-        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
@@ -1835,7 +1814,7 @@ namespace gpu{
         cudaStream_t stream,
         KernelLaunchHandle& handle){
 
-        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
@@ -1993,7 +1972,7 @@ namespace gpu{
             d_tiles_per_subject(d_candidates_per_subject,
                             getTilesPerSubject);
 
-        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
@@ -2117,16 +2096,16 @@ namespace gpu{
             //     thread_data,
             //     numItems,
             //     0
-            // )	
+            // )    
 
             // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
 
             // cub::StoreDirectBlocked(
-            //     	int 	linear_tid,
-            //     OutputIteratorT 	block_itr,
-            //     T(&) 	items[ITEMS_PER_THREAD],
-            //     int 	valid_items 
-            //     )	
+            //         int     linear_tid,
+            //     OutputIteratorT     block_itr,
+            //     T(&)     items[ITEMS_PER_THREAD],
+            //     int     valid_items 
+            //     )    
         }); CUERR;
 
 
@@ -2255,7 +2234,7 @@ namespace gpu{
             d_tiles_per_subject(d_candidates_per_subject,
                             getTilesPerSubject);
 
-        const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+        const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
         const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
@@ -2379,16 +2358,16 @@ namespace gpu{
             //     thread_data,
             //     numItems,
             //     0
-            // )	
+            // )    
 
             // BlockScan(temp_storage).InclusiveSum(thread_data, thread_data, T &block_aggregate)
 
             // cub::StoreDirectBlocked(
-            //     	int 	linear_tid,
-            //     OutputIteratorT 	block_itr,
-            //     T(&) 	items[ITEMS_PER_THREAD],
-            //     int 	valid_items 
-            //     )	
+            //         int     linear_tid,
+            //     OutputIteratorT     block_itr,
+            //     T(&)     items[ITEMS_PER_THREAD],
+            //     int     valid_items 
+            //     )    
         }); CUERR;
 
 
@@ -2801,90 +2780,95 @@ namespace gpu{
                 BestAlignment_t* d_bestAlignmentFlags,
                 const int* d_nOps,
                 const int* d_overlaps,
-    			const int* d_candidates_per_subject_prefixsum,
-    			const int* d_numAnchors,
+                const int* d_candidates_per_subject_prefixsum,
+                const int* d_numAnchors,
                 const int* d_numCandidates,
                 int maxNumAnchors,
                 int maxNumCandidates,
-    			float mismatchratioBaseFactor,
-    			float goodAlignmentsCountThreshold,
-    			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+                float mismatchratioBaseFactor,
+                float goodAlignmentsCountThreshold,
+                cudaStream_t stream,
+                KernelLaunchHandle& handle){
 
-    	const int blocksize = 128;
-    	const std::size_t smem = 0;
+        constexpr int requestedBlocksize = 128;
+        const std::size_t smem = 0;
 
-    	int max_blocks_per_device = 1;
+        int max_blocks_per_device = 1;
 
-    	KernelLaunchConfig kernelLaunchConfig;
-    	kernelLaunchConfig.threads_per_block = blocksize;
-    	kernelLaunchConfig.smem = smem;
 
-    	auto iter = handle.kernelPropertiesMap.find(KernelId::FilterAlignmentsByMismatchRatio);
-    	if(iter == handle.kernelPropertiesMap.end()) {
+        auto iter = handle.kernelPropertiesMap.find(KernelId::FilterAlignmentsByMismatchRatio);
+        if(iter == handle.kernelPropertiesMap.end()) {
 
-    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
 
-    	    #define getProp(blocksize) { \
-                    KernelLaunchConfig kernelLaunchConfig; \
-                    kernelLaunchConfig.threads_per_block = (blocksize); \
-                    kernelLaunchConfig.smem = 0; \
+            #define getProp(blocksize) { \
+                    KernelLaunchConfig klc; \
+                    klc.threads_per_block = (blocksize); \
+                    klc.smem = 0; \
                     KernelProperties kernelProperties; \
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                                 cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)>, \
-                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                    mymap[kernelLaunchConfig] = kernelProperties; \
+                                klc.threads_per_block, klc.smem); CUERR; \
+                    mymap[klc] = kernelProperties; \
             }
 
-    		getProp(32);
-    		getProp(64);
-    		getProp(96);
-    		getProp(128);
-    		getProp(160);
-    		getProp(192);
-    		getProp(224);
-    		getProp(256);
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+            
+            KernelLaunchConfig kernelLaunchConfig;
+            kernelLaunchConfig.threads_per_block = requestedBlocksize;
+            kernelLaunchConfig.smem = smem;    
+            
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
-    		const auto& kernelProperties = mymap[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            handle.kernelPropertiesMap[KernelId::FilterAlignmentsByMismatchRatio] = std::move(mymap);
 
-    		handle.kernelPropertiesMap[KernelId::FilterAlignmentsByMismatchRatio] = std::move(mymap);
+            #undef getProp
+        }else{
+            KernelLaunchConfig kernelLaunchConfig;
+            kernelLaunchConfig.threads_per_block = requestedBlocksize;
+            kernelLaunchConfig.smem = smem;   
 
-    	    #undef getProp
-    	}else{
-    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-    	}
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
-    	dim3 block(blocksize, 1, 1);
+        dim3 block(requestedBlocksize, 1, 1);
         //dim3 grid(std::min(max_blocks_per_device, maxNumAnchors));
         dim3 grid(max_blocks_per_device, 1, 1);
 
-    	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
-    	        <<<grid, block, smem, stream>>>( \
+        #define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
+                <<<grid, block, smem, stream>>>( \
             d_bestAlignmentFlags, \
             d_nOps, \
             d_overlaps, \
-    		d_candidates_per_subject_prefixsum, \
-    		d_numAnchors, \
-    		d_numCandidates, \
-    		mismatchratioBaseFactor, \
-    		goodAlignmentsCountThreshold); CUERR;
+            d_candidates_per_subject_prefixsum, \
+            d_numAnchors, \
+            d_numCandidates, \
+            mismatchratioBaseFactor, \
+            goodAlignmentsCountThreshold); CUERR;
 
-    	switch(blocksize) {
-    	case 32: mycall(32); break;
-    	case 64: mycall(64); break;
-    	case 96: mycall(96); break;
-    	case 128: mycall(128); break;
-    	case 160: mycall(160); break;
-    	case 192: mycall(192); break;
-    	case 224: mycall(224); break;
-    	case 256: mycall(256); break;
-    	default: mycall(256); break;
-    	}
+        switch(requestedBlocksize) {
+        case 32: mycall(32); break;
+        case 64: mycall(64); break;
+        case 96: mycall(96); break;
+        case 128: mycall(128); break;
+        case 160: mycall(160); break;
+        case 192: mycall(192); break;
+        case 224: mycall(224); break;
+        case 256: mycall(256); break;
+        default: mycall(256); break;
+        }
 
-    		#undef mycall
+            #undef mycall
     }
 
 
@@ -2957,7 +2941,7 @@ namespace gpu{
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
             const int stride = blockDim.x * gridDim.x;
 
-            for(int i = tid; i < *d_numAnchors; i += stride){
+            for(int i = tid; i < maxNumAnchors; i += stride){
                 d_numIndicesPerAnchor[i] = 0;
             }
 

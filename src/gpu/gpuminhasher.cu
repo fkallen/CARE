@@ -5,227 +5,7 @@ namespace care{
     namespace gpu{
 
 
-__global__
-void minhashSignaturesKernel(
-        std::uint64_t* __restrict__ signatures,
-        std::size_t signaturesRowPitchElements,
-        const unsigned int* __restrict__ sequences2Bit,
-        std::size_t sequenceRowPitchElements,
-        int numSequences,
-        const int* __restrict__ sequenceLengths,
-        int k,
-        int numHashFuncs,
-        int firstHashFunc){
-            
-    //constexpr int blocksize = 128;
-    constexpr int maximum_kmer_length = max_k<std::uint64_t>::value;
-
-    auto murmur3_fmix = [](std::uint64_t x) {
-        x ^= x >> 33;
-        x *= 0xff51afd7ed558ccd;
-        x ^= x >> 33;
-        x *= 0xc4ceb9fe1a85ec53;
-        x ^= x >> 33;
-        return x;
-    };
-
-    auto make_reverse_complement = [](std::uint64_t s){
-        s = ((s >> 2)  & 0x3333333333333333ull) | ((s & 0x3333333333333333ull) << 2);
-        s = ((s >> 4)  & 0x0F0F0F0F0F0F0F0Full) | ((s & 0x0F0F0F0F0F0F0F0Full) << 4);
-        s = ((s >> 8)  & 0x00FF00FF00FF00FFull) | ((s & 0x00FF00FF00FF00FFull) << 8);
-        s = ((s >> 16) & 0x0000FFFF0000FFFFull) | ((s & 0x0000FFFF0000FFFFull) << 16);
-        s = ((s >> 32) & 0x00000000FFFFFFFFull) | ((s & 0x00000000FFFFFFFFull) << 32);
-        return ((std::uint64_t)(-1) - s) >> (8 * sizeof(s) - (32 << 1));
-    };
-
-    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-    if(tid < numSequences * numHashFuncs){
-        const int mySequenceIndex = tid / numHashFuncs;
-        const int myNumHashFunc = tid % numHashFuncs;
-        const int hashFuncId = myNumHashFunc + firstHashFunc;
-
-        const unsigned int* const mySequence = sequences2Bit + mySequenceIndex * sequenceRowPitchElements;
-        const int myLength = sequenceLengths[mySequenceIndex];
-
-        std::uint64_t* const mySignature = signatures + mySequenceIndex * signaturesRowPitchElements;
-
-        std::uint64_t minHashValue = std::numeric_limits<std::uint64_t>::max();
-
-        auto handlekmer = [&](auto fwd, auto rc){
-            const auto smallest = min(fwd, rc);
-            const auto hashvalue = murmur3_fmix(smallest + hashFuncId);
-            minHashValue = min(minHashValue, hashvalue);
-        };
-
-        if(myLength >= k){
-            //const int numKmers = myLength - k + 1;
-            const std::uint64_t kmer_mask = std::numeric_limits<std::uint64_t>::max() >> ((maximum_kmer_length - k) * 2);
-            const int rcshiftamount = (maximum_kmer_length - k) * 2;
-
-            //Compute the first kmer
-            std::uint64_t kmer_encoded = mySequence[0];
-            if(k <= 16){
-                kmer_encoded >>= (16 - k) * 2;
-            }else{
-                kmer_encoded = (kmer_encoded << 32) | mySequence[1];
-                kmer_encoded >>= (32 - k) * 2;
-            }
-
-            kmer_encoded >>= 2; //k-1 bases, allows easier loop
-
-            std::uint64_t rc_kmer_encoded = make_reverse_complement(kmer_encoded);
-
-            auto addBase = [&](std::uint64_t encBase){
-                kmer_encoded <<= 2;
-                rc_kmer_encoded >>= 2;
-
-                const std::uint64_t revcBase = (~encBase) & 3;
-                kmer_encoded |= encBase;
-                rc_kmer_encoded |= revcBase << 62;
-            };
-
-            const int itersend1 = min(SDIV(k-1, 16) * 16, myLength);
-
-            //process sequence positions one by one
-            // until the next encoded sequence data element is reached
-            for(int nextSequencePos = k - 1; nextSequencePos < itersend1; nextSequencePos++){
-                const int nextIntIndex = nextSequencePos / 16;
-                const int nextPositionInInt = nextSequencePos % 16;
-
-                const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
-
-                addBase(nextBase);
-
-                handlekmer(
-                    kmer_encoded & kmer_mask, 
-                    rc_kmer_encoded >> rcshiftamount
-                );
-            }
-
-            const int full16Iters = (myLength - itersend1) / 16;
-
-            //process all fully occupied encoded sequence data elements
-            // improves memory access
-            for(int iter = 0; iter < full16Iters; iter++){
-                const int intIndex = (itersend1 + iter * 16) / 16;
-                const unsigned int data = mySequence[intIndex];
-
-                #pragma unroll
-                for(int posInInt = 0; posInInt < 16; posInInt++){
-                    const std::uint64_t nextBase = data >> (30 - 2 * posInInt);
-
-                    addBase(nextBase);
-
-                    handlekmer(
-                        kmer_encoded & kmer_mask, 
-                        rc_kmer_encoded >> rcshiftamount
-                    );
-                }
-            }
-
-            //process remaining positions one by one
-            for(int nextSequencePos = full16Iters * 16 + itersend1; nextSequencePos < myLength; nextSequencePos++){
-                const int nextIntIndex = nextSequencePos / 16;
-                const int nextPositionInInt = nextSequencePos % 16;
-
-                const std::uint64_t nextBase = mySequence[nextIntIndex] >> (30 - 2 * nextPositionInInt);
-
-                addBase(nextBase);
-
-                handlekmer(
-                    kmer_encoded & kmer_mask, 
-                    rc_kmer_encoded >> rcshiftamount
-                );
-            }
-
-            mySignature[myNumHashFunc] = minHashValue;
-
-        }else{
-            mySignature[myNumHashFunc] = std::numeric_limits<std::uint64_t>::max();
-        }
-    }
-}
-
-
-void callMinhashSignaturesKernel_async(
-        std::uint64_t* d_signatures,
-        std::size_t signaturesRowPitchElements,
-        const unsigned int* d_sequences2Bit,
-        std::size_t sequenceRowPitchElements,
-        int numSequences,
-        const int* d_sequenceLengths,
-        int k,
-        int numHashFuncs,
-        int firstHashFunc,
-        cudaStream_t stream){
-
-    constexpr int blocksize = 128;
-
-    if(numSequences <= 0){
-        return;
-    }
-
-    dim3 block(blocksize, 1, 1);
-    dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
-    std::size_t smem = 0;
-
-    minhashSignaturesKernel<<<grid, block, smem, stream>>>(
-        d_signatures,
-        signaturesRowPitchElements,
-        d_sequences2Bit,
-        sequenceRowPitchElements,
-        numSequences,
-        d_sequenceLengths,
-        k,
-        numHashFuncs,
-        firstHashFunc
-    );
-
-    CUERR;
-}
-
-void callMinhashSignaturesKernel_async(
-        std::uint64_t* d_signatures,
-        std::size_t signaturesRowPitchElements,
-        const unsigned int* d_sequences2Bit,
-        std::size_t sequenceRowPitchElements,
-        int numSequences,
-        const int* d_sequenceLengths,
-        int k,
-        int numHashFuncs,
-        cudaStream_t stream){
-            
-    constexpr int blocksize = 128;
-
-    if(numSequences <= 0){
-        return;
-    }
-            
-    dim3 block(blocksize, 1, 1);
-    dim3 grid(SDIV(numSequences * numHashFuncs, blocksize), 1, 1);
-    std::size_t smem = 0;
-    
-    const int firstHashFunc = 0;
-
-    minhashSignaturesKernel<<<grid, block, smem, stream>>>(
-        d_signatures,
-        signaturesRowPitchElements,
-        d_sequences2Bit,
-        sequenceRowPitchElements,
-        numSequences,
-        d_sequenceLengths,
-        k,
-        numHashFuncs,
-        firstHashFunc
-    );
-
-    CUERR;
-}
-
-
-
-
+        
 
 
 void GpuMinhasher::queryPrecalculatedSignatures(
@@ -315,29 +95,6 @@ int GpuMinhasher::calculateResultsPerMapThreshold(int coverage){
     return result;
 }
 
-void GpuMinhasher::computeReadHashesOnGpu(
-    std::uint64_t* d_hashValues,
-    std::size_t hashValuesPitchInElements,
-    const unsigned int* d_encodedSequenceData,
-    std::size_t encodedSequencePitchInInts,
-    int numSequences,
-    const int* d_sequenceLengths,
-    cudaStream_t stream
-) const{
-    callMinhashSignaturesKernel_async(
-        d_hashValues,
-        hashValuesPitchInElements,
-        d_encodedSequenceData,
-        encodedSequencePitchInInts,
-        numSequences,
-        d_sequenceLengths,
-        getKmerSize(),
-        getNumberOfMaps(),
-        stream
-    );
-}
-
-
 
 void GpuMinhasher::construct(
     const FileOptions &fileOptions,
@@ -356,7 +113,7 @@ void GpuMinhasher::construct(
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
 
     auto sequencehandle = readStorage.makeGatherHandleSequences();
-    std::size_t sequencepitch = getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(int);
+    std::size_t sequencepitch = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(int);
 
     const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
     std::ofstream outstream(tmpmapsFilename, std::ios::binary);
@@ -681,53 +438,7 @@ void GpuMinhasher::addHashTable(HashTable&& hm){
     minhashTables.emplace_back(std::make_unique<HashTable>(std::move(hm)));
 }
 
-void GpuMinhasher::computeReadHashesOnGpu(
-    std::uint64_t* d_hashValues,
-    std::size_t hashValuesPitchInElements,
-    const unsigned int* d_encodedSequenceData,
-    std::size_t encodedSequencePitchInInts,
-    int numSequences,
-    const int* d_sequenceLengths,
-    int numHashFuncs,
-    cudaStream_t stream
-) const{
-    callMinhashSignaturesKernel_async(
-        d_hashValues,
-        hashValuesPitchInElements,
-        d_encodedSequenceData,
-        encodedSequencePitchInInts,
-        numSequences,
-        d_sequenceLengths,
-        getKmerSize(),
-        numHashFuncs,
-        stream
-    );
-}
 
-void GpuMinhasher::computeReadHashesOnGpu(
-    std::uint64_t* d_hashValues,
-    std::size_t hashValuesPitchInElements,
-    const unsigned int* d_encodedSequenceData,
-    std::size_t encodedSequencePitchInInts,
-    int numSequences,
-    const int* d_sequenceLengths,
-    int numHashFuncs,
-    int firstHashFunc,
-    cudaStream_t stream
-) const{
-    callMinhashSignaturesKernel_async(
-        d_hashValues,
-        hashValuesPitchInElements,
-        d_encodedSequenceData,
-        encodedSequencePitchInInts,
-        numSequences,
-        d_sequenceLengths,
-        getKmerSize(),
-        numHashFuncs,
-        firstHashFunc,
-        stream
-    );
-}
 
 
 std::pair< std::vector<std::vector<kmer_type>>, std::vector<std::vector<read_number>> > 
@@ -743,7 +454,7 @@ GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
     constexpr read_number parallelReads = 1000000;
     read_number numReads = numberOfReads;
     const int numIters = SDIV(numReads, parallelReads);
-    const std::size_t encodedSequencePitchInInts = getEncodedNumInts2Bit(upperBoundSequenceLength);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(upperBoundSequenceLength);
 
     const auto& deviceIds = runtimeOptions.deviceIds;
     const int numThreads = runtimeOptions.threads;
@@ -844,19 +555,18 @@ GpuMinhasher::computeKeyValuePairsForHashtableUsingGpu(
             stream
         );
 
-        computeReadHashesOnGpu(
+        callMinhashSignaturesKernel(
             d_signatures,
             signaturesRowPitchElements,
             d_sequenceData,
             encodedSequencePitchInInts,
             curBatchsize,
             d_lengths,
+            getKmerSize(),
             numHashFuncs,
             firstHashFunc,
             stream
-        );
-
-        CUERR;
+        ); CUERR;
 
         cudaMemcpyAsync(
             h_signatures, 

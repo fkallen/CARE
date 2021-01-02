@@ -31,7 +31,7 @@ namespace care{
         for(auto& task : tasks){
             std::string decodedAnchor(task.currentAnchorLength, '\0');
 
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 &decodedAnchor[0],
                 task.currentAnchor.data(),
                 task.currentAnchorLength
@@ -200,7 +200,7 @@ namespace care{
                     unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
                                                         + std::size_t(encodedSequencePitchInInts) * c;
 
-                    reverseComplement2Bit(
+                    SequenceHelpers::reverseComplementSequence2Bit(
                         seqrevcPtr,  
                         seqPtr,
                         task.candidateSequenceLengths[c]
@@ -410,7 +410,7 @@ namespace care{
                 task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
 
                 for(int c = 0; c < task.numRemainingCandidates; c++){
-                    decode2BitSequence(
+                    SequenceHelpers::decode2BitSequence(
                         task.candidateStrings.data() + c * decodedSequencePitchInBytes,
                         task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
                         vecAccess(task.candidateSequenceLengths, c)
@@ -460,11 +460,11 @@ namespace care{
 
                         std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
 
-                        const int numInts = getEncodedNumInts2Bit(task.currentAnchorLength);
+                        const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
 
                         task.currentAnchor.resize(numInts);
 
-                        encodeSequence2Bit(
+                        SequenceHelpers::encodeSequence2Bit(
                             task.currentAnchor.data(), 
                             decodedAnchor.data(), 
                             task.currentAnchorLength
@@ -1035,7 +1035,7 @@ namespace care{
                 assert(rl.direction == ExtensionDirection::RL);
 
                 std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
-                reverseComplementStringInplace(revcRLSeq.data(), revcRLSeq.size());
+                SequenceHelpers::reverseComplementSequenceDecodedInplace(revcRLSeq.data(), revcRLSeq.size());
 
                 //  std::stringstream sstream;
 
@@ -1325,7 +1325,7 @@ namespace care{
             //get reverse complement of RL extension. overlap it with LR extension
             const int newbasesRL = res2.extendedRead.length() - task.myLength;
             if(newbasesRL > 0){
-                reverseComplementStringInplace(res2.extendedRead.data() + task.myLength, newbasesRL);
+                SequenceHelpers::reverseComplementSequenceDecodedInplace(res2.extendedRead.data() + task.myLength, newbasesRL);
                 comb.extendedRead.append(res2.extendedRead.data() + task.myLength, newbasesRL);
             }
 

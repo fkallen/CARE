@@ -14,17 +14,22 @@
 #include <algorithm>
 #include <iostream>
 
+#include <unordered_map>
+
 #include <thrust/system/omp/execution_policy.h>
 #include <thrust/iterator/constant_iterator.h>
 #include <thrust/inner_product.h>
 #include <thrust/sequence.h>
 #include <thrust/copy.h>
 #include <thrust/sort.h>
+#include <thrust/equal.h>
 
 #ifdef __NVCC__
 #include <thrust/device_vector.h>
-#include <hpc_helpers.cuh>
+#include <cooperative_groups.h>
 #endif
+
+#include <hpc_helpers.cuh>
 
 namespace care{
 
@@ -87,8 +92,10 @@ namespace care{
         }
 
         void insert(const Key& key, const Value& value){
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
+            std::size_t pos = hasher::hash(key) % capacity;
             while(storage[pos] != emptySlot){
                 pos++;
                 //wrap-around
@@ -104,8 +111,10 @@ namespace care{
         }
 
         QueryResult query(const Key& key) const{
+            using hasher = hashers::MurmurHash<std::uint64_t>;
+            
             std::size_t probes = 0;
-            std::size_t pos = hashfunc(key) % capacity;
+            std::size_t pos = hasher::hash(key) % capacity;
             while(storage[pos].first != key){
                 if(storage[pos] == emptySlot){
                     return {false, Value{}};
@@ -167,15 +176,6 @@ namespace care{
         }
 
     private:
-        std::uint64_t hashfunc(std::uint64_t x) const{
-            //murmur64
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccd;
-            x ^= x >> 33;
-            x *= 0xc4ceb9fe1a85ec53;
-            x ^= x >> 33;
-            return x;
-        }
 
         using Data = std::pair<Key,Value>;
 
@@ -213,328 +213,244 @@ namespace cpuhashtabledetail{
             }
         };
 
-        struct TransformResult{
-            std::uint64_t numberOfUniqueKeys = 0;
-            std::uint64_t numberOfRemovedKeys = 0;
-            std::uint64_t numberOfRemovedValues = 0;
-        };
+        template<class Key_t, class Value_t, class Offset_t>
+        struct GroupByKeyCpu{
+            bool valuesOfSameKeyMustBeSorted = false;
+            int maxValuesPerKey = 0;
 
-        struct TransformRemoveKeysResult{
-            std::uint64_t numberOfRemovedKeys = 0;
-            std::uint64_t numberOfRemovedValues = 0;
-        };
+            GroupByKeyCpu(bool sortValues, int maxValuesPerKey_) 
+                : valuesOfSameKeyMustBeSorted(sortValues), maxValuesPerKey(maxValuesPerKey_){}
 
+            /*
+                Input: keys and values. keys[i] and values[i] form a key-value pair
+                Output: unique keys. values with the same key are stored consecutive. values of unique_keys[i] are
+                stored at values[offsets[i]] to values[offsets[i+1]] (exclusive)
+                If valuesOfSameKeyMustBeSorted == true, values with the same key are sorted in ascending order.
+                If there are more than maxValuesPerKey values with the same key, all of those values are removed,
+                i.e. the key ends up with 0 values
+            */
+            void execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
+                if(keys.size() == 0) return;
 
-        template<class Key_t, class Value_t, class Index_t>
-        std::uint64_t transformCPUCompactKeys(std::vector<Key_t>& keys,
-                                            std::vector<Value_t>& values,
-                                            std::vector<Index_t>& countsPrefixSum,
-                                            bool valuesOfSameKeyMustBeSorted = true){
+                bool isIotaValues = checkIotaValues(values);
 
-            auto deallocVector = [](auto& vec){
-                using T = typename std::remove_reference<decltype(vec)>::type;
-                T tmp{};
-                vec.swap(tmp);
-            };
-
-            assert(keys.size() == values.size());
-            assert(std::numeric_limits<Index_t>::max() >= keys.size());
-
-            const std::size_t size = keys.size();
-            auto policy = thrust::omp::par;
-
-            std::vector<Index_t> indices(size);
-            auto* indices_begin = indices.data();
-            auto* indices_end = indices.data() + indices.size();
-
-            //TIMERSTARTCPU(iota);
-            thrust::sequence(policy, indices_begin, indices_end, Index_t(0));
-            //TIMERSTOPCPU(iota);
-
-            //TIMERSTARTCPU(sortindices);
-            if(valuesOfSameKeyMustBeSorted){
-            //sort indices by key. if keys are equal, sort by value
-                thrust::sort(
-                    policy,
-                    indices_begin,
-                    indices_end,
-                    [&] (const auto &lhs, const auto &rhs) {
-                        if(keys[lhs] == keys[rhs]){
-                            return values[lhs] < values[rhs];
-                        }
-                        return keys[lhs] < keys[rhs];
-                    }
-                );
-            }else{
-                thrust::sort(
-                    policy,
-                    indices_begin,
-                    indices_end,
-                    [&] (const auto &lhs, const auto &rhs) {
-                        return keys[lhs] < keys[rhs];
-                    }
-                );
+                if(isIotaValues){
+                    executeWithIotaValues(keys, values, offsets);
+                }else{
+                    assert(false && "not implemented");
+                }
             }
-            //TIMERSTOPCPU(sortindices);
 
+            bool checkIotaValues(const std::vector<Value_t>& values){
+                auto policy = thrust::omp::par;
 
-            //TIMERSTARTCPU(sortvalues);
-            std::vector<Value_t> sortedValues(size);
-            thrust::copy(policy,
-                        thrust::make_permutation_iterator(values.begin(), indices_begin),
-                        thrust::make_permutation_iterator(values.begin(), indices_end),
-                        sortedValues.begin());
+                bool isIotaValues = thrust::equal(
+                    policy,
+                    thrust::counting_iterator<Value_t>{0},
+                    thrust::counting_iterator<Value_t>{0} + values.size(),
+                    values.data()
+                ); 
 
-            //TIMERSTOPCPU(sortvalues);
+                return isIotaValues;
+            }
 
-            std::swap(sortedValues, values);
+            void executeWithIotaValues(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
+                assert(keys.size() == values.size()); //key value pairs
+                assert(std::numeric_limits<Offset_t>::max() >= keys.size()); //total number of keys must fit into Offset_t
 
-            deallocVector(sortedValues);
+                auto deallocVector = [](auto& vec){
+                    using T = typename std::remove_reference<decltype(vec)>::type;
+                    T tmp{};
+                    vec.swap(tmp);
+                };
 
-            //TIMERSTARTCPU(sortkeys);
-            std::vector<Key_t> sortedKeys(size);
-            thrust::copy(policy,
-                        thrust::make_permutation_iterator(keys.begin(), indices_begin),
-                        thrust::make_permutation_iterator(keys.begin(), indices_end),
-                        sortedKeys.begin());
+                deallocVector(offsets); //don't need offsets at the moment
 
-            //TIMERSTOPCPU(sortkeys);
+                const std::size_t size = keys.size();
+                auto policy = thrust::omp::par;
 
-            std::swap(sortedKeys, keys);
+                if(valuesOfSameKeyMustBeSorted){
+                    auto kb = keys.data();
+                    auto ke = keys.data() + size;
+                    auto vb = values.data();
 
-            deallocVector(sortedKeys);
-            deallocVector(indices);
+                    thrust::stable_sort_by_key(policy, kb, ke, vb);
+                }else{
+                    auto kb = keys.data();
+                    auto ke = keys.data() + size;
+                    auto vb = values.data();
 
-            const Index_t nUniqueKeys = thrust::inner_product(policy,
+                    thrust::sort_by_key(policy, kb, ke, vb);
+                }
+
+                const Offset_t nUniqueKeys = thrust::inner_product(policy,
                                                 keys.begin(),
                                                 keys.end() - 1,
                                                 keys.begin() + 1,
-                                                Index_t(1),
+                                                Offset_t(1),
                                                 thrust::plus<Key_t>(),
                                                 thrust::not_equal_to<Key_t>());
 
-            //std::cout << "unique keys " << nUniqueKeys << ". ";
+                //std::cout << "unique keys " << nUniqueKeys << ". ";
 
-            std::vector<Key_t> histogram_keys(nUniqueKeys);
-            std::vector<Index_t> histogram_counts(nUniqueKeys);
+                std::vector<Key_t> uniqueKeys(nUniqueKeys);
+                std::vector<Offset_t> valuesPerKey(nUniqueKeys);
 
-            auto* keys_begin = keys.data();
-            auto* keys_end = keys.data() + keys.size();
-            auto* histogram_keys_begin = histogram_keys.data();
-            auto* histogram_counts_begin = histogram_counts.data();
+                auto* keys_begin = keys.data();
+                auto* keys_end = keys.data() + size;
+                auto* uniqueKeys_begin = uniqueKeys.data();
+                auto* valuesPerKey_begin = valuesPerKey.data();
 
-            //make key - frequency histogram
-            auto histogramEndIterators = thrust::reduce_by_key(policy,
-                                    keys_begin,
-                                    keys_end,
-                                    thrust::constant_iterator<Index_t>(1),
-                                    histogram_keys_begin,
-                                    histogram_counts_begin);
+                //make histogram
+                auto histogramEndIterators = thrust::reduce_by_key(
+                    policy,
+                    keys_begin,
+                    keys_end,
+                    thrust::constant_iterator<Offset_t>(1),
+                    uniqueKeys_begin,
+                    valuesPerKey_begin
+                );
 
-            assert(histogramEndIterators.first == histogram_keys.data() + nUniqueKeys);
-            assert(histogramEndIterators.second == histogram_counts.data() + nUniqueKeys);
+                assert(histogramEndIterators.first == uniqueKeys.data() + nUniqueKeys);
+                assert(histogramEndIterators.second == valuesPerKey.data() + nUniqueKeys);
 
-            countsPrefixSum.resize(nUniqueKeys+1, Index_t(0));
+                keys.swap(uniqueKeys);
+                deallocVector(uniqueKeys);
 
-            thrust::inclusive_scan(policy,
-                                    histogram_counts_begin,
-                                    histogramEndIterators.second,
-                                    countsPrefixSum.data() + 1);
+                offsets.resize(nUniqueKeys+1);
+                offsets[0] = 0;
 
-            keys.swap(histogram_keys);
+                thrust::inclusive_scan(
+                    policy,
+                    valuesPerKey_begin,
+                    valuesPerKey_begin + nUniqueKeys,
+                    offsets.data() + 1
+                );
 
-            return nUniqueKeys;
-        }
-
-        template<class Key_t, class Value_t, class Index_t>
-        TransformRemoveKeysResult transformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
-                                                            std::vector<Value_t>& values, 
-                                                            std::vector<Index_t>& countsPrefixSum,
-                                                            int maxValuesPerKey_){
-            auto deallocVector = [](auto& vec){
-                using T = typename std::remove_reference<decltype(vec)>::type;
-                T tmp{};
-                vec.swap(tmp);
-            };
-
-            TransformRemoveKeysResult result;
-
-            auto policy = thrust::omp::par;
-
-            const Index_t maxValuesPerKey = maxValuesPerKey_;
-
-            std::size_t oldSizeKeys = keys.size();
-            std::size_t oldSizeValues = values.size();
-
-            std::vector<Index_t> counts(countsPrefixSum.size()-1);
-            {
-                auto psPtr = thrust::raw_pointer_cast(countsPrefixSum.data());
-                auto countsPtr = thrust::raw_pointer_cast(counts.data());
-            
-                thrust::adjacent_difference(policy,
-                                            psPtr+1,
-                                            psPtr + countsPrefixSum.size(),
-                                            countsPtr);
-
-            }
-            
-            //handle keys
-            int numKeysToRemove = 0;
-            {
-                std::vector<char> removeflags(countsPrefixSum.size()-1);
-
-                thrust::transform(policy,
-                                    counts.begin(),
-                                    counts.end(),
-                                    removeflags.begin(),
-                                    [=](auto i){
-                                        return i > maxValuesPerKey ? 1 : 0;
-                                    });
-
-                numKeysToRemove = thrust::count_if(policy,
-                                                    removeflags.begin(),
-                                                    removeflags.end(),
-                                                    [] (auto flag){
-                                                        return flag == 1;
-                                                    });         
-            }
-
-            result.numberOfRemovedKeys = numKeysToRemove;
-
-            //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
-
-            //handle values
-            int numValuesToRemove = 0;
-            {
                 std::vector<char> removeflags(values.size(), false);
 
-                thrust::for_each(policy,
-                                thrust::counting_iterator<Index_t>(0),
-                                thrust::counting_iterator<Index_t>(0) + oldSizeKeys,
-                                [&](int index){
-                                    if(counts[index] > maxValuesPerKey){
-                                        auto begin = countsPrefixSum[index];
-                                        auto end = countsPrefixSum[index+1];
-                                        for(Index_t k = begin; k < end; k++){
-                                            removeflags[k] = true;
-                                        }
-                                    }
-                                });          
+                thrust::for_each(
+                    policy,
+                    thrust::counting_iterator<Offset_t>(0),
+                    thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
+                    [&](Offset_t index){
+                        auto begin = offsets[index];
+                        auto end = offsets[index+1];
+                        if(end - begin > Offset_t(maxValuesPerKey)){
+                            valuesPerKey_begin[index] = 0;
 
-                numValuesToRemove = thrust::count_if(policy,
-                                                        removeflags.begin(),
-                                                        removeflags.end(),
-                                                        [](auto flag){
-                                                            return flag == 1;
-                                                        });
+                            for(Offset_t k = begin; k < end; k++){
+                                removeflags[k] = true;
+                            }
+                        }
+                    }
+                );
 
-                std::vector<Value_t> values_tmp(oldSizeValues - numValuesToRemove);
+                deallocVector(offsets);    
 
-                thrust::copy_if(values.begin(),
-                                values.end(),
-                                removeflags.begin(),
-                                values_tmp.begin(),
-                                [](auto flag){
-                                    return flag == 0;
-                                });
+                Offset_t numValuesToRemove = thrust::reduce(
+                    policy,
+                    removeflags.begin(),
+                    removeflags.end(),
+                    Offset_t(0)
+                );
+
+                std::vector<Value_t> values_tmp(size - numValuesToRemove);
+
+                thrust::copy_if(
+                    values.begin(),
+                    values.end(),
+                    removeflags.begin(),
+                    values_tmp.begin(),
+                    [](auto flag){
+                        return flag == 0;
+                    }
+                );
 
                 values.swap(values_tmp);
+                deallocVector(values_tmp);
+
+                offsets.resize(nUniqueKeys+1);
+                offsets[0] = 0;
+
+                thrust::inclusive_scan(
+                    policy,
+                    valuesPerKey_begin,
+                    valuesPerKey_begin + nUniqueKeys,
+                    offsets.data() + 1
+                );
             }
-
-            result.numberOfRemovedValues = numValuesToRemove;
-
-            //std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
-
-            //handle counts prefix sum
-            {
-                thrust::for_each(policy,
-                                thrust::counting_iterator<Index_t>(0),
-                                thrust::counting_iterator<Index_t>(0) + counts.size(),
-                                [&] (auto i){
-                                    if(counts[i] > maxValuesPerKey){
-                                        counts[i] = 0;
-                                    }
-                                });
-                                
-                deallocVector(countsPrefixSum);
-
-                countsPrefixSum.resize(keys.size() + 1);
-                countsPrefixSum[0] = 0;
-
-                thrust::inclusive_scan(policy,
-                                        counts.begin(),
-                                        counts.end(),
-                                        countsPrefixSum.begin() + 1);              
-            }
-
-            return result;
-        }
-
-        template<class Key_t, class Value_t, class Index_t>
-        TransformResult cpu_transformation(std::vector<Key_t>& keys,
-                                std::vector<Value_t>& values,
-                                std::vector<Index_t>& countsPrefixSum,
-                                int maxValuesPerKey,
-                                bool valuesOfSameKeyMustBeSorted = true){
-
-            std::uint64_t uniqueKeys = transformCPUCompactKeys(
-                keys, 
-                values, 
-                countsPrefixSum,
-                valuesOfSameKeyMustBeSorted
-            );
-
-            TransformRemoveKeysResult removeKeysResult = transformCPURemoveKeysWithToManyValues(
-                keys, 
-                values, 
-                countsPrefixSum, 
-                maxValuesPerKey
-            );
-
-            TransformResult result;
-            result.numberOfUniqueKeys = uniqueKeys;
-            result.numberOfRemovedKeys = removeKeysResult.numberOfRemovedKeys;
-            result.numberOfRemovedValues = removeKeysResult.numberOfRemovedValues;
-
-            return result;
         };
-
 
     #ifdef __NVCC__
 
-        template<bool allowFallback>
-        struct TransformGPUCompactKeys{
+        template<class Key_t, class Value_t, class Offset_t>
+        struct GroupByKeyGpu{
+            //gpu allocator which uses cudaMallocManaged if not enough gpu memory is available for cudaMalloc
             template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
+            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, true>;
 
-            template<class Key_t, class Value_t, class Index_t>
-            static std::size_t estimateRequiredGpuMem(
-                                std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum,
-                                bool valuesOfSameKeyMustBeSorted = true){
-                
-                return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size()), valuesOfSameKeyMustBeSorted;
+
+            bool valuesOfSameKeyMustBeSorted = false;
+            int maxValuesPerKey = 0;
+
+            GroupByKeyGpu(bool sortValues, int maxValuesPerKey_) 
+                : valuesOfSameKeyMustBeSorted(sortValues), maxValuesPerKey(maxValuesPerKey_){}
+
+            /*
+                Input: keys and values. keys[i] and values[i] form a key-value pair
+                Output: unique keys. values with the same key are stored consecutive. values of unique_keys[i] are
+                stored at values[offsets[i]] to values[offsets[i+1]] (exclusive)
+                If valuesOfSameKeyMustBeSorted == true, values with the same key are sorted in ascending order.
+                If there are more than maxValuesPerKey values with the same key, all of those values are removed,
+                i.e. the key ends up with 0 values
+            */
+            bool execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
+                if(keys.size() == 0) return true;
+
+                bool success = false;
+
+                bool isIotaValues = checkIotaValues(values);
+
+                if(isIotaValues){                   
+                    try{           
+                        executeWithIotaValues(keys, values, offsets);
+                        success = true;
+                    }catch(const thrust::system_error& ex){
+                        std::cerr << ex.what() << '\n';
+                        cudaGetLastError();
+                        success = false;
+                    }catch(const std::exception& ex){
+                        std::cerr << ex.what() << '\n';
+                        cudaGetLastError();
+                        success = false;
+                    }catch(...){
+                        cudaGetLastError();
+                        success = false;
+                    }                    
+                }else{
+                    assert(false && "not implemented");
+                }
+
+                return success;
             }
 
-            template<class Key_t, class Value_t, class Index_t>
-            static std::size_t estimateRequiredGpuMem(Index_t numEntries, bool valuesOfSameKeyMustBeSorted = true){
+            bool checkIotaValues(const std::vector<Value_t>& values){
+                auto policy = thrust::omp::par;
 
-                std::size_t mem = 0;
-                mem += sizeof(Key_t) * numEntries; //d_keys
-                mem += sizeof(Value_t) * numEntries; //d_values
-                mem += sizeof(Index_t) * numEntries; //d_indices
-                mem += std::max(sizeof(Index_t), sizeof(Value_t)) * numEntries; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
+                bool isIotaValues = thrust::equal(
+                    policy,
+                    thrust::counting_iterator<Value_t>{0},
+                    thrust::counting_iterator<Value_t>{0} + values.size(),
+                    values.data()
+                ); 
 
-                return mem;
+                return isIotaValues;
             }
 
-            template<class Key_t, class Value_t, class Index_t>
-            static std::uint64_t execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum,
-                                const std::vector<int>& /*deviceIds*/,
-                                bool valuesOfSameKeyMustBeSorted = true){
+            void executeWithIotaValues(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Offset_t>& offsets){
+                assert(keys.size() == values.size()); //key value pairs
+                assert(std::numeric_limits<Offset_t>::max() >= keys.size()); //total number of keys must fit into Offset_t
 
                 auto deallocVector = [](auto& vec){
                     using T = typename std::remove_reference<decltype(vec)>::type;
@@ -542,371 +458,141 @@ namespace cpuhashtabledetail{
                     vec.swap(tmp);
                 };
 
-                std::size_t size = values.size();
+                deallocVector(offsets); //don't need offsets at the moment
+
+                const std::size_t size = keys.size();
 
                 ThrustAlloc<char> allocator;
                 auto allocatorPolicy = thrust::cuda::par(allocator);
 
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);                
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_indices(size);
+                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(size);
+                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(size);
 
-                thrust::copy(keys.begin(), keys.end(), d_keys.begin());                
-                thrust::sequence(allocatorPolicy, d_indices.begin(), d_indices.end(), Index_t(0));
+                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
+                thrust::copy(values.begin(), values.end(), d_values.begin());
 
-                thrust::device_ptr<Key_t> d_keys_ptr = d_keys.data();                
-
-                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values;
-
-                //std::cerr << "before sort\n";
-
-
-
-                //sort indices
                 if(valuesOfSameKeyMustBeSorted){
-                    d_values.resize(size);
-                    thrust::copy(values.begin(), values.end(), d_values.begin());
-                    thrust::device_ptr<Value_t> d_values_ptr = d_values.data();
-
-                    thrust::sort(
-                        allocatorPolicy,
-                        d_indices.begin(),
-                        d_indices.end(),
-                        [=] __device__ (const auto& lhs, const auto& rhs) {
-                            if(d_keys_ptr[lhs] == d_keys_ptr[rhs]){
-                                return d_values_ptr[lhs] < d_values_ptr[rhs];
-                            }
-                            return d_keys_ptr[lhs] < d_keys_ptr[rhs];
-                        }
-                    );
+                    thrust::stable_sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
                 }else{
-                    thrust::sort(allocatorPolicy,
-                        d_indices.begin(),
-                        d_indices.end(),
-                        [=] __device__ (const auto& lhs, const auto& rhs) {
-                            return d_keys_ptr[lhs] < d_keys_ptr[rhs];
-                        }
-                    );
+                    auto kb = keys.data();
+                    auto ke = keys.data() + size;
+                    auto vb = values.data();
 
-                    d_values.resize(size);
-                    thrust::copy(values.begin(), values.end(), d_values.begin());
+                    thrust::sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
                 }
-                
-                deallocVector(d_keys);
 
-                //std::cerr << "after sort\n";
-
-                // std::cerr << "before sort by key\n";
-
-                // //sort indices
-                // thrust::sort_by_key(allocatorPolicy, d_keys.begin(), d_keys.end(), d_values.begin());
-
-                // std::cerr << "after sort by key\n";
-
-                //sort values by order defined by indices and copy sorted values to host.
-                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(size);
-
-                thrust::copy(thrust::make_permutation_iterator(d_values.begin(), d_indices.begin()),
-                            thrust::make_permutation_iterator(d_values.begin(), d_indices.end()),
-                            d_values_tmp.begin());
-
-                thrust::copy(d_values_tmp.begin(),
-                            d_values_tmp.end(),
-                            values.begin());
-
-                deallocVector(d_values_tmp);
+                thrust::copy(d_values.begin(), d_values.end(), values.begin());
                 deallocVector(d_values);
 
-                d_keys.resize(size);
-                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-
-                //sort keys by order defined by indices
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(size);
-
-                thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
-                            thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
-                            d_keys_tmp.begin());
-
-                std::swap(d_keys, d_keys_tmp);
-
-                deallocVector(d_keys_tmp);
-                deallocVector(d_indices);
-
-                const Index_t nUniqueKeys = thrust::inner_product(allocatorPolicy,
+                const Offset_t nUniqueKeys = thrust::inner_product(
+                    allocatorPolicy,
                     d_keys.begin(),
                     d_keys.end() - 1,
                     d_keys.begin() + 1,
-                    Index_t(1),
+                    Offset_t(1),
                     thrust::plus<Key_t>(),
-                    thrust::not_equal_to<Key_t>());
+                    thrust::not_equal_to<Key_t>()
+                );
 
-                //std::cerr << "unique keys " << nUniqueKeys << ". ";
+                //std::cout << "unique keys " << nUniqueKeys << ". ";
 
-                //histogram storage
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_histogram_keys(nUniqueKeys);
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts(nUniqueKeys);                
+                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_uniqueKeys(nUniqueKeys);
+                thrust::device_vector<Offset_t, ThrustAlloc<Offset_t>> d_valuesPerKey(nUniqueKeys);
 
-                //make key multiplicity histogram
-                auto histogramEndIterators = thrust::reduce_by_key(allocatorPolicy,
+                //make histogram
+                auto histogramEndIterators = thrust::reduce_by_key(
+                    allocatorPolicy,
                     d_keys.begin(),
                     d_keys.end(),
-                    thrust::constant_iterator<Index_t>(1),
-                    d_histogram_keys.begin(),
-                    d_histogram_counts.begin());
+                    thrust::constant_iterator<Offset_t>(1),
+                    d_uniqueKeys.begin(),
+                    d_valuesPerKey.begin()
+                );
 
-                assert(histogramEndIterators.first == d_histogram_keys.end());
-                assert(histogramEndIterators.second == d_histogram_counts.end());
+                assert(histogramEndIterators.first == d_uniqueKeys.begin() + nUniqueKeys);
+                assert(histogramEndIterators.second == d_valuesPerKey.begin() + nUniqueKeys);
 
                 deallocVector(keys);
-
                 keys.resize(nUniqueKeys);
+                thrust::copy(d_uniqueKeys.begin(), d_uniqueKeys.end(), keys.begin());
+                deallocVector(d_keys);
+                deallocVector(d_uniqueKeys);
 
-                thrust::copy(d_histogram_keys.begin(),
-                            d_histogram_keys.end(),
-                            keys.begin());
+                thrust::device_vector<Offset_t, ThrustAlloc<Offset_t>> d_offsets(nUniqueKeys + 1, 0);
 
-                deallocVector(d_histogram_keys);
+                thrust::inclusive_scan(
+                    allocatorPolicy,
+                    d_valuesPerKey.begin(),
+                    d_valuesPerKey.end(),
+                    d_offsets.begin() + 1
+                );
 
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_histogram_counts_prefixsum(nUniqueKeys+1, Index_t(0));
+                thrust::device_vector<char, ThrustAlloc<char>> d_removeflags(size, false);
+                auto d_removeflags_begin = d_removeflags.data();
+                auto d_offsets_begin = d_offsets.data();
+                auto d_valuesPerKey_begin = d_valuesPerKey.data();
+                auto maxValuesPerKey_copy = maxValuesPerKey;
+                thrust::for_each(
+                    allocatorPolicy,
+                    thrust::counting_iterator<Offset_t>(0),
+                    thrust::counting_iterator<Offset_t>(0) + nUniqueKeys,
+                    [=] __device__ (Offset_t index){
+                        auto begin = d_offsets_begin[index];
+                        auto end = d_offsets_begin[index+1];
+                        if(end - begin > Offset_t(maxValuesPerKey_copy)){
+                            d_valuesPerKey_begin[index] = 0;
 
-                thrust::inclusive_scan(allocatorPolicy,
-                    d_histogram_counts.begin(),
-                    histogramEndIterators.second,
-                    d_histogram_counts_prefixsum.begin() + 1);
-
-                deallocVector(countsPrefixSum);
-
-                countsPrefixSum.resize(nUniqueKeys+1);
-                thrust::copy(d_histogram_counts_prefixsum.begin(),
-                            d_histogram_counts_prefixsum.end(),
-                            countsPrefixSum.begin());                
-
-                return nUniqueKeys;
-            }
-        };
-
-
-        template<bool allowFallback>
-        struct TransformGPURemoveKeysWithToManyValues{
-            template<class T>
-            using ThrustAlloc = helpers::ThrustFallbackDeviceAllocator<T, allowFallback>;
-
-            template<class Key_t, class Value_t, class Index_t>
-            static TransformRemoveKeysResult execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum,
-                                int maxValuesPerKey_,
-                                const std::vector<int>& /*deviceIds*/){
-
-                auto deallocVector = [](auto& vec){
-                    using T = typename std::remove_reference<decltype(vec)>::type;
-                    T tmp{};
-                    vec.swap(tmp);
-                };
-
-                TransformRemoveKeysResult result;
-
-                const Index_t maxValuesPerKey = maxValuesPerKey_;
-
-                ThrustAlloc<char> allocator;
-                auto allocatorPolicy = thrust::cuda::par(allocator);
-
-                const std::size_t oldSizeKeys = keys.size();
-                const std::size_t oldSizeValues = values.size();
-
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_countsPrefixSum(countsPrefixSum.size());
-
-                thrust::copy(countsPrefixSum.begin(), countsPrefixSum.end(), d_countsPrefixSum.begin());
-
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_counts(countsPrefixSum.size()-1);
-                //make counts array from prefixsum
-                thrust::adjacent_difference(allocatorPolicy,
-                                            d_countsPrefixSum.begin()+1,
-                                            d_countsPrefixSum.end(),
-                                            d_counts.begin());
-                
-                //handle keys
-                int numKeysToRemove = 0;
-                {
-                    thrust::device_vector<bool, ThrustAlloc<bool>> d_removeflags(countsPrefixSum.size()-1);
-
-                    thrust::transform(allocatorPolicy,
-                                        d_counts.begin(),
-                                        d_counts.end(),
-                                        d_removeflags.begin(),
-                                        [=] __device__ (auto i){
-                                            return i > maxValuesPerKey;
-                                        });
-
-                    numKeysToRemove = thrust::count_if(allocatorPolicy,
-                                                            d_removeflags.begin(),
-                                                            d_removeflags.end(),
-                                                            [] __device__ (auto flag){
-                                                                return flag;
-                                                            });
-                }
-
-                result.numberOfRemovedKeys = numKeysToRemove;
-                
-                //std::cerr << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
-
-                //handle values
-                int numValuesToRemove = 0;
-                {
-                    thrust::device_vector<bool, ThrustAlloc<bool>> d_removeflags(values.size(), false);
-
-                    auto countsPtr = d_counts.data();
-                    auto countPrefixSumPtr = d_countsPrefixSum.data();
-                    auto flagsPtr = d_removeflags.data();
-
-                    //if counts[i] > maxValuesPerKey, set removeflag for all corresponding values of this key                
-                    thrust::for_each(allocatorPolicy,
-                        thrust::counting_iterator<Index_t>(0),
-                        thrust::counting_iterator<Index_t>(0) + oldSizeKeys,
-                        [=] __device__ (int index){
-                            if(countsPtr[index] > maxValuesPerKey){
-                                auto begin = countPrefixSumPtr[index];
-                                auto end = countPrefixSumPtr[index+1];
-                                for(Index_t k = begin; k < end; k++){
-                                    flagsPtr[k] = true;
-                                }
+                            for(Offset_t k = begin; k < end; k++){
+                                d_removeflags_begin[k] = true;
                             }
-                        });
+                        }
+                    }
+                );
 
-                    //copy values to device
-                    thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(values.size());
-                    thrust::copy(values.begin(), values.end(), d_values.begin());                
+                deallocVector(d_offsets);    
 
-                    //determine number of set remove flags
-                    numValuesToRemove = thrust::count_if(allocatorPolicy,
-                                                            d_removeflags.begin(),
-                                                            d_removeflags.end(),
-                                                            [] __device__ (auto flag){
-                                                                return flag;
-                                                            });
+                Offset_t numValuesToRemove = thrust::reduce(
+                    allocatorPolicy,
+                    d_removeflags.begin(),
+                    d_removeflags.end(),
+                    Offset_t(0)
+                );
 
-                    //select the remaining values, then copy them back to host
-                    thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(oldSizeValues - numValuesToRemove);
+                thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(size - numValuesToRemove);
+                d_values.resize(values.size());
+                thrust::copy(values.begin(), values.end(), d_values.begin());
 
-                    thrust::copy_if(d_values.begin(),
-                                    d_values.end(),
-                                    d_removeflags.begin(),
-                                    d_values_tmp.begin(),
-                                    [] __device__ (auto flag){
-                                        return !flag;
-                                    });
+                thrust::copy_if(
+                    d_values.begin(),
+                    d_values.end(),
+                    d_removeflags.begin(),
+                    d_values_tmp.begin(),
+                    [] __device__ (auto flag){
+                        return flag == 0;
+                    }
+                );
 
-                    deallocVector(values);
-                    values.resize(d_values_tmp.size());
+                deallocVector(d_removeflags);
+                deallocVector(values);
+                deallocVector(d_values);
+                values.resize(size - numValuesToRemove);
+                thrust::copy(d_values_tmp.begin(), d_values_tmp.end(), values.begin());
 
-                    thrust::copy(d_values_tmp.begin(), d_values_tmp.end(), values.begin());
-                }
+                offsets.resize(nUniqueKeys+1);               
+                d_offsets.resize(nUniqueKeys);
 
-                result.numberOfRemovedValues = numValuesToRemove;
+                thrust::inclusive_scan(
+                    allocatorPolicy,
+                    d_valuesPerKey.begin(),
+                    d_valuesPerKey.end(),
+                    d_offsets.begin()
+                );
 
-                // std::cerr << "Removed corresponding values: " << numValuesToRemove << ". "; 
-
-                //handle counts prefix sum
-                {
-                    auto countsPtr = d_counts.data();
-
-                    //set counts of removed keys to 0
-                    thrust::for_each(allocatorPolicy,
-                                    thrust::counting_iterator<Index_t>(0),
-                                    thrust::counting_iterator<Index_t>(0) + d_counts.size(),
-                                    [=] __device__ (auto i){
-                                        if(countsPtr[i] > maxValuesPerKey){
-                                            countsPtr[i] = 0;
-                                        }
-                                    });
-
-                    //make new prefix_sum
-                    auto psend = thrust::inclusive_scan(allocatorPolicy,
-                                            d_counts.begin(),
-                                            d_counts.end(),
-                                            d_countsPrefixSum.begin());
-
-                    assert(keys.size() == thrust::distance(d_countsPrefixSum.begin(), psend));
-                    
-                    deallocVector(countsPrefixSum);
-                    countsPrefixSum.resize(keys.size() + 1);
-                    countsPrefixSum[0] = 0;
-                    thrust::copy(d_countsPrefixSum.begin(), psend, countsPrefixSum.begin() + 1);                
-                }
-
-                return result;
+                thrust::copy(d_offsets.begin(), d_offsets.end(), offsets.begin() + 1);
+                offsets[0] = 0;
             }
         };
-
-        template<bool allowFallback>
-        struct GPUTransformation{
-
-            template<class Key_t, class Value_t, class Index_t>
-            static std::pair<bool, TransformResult> execute(std::vector<Key_t>& keys, 
-                                std::vector<Value_t>& values, 
-                                std::vector<Index_t>& countsPrefixSum, 
-                                const std::vector<int>& deviceIds,
-                                int maxValuesPerKey,
-                                bool valuesOfSameKeyMustBeSorted = true){
-
-                assert(keys.size() == values.size());
-                assert(std::numeric_limits<Index_t>::max() >= keys.size());
-                assert(deviceIds.size() > 0);
-
-                std::pair<bool, TransformResult> result;
-
-                if(keys.empty()){
-                    std::cerr << "Want to transform empty map!\n";
-                    assert(false);
-                    //return true;
-                }
-
-                int oldDeviceId;
-                cudaError_t setupStatus = cudaGetDevice(&oldDeviceId);
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not query current device id!");
-
-                setupStatus = cudaSetDevice(deviceIds.front()); //TODO choose appropriate id from deviceIds
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not set device id!");
-
-                bool& success = result.first;
-                TransformResult& transformresult = result.second;
-
-                success = false;
-
-                try{           
-                    transformresult.numberOfUniqueKeys = TransformGPUCompactKeys<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, deviceIds, valuesOfSameKeyMustBeSorted);
-
-                    auto removeresult = TransformGPURemoveKeysWithToManyValues<allowFallback>
-                            ::execute(keys, values, countsPrefixSum, maxValuesPerKey, deviceIds);  
-
-                    transformresult.numberOfRemovedKeys = removeresult.numberOfRemovedKeys;
-                    transformresult.numberOfRemovedValues = removeresult.numberOfRemovedValues;
-
-                    success = true;
-
-                }catch(const thrust::system_error& ex){
-                    std::cerr << ex.what() << '\n';
-                    cudaGetLastError();
-                    success = false;
-                }catch(const std::exception& ex){
-                    std::cerr << ex.what() << '\n';
-                    cudaGetLastError();
-                    success = false;
-                }catch(...){
-                    cudaGetLastError();
-                    success = false;
-                }
-
-                setupStatus = cudaSetDevice(oldDeviceId);
-                if(setupStatus != cudaSuccess) //we cannot recover from this.
-                    throw std::runtime_error("Could not revert device id!");
-
-                return result;
-            }
-
-        };
+     
     #endif
 }
 
@@ -959,6 +645,13 @@ namespace cpuhashtabledetail{
             init(std::move(keys), std::move(vals), maxValuesPerKey, valuesOfSameKeyMustBeSorted);
         }
 
+        CpuReadOnlyMultiValueHashTable(
+            std::uint64_t maxNumValues_
+        ) : buildMaxNumValues{maxNumValues_}{
+            buildkeys.reserve(buildMaxNumValues);
+            buildvalues.reserve(buildMaxNumValues);
+        }
+
         bool operator==(const CpuReadOnlyMultiValueHashTable& rhs) const{
             return values == rhs.values && lookup == rhs.lookup;
         }
@@ -993,60 +686,31 @@ namespace cpuhashtabledetail{
             #ifdef __NVCC__            
             if(gpuIds.size() == 0){
             #endif
-                cpuhashtabledetail::cpu_transformation(
-                    keys, 
-                    values, 
-                    countsPrefixSum, 
-                    maxValuesPerKey,
-                    valuesOfSameKeyMustBeSorted
-                );
+                using GroupByKeyCpu = cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
+
+                GroupByKeyCpu groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                groupByKey.execute(keys, values, countsPrefixSum);
             #ifdef __NVCC__
             }else{
-                
-                auto pair = cpuhashtabledetail::GPUTransformation<false>::execute(
-                    keys, 
-                    values, 
-                    countsPrefixSum, 
-                    gpuIds, 
-                    maxValuesPerKey,
-                    valuesOfSameKeyMustBeSorted
-                );
 
-                bool success = pair.first;
+                using GroupByKeyCpu = cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
+                using GroupByKeyGpu = cpuhashtabledetail::GroupByKeyGpu<Key, Value, read_number>;
+
+                GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                bool success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
 
                 if(!success){
-                    std::cerr << "Fallback to managed memory transformation.\n";
-
-                    pair = cpuhashtabledetail::GPUTransformation<true>::execute(
-                        keys, 
-                        values, 
-                        countsPrefixSum, 
-                        gpuIds, 
-                        maxValuesPerKey,
-                        valuesOfSameKeyMustBeSorted
-                    );
-
-                    success = pair.first;
-                }
-
-                if(!success){
-                    std::cerr << "\nFallback to cpu transformation.\n";
-                    
-                    cpuhashtabledetail::cpu_transformation(
-                        keys, 
-                        values, 
-                        countsPrefixSum, 
-                        maxValuesPerKey,
-                        valuesOfSameKeyMustBeSorted
-                    );
+                    GroupByKeyCpu groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    groupByKeyCpu.execute(keys, values, countsPrefixSum);
                 }
             }
             #endif
 
-            lookup = NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f);
-
+            lookup = std::move(NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f));
+            //std::cerr << "keys.size(): " << keys.size() << "\n";
+            //nvtx::push_range("build_key_to_index_table", 0);
             for(std::size_t i = 0; i < keys.size(); i++){
-                // if(i < 10){
+                // if(keys[i] == 390602873081ull){
                 //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
                 // }
                 
@@ -1056,9 +720,27 @@ namespace cpuhashtabledetail{
                 );
                 
             }
+            //nvtx::pop_range();
+
+            isInit = true;
+        }
+
+        void insert(Key* keys, Value* values, int N){
+            assert(keys != nullptr);
+            assert(values != nullptr);
+            assert(buildMaxNumValues >= buildkeys.size() + N);
+
+            buildkeys.insert(buildkeys.end(), keys, keys + N);
+            buildvalues.insert(buildvalues.end(), values, values + N);
+        }
+
+        void finalize(int maxValuesPerKey, const std::vector<int>& gpuIds = {}){
+            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, gpuIds);            
         }
 
         QueryResult query(const Key& key) const{
+            assert(isInit);
+
             auto lookupQueryResult = lookup.query(key);
 
             if(lookupQueryResult.valid()){
@@ -1080,6 +762,7 @@ namespace cpuhashtabledetail{
         }
 
         void query(const Key* keys, std::size_t numKeys, QueryResult* resultsOutput) const{
+            assert(isInit);
             for(std::size_t i = 0; i < numKeys; i++){
                 resultsOutput[i] = query(keys[i]);
             }
@@ -1089,13 +772,18 @@ namespace cpuhashtabledetail{
             MemoryUsage result;
             result.host = sizeof(Value) * values.capacity();
             result.host += lookup.getMemoryInfo().host;
+            result.host += sizeof(Key) * buildkeys.capacity();
+            result.host += sizeof(Value) * buildvalues.capacity();
 
             result.device = lookup.getMemoryInfo().device;
+
+            //std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
 
             return result;
         }
 
         void writeToStream(std::ostream& os) const{
+            assert(isInit);
 
             const std::size_t elements = values.size();
             const std::size_t bytes = sizeof(Value) * elements;
@@ -1115,6 +803,7 @@ namespace cpuhashtabledetail{
             is.read(reinterpret_cast<char*>(values.data()), bytes);
 
             lookup.loadFromStream(is);
+            isInit = true;
         }
 
         void destroy(){
@@ -1122,6 +811,7 @@ namespace cpuhashtabledetail{
             std::swap(values, tmp);
 
             lookup.destroy();
+            isInit = false;
         }
 
         static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
@@ -1138,7 +828,10 @@ namespace cpuhashtabledetail{
     private:
 
         using ValueIndex = std::pair<read_number, BucketSize>;
-
+        bool isInit = false;
+        std::uint64_t buildMaxNumValues = 0;
+        std::vector<Key> buildkeys;
+        std::vector<Value> buildvalues;
         // values with the same key are stored in contiguous memory locations
         // a single-value hashmap maps keys to the range of the corresponding values
         std::vector<Value> values; 

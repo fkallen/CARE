@@ -1,4 +1,4 @@
-
+#include <version.hpp>
 #include <config.hpp>
 
 #include <cxxopts/cxxopts.hpp>
@@ -300,6 +300,7 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
+	std::cout << "Merged output: " << fileOptions.mergedoutput << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

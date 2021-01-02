@@ -4,7 +4,7 @@
 
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <minhasher.hpp>
 #include <readstorage.hpp>
 #include <options.hpp>
@@ -121,7 +121,7 @@ public:
         msaTimer{"MSA timer"}
     {
 
-        encodedSequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+        encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
         decodedSequencePitchInBytes = maximumSequenceLength;
         qualityPitchInBytes = maximumSequenceLength;
 
@@ -1071,16 +1071,16 @@ protected:
             task.mateReadId = input.readId2;
 
             task.decodedMate.resize(input.readLength2);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.decodedMate.data(),
                 input.encodedRead2,
                 input.readLength2
             );
 
-            task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength2);
+            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), input.readLength2);
 
             task.resultsequence.resize(input.readLength1);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
                 input.encodedRead1,
                 input.readLength1
@@ -1110,15 +1110,15 @@ protected:
             task.mateReadId = input.readId1;
 
             task.decodedMate.resize(input.readLength1);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.decodedMate.data(),
                 input.encodedRead1,
                 input.readLength1
             );
-            task.decodedMateRevC = reverseComplementString(task.decodedMate.data(), input.readLength1);
+            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), input.readLength1);
 
             task.resultsequence.resize(input.readLength2);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
                 input.encodedRead2,
                 input.readLength2
@@ -1153,7 +1153,7 @@ protected:
             task.mateReadId = std::numeric_limits<read_number>::max();
 
             task.resultsequence.resize(input.readLength1);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
                 input.encodedRead1,
                 input.readLength1
@@ -1170,7 +1170,7 @@ protected:
             std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
 
             //to extend a single-end read to the left, its reverse complement will be extended to the right
-            reverseComplementInplace2Bit(task.currentAnchor.data(), input.readLength1);
+            SequenceHelpers::reverseComplementSequenceInplace2Bit(task.currentAnchor.data(), input.readLength1);
 
             task.currentAnchorLength = input.readLength1;
             task.currentAnchorReadId = input.readId1;
@@ -1184,7 +1184,7 @@ protected:
             task.mateReadId = std::numeric_limits<read_number>::max();
 
             task.resultsequence.resize(input.readLength1);
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
                 input.encodedRead1,
                 input.readLength1
@@ -1560,7 +1560,7 @@ private:
             const int length = readLength;
             std::string sequence(length, '0');
 
-            decode2BitSequence(
+            SequenceHelpers::decode2BitSequence(
                 &sequence[0],
                 encodedRead,
                 length

@@ -397,6 +397,15 @@ namespace care{
 
         std::cout << "Running CARE EXTEND GPU" << std::endl;
 
+        if(runtimeOptions.deviceIds.size() == 0){
+            std::cout << "No device ids found. Abort!" << std::endl;
+            return;
+        }
+
+        cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
+
+        helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
+        peerAccess.enableAllPeerAccesses();
 
         // {
         //     MemoryFileFixedSize<ExtendedRead> memfile{0, fileOptions.tempdirectory+"/tmpfile"};
@@ -716,6 +725,10 @@ namespace care{
         if(outputFormat == FileFormat::FASTAGZ)
             outputFormat = FileFormat::FASTA;
 
+        //read extender does not produce longer quality scores -> only output fasta format
+        if(outputFormat == FileFormat::FASTQGZ)
+            outputFormat = FileFormat::FASTQ;
+
 
         const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
 
@@ -731,7 +744,6 @@ namespace care{
             false,
             fileOptions.mergedoutput
         );
-
 
         step3Timer.print();
 

@@ -3,7 +3,7 @@
 
 
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <hpc_helpers.cuh>
 #include <memoryfile.hpp>
 #include <readlibraryio.hpp>
