@@ -155,6 +155,68 @@ private:
         h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
         d_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
 
+        #if 1
+        constexpr int batchsize = 64;
+        const int batches = SDIV(numIndices, batchsize);
+
+        for(int batch = 0; batch < batches; batch++){
+            const int begin = batch * batchsize;
+            const int end = std::min((batch + 1) * batchsize, numIndices);
+            const int num = end - begin;
+
+            for(int t = begin; t < end; t++){
+                const auto& task = tasks[indicesOfActiveTasks[t]];
+
+                if(task.iteration >= 0){
+
+                    h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+                    std::copy(
+                        task.currentAnchor.begin(),
+                        task.currentAnchor.end(),
+                        h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
+                    );
+                }else{
+                    //only hash kmers which include extended positions
+
+                    const int extendedPositionsPreviousIteration 
+                        = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
+
+                    const int lengthToHash = std::min(task.currentAnchorLength, gpuMinhasher->getKmerSize() + extendedPositionsPreviousIteration - 1);
+                    h_anchorSequencesLength[t] = lengthToHash;
+
+                    //std::cerr << "lengthToHash = " << lengthToHash << "\n";
+
+                    std::vector<char> buf(task.currentAnchorLength);
+                    decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+                    encodeSequence2Bit(
+                        h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
+                        buf.data() + task.currentAnchorLength - lengthToHash, 
+                        lengthToHash
+                    );
+
+                }
+            }
+
+            cudaMemcpyAsync(
+                d_subjectSequencesData.get() + encodedSequencePitchInInts2Bit * begin ,
+                h_subjectSequencesData.get() + encodedSequencePitchInInts2Bit * begin,
+                sizeof(unsigned int) * num * encodedSequencePitchInInts2Bit,
+                H2D,
+                streams[batch % streams.size()];
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_anchorSequencesLength.get() + begin,
+                h_anchorSequencesLength.get() + begin,
+                sizeof(int) * num,
+                H2D,
+                stream
+            ); CUERR;
+        }
+
+        #else
+
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
 
@@ -204,7 +266,9 @@ private:
             H2D,
             stream
         ); CUERR;
-        
+
+        #endif
+
         gpuMinhasher->getIdsOfSimilarReads(
             gpuMinhashHandle,
             d_subjectSequencesData.get(), //device accessible
@@ -576,7 +640,7 @@ private:
 
     DeviceBuffer<char> d_tempstorage;
 
-    std::array<CudaStream, 2> streams{};
+    std::array<CudaStream, 4> streams{};
 
     gpu::KernelLaunchHandle kernelLaunchHandle;
 
