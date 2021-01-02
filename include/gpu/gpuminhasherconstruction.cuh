@@ -3,6 +3,7 @@
 
 
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/gpureadstorage.cuh>
 
 #include <options.hpp>
 
@@ -26,7 +27,7 @@ namespace gpu{
         const MemoryOptions& memoryOptions,
         const CorrectionOptions& correctionOptions,
         const SequenceFileProperties& totalInputFileProperties,
-        const DistributedReadStorage& gpuReadStorage,
+        const GpuReadStorage& gpuReadStorage,
         GpuMinhasherType requestedType = GpuMinhasherType::None
     );
 

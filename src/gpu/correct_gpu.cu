@@ -4,6 +4,8 @@
 
 #include <gpu/gpucorrector.cuh>
 #include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
+
 #include <gpu/gpuminhasher.cuh>
 // #include <gpu/fakegpuminhasher.cuh>
 // #include <gpu/singlegpuminhasher.cuh>
@@ -177,7 +179,7 @@ public:
     };
 
     SimpleGpuCorrectionPipeline(
-        const DistributedReadStorage& readStorage_,
+        const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
@@ -744,7 +746,7 @@ public:
     }
 
 private:
-    const DistributedReadStorage* readStorage;
+    const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
 };
@@ -761,7 +763,7 @@ public:
     };
 
     ComplexGpuCorrectionPipeline(
-        const DistributedReadStorage& readStorage_,
+        const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
@@ -1338,7 +1340,7 @@ public:
     };
 
 private:
-    const DistributedReadStorage* readStorage;
+    const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
 
@@ -1366,7 +1368,7 @@ correct_gpu_impl(
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
         Minhasher& minhasher,
-        DistributedReadStorage& readStorage){
+        GpuReadStorage& readStorage){
 
     assert(runtimeOptions.canUseGpu);
     //assert(runtimeOptions.max_candidates > 0);
@@ -1968,7 +1970,7 @@ correct_gpu(
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
         GpuMinhasher& minhasher,
-        DistributedReadStorage& readStorage){
+        GpuReadStorage& readStorage){
 
     return correct_gpu_impl(
         goodAlignmentProperties,

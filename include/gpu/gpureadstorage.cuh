@@ -37,6 +37,7 @@ public:
     virtual Handle makeHandle() const = 0;
 
     virtual void areSequencesAmbiguous(
+        Handle& handle,
         bool* d_result, 
         const read_number* d_readIds, 
         int numSequences, 
@@ -67,25 +68,25 @@ public:
         Handle& handle,
         int* d_lengths,
         const read_number* d_readIds,
-        int nReadIds,    
+        int numSequences,    
         cudaStream_t stream
     ) const = 0;
 
-    virtual bool readContainsN(read_number readId) const noexcept = 0;
+    virtual bool readContainsN(read_number readId) const = 0;
 
-    virtual std::int64_t getNumberOfReadsWithN() const noexcept = 0;
+    virtual std::int64_t getNumberOfReadsWithN() const = 0;
 
-    virtual MemoryUsage getMemoryInfo() const noexcept = 0;
+    virtual MemoryUsage getMemoryInfo() const = 0;
 
-    virtual MemoryUsage getMemoryInfo(const Handle& handle) const noexcept = 0;
+    virtual MemoryUsage getMemoryInfo(const Handle& handle) const = 0;
 
-    virtual read_number getNumberOfReads() const noexcept = 0;
+    virtual read_number getNumberOfReads() const = 0;
 
-    virtual bool canUseQualityScores() const noexcept = 0;
+    virtual bool canUseQualityScores() const = 0;
 
-    virtual int getSequenceLengthLowerBound() const noexcept = 0;
+    virtual int getSequenceLengthLowerBound() const = 0;
 
-    virtual int getSequenceLengthUpperBound() const noexcept = 0;
+    virtual int getSequenceLengthUpperBound() const = 0;
 
     virtual void destroy() = 0;
 

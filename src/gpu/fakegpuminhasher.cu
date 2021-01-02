@@ -75,7 +75,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
     const MemoryOptions& memoryOptions,
     std::uint64_t nReads,
     const CorrectionOptions& correctionOptions,
-    const DistributedReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage
 ){
     
     auto& readStorage = gpuReadStorage;
@@ -90,7 +90,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
     const read_number numReads = readStorage.getNumberOfReads();
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
 
-    auto sequencehandle = readStorage.makeGatherHandleSequences();
+    auto sequencehandle = gpuReadStorage.makeHandle();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(unsigned int);
 
     constexpr read_number parallelReads = 1000000;
@@ -190,21 +190,19 @@ void FakeGpuMinhasher::constructFromReadStorage(
 
             cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
 
-            gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
-                nullptr, //threadpool
+            gpuReadStorage.gatherSequences(
                 sequencehandle,
                 d_sequenceData,
                 encodedSequencePitchInInts,
                 h_indices,
                 d_indices,
                 curBatchsize,
-                deviceId,
                 stream
             );
         
-            gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+            gpuReadStorage.gatherSequenceLengths(
+                sequencehandle,
                 d_lengths,
-                deviceId,
                 d_indices,
                 curBatchsize,
                 stream

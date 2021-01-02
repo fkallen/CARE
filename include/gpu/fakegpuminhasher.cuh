@@ -3,7 +3,7 @@
 
 #include <config.hpp>
 
-#include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <gpu/minhashingkernels.cuh>
 #include <cpuhashtable.hpp>
@@ -246,7 +246,7 @@ namespace gpu{
             const MemoryOptions& memoryOptions,
             std::uint64_t nReads,
             const CorrectionOptions& correctionOptions,
-            const DistributedReadStorage& gpuReadStorage
+            const GpuReadStorage& gpuReadStorage
         );
  
 

@@ -6,7 +6,7 @@
 #include <config.hpp>
 
 
-#include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <gpu/singlegpuminhasher.cuh>
 #include <gpu/kernels.hpp>
@@ -303,7 +303,7 @@ namespace gpu{
         int constructFromReadStorage(
             const RuntimeOptions &runtimeOptions,
             std::uint64_t nReads,
-            const DistributedReadStorage& gpuReadStorage,
+            const GpuReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0

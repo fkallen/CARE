@@ -7,7 +7,7 @@
 
 #include <warpcore.cuh>
 
-#include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
 #include <gpu/gpuhashtable.cuh>
@@ -92,7 +92,7 @@ namespace gpu{
         int constructFromReadStorage(
             const RuntimeOptions &runtimeOptions,
             std::uint64_t nReads,
-            const DistributedReadStorage& gpuReadStorage,
+            const GpuReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0
@@ -139,7 +139,7 @@ namespace gpu{
 
             CudaStream stream{};
 
-            auto sequencehandle = gpuReadStorage.makeGatherHandleSequences();
+            auto sequencehandle = gpuReadStorage.makeHandle();
 
             // auto showProgress = [&](auto totalCount, auto seconds){
             //     if(runtimeOptions.showProgress){
@@ -201,21 +201,19 @@ namespace gpu{
 
                     cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
 
-                    gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
-                        &threadPool,
+                    gpuReadStorage.gatherSequences(
                         sequencehandle,
                         d_sequenceData,
                         encodedSequencePitchInInts,
                         h_indices,
                         d_indices,
                         curBatchsize,
-                        deviceId,
                         stream
                     );
                 
-                    gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+                    gpuReadStorage.gatherSequenceLengths(
+                        sequencehandle,
                         d_lengths,
-                        deviceId,
                         d_indices,
                         curBatchsize,
                         stream
