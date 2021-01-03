@@ -97,7 +97,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
             for(int gpu = 0; gpu < numGpus; gpu++){
                 const size_t usableMem = freeMemPerGpu[gpu] > headRoom ? freeMemPerGpu[gpu] - headRoom : 0;
-                maximumUsableBytesPerGpu[gpu] = 0;//usableMem;
+                maximumUsableBytesPerGpu[gpu] = usableMem;
             }
             // std::cerr << "Usable memory per gpu : ";
             // std::copy(maximumUsableBytesPerGpu.begin(), maximumUsableBytesPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
