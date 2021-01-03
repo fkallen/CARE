@@ -72,6 +72,26 @@ namespace cpu{
         std::atomic<read_number> numberOfInsertedReads{0};
         LengthStore_t lengthStorage;
 
+        const unsigned int* getSequenceArray() const noexcept{
+            return h_sequence_data.get();
+        }
+
+        const char* getQualityArray() const noexcept{
+            return h_quality_data.get();
+        }
+
+        const LengthStore_t& getLengthStore() const noexcept{
+            return lengthStorage;
+        }
+
+        std::size_t getSequencePitch() const noexcept{
+            return sequenceDataPitchInInts * sizeof(unsigned int);
+        }
+
+        std::size_t getQualityPitch() const noexcept{
+            return sequenceQualitiesPitchInBytes;
+        }
+
 
 
         ContiguousReadStorage() : ContiguousReadStorage(0){}

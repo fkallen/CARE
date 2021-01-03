@@ -10,6 +10,8 @@
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
 
+#include <gpu/multigpureadstorage.cuh>
+
 #include <rangegenerator.hpp>
 
 #include <algorithm>

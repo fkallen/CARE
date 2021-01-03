@@ -72,8 +72,6 @@ public:
         cudaStream_t stream
     ) const = 0;
 
-    virtual bool readContainsN(read_number readId) const = 0;
-
     virtual std::int64_t getNumberOfReadsWithN() const = 0;
 
     virtual MemoryUsage getMemoryInfo() const = 0;
