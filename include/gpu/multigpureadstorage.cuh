@@ -7,10 +7,15 @@
 #include <2darray.hpp>
 #include <gpu/multigpuarray.cuh>
 #include <sequencehelpers.hpp>
+#include <lengthstorage.hpp>
+#include <gpu/gpulengthstorage.hpp>
+#include <sharedmutex.hpp>
+
 
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <map>
 
 #include <cub/cub.cuh>
 
@@ -20,12 +25,25 @@ namespace gpu{
 
 class MultiGpuReadStororage : public GpuReadStorage {
 public:
-    std::vector<Gpu2dArrayManaged<unsigned int>> sequencesGpuPartitions;
-    std::vector<Gpu2dArrayManaged<char>> qualitiesGpuPartitions;
-    std::vector<int> readsPerSequencesPartition;
-    std::vector<int> readsPerSequencesPartitionPrefixSum;
-    std::vector<int> readsPerQualitiesPartition;
-    std::vector<int> readsPerQualitiesPartitionPrefixSum;
+
+    struct TempData{
+        struct CallerData{
+
+        };
+
+        CallerData& getCallerData(int deviceId){
+            cub::SwitchDevice sd(deviceId);
+            return callerDataMap[deviceId];
+        }
+
+        std::map<int, CallerData> callerDataMap{};
+
+        MemoryUsage getMemoryInfo() const override{
+            MemoryUsage result{};
+
+            return result;
+        }
+    };
 
     MultiGpuReadStororage(
         const cpu::ContiguousReadStorage& cpuReadStorage_, 
@@ -35,11 +53,11 @@ public:
         deviceIds{std::move(deviceIds_)},
         memoryLimitsPerDevice{std::move(memoryLimitsPerDevice_)}
     {
-        //Gpu2dArrayManaged(size_t numRows, size_t numColumns, size_t alignmentInBytes)
+
         const int numGpus = deviceIds.size();
-
-
         const std::size_t numReads = cpuReadStorage->getNumberOfReads();
+
+        gpuLengthStorage = std::move(GPULengthStore2(cpuReadStorage->getLengthStore(), deviceIds));
 
         //handle sequences
         readsPerSequencesPartition.resize(numGpus, 0);
@@ -126,19 +144,32 @@ public:
         );
     }
 
-public: //inherited interface
+public: //inherited GPUReadStorage interface
 
-    virtual Handle makeHandle() const = 0;
+    Handle makeHandle() const override {
+        auto data = std::make_unique<TempData>();
 
-    virtual void areSequencesAmbiguous(
+        std::unique_lock<SharedMutex> lock(sharedmutex);
+        const int handleid = counter++;
+        Handle h = constructHandle(handleid);
+
+        tempdataVector.emplace_back(std::move(data));
+        return h;
+    }
+
+    void areSequencesAmbiguous(
         Handle& handle,
         bool* d_result, 
         const read_number* d_readIds, 
         int numSequences, 
         cudaStream_t stream
-    ) const = 0;
+    ) const override{
+        //TODO correct implementation
 
-    virtual void gatherSequences(
+        cudaMemsetAsync(d_result, 0, sizeof(bool) * numSequences, stream); CUERR;
+    }
+
+    void gatherSequences(
         Handle& handle,
         unsigned int* d_sequence_data,
         size_t outSequencePitchInInts,
@@ -146,7 +177,15 @@ public: //inherited interface
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream
-    ) const = 0;
+    ) const override{
+        TempData* tempData = getTempDataFromHandle(handle);
+
+        const int numGpus = deviceIds.size();
+
+        for()
+
+        //TODO
+    }
 
     virtual void gatherQualities(
         Handle& handle,
@@ -156,37 +195,178 @@ public: //inherited interface
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream
-    ) const = 0;
+    ) const override{
 
-    virtual void gatherSequenceLengths(
+        //TODO
+    }
+
+    void gatherSequenceLengths(
         Handle& handle,
         int* d_lengths,
         const read_number* d_readIds,
         int numSequences,    
         cudaStream_t stream
-    ) const = 0;
+    ) const override{
 
-    virtual std::int64_t getNumberOfReadsWithN() const = 0;
+        gpuLengthStorage.gatherLengthsOnDeviceAsync(
+            d_lengths, 
+            d_readIds, 
+            numSequences, 
+            stream
+        );
 
-    virtual MemoryUsage getMemoryInfo() const = 0;
+    }
 
-    virtual MemoryUsage getMemoryInfo(const Handle& handle) const = 0;
+    std::int64_t getNumberOfReadsWithN() const override{
+        return cpuReadStorage->getNumberOfReadsWithN();
+    }
 
-    virtual read_number getNumberOfReads() const = 0;
+    MemoryUsage getMemoryInfo() const override{
+        MemoryUsage result;
 
-    virtual bool canUseQualityScores() const = 0;
+        const int numGpus = deviceIds.size();
 
-    virtual int getSequenceLengthLowerBound() const = 0;
+        for(int i = 0; i < numGpus; i++){
+            result.device[sequencesGpuPartitions[i].getDeviceId()] += sequencesGpuPartitions[i].getPitch() * sequencesGpuPartitions[i].getNumColumns();
 
-    virtual int getSequenceLengthUpperBound() const = 0;
+            if(canUseQualityScores()){
+                result.device[qualitiesGpuPartitions[i].getDeviceId()] += qualitiesGpuPartitions[i].getPitch() * qualitiesGpuPartitions[i].getNumColumns();
+            }
+        }
 
-    virtual void destroy() = 0;
+        result += gpuLengthStorage.getMemoryInfo();
+
+        return result;
+    }
+
+    MemoryUsage getMemoryInfo(const Handle& handle) const override{
+        int deviceId = 0;
+        cudaGetDevice(&deviceId); CUERR;
+
+        TempData* tempData = getTempDataFromHandle(handle);
+        auto& callerData = tempData->getCallerData(deviceId);
+ 
+        return tempData->getMemoryInfo();
+    }
+
+    read_number getNumberOfReads() const override{
+        return cpuReadStorage->getNumberOfReads();
+    }
+
+    bool canUseQualityScores() const override{
+        return cpuReadStorage->canUseQualityScores();
+    }
+
+    int getSequenceLengthLowerBound() const override{
+        return cpuReadStorage->getSequenceLengthLowerBound();
+    }
+
+    int getSequenceLengthUpperBound() const override{
+        return cpuReadStorage->getSequenceLengthUpperBound();
+    }
+
+    void destroy() override{
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+        const int numGpus = deviceIds.size();
+
+        for(int i = 0; i < numGpus; i++){
+            cub::SwitchDevice sd(deviceIds[i]);
+
+            cudaDeviceSynchronize(); CUERR;
+
+            sequencesGpuPartitions[i].destroy();
+
+            if(canUseQualityScores()){
+                qualitiesGpuPartitions[i].destroy();
+            }
+        }
+
+        gpuLengthStorage.destroyGpuData();
+
+        deallocVector(sequencesGpuPartitions);
+        deallocVector(qualitiesGpuPartitions);
+        deallocVector(readsPerSequencesPartition);
+        deallocVector(readsPerSequencesPartitionPrefixSum);
+        deallocVector(readsPerQualitiesPartition);
+        deallocVector(readsPerQualitiesPartitionPrefixSum);
+        deallocVector(tempdataVector);
+
+    }
+
+public: //private, but nvcc..
+
+    template<class T>
+    void gatherImplSingleGpu(
+        Handle& handle,
+        T* d_sequence_data,
+        size_t outSequencePitchInBytes,
+        const read_number* h_readIds,
+        const read_number* d_readIds,
+        int numSequences,
+        cudaStream_t stream,
+        const std::vector<Gpu2dArrayManaged<T>>& gpuArrays,
+        const std::vector<std::size_t>& readsPerPartition,
+        const std::vector<std::size_t>& readsPerPartitionPrefixSum
+    ) const override{
+        TempData* tempData = getTempDataFromHandle(handle);
+
+        const int numGpus = deviceIds.size();
+
+        for(int i = 0; i < numGpus; i++){
+            if(readsPerPartition[i] > 0){
+                cub::SwitchDevice sd{deviceIds[i]};
+
+                break;
+            }
+        }
+    }
 
 private:
+    TempData* getTempDataFromHandle(const Handle& handle) const{
+        std::shared_lock<SharedMutex> lock(sharedmutex);
+
+        return tempdataVector[handle.getId()].get();
+    }
+
+    bool hasHostSequences() const noexcept{
+        return readsPerSequencesPartition.back() > 0;
+    }
+
+    bool hasHostQualities() const noexcept{
+        return canUseQualityScores() && readsPerQualitiesPartition.back() > 0;
+    }
+
+    bool isHostElementSequence(std::size_t index) const noexcept{
+        const int hostposition = readsPerSequencesPartitionPrefixSum.size() - 2;
+        return index < getNumberOfReads() && readsPerSequencesPartitionPrefixSum[hostposition] < getNumberOfReads();
+    }
+
+    bool isHostElementQualityScore(std::size_t index) const noexcept{
+        const int hostposition = readsPerQualitiesPartitionPrefixSum.size() - 2;
+        return index < getNumberOfReads() && readsPerQualitiesPartitionPrefixSum[hostposition] < getNumberOfReads();
+    }
+    
     const cpu::ContiguousReadStorage* cpuReadStorage{};
+
+    std::vector<Gpu2dArrayManaged<unsigned int>> sequencesGpuPartitions{};
+    std::vector<Gpu2dArrayManaged<char>> qualitiesGpuPartitions{};
+    std::vector<std::size_t> readsPerSequencesPartition{};
+    std::vector<std::size_t> readsPerSequencesPartitionPrefixSum{};
+    std::vector<std::size_t> readsPerQualitiesPartition{};
+    std::vector<std::size_t> readsPerQualitiesPartitionPrefixSum{};
+
+    GPULengthStore2<std::uint32_t> gpuLengthStorage{};
 
     std::vector<int> deviceIds{};
     std::vector<std::size_t> memoryLimitsPerDevice{};
+
+    mutable int counter = 0;
+    mutable SharedMutex sharedmutex{};
+    mutable std::vector<std::unique_ptr<TempData>> tempdataVector{};
 };
     
 }

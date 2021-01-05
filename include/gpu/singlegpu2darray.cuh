@@ -180,6 +180,7 @@ public:
     template<class IndexGenerator>
     void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(numIndices * numColumns, block.x), 1, 1);
@@ -200,6 +201,7 @@ public:
     template<class IndexGenerator>
     void gather(T* d_dest, size_t destRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(maxNumIndices * numColumns, block.x), 1, 1);
@@ -221,6 +223,7 @@ public:
         const size_t rows = rowEnd - rowBegin;
 
         if(rows == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
@@ -246,6 +249,7 @@ public:
     template<class IndexGenerator>
     void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, size_t numIndices, cudaStream_t stream = 0) const{
         if(numIndices == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(numIndices * numColumns, block.x), 1, 1);
@@ -266,6 +270,7 @@ public:
     template<class IndexGenerator>
     void scatter(const T* d_src, size_t srcRowPitchInBytes, IndexGenerator d_indices, const size_t* d_numIndices, size_t maxNumIndices, cudaStream_t stream = 0) const{
         if(maxNumIndices == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(maxNumIndices * numColumns, block.x), 1, 1);
@@ -286,6 +291,7 @@ public:
     void scatter(const T* d_src, size_t srcRowPitchInBytes, size_t rowBegin, size_t rowEnd, cudaStream_t stream = 0) const{
         const size_t rows = rowEnd - rowBegin;
         if(rows == 0) return;
+        if(getNumRows() == 0) return;
 
         dim3 block(128, 1, 1);
         dim3 grid(SDIV(rows * numColumns, block.x), 1, 1);
