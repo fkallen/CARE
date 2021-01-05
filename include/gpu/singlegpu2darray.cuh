@@ -4,6 +4,7 @@
 #include <hpc_helpers.cuh>
 
 #include <2darray.hpp>
+#include <memorymanagement.hpp>
 
 #include <algorithm>
 #include <cassert>
@@ -335,6 +336,15 @@ public:
 
     size_t getPitch() const noexcept{
         return rowPitchInBytes;
+    }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage result{};
+
+        result.host = 0;
+        result.device[getDeviceId()] = getPitch() * getNumRows();
+
+        return result;
     }
 
 private:

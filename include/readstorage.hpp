@@ -92,6 +92,10 @@ namespace cpu{
             return sequenceQualitiesPitchInBytes;
         }
 
+        const read_number* getAmbiguousIds() const noexcept{
+            return readIdsOfReadsWithUndeterminedBase.data();
+        }
+
 
 
         ContiguousReadStorage() : ContiguousReadStorage(0){}

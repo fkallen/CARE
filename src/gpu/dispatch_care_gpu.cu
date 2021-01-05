@@ -312,6 +312,48 @@ namespace care{
 
         step1timer.print();
 
+#define USENEWRS
+
+#ifdef USENEWRS
+        readStorage.saveToFile("foootemp");
+        readStorage.destroy();
+
+        care::cpu::ContiguousReadStorage cpuReadStorage(
+            totalInputFileProperties.nReads,
+            correctionOptions.useQualityScores, 
+            totalInputFileProperties.minSequenceLength, 
+            totalInputFileProperties.maxSequenceLength
+        );
+            
+        cpuReadStorage.loadFromFile("foootemp");
+        std::cout << "Loaded cpu readstorage " << std::endl;
+
+        std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+        for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
+            std::size_t total = 0;
+            cudaMemGetInfo(&gpumemorylimits[i], &total);
+
+            std::size_t safety = 1 << 30;
+            if(gpumemorylimits[i] > safety){
+                gpumemorylimits[i] -= safety;
+            }else{
+                gpumemorylimits[i] = 0;
+            }
+        }
+
+        helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
+        gpu::MultiGpuReadStorage gpuReadStorage(
+            cpuReadStorage, 
+            runtimeOptions.deviceIds, 
+            gpumemorylimits
+        );
+        cpugputimer.print();
+
+        std::cout << "constructed gpu readstorage " << std::endl;
+#endif        
+
+
+
         std::cout << "STEP 2: Error correction" << std::endl;
 
         helpers::CpuTimer step2timer("STEP2");
@@ -319,12 +361,16 @@ namespace care{
         auto partialResults = gpu::correct_gpu(
             goodAlignmentProperties, 
             correctionOptions,
-            runtimeOptions, 
+            runtimeOptions,
             fileOptions, 
             memoryOptions,
             totalInputFileProperties,
-            *gpuMinhasher,                       
+            *gpuMinhasher, 
+#ifdef USENEWRS                                  
+            gpuReadStorage
+#else            
             readStorage
+#endif            
         );
 
         step2timer.print();
@@ -334,6 +380,10 @@ namespace care{
         gpuMinhasher->destroy();
 
         readStorage.destroy();
+#ifdef USENEWRS        
+        gpuReadStorage.destroy();
+        cpuReadStorage.destroy();
+#endif        
 
         //Merge corrected reads with input file to generate output file
 

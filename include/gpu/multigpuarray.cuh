@@ -6,6 +6,8 @@
 
 #include <gpu/singlegpu2darray.cuh>
 
+#include <memorymanagement.hpp>
+
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -161,16 +163,16 @@ namespace MultiGpu2dArrayKernels{
 
 
 
-    template<int maxNumGpus = 8>
+    template<class IndexType, int maxNumGpus = 8>
     __global__
     void partitionSplitKernel(
-        size_t* __restrict__ splitIndices, // numIndices elements per partition
+        IndexType* __restrict__ splitIndices, // numIndices elements per partition
         size_t* __restrict__ splitDestinationPositions, // numIndices elements per partition
         size_t* __restrict__ numSplitIndicesPerPartition, 
         int numPartitions,
         const size_t* __restrict__ partitionOffsetsPS,
         size_t numIndices,
-        const size_t* __restrict__ indices
+        const IndexType* __restrict__ indices
     ){
 
         assert(numPartitions <= maxNumGpus+1);
@@ -216,7 +218,7 @@ namespace MultiGpu2dArrayKernels{
                 }
             }
 
-#if 1 && __CUDACC_VER_MAJOR__ >= 11
+#if __CUDACC_VER_MAJOR__ >= 11 && __CUDA_ARCH__ >= 700
             if(location != -1){
                 auto g = cg::coalesced_threads();
                 //partition into groups of threads with the same location. Cannot use a tiled_partition<N> as input, because for-loop may cause a deadlock:
@@ -258,7 +260,13 @@ namespace MultiGpu2dArrayKernels{
     };
 }
 
-template<class T>
+
+
+
+enum class MultiGpu2dArrayLayout {FirstFit, EvenShare};
+enum class MultiGpu2dArrayInitMode {MustFitCompletely, CanDiscardRows};
+
+template<class T, class IndexType = int>
 class MultiGpu2dArray{
 public:
 
@@ -267,8 +275,7 @@ public:
     template<class W>
     using DeviceBuffer = helpers::SimpleAllocationDevice<W>;
 
-    enum class Layout {FirstFit, EvenShare};
-    enum class InitMode {MustFitCompletely, CanDiscardRows};
+
 
     MultiGpu2dArray()
     : alignmentInBytes(sizeof(T)){
@@ -282,8 +289,8 @@ public:
         std::vector<int> dDeviceIds, // data resides on these gpus
         std::vector<int> cDeviceIds, // array can be accessed by these gpus
         std::vector<size_t> memoryLimits,
-        Layout layout,
-        InitMode initMode = InitMode::MustFitCompletely) 
+        MultiGpu2dArrayLayout layout,
+        MultiGpu2dArrayInitMode initMode = MultiGpu2dArrayInitMode::MustFitCompletely) 
     : alignmentInBytes(alignmentInBytes), 
         dataDeviceIds(dDeviceIds),
         callerDeviceIds(cDeviceIds)
@@ -345,7 +352,7 @@ public:
 
     struct HandleStruct{
         struct PerDevice{
-            using ArgIndexPair = cub::ArgIndexInputIterator<size_t*, size_t>::value_type;
+            using ArgIndexPair = typename cub::ArgIndexInputIterator<IndexType*, size_t>::value_type;
 
             PerDevice()
                 : 
@@ -362,15 +369,15 @@ public:
             CudaEvent event{};
 
             DeviceBuffer<char> d_cubTemp{};
-            DeviceBuffer<size_t> d_indices{};
-            DeviceBuffer<size_t> d_selectedIndices{};
+            DeviceBuffer<IndexType> d_indices{};
+            DeviceBuffer<IndexType> d_selectedIndices{};
             DeviceBuffer<size_t> d_selectedPositions{};
             DeviceBuffer<ArgIndexPair> d_selectedIndicesWithPositions{};
             DeviceBuffer<char> d_dataCommunicationBuffer{};
         };
 
         struct PerCaller{
-            using ArgIndexPair = cub::ArgIndexInputIterator<size_t*, size_t>::value_type;
+            using ArgIndexPair = typename cub::ArgIndexInputIterator<IndexType*, size_t>::value_type;
 
             PerCaller()
                 : 
@@ -387,8 +394,8 @@ public:
             CudaEvent event{};
 
             DeviceBuffer<char> d_cubTemp{};
-            DeviceBuffer<size_t> d_indices{};
-            DeviceBuffer<size_t> d_selectedIndices{};
+            DeviceBuffer<IndexType> d_indices{};
+            DeviceBuffer<IndexType> d_selectedIndices{};
             DeviceBuffer<size_t> d_selectedPositions{};
             DeviceBuffer<ArgIndexPair> d_selectedIndicesWithPositions{};
             DeviceBuffer<char> d_dataCommunicationBuffer{};
@@ -414,9 +421,21 @@ public:
 
         std::map<int, PerDevice> deviceBuffers{};
         std::map<int, PerCaller> callerBuffers{};
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result{};
+
+            return result;
+        }
     };
 
     using Handle = std::shared_ptr<HandleStruct>;
+
+    MemoryUsage getMemoryInfo(const Handle& handle) const{
+        MemoryUsage result{};
+
+        return handle->getMemoryInfo();
+    }
 
     Handle makeHandle() const{
         Handle handle = std::make_shared<HandleStruct>();
@@ -475,11 +494,12 @@ public:
         Handle& handle, 
         T* d_dest, 
         size_t destRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
-        int destDeviceId, 
         cudaStream_t destStream = 0
     ) const{
+
+        if(getNumRows() == 0) return;
 
         //TODO maybe perform batched gather to limit memory usage of handle
 
@@ -490,7 +510,6 @@ public:
             d_indices,
             numIndices,
             false,
-            destDeviceId,
             destStream
         );
     }
@@ -499,12 +518,13 @@ public:
         Handle& handle, 
         T* d_dest, 
         size_t destRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
         bool mayContainInvalidIndices,
-        int destDeviceId, 
         cudaStream_t destStream = 0
     ) const{
+
+        if(getNumRows() == 0) return;
 
         //TODO maybe perform batched gather to limit memory usage of handle
 
@@ -515,7 +535,6 @@ public:
             d_indices,
             numIndices,
             mayContainInvalidIndices,
-            destDeviceId,
             destStream
         );
     }
@@ -524,11 +543,12 @@ public:
         Handle& handle, 
         const T* d_src, 
         size_t srcRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
-        int srcDeviceId, 
         cudaStream_t srcStream = 0
     ) const{
+
+        if(getNumRows() == 0) return;
 
         //TODO maybe perform batched scatter to limit memory usage of handle
 
@@ -539,7 +559,6 @@ public:
             d_indices,
             numIndices,
             false,
-            srcDeviceId,
             srcStream
         );
     }
@@ -548,12 +567,13 @@ public:
         Handle& handle, 
         const T* d_src, 
         size_t srcRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
         bool mayContainInvalidIndices,
-        int srcDeviceId, 
         cudaStream_t srcStream = 0
     ) const{
+
+        if(getNumRows() == 0) return;
 
         //TODO maybe perform batched scatter to limit memory usage of handle
 
@@ -564,7 +584,6 @@ public:
             d_indices,
             numIndices,
             mayContainInvalidIndices,
-            srcDeviceId,
             srcStream
         );
     }
@@ -608,16 +627,15 @@ public:
     void gather_internal(
         Handle& handle, T* d_dest, 
         size_t destRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
         bool mayContainInvalidIndices,
-        int destDeviceId, 
         cudaStream_t destStream
     ) const{
         if(numIndices == 0) return;
 
-        cub::SwitchDevice sddest(destDeviceId);
-        //std::cerr << "switchdevice " << destDeviceId << "\n";
+        int destDeviceId = 0;
+        cudaGetDevice(&destDeviceId); CUERR;
 
         if(isSingleGpu() && !mayContainInvalidIndices){
             if(gpuArrays[0]->getDeviceId() == destDeviceId){ 
@@ -686,7 +704,7 @@ public:
 
                 cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
-                const size_t* d_selectedIndices = callerBuffers.d_selectedIndices.get() + gpuArrayIndex * numIndices;
+                const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + gpuArrayIndex * numIndices;
                 const size_t* d_numSelected = callerBuffers.d_numSelected.get() + gpuArrayIndex;
 
                 //TODO 
@@ -726,7 +744,7 @@ public:
                     d_selectedIndices,
                     ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
-                    const size_t index = d_selectedIndices[i];
+                    const IndexType index = d_selectedIndices[i];
                     return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
                 };
 
@@ -806,7 +824,7 @@ public:
                     //     return index; //destination row
                     // };
 
-                    MultiGpu2dArrayKernels::LinearAccessFunctor<size_t> scatterIndexGenerator(
+                    MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
                         callerBuffers.d_selectedPositions.get() + gpuArrayIndex * numIndices
                     );
 
@@ -841,15 +859,15 @@ public:
         Handle& handle, 
         const T* d_src, 
         size_t srcRowPitchInBytes, 
-        const size_t* d_indices, 
+        const IndexType* d_indices, 
         size_t numIndices, 
         bool mayContainInvalidIndices,
-        int srcDeviceId, 
         cudaStream_t srcStream = 0
     ) const{
         if(numIndices == 0) return;
 
-        cub::SwitchDevice sdsrc(srcDeviceId);
+        int srcDeviceId = 0;
+        cudaGetDevice(&srcDeviceId); CUERR;
 
         if(isSingleGpu() && !mayContainInvalidIndices && gpuArrays[0]->getDeviceId() == srcDeviceId){ //if all data should be scattered to same device
             auto indexGenerator = [d_indices] __device__ (auto i){
@@ -877,7 +895,7 @@ public:
                     targetDeviceBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
                 }
 
-                cub::ArgIndexInputIterator<const size_t*, size_t> d_indicesWithPosition(d_indices);
+                cub::ArgIndexInputIterator<const IndexType*, size_t> d_indicesWithPosition(d_indices);
 
                 auto selectOp = [
                     deviceIdIndex = getDeviceIdIndex(deviceId), 
@@ -920,7 +938,7 @@ public:
                     d_selectedIndicesWithPositions = callerBuffers.d_selectedIndicesWithPositions.get(), 
                     ps = callerBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
-                    const size_t index = d_selectedIndicesWithPositions[i].key; // position in array
+                    const IndexType index = d_selectedIndicesWithPositions[i].key; // position in array
                     return index; 
                 };
 
@@ -955,7 +973,7 @@ public:
                     deviceId, 
                     callerBuffers.d_selectedIndicesWithPositions.get(), 
                     srcDeviceId, 
-                    sizeof(cub::ArgIndexInputIterator<size_t*, size_t>::value_type) * numIndices, 
+                    sizeof(typename cub::ArgIndexInputIterator<IndexType*, size_t>::value_type) * numIndices, 
                     srcStream
                 );
 
@@ -984,7 +1002,7 @@ public:
                     d_selectedIndicesWithPositions = targetDeviceBuffers.d_selectedIndicesWithPositions.get(),
                     ps = targetDeviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
-                    const size_t index = d_selectedIndicesWithPositions[i].value;
+                    const IndexType index = d_selectedIndicesWithPositions[i].value;
                     return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
                 };
 
@@ -1012,6 +1030,17 @@ public:
         }
     }
 
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage result{};
+
+        result.host = 0;
+        for(const auto& ptr : gpuArrays){
+            result += ptr->getMemoryInfo();
+        }
+
+        return result;
+    }
+
 private:
     void copy(
         void* dst, 
@@ -1035,8 +1064,8 @@ private:
         size_t numRows, 
         size_t numColumns, 
         std::vector<size_t> memoryLimits, 
-        Layout layout,
-        InitMode initMode
+        MultiGpu2dArrayLayout layout,
+        MultiGpu2dArrayInitMode initMode
     ){
         assert(numRows > 0);
         assert(numColumns > 0);
@@ -1061,7 +1090,7 @@ private:
             maxRowsPerGpu[i] = memoryLimits[i] / rowPitchInBytes;
         }
 
-        if(layout == Layout::EvenShare){
+        if(layout == MultiGpu2dArrayLayout::EvenShare){
             std::cerr << "Layout::EvenShare not implemented. Will use Layout::FirstFit\n";
         }
 
@@ -1079,7 +1108,7 @@ private:
 
         //std::cerr << ", remaining " << remaining << "\n";
 
-        if(initMode == InitMode::MustFitCompletely){
+        if(initMode == MultiGpu2dArrayInitMode::MustFitCompletely){
             if(remaining > 0){
                 throw std::invalid_argument("Cannot fit all array elements into provided memory\n");
             }

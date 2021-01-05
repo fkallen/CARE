@@ -248,7 +248,7 @@ struct GPULengthStore2{
         deviceDataPointers.resize(deviceIds.size());
         int oldDevice = 0;
         cudaGetDevice(&oldDevice); CUERR;
-        for(int i = 0; i < int(deviceIds->size()); i++){
+        for(int i = 0; i < int(deviceIds.size()); i++){
             int deviceId = deviceIds[i];
             cudaSetDevice(deviceId); CUERR;
             cudaMalloc(&deviceDataPointers[i], lengthStore->getRawSizeInBytes()); CUERR;
@@ -261,6 +261,7 @@ struct GPULengthStore2{
         numElements = lengthStore->getNumElements();
         rawBitsPerLength = lengthStore->getRawBitsPerLength();
         rawSizeInBytes = lengthStore->getRawSizeInBytes();
+        numRawElements = lengthStore->getRawSizeInElements();
     }
 
     
@@ -287,6 +288,10 @@ struct GPULengthStore2{
 
     std::size_t getRawSizeInBytes() const noexcept{
         return rawSizeInBytes;
+    }
+
+    int getRawSizeInElements() const noexcept{
+        return numRawElements;
     }
 
     void gatherLengthsOnDeviceAsync(int* d_result, 
@@ -378,6 +383,7 @@ private:
     int minLength = 0;
     int maxLength = 0;
     int rawBitsPerLength = 0;
+    int numRawElements = 0;
     std::int64_t numElements = 0;
     std::size_t rawSizeInBytes;
     std::vector<Data_t*> deviceDataPointers;

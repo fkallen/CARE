@@ -1033,8 +1033,11 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     std::size_t lengthsBytes = gpulengthStorage.writeCpuLengthStoreToStream(stream);
 
-    std::size_t sequencesBytes = distributedSequenceData.writeToStream(stream);      
-    std::size_t qualitiesBytes = distributedQualities.writeToStream(stream);       
+    std::size_t sequencesBytes = distributedSequenceData.writeToStream(stream);
+    std::size_t qualitiesBytes = 0;
+    if(useQualityScores){
+        distributedQualities.writeToStream(stream);
+    }
 
     //read ids with N
     std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();

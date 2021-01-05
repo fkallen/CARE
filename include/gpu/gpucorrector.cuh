@@ -1737,6 +1737,7 @@ namespace gpucorrectorkernels{
 
 
         void getAmbiguousFlagsOfAnchors(cudaStream_t stream){
+
             gpuReadStorage->areSequencesAmbiguous(
                 readstorageHandleAnchorQualities,
                 d_anchorContainsN.get(), 
