@@ -378,8 +378,7 @@ public:
 
             PerCaller()
                 : 
-                d_numSelected(1),
-                event(cudaEventDisableTiming)
+                d_numSelected(1)
             {        
 
             }
@@ -396,8 +395,8 @@ public:
             DeviceBuffer<ArgIndexPair> d_selectedIndicesWithPositions{};
             DeviceBuffer<char> d_dataCommunicationBuffer{};
 
-            CudaEvent event{};
-
+            CudaEvent event{cudaEventDisableTiming};
+            std::vector<CudaEvent> events{};
             std::vector<CudaStream> streams{};
         };
 
@@ -475,6 +474,10 @@ public:
 
             auto& callerBuffers = handle->callerBuffers;
             callerBuffers.streams.resize(h_arrayOffsets.size());
+            
+            for(int i = 0; i < int(h_arrayOffsets.size()); i++){
+                callerBuffers.events.emplace_back(cudaEventDisableTiming);
+            }
 
             callerBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size()); CUERR;
             callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size()); CUERR;
@@ -668,7 +671,7 @@ public:
                 gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
             }
         }else{
-
+            
             //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
             // and scatter into result array
 
@@ -713,73 +716,71 @@ public:
 
             for(int d = 0; d < numGpus; d++){
                 const auto& gpuArray = gpuArrays[d];
-                const int deviceId = gpuArray->getDeviceId();
-
-                cub::SwitchDevice sd(deviceId);
-
-                //std::cerr << "switchdevice " << deviceId << "\n";
-
                 auto& deviceBuffers = handle->deviceBuffers[d];
+                {
 
-                cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
+                    const int deviceId = gpuArray->getDeviceId();
+                    cub::SwitchDevice sd(deviceId);
 
-                const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + d * numIndices;
-                const size_t* d_numSelected = callerBuffers.d_numSelected.get() + d;
+                    cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
-                //TODO 
-                // if (destDeviceId != deviceId) and interconnect is pci-e, try to copy selected data to device deviceId in an efficient way
-                // For now, it is always accessed via peer interconnect
+                    const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + d * numIndices;
+                    const size_t* d_numSelected = callerBuffers.d_numSelected.get() + d;
 
-                // if(destDeviceId != deviceId && pci-e){
-                //     //copy indices to local buffer
-                //     MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
-                //         callerBuffers.d_selectedIndices.get() + d * numIndices, 
-                //         callerBuffers.d_numSelected.get() + d,
-                //         deviceBuffers.d_selectedIndices.get()
-                //     ); CUERR;
+                    //TODO 
+                    // if (destDeviceId != deviceId) and interconnect is pci-e, try to copy selected data to device deviceId in an efficient way
+                    // For now, it is always accessed via peer interconnect
 
-                //     // MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
-                //     //     callerBuffers.d_selectedPositions.get() + d * numIndices, 
-                //     //     callerBuffers.d_numSelected.get() + d,
-                //     //     deviceBuffers.d_selectedPositions.get()
-                //     // ); CUERR;
+                    // if(destDeviceId != deviceId && pci-e){
+                    //     //copy indices to local buffer
+                    //     MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
+                    //         callerBuffers.d_selectedIndices.get() + d * numIndices, 
+                    //         callerBuffers.d_numSelected.get() + d,
+                    //         deviceBuffers.d_selectedIndices.get()
+                    //     ); CUERR;
 
-                //     copy(
-                //         deviceBuffers.d_numSelected.get(), 
-                //         deviceId,
-                //         callerBuffers.d_numSelected.get() + d, 
-                //         destDeviceId,                                         
-                //         sizeof(size_t), 
-                //         deviceBuffers.stream
-                //     );
+                    //     // MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
+                    //     //     callerBuffers.d_selectedPositions.get() + d * numIndices, 
+                    //     //     callerBuffers.d_numSelected.get() + d,
+                    //     //     deviceBuffers.d_selectedPositions.get()
+                    //     // ); CUERR;
 
-                //     d_selectedIndices = deviceBuffers.d_selectedIndices.get();
-                //     d_numSelected = deviceBuffers.d_numSelected.get();
-                // }
+                    //     copy(
+                    //         deviceBuffers.d_numSelected.get(), 
+                    //         deviceId,
+                    //         callerBuffers.d_numSelected.get() + d, 
+                    //         destDeviceId,                                         
+                    //         sizeof(size_t), 
+                    //         deviceBuffers.stream
+                    //     );
+
+                    //     d_selectedIndices = deviceBuffers.d_selectedIndices.get();
+                    //     d_numSelected = deviceBuffers.d_numSelected.get();
+                    // }
 
 
-                auto gatherIndexGenerator = [
-                    d,
-                    d_selectedIndices,
-                    ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
-                ] __device__ (auto i){
-                    const IndexType index = d_selectedIndices[i];
-                    return index - ps[d]; //transform into local index for this gpuArray
-                };
+                    auto gatherIndexGenerator = [
+                        d,
+                        d_selectedIndices,
+                        ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                    ] __device__ (auto i){
+                        const IndexType index = d_selectedIndices[i];
+                        return index - ps[d]; //transform into local index for this gpuArray
+                    };
 
-                //std::cerr << "gpuArray->gather\n";
-                gpuArray->gather(
-                    (T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
-                    destRowPitchInBytes, 
-                    gatherIndexGenerator, 
-                    d_numSelected,
-                    numIndices, 
-                    deviceBuffers.stream
-                );
+                    //std::cerr << "gpuArray->gather\n";
+                    gpuArray->gather(
+                        (T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
+                        destRowPitchInBytes, 
+                        gatherIndexGenerator, 
+                        d_numSelected,
+                        numIndices, 
+                        deviceBuffers.stream
+                    );
 
-                cudaEventRecord(deviceBuffers.event, deviceBuffers.stream); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
+                    cudaEventRecord(deviceBuffers.event, deviceBuffers.stream); CUERR;
+                }
+              
             }
             
             auto processWithDeviceIdCondition = [&](auto condition){
@@ -871,6 +872,281 @@ public:
             processWithDeviceIdCondition([destDeviceId](int id){
                 return destDeviceId != id;
             });
+        }
+    }
+
+
+    void gather_internal2(
+        Handle& handle, T* d_dest, 
+        size_t destRowPitchInBytes, 
+        const IndexType* d_indices, 
+        size_t numIndices, 
+        bool mayContainInvalidIndices,
+        cudaStream_t destStream
+    ) const{
+        if(numIndices == 0) return;
+
+        int destDeviceId = 0;
+        cudaGetDevice(&destDeviceId); CUERR;
+
+        if(isSingleGpu() && !mayContainInvalidIndices){
+            if(gpuArrays[0]->getDeviceId() == destDeviceId){ 
+                //all data to be gathered resides on the destination device
+
+                auto indexGenerator = [d_indices] __device__ (auto i){
+                    return d_indices[i];
+                };
+
+                gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
+                return;
+            }else{
+                //all data resides on a different device
+
+                //using peer access on different device data
+
+                auto indexGenerator = [d_indices] __device__ (auto i){
+                    return d_indices[i];
+                };
+
+                gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
+            }
+        }else{
+
+            //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
+            // and scatter into result array
+
+            const int numGpus = gpuArrays.size();
+
+            auto& callerBuffers = handle->callerBuffers;
+            callerBuffers.d_selectedIndices.resize(numIndices * gpuArrays.size());
+            callerBuffers.d_selectedPositions.resize(numIndices * gpuArrays.size());
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
+                const int deviceId = gpuArray->getDeviceId();
+
+                cub::SwitchDevice sd(deviceId);
+
+                auto& deviceBuffers = handle->deviceBuffers[d];
+                deviceBuffers.d_selectedIndices.resize(numIndices);
+                deviceBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
+            }
+            
+
+            cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
+
+            //helpers::GpuTimer gpuTimer(destStream, "partitionsplit");
+
+            MultiGpu2dArrayKernels::partitionSplitKernel<<<SDIV(numIndices, 128), 128, 0, destStream>>>(
+                callerBuffers.d_selectedIndices.get(),
+                callerBuffers.d_selectedPositions.get(),
+                callerBuffers.d_numSelected.get(),
+                gpuArrays.size(),
+                callerBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
+                numIndices,
+                d_indices
+            );
+
+            // gpuTimer.stop();
+            // gpuTimer.print();
+            
+            callerBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
+
+            cudaEventRecord(callerBuffers.event, destStream); CUERR;
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
+                auto& deviceBuffers = handle->deviceBuffers[d];
+                {
+
+                    const int deviceId = gpuArray->getDeviceId();
+                    cub::SwitchDevice sd(deviceId);
+
+                    cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
+
+                    const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + d * numIndices;
+                    const size_t* d_numSelected = callerBuffers.d_numSelected.get() + d;
+
+                    auto gatherIndexGenerator = [
+                        d,
+                        d_selectedIndices,
+                        ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                    ] __device__ (auto i){
+                        const IndexType index = d_selectedIndices[i];
+                        return index - ps[d]; //transform into local index for this gpuArray
+                    };
+
+                    //std::cerr << "gpuArray->gather\n";
+                    gpuArray->gather(
+                        (T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
+                        destRowPitchInBytes, 
+                        gatherIndexGenerator, 
+                        d_numSelected,
+                        numIndices, 
+                        deviceBuffers.stream
+                    );
+
+                    cudaEventRecord(deviceBuffers.event, deviceBuffers.stream); CUERR;
+                }
+
+                cudaStreamWaitEvent(callerBuffers.streams[d], deviceBuffers.event, 0); CUERR;
+
+
+                T* dataToBeScatteredIntoDestinationArray 
+                        = (T*)deviceBuffers.d_dataCommunicationBuffer.get();
+
+                //TODO 
+                // if (destDeviceId != deviceId) and interconnect is pci-e, try to copy commBuffer to destDeviceId in an efficient way
+                // For now, it is always accessed via peer interconnect
+
+                // if(destDeviceId != deviceId && pci-e){
+                //     dim3 block(128, 1, 1);
+                //     dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+                //     auto copyIndexGenerator = [] __device__ (auto i){
+                //         return i;
+                //     };
+
+                //     //used as copy kernel between devices with peer access. replace with efficient copy for pci-e interconnect
+                //     MultiGpu2dArrayKernels::gatherKernel<<<grid, block, 0, destStream>>>(
+                //         (const T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
+                //         destRowPitchInBytes, 
+                //         getNumColumns(),
+                //         (T*)callerBuffers.d_dataCommunicationBuffer.get(), 
+                //         destRowPitchInBytes, 
+                //         copyIndexGenerator, 
+                //         callerBuffers.d_numSelected.get() + gpuArrayIndex
+                //     );
+
+                //     dataToBeScatteredIntoDestinationArray
+                //         = (T*)callerBuffers.d_dataCommunicationBuffer.get();
+
+                //     //cudaDeviceSynchronize(); CUERR;
+
+                // }
+
+                dim3 block(128, 1, 1);
+                dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+                // auto scatterIndexGenerator = [
+                //     d_selectedPositions = callerBuffers.d_selectedPositions.get() + gpuArrayIndex * numIndices
+                // ] __device__ (auto i){
+                //     const size_t index = d_selectedPositions[i];
+                //     return index; //destination row
+                // };
+
+                MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
+                    callerBuffers.d_selectedPositions.get() + d * numIndices
+                );
+
+                MultiGpu2dArrayKernels::scatterKernel<<<grid, block, 0, callerBuffers.streams[d]>>>(
+                    dataToBeScatteredIntoDestinationArray, 
+                    destRowPitchInBytes, 
+                    getNumRows(),
+                    getNumColumns(),
+                    d_dest, 
+                    destRowPitchInBytes, 
+                    scatterIndexGenerator, 
+                    callerBuffers.d_numSelected.get() + d
+                ); CUERR; 
+
+                cudaEventRecord(callerBuffers.events[d]); CUERR;                   
+            }
+
+            //join multi gpu work to destStream
+            for(int d = 0; d < numGpus; d++){
+                cudaStreamWaitEvent(destStream, callerBuffers.events[d], 0); CUERR;
+            }
+            
+            // auto processWithDeviceIdCondition = [&](auto condition){
+
+            //     //copy partial results from gpuArray to local buffer, and scatter into output buffer
+            //     for(int d = 0; d < numGpus; d++){
+            //         const auto& gpuArray = gpuArrays[d];
+            //         const int deviceId = gpuArray->getDeviceId();
+
+            //         if(!condition(deviceId)){
+            //             continue;
+            //         }
+
+            //         auto& deviceBuffers = handle->deviceBuffers[d];
+
+            //         cudaStreamWaitEvent(destStream, deviceBuffers.event, 0); CUERR;
+
+                    
+
+            //         //if the gpuArray lives on the destination device, we can avoid the copy of partial gathered data, and use it directly
+            //         T* dataToBeScatteredIntoDestinationArray 
+            //             = (T*)deviceBuffers.d_dataCommunicationBuffer.get();
+
+            //         //TODO 
+            //         // if (destDeviceId != deviceId) and interconnect is pci-e, try to copy commBuffer to destDeviceId in an efficient way
+            //         // For now, it is always accessed via peer interconnect
+
+            //         // if(destDeviceId != deviceId && pci-e){
+            //         //     dim3 block(128, 1, 1);
+            //         //     dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+            //         //     auto copyIndexGenerator = [] __device__ (auto i){
+            //         //         return i;
+            //         //     };
+
+            //         //     //used as copy kernel between devices with peer access. replace with efficient copy for pci-e interconnect
+            //         //     MultiGpu2dArrayKernels::gatherKernel<<<grid, block, 0, destStream>>>(
+            //         //         (const T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
+            //         //         destRowPitchInBytes, 
+            //         //         getNumColumns(),
+            //         //         (T*)callerBuffers.d_dataCommunicationBuffer.get(), 
+            //         //         destRowPitchInBytes, 
+            //         //         copyIndexGenerator, 
+            //         //         callerBuffers.d_numSelected.get() + gpuArrayIndex
+            //         //     );
+
+            //         //     dataToBeScatteredIntoDestinationArray
+            //         //         = (T*)callerBuffers.d_dataCommunicationBuffer.get();
+
+            //         //     //cudaDeviceSynchronize(); CUERR;
+
+            //         // }
+
+            //         dim3 block(128, 1, 1);
+            //         dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+            //         // auto scatterIndexGenerator = [
+            //         //     d_selectedPositions = callerBuffers.d_selectedPositions.get() + gpuArrayIndex * numIndices
+            //         // ] __device__ (auto i){
+            //         //     const size_t index = d_selectedPositions[i];
+            //         //     return index; //destination row
+            //         // };
+
+            //         MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
+            //             callerBuffers.d_selectedPositions.get() + d * numIndices
+            //         );
+
+            //         MultiGpu2dArrayKernels::scatterKernel<<<grid, block, 0, destStream>>>(
+            //             dataToBeScatteredIntoDestinationArray, 
+            //             destRowPitchInBytes, 
+            //             getNumRows(),
+            //             getNumColumns(),
+            //             d_dest, 
+            //             destRowPitchInBytes, 
+            //             scatterIndexGenerator, 
+            //             callerBuffers.d_numSelected.get() + d
+            //         ); CUERR;
+
+
+            //         //cudaDeviceSynchronize(); CUERR;
+            //     }
+            // };
+
+            // //first process chunk on same device id. If it exists, this chunk should finish first, giving remote accesses more time to complete
+            // processWithDeviceIdCondition([destDeviceId](int id){
+            //     return destDeviceId == id;
+            // });
+
+            // processWithDeviceIdCondition([destDeviceId](int id){
+            //     return destDeviceId != id;
+            // });
         }
     }
 

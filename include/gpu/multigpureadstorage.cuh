@@ -171,7 +171,6 @@ public:
                 numColumnsSequences,
                 sizeof(unsigned int),
                 deviceIds,
-                deviceIds,
                 memoryLimitsPerDevice,
                 MultiGpu2dArrayLayout::FirstFit,
                 MultiGpu2dArrayInitMode::CanDiscardRows
@@ -274,7 +273,6 @@ public:
                     numReads,
                     numColumnsQualities,
                     sizeof(char),
-                    deviceIds,
                     deviceIds,
                     memoryLimitsPerDevice,
                     MultiGpu2dArrayLayout::FirstFit,

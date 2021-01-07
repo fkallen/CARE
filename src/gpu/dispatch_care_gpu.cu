@@ -257,10 +257,17 @@ namespace care{
 
         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
 
+        // gpumemorylimits.resize(2);
+        // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
+
+        // std::vector<int> tempids2(gpumemorylimits.size(), 0);
+
+
         helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
         gpu::MultiGpuReadStorage gpuReadStorage(
             cpuReadStorage, 
-            runtimeOptions.deviceIds, 
+            runtimeOptions.deviceIds,
+            //tempids2,
             gpumemorylimits
         );
         cpugputimer.print();
@@ -323,46 +330,6 @@ namespace care{
 
         step1timer.print();
 
-//#define USENEWRS
-
-// #ifdef USENEWRS
-//         readStorage.saveToFile("foootemp");
-//         readStorage.destroy();
-
-//         care::cpu::ContiguousReadStorage cpuReadStorage(
-//             totalInputFileProperties.nReads,
-//             correctionOptions.useQualityScores, 
-//             totalInputFileProperties.minSequenceLength, 
-//             totalInputFileProperties.maxSequenceLength
-//         );
-            
-//         cpuReadStorage.loadFromFile("foootemp");
-//         std::cout << "Loaded cpu readstorage " << std::endl;
-
-//         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
-//         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
-//             std::size_t total = 0;
-//             cudaMemGetInfo(&gpumemorylimits[i], &total);
-
-//             std::size_t safety = 1 << 30;
-//             if(gpumemorylimits[i] > safety){
-//                 gpumemorylimits[i] -= safety;
-//             }else{
-//                 gpumemorylimits[i] = 0;
-//             }
-//         }
-
-//         helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
-//         gpu::MultiGpuReadStorage gpuReadStorage(
-//             cpuReadStorage, 
-//             runtimeOptions.deviceIds, 
-//             gpumemorylimits
-//         );
-//         cpugputimer.print();
-
-//         std::cout << "constructed gpu readstorage " << std::endl;
-// #endif 
-
         //After minhasher is constructed, remaining gpu memory can be used to store reads
 
         std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
@@ -378,11 +345,17 @@ namespace care{
             }
         }
 
+        gpumemorylimits.resize(2);
+        std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
+
+        std::vector<int> tempids(gpumemorylimits.size(), 0);
+
         cpugputimer.reset();
         cpugputimer.start();
         gpuReadStorage.rebuild(
-            cpuReadStorage, 
-            runtimeOptions.deviceIds, 
+            cpuReadStorage,
+            //runtimeOptions.deviceIds, 
+            tempids,
             gpumemorylimits
         );
         cpugputimer.print();
