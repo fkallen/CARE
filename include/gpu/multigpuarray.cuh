@@ -274,6 +274,7 @@ public:
     using HostBuffer = helpers::SimpleAllocationPinnedHost<W>;
     template<class W>
     using DeviceBuffer = helpers::SimpleAllocationDevice<W>;
+    //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<W>;
 
 
 
@@ -401,7 +402,10 @@ public:
             DeviceBuffer<char> d_dataCommunicationBuffer{};
         };
 
-        HandleStruct() = default;
+        HandleStruct(){
+            cudaGetDevice(&deviceId); CUERR;
+        }
+
         HandleStruct(HandleStruct&&) = default;
         HandleStruct(const HandleStruct&) = delete;
 
@@ -409,7 +413,7 @@ public:
             maxNumberOfIndices = num;
             maxNumberOfIndicesIsSet = true;
 
-            cudaDeviceSynchronize();
+            cudaDeviceSynchronize(); CUERR;
         }
 
         size_t getMaxNumberOfIndices() const{
@@ -417,10 +421,11 @@ public:
         }
 
         bool maxNumberOfIndicesIsSet = false;
+        int deviceId = 0;
         size_t maxNumberOfIndices = std::numeric_limits<size_t>::max();
 
-        std::map<int, PerDevice> deviceBuffers{};
-        std::map<int, PerCaller> callerBuffers{};
+        std::vector<PerDevice> deviceBuffers{};
+        PerCaller callerBuffers{};
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage result{};
@@ -440,10 +445,12 @@ public:
     Handle makeHandle() const{
         Handle handle = std::make_shared<HandleStruct>();
 
-        for(const auto deviceId : dataDeviceIds){
+        const int numDataGpus = dataDeviceIds.size();
+        for(int d = 0; d < numDataGpus; d++){
+            const int deviceId = dataDeviceIds[d];
             cub::SwitchDevice sd(deviceId);
 
-            auto& deviceBuffers = handle->deviceBuffers[deviceId];
+            typename HandleStruct::PerDevice deviceBuffers; 
 
             deviceBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size());
             deviceBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size());
@@ -453,39 +460,41 @@ public:
                 h_arrayOffsets.get(),
                 h_arrayOffsets.size() * sizeof(std::size_t),
                 H2D
-            );
+            ); CUERR;
 
             cudaMemcpy(
                 deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
                 h_arrayOffsetsPrefixSum.get(),
                 h_arrayOffsetsPrefixSum.size() * sizeof(std::size_t),
                 H2D
-            );
+            ); CUERR;
+
+            handle->deviceBuffers.emplace_back(std::move(deviceBuffers));
         }
 
-        for(const auto deviceId : callerDeviceIds){
-            cub::SwitchDevice sd(deviceId);
+        if(h_arrayOffsets.size() > 0){
 
-            auto& callerBuffers = handle->callerBuffers[deviceId];
+            auto& callerBuffers = handle->callerBuffers;
 
-            callerBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size());
-            callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size());
-            callerBuffers.d_numSelected.resize(h_arrayOffsets.size());
+            callerBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size()); CUERR;
+            callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size()); CUERR;
+            callerBuffers.d_numSelected.resize(h_arrayOffsets.size()); CUERR;
 
             cudaMemcpy(
                 callerBuffers.d_multigpuarrayOffsets.get(),
                 h_arrayOffsets.get(),
                 h_arrayOffsets.size() * sizeof(std::size_t),
                 H2D
-            );
+            ); CUERR;
 
             cudaMemcpy(
                 callerBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
                 h_arrayOffsetsPrefixSum.get(),
                 h_arrayOffsetsPrefixSum.size() * sizeof(std::size_t),
                 H2D
-            );
-        }     
+            ); CUERR;  
+
+        } 
 
         return handle;
     }
@@ -663,11 +672,11 @@ public:
             //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
             // and scatter into result array
 
-            auto& callerBuffers = handle->callerBuffers[destDeviceId];
+            auto& callerBuffers = handle->callerBuffers;
             callerBuffers.d_selectedIndices.resize(numIndices * gpuArrays.size());
             callerBuffers.d_selectedPositions.resize(numIndices * gpuArrays.size());
 
-            cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream);
+            cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
 
             //helpers::GpuTimer gpuTimer(destStream, "partitionsplit");
 
@@ -688,15 +697,17 @@ public:
 
             cudaEventRecord(callerBuffers.event, destStream); CUERR;
 
-            for(size_t gpuArrayIndex = 0; gpuArrayIndex < gpuArrays.size(); gpuArrayIndex++){
-                const auto& gpuArray = gpuArrays[gpuArrayIndex];
+            const int numGpus = gpuArrays.size();
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
                 const int deviceId = gpuArray->getDeviceId();
 
                 cub::SwitchDevice sd(deviceId);
 
                 //std::cerr << "switchdevice " << deviceId << "\n";
 
-                auto& deviceBuffers = handle->deviceBuffers[deviceId];
+                auto& deviceBuffers = handle->deviceBuffers[d];
 
                 deviceBuffers.d_selectedIndices.resize(numIndices);
                 //deviceBuffers.d_selectedPositions.resize(numIndices);
@@ -704,8 +715,8 @@ public:
 
                 cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
-                const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + gpuArrayIndex * numIndices;
-                const size_t* d_numSelected = callerBuffers.d_numSelected.get() + gpuArrayIndex;
+                const IndexType* d_selectedIndices = callerBuffers.d_selectedIndices.get() + d * numIndices;
+                const size_t* d_numSelected = callerBuffers.d_numSelected.get() + d;
 
                 //TODO 
                 // if (destDeviceId != deviceId) and interconnect is pci-e, try to copy selected data to device deviceId in an efficient way
@@ -714,21 +725,21 @@ public:
                 // if(destDeviceId != deviceId && pci-e){
                 //     //copy indices to local buffer
                 //     MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
-                //         callerBuffers.d_selectedIndices.get() + gpuArrayIndex * numIndices, 
-                //         callerBuffers.d_numSelected.get() + gpuArrayIndex,
+                //         callerBuffers.d_selectedIndices.get() + d * numIndices, 
+                //         callerBuffers.d_numSelected.get() + d,
                 //         deviceBuffers.d_selectedIndices.get()
                 //     ); CUERR;
 
                 //     // MultiGpu2dArrayKernels::copyKernel<<<SDIV(numIndices, 128), 128, 0, deviceBuffers.stream>>>(
-                //     //     callerBuffers.d_selectedPositions.get() + gpuArrayIndex * numIndices, 
-                //     //     callerBuffers.d_numSelected.get() + gpuArrayIndex,
+                //     //     callerBuffers.d_selectedPositions.get() + d * numIndices, 
+                //     //     callerBuffers.d_numSelected.get() + d,
                 //     //     deviceBuffers.d_selectedPositions.get()
                 //     // ); CUERR;
 
                 //     copy(
                 //         deviceBuffers.d_numSelected.get(), 
                 //         deviceId,
-                //         callerBuffers.d_numSelected.get() + gpuArrayIndex, 
+                //         callerBuffers.d_numSelected.get() + d, 
                 //         destDeviceId,                                         
                 //         sizeof(size_t), 
                 //         deviceBuffers.stream
@@ -740,12 +751,12 @@ public:
 
 
                 auto gatherIndexGenerator = [
-                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    d,
                     d_selectedIndices,
                     ps = deviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
                     const IndexType index = d_selectedIndices[i];
-                    return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
+                    return index - ps[d]; //transform into local index for this gpuArray
                 };
 
                 //std::cerr << "gpuArray->gather\n";
@@ -766,17 +777,17 @@ public:
             auto processWithDeviceIdCondition = [&](auto condition){
 
                 //copy partial results from gpuArray to local buffer, and scatter into output buffer
-                for(size_t gpuArrayIndex = 0; gpuArrayIndex < gpuArrays.size(); gpuArrayIndex++){
-                    const auto& gpuArray = gpuArrays[gpuArrayIndex];
+                for(int d = 0; d < numGpus; d++){
+                    const auto& gpuArray = gpuArrays[d];
                     const int deviceId = gpuArray->getDeviceId();
 
                     if(!condition(deviceId)){
                         continue;
                     }
 
-                    auto& deviceBuffers = handle->deviceBuffers[deviceId];
+                    auto& deviceBuffers = handle->deviceBuffers[d];
 
-                    cudaStreamWaitEvent(destStream, deviceBuffers.event, 0);
+                    cudaStreamWaitEvent(destStream, deviceBuffers.event, 0); CUERR;
 
                     
 
@@ -825,7 +836,7 @@ public:
                     // };
 
                     MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
-                        callerBuffers.d_selectedPositions.get() + gpuArrayIndex * numIndices
+                        callerBuffers.d_selectedPositions.get() + d * numIndices
                     );
 
                     MultiGpu2dArrayKernels::scatterKernel<<<grid, block, 0, destStream>>>(
@@ -836,7 +847,7 @@ public:
                         d_dest, 
                         destRowPitchInBytes, 
                         scatterIndexGenerator, 
-                        callerBuffers.d_numSelected.get() + gpuArrayIndex
+                        callerBuffers.d_numSelected.get() + d
                     ); CUERR;
 
 
@@ -878,15 +889,17 @@ public:
             return;
         }else{
 
-            auto& callerBuffers = handle->callerBuffers[srcDeviceId];
+            auto& callerBuffers = handle->callerBuffers;
+            const int numGpus = gpuArrays.size();
 
-            for(const auto& gpuArray : gpuArrays){
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
                 const int deviceId = gpuArray->getDeviceId();
 
                 callerBuffers.d_selectedIndicesWithPositions.resize(numIndices);
                 callerBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
 
-                auto& targetDeviceBuffers = handle->deviceBuffers[deviceId];
+                auto& targetDeviceBuffers = handle->deviceBuffers[d];
 
                 {
                     cub::SwitchDevice sddev(deviceId);
@@ -898,12 +911,12 @@ public:
                 cub::ArgIndexInputIterator<const IndexType*, size_t> d_indicesWithPosition(d_indices);
 
                 auto selectOp = [
-                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    d,
                     ps = callerBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto indexPositionPair){
                     //key == position, value == index
                     //select if index belongs to device
-                    return (ps[deviceIdIndex] <= indexPositionPair.value && indexPositionPair.value < ps[deviceIdIndex+1]);
+                    return (ps[d] <= indexPositionPair.value && indexPositionPair.value < ps[d+1]);
                 };
 
                 size_t temp_storage_bytes = 0;
@@ -998,12 +1011,12 @@ public:
                 cudaStreamWaitEvent(targetDeviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
                 auto scatterIndexGenerator = [
-                    deviceIdIndex = getDeviceIdIndex(deviceId), 
+                    d,
                     d_selectedIndicesWithPositions = targetDeviceBuffers.d_selectedIndicesWithPositions.get(),
                     ps = targetDeviceBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto i){
                     const IndexType index = d_selectedIndicesWithPositions[i].value;
-                    return index - ps[deviceIdIndex]; //transform into local index for this gpuArray
+                    return index - ps[d]; //transform into local index for this gpuArray
                 };
 
                 gpuArray->scatter(
@@ -1023,9 +1036,11 @@ public:
             }
 
             //join multi gpu work to srcStream
-            for(const auto& gpuArray : gpuArrays){
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
                 const int deviceId = gpuArray->getDeviceId();
-                cudaStreamWaitEvent(srcStream, handle->deviceBuffers[deviceId].event, 0); CUERR;
+
+                cudaStreamWaitEvent(srcStream, handle->deviceBuffers[d].event, 0); CUERR;
             }
         }
     }
@@ -1149,7 +1164,7 @@ private:
                 h_arrayOffsets.get(),
                 h_arrayOffsets.size() * sizeof(std::size_t),
                 H2D
-            );
+            ); CUERR;
 
             d_offsetsArrayForGpus.emplace_back(std::move(a));
 
@@ -1160,22 +1175,28 @@ private:
                 h_arrayOffsetsPrefixSum.get(),
                 h_arrayOffsetsPrefixSum.size() * sizeof(std::size_t),
                 H2D
-            );
+            ); CUERR;
 
-            d_offsetsPrefixSumArrayForGpus.emplace_back(std::move(a));
+            d_offsetsPrefixSumArrayForGpus.emplace_back(std::move(b));
         }
+
+        std::cerr << "multigpuarray offsets prefixsum: ";
+        for(int i = 0; i < numGpus+1; i++){
+            std::cerr << h_arrayOffsetsPrefixSum[i] << " ";
+        }
+        std::cerr << "\n";
 
     }
 
-    int getDeviceIdIndex(int deviceId) const{
-        auto it = std::find(dataDeviceIds.begin(), dataDeviceIds.end(), deviceId);
-        if(it != dataDeviceIds.end()){
-            return std::distance(dataDeviceIds.begin(), it);
-        }else{
-            assert(false);
-            return -1;
-        }
-    }
+    // int getDeviceIdIndex(int deviceId) const{
+    //     auto it = std::find(dataDeviceIds.begin(), dataDeviceIds.end(), deviceId);
+    //     if(it != dataDeviceIds.end()){
+    //         return std::distance(dataDeviceIds.begin(), it);
+    //     }else{
+    //         assert(false);
+    //         return -1;
+    //     }
+    // }
 
     size_t numRows{};
     size_t numColumns{};

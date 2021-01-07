@@ -181,9 +181,8 @@ public:
         std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", sequencesGpu.getNumRows(): " << sequencesGpu.getNumRows() << "\n";
 
         {
-            const std::size_t batchsize = 65000;
-            //CudaStream stream{};
-            cudaStream_t stream = nullptr;
+            std::size_t batchsize = 65000;
+            CudaStream stream{};
             auto arrayhandle = sequencesGpu.makeHandle();
 
             helpers::SimpleAllocationPinnedHost<IndexType> h_indices(batchsize);
@@ -199,7 +198,7 @@ public:
                     cpuReadStorage->getSequencePitch() * currentBatchsize,
                     H2D,
                     stream
-                );
+                ); CUERR;
 
                 sequencesGpu.scatter(
                     arrayhandle, 
@@ -210,8 +209,52 @@ public:
                     stream
                 );
 
-                cudaStreamSynchronize(stream);
+                cudaStreamSynchronize(stream); CUERR;
             }
+
+            // auto gatherhandle = makeHandle();
+
+            // helpers::SimpleAllocationPinnedHost<unsigned int> mysequencedata(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
+            // helpers::SimpleAllocationPinnedHost<unsigned int> cpusequencedata(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
+
+            // batchsize = 1000;
+
+            // for(std::size_t i = 0; i < numReads; i += batchsize){
+            //     const std::size_t currentBatchsize = std::min(batchsize, numReads - i);
+            //     std::iota(h_indices.begin(), h_indices.begin() + currentBatchsize, i);
+
+            //     gatherSequences(
+            //         gatherhandle,
+            //         mysequencedata.data(),
+            //         cpuReadStorage->getSequencePitch() / sizeof(unsigned int),
+            //         h_indices.data(),
+            //         h_indices.data(),
+            //         batchsize,
+            //         stream
+            //     );
+
+            //     cudaStreamSynchronize(stream); CUERR;
+
+            //     cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
+            //     cpuReadStorage->gatherSequenceData(
+            //         cpuhandle,
+            //         h_indices.data(),
+            //         batchsize,
+            //         cpusequencedata.data(),
+            //         cpuReadStorage->getSequencePitch() / sizeof(unsigned int)
+            //     );
+
+            //     for(std::size_t k = 0; k < cpuReadStorage->getSequencePitch() / sizeof(unsigned int) * batchsize; k++){
+            //         if(cpusequencedata[k] != mysequencedata[k]){
+            //             std::cerr << "error i = " << i << ", k = " << k << ", pitch = " << cpuReadStorage->getSequencePitch() << "\n";
+            //             assert(false);
+            //         }
+            //     }
+            // }
+
+            
+
+            // destroyHandle(gatherhandle);
         }
 
         auto meminfo = sequencesGpu.getMemoryInfo();
@@ -241,8 +284,7 @@ public:
 
             {
                 const std::size_t batchsize = 65000;
-                //CudaStream stream{};
-                cudaStream_t stream = nullptr;
+                CudaStream stream{};
                 auto arrayhandle = qualitiesGpu.makeHandle();
 
                 helpers::SimpleAllocationPinnedHost<IndexType> h_indices(batchsize);
@@ -258,7 +300,7 @@ public:
                         cpuReadStorage->getQualityPitch() * currentBatchsize,
                         H2D,
                         stream
-                    );
+                    ); CUERR;
 
                     qualitiesGpu.scatter(
                         arrayhandle, 
@@ -269,7 +311,7 @@ public:
                         stream
                     );
 
-                    cudaStreamSynchronize(stream);
+                    cudaStreamSynchronize(stream); CUERR;
                 }
             }
 
@@ -343,13 +385,6 @@ public: //inherited GPUReadStorage interface
 
         int deviceId = 0;
         cudaGetDevice(&deviceId); CUERR;
-
-        static bool once = true;
-
-        if(once){
-            std::cerr << "gatherSequences new readstorage\n";
-            once = false;
-        }
 
         TempData* tempData = getTempDataFromHandle(handle);
         assert(tempData->deviceId == deviceId);
@@ -510,7 +545,7 @@ public: //inherited GPUReadStorage interface
 
                 tempData->pinnedBuffer.resize(2 * batchsize * sequencepitch);
 
-                std::array<unsigned int*, 2> hostpointers{
+                std::array<unsigned int*, 2> hostpointers{ 
                     (unsigned int*)(tempData->pinnedBuffer.data()), 
                     (unsigned int*)(tempData->pinnedBuffer.data() + batchsize * sequencepitch)
                 };
