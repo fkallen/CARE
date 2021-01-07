@@ -72,10 +72,25 @@ public:
         const cpu::ContiguousReadStorage& cpuReadStorage_, 
         std::vector<int> deviceIds_, 
         std::vector<std::size_t> memoryLimitsPerDevice_
-    ) : cpuReadStorage{&cpuReadStorage_},
-        deviceIds{std::move(deviceIds_)},
-        memoryLimitsPerDevice{std::move(memoryLimitsPerDevice_)}
-    {
+    ){
+
+        rebuild(
+            cpuReadStorage_,
+            deviceIds_,
+            memoryLimitsPerDevice_
+        );
+
+    }
+
+    void rebuild(
+        const cpu::ContiguousReadStorage& cpuReadStorage_, 
+        std::vector<int> deviceIds_, 
+        std::vector<std::size_t> memoryLimitsPerDevice
+    ){
+        destroyGpuReadData();
+
+        cpuReadStorage = &cpuReadStorage_;
+        deviceIds = std::move(deviceIds_);
 
         const int numGpus = deviceIds.size();
         const std::size_t numReads = cpuReadStorage->getNumberOfReads();
@@ -785,8 +800,6 @@ public: //inherited GPUReadStorage interface
     MemoryUsage getMemoryInfo() const override{
         MemoryUsage result;
 
-        const int numGpus = deviceIds.size();
-
         result += cpuReadStorage->getMemoryInfo();
 
         result += sequencesGpu.getMemoryInfo();
@@ -826,57 +839,16 @@ public: //inherited GPUReadStorage interface
     }
 
     void destroy() override{
-        auto deallocVector = [](auto& vec){
-            using T = typename std::remove_reference<decltype(vec)>::type;
-            T tmp{};
-            vec.swap(tmp);
-        };
-        sequencesGpu.destroy();
+        destroyGpuReadData();
 
-        if(canUseQualityScores()){
-            qualitiesGpu.destroy();
-        }
-
-        gpuLengthStorage.destroyGpuData();
-
-        for(auto& pair : bitArraysUndeterminedBase){
-            cub::SwitchDevice sd(pair.first); CUERR;
-            destroyGpuBitArray(pair.second);
-        }
-        bitArraysUndeterminedBase.clear();
-
-        deallocVector(tempdataVector);
+        destroyTempData();
     }
 
-public: //private, but nvcc..
-
-    // template<class T>
-    // void gatherImplSingleGpu(
-    //     Handle& handle,
-    //     T* d_sequence_data,
-    //     size_t outSequencePitchInBytes,
-    //     const read_number* h_readIds,
-    //     const read_number* d_readIds,
-    //     int numSequences,
-    //     cudaStream_t stream,
-    //     const MultiGpu2dArray<T>& gpuArrays,
-    //     T* hostData
-    // ) const override{
-    //     TempData* tempData = getTempDataFromHandle(handle);
-
-    //     const int numGpus = deviceIds.size();
-
-    //     for(int i = 0; i < numGpus; i++){
-    //         if(readsPerPartition[i] > 0){
-    //             cub::SwitchDevice sd{deviceIds[i]};
-
-    //             break;
-    //         }
-    //     }
-    // }
 
 private:
     TempData* getTempDataFromHandle(const Handle& handle) const{
+        assert(handle.getId() < tempdataVector.size());
+
         std::shared_lock<SharedMutex> lock(sharedmutex);
 
         return tempdataVector[handle.getId()].get();
@@ -905,6 +877,37 @@ private:
     bool isHostElementQualityScore(std::size_t index) const noexcept{
         return qualitiesGpu.getNumRows() <= index;
     }
+
+    void destroyGpuReadData(){
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+        sequencesGpu.destroy();
+
+        if(canUseQualityScores()){
+            qualitiesGpu.destroy();
+        }
+
+        gpuLengthStorage.destroyGpuData();
+
+        for(auto& pair : bitArraysUndeterminedBase){
+            cub::SwitchDevice sd(pair.first); CUERR;
+            destroyGpuBitArray(pair.second);
+        }
+        bitArraysUndeterminedBase.clear();
+    }
+
+    void destroyTempData(){
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+
+        deallocVector(tempdataVector);
+    }
     
     const cpu::ContiguousReadStorage* cpuReadStorage{};
 
@@ -916,7 +919,6 @@ private:
     GPULengthStore2<std::uint32_t> gpuLengthStorage{};
 
     std::vector<int> deviceIds{};
-    std::vector<std::size_t> memoryLimitsPerDevice{};
 
     mutable int counter = 0;
     mutable SharedMutex sharedmutex{};
