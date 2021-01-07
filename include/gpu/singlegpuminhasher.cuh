@@ -414,6 +414,9 @@ namespace gpu{
                 cudaMalloc(&temp, required_temp_bytes); CUERR;
             }else{
                 cudaMallocManaged(&temp, required_temp_bytes); CUERR;
+                int deviceId = 0;
+                cudaGetDevice(&deviceId); CUERR;
+                cudaMemAdvise(temp, required_temp_bytes, cudaMemAdviseSetAccessedBy, deviceId); CUERR;
             }
 
             for(auto& table : gpuHashTables){
