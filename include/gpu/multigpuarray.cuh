@@ -288,13 +288,11 @@ public:
         size_t numColumns, 
         size_t alignmentInBytes,
         std::vector<int> dDeviceIds, // data resides on these gpus
-        std::vector<int> cDeviceIds, // array can be accessed by these gpus
         std::vector<size_t> memoryLimits,
         MultiGpu2dArrayLayout layout,
         MultiGpu2dArrayInitMode initMode = MultiGpu2dArrayInitMode::MustFitCompletely) 
     : alignmentInBytes(alignmentInBytes), 
-        dataDeviceIds(dDeviceIds),
-        callerDeviceIds(cDeviceIds)
+        dataDeviceIds(dDeviceIds)
     {
 
         assert(alignmentInBytes > 0);
@@ -335,7 +333,6 @@ public:
         std::swap(l.alignmentInBytes, r.alignmentInBytes);
         std::swap(l.gpuArrays, r.gpuArrays);
         std::swap(l.dataDeviceIds, r.dataDeviceIds);
-        std::swap(l.callerDeviceIds, r.callerDeviceIds);
         std::swap(l.h_arrayOffsets, r.h_arrayOffsets);
         std::swap(l.h_arrayOffsetsPrefixSum, r.h_arrayOffsetsPrefixSum);
     }
@@ -346,7 +343,6 @@ public:
         alignmentInBytes = 0;
         gpuArrays.clear();
         dataDeviceIds.clear();
-        callerDeviceIds.clear();
         h_arrayOffsets.destroy();
         h_arrayOffsetsPrefixSum.destroy();
     }
@@ -391,8 +387,7 @@ public:
             DeviceBuffer<size_t> d_multigpuarrayOffsets{};
             DeviceBuffer<size_t> d_multigpuarrayOffsetsPrefixSum{};
             DeviceBuffer<size_t> d_numSelected{};
-            CudaStream stream{};
-            CudaEvent event{};
+            
 
             DeviceBuffer<char> d_cubTemp{};
             DeviceBuffer<IndexType> d_indices{};
@@ -400,10 +395,14 @@ public:
             DeviceBuffer<size_t> d_selectedPositions{};
             DeviceBuffer<ArgIndexPair> d_selectedIndicesWithPositions{};
             DeviceBuffer<char> d_dataCommunicationBuffer{};
+
+            CudaEvent event{};
+
+            std::vector<CudaStream> streams{};
         };
 
         HandleStruct(){
-            cudaGetDevice(&deviceId); CUERR;
+            cudaGetDevice(&deviceId); CUERR;            
         }
 
         HandleStruct(HandleStruct&&) = default;
@@ -475,6 +474,7 @@ public:
         if(h_arrayOffsets.size() > 0){
 
             auto& callerBuffers = handle->callerBuffers;
+            callerBuffers.streams.resize(h_arrayOffsets.size());
 
             callerBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size()); CUERR;
             callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size()); CUERR;
@@ -672,9 +672,23 @@ public:
             //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
             // and scatter into result array
 
+            const int numGpus = gpuArrays.size();
+
             auto& callerBuffers = handle->callerBuffers;
             callerBuffers.d_selectedIndices.resize(numIndices * gpuArrays.size());
             callerBuffers.d_selectedPositions.resize(numIndices * gpuArrays.size());
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
+                const int deviceId = gpuArray->getDeviceId();
+
+                cub::SwitchDevice sd(deviceId);
+
+                auto& deviceBuffers = handle->deviceBuffers[d];
+                deviceBuffers.d_selectedIndices.resize(numIndices);
+                deviceBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
+            }
+            
 
             cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
 
@@ -697,8 +711,6 @@ public:
 
             cudaEventRecord(callerBuffers.event, destStream); CUERR;
 
-            const int numGpus = gpuArrays.size();
-
             for(int d = 0; d < numGpus; d++){
                 const auto& gpuArray = gpuArrays[d];
                 const int deviceId = gpuArray->getDeviceId();
@@ -708,10 +720,6 @@ public:
                 //std::cerr << "switchdevice " << deviceId << "\n";
 
                 auto& deviceBuffers = handle->deviceBuffers[d];
-
-                deviceBuffers.d_selectedIndices.resize(numIndices);
-                //deviceBuffers.d_selectedPositions.resize(numIndices);
-                deviceBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
 
                 cudaStreamWaitEvent(deviceBuffers.stream, callerBuffers.event, 0); CUERR;
 
@@ -889,29 +897,17 @@ public:
             return;
         }else{
 
-            auto& callerBuffers = handle->callerBuffers;
             const int numGpus = gpuArrays.size();
+            cub::ArgIndexInputIterator<const IndexType*, size_t> d_indicesWithPosition(d_indices);
 
-            for(int d = 0; d < numGpus; d++){
-                const auto& gpuArray = gpuArrays[d];
-                const int deviceId = gpuArray->getDeviceId();
+            auto& callerBuffers = handle->callerBuffers;
+            callerBuffers.d_selectedIndicesWithPositions.resize(numIndices);
+            callerBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
 
-                callerBuffers.d_selectedIndicesWithPositions.resize(numIndices);
-                callerBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
-
-                auto& targetDeviceBuffers = handle->deviceBuffers[d];
-
-                {
-                    cub::SwitchDevice sddev(deviceId);
-
-                    targetDeviceBuffers.d_selectedIndicesWithPositions.resize(numIndices);
-                    targetDeviceBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
-                }
-
-                cub::ArgIndexInputIterator<const IndexType*, size_t> d_indicesWithPosition(d_indices);
-
+            size_t temp_storage_bytes = 0;
+            {
                 auto selectOp = [
-                    d,
+                    d = numGpus,
                     ps = callerBuffers.d_multigpuarrayOffsetsPrefixSum.get()
                 ] __device__ (auto indexPositionPair){
                     //key == position, value == index
@@ -919,7 +915,6 @@ public:
                     return (ps[d] <= indexPositionPair.value && indexPositionPair.value < ps[d+1]);
                 };
 
-                size_t temp_storage_bytes = 0;
                 cub::DeviceSelect::If(
                     nullptr, 
                     temp_storage_bytes, 
@@ -930,8 +925,34 @@ public:
                     selectOp, 
                     srcStream
                 );
+            }
 
-                callerBuffers.d_cubTemp.resize(temp_storage_bytes);
+            callerBuffers.d_cubTemp.resize(temp_storage_bytes);
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
+                const int deviceId = gpuArray->getDeviceId();
+                cub::SwitchDevice sddev(deviceId);
+
+                auto& targetDeviceBuffers = handle->deviceBuffers[d];
+                targetDeviceBuffers.d_selectedIndicesWithPositions.resize(numIndices);
+                targetDeviceBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
+            }
+
+            for(int d = 0; d < numGpus; d++){
+                const auto& gpuArray = gpuArrays[d];
+                const int deviceId = gpuArray->getDeviceId();
+
+                auto& targetDeviceBuffers = handle->deviceBuffers[d];               
+
+                auto selectOp = [
+                    d,
+                    ps = callerBuffers.d_multigpuarrayOffsetsPrefixSum.get()
+                ] __device__ (auto indexPositionPair){
+                    //key == position, value == index
+                    //select if index belongs to device
+                    return (ps[d] <= indexPositionPair.value && indexPositionPair.value < ps[d+1]);
+                };
 
                 //select indices for gpuArray
                 cub::DeviceSelect::If(
@@ -1204,7 +1225,6 @@ private:
     std::vector<std::unique_ptr<Gpu2dArrayManaged<T>>> gpuArrays{};
 
     std::vector<int> dataDeviceIds;
-    std::vector<int> callerDeviceIds;
 
     HostBuffer<size_t> h_arrayOffsets;
     HostBuffer<size_t> h_arrayOffsetsPrefixSum;
