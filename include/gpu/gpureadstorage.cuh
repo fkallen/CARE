@@ -36,6 +36,8 @@ public:
 
     virtual Handle makeHandle() const = 0;
 
+    virtual void destroyHandle(Handle& handle) const = 0;
+
     virtual void areSequencesAmbiguous(
         Handle& handle,
         bool* d_result, 

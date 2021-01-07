@@ -637,6 +637,9 @@ namespace gpucorrectorkernels{
                 std::cerr << ", [" << pair.first << "] " << pair.second;
             }
             std::cerr << "\n";
+
+            gpuReadStorage->destroyHandle(readstorageHandle);
+            gpuMinhasher->destroyHandle(minhashHandle);
         }
 
         void makeErrorCorrectorInput(
@@ -1124,6 +1127,12 @@ namespace gpucorrectorkernels{
             msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
             initFixedSizeBuffers();
+        }
+
+        ~GpuErrorCorrector(){
+            gpuReadStorage->destroyHandle(readstorageHandleAnchorQualities);
+            gpuReadStorage->destroyHandle(readstorageHandleCandidates);
+            gpuReadStorage->destroyHandle(readstorageHandleCandidateQualities);
         }
 
         void correct(GpuErrorCorrectorInput& input, GpuErrorCorrectorRawOutput& output, cudaStream_t stream){

@@ -251,6 +251,8 @@ namespace gpu{
             h_currentHashFunctionNumbers.resize(numberOfAvailableHashFunctions);
             std::copy(usedHashFunctionNumbers.begin(), usedHashFunctionNumbers.end(), h_currentHashFunctionNumbers.begin());
 
+            gpuReadStorage.destroyHandle(sequencehandle);
+
             return numberOfAvailableHashFunctions; 
         }
 
@@ -393,6 +395,17 @@ namespace gpu{
 
             tempdataVector.emplace_back(std::move(data));
             return h;
+        }
+
+        void destroyHandle(QueryHandle& handle) const override{
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
         }
 
         void compact(cudaStream_t stream = 0) override {

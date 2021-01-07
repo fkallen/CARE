@@ -1137,6 +1137,34 @@ private:
         std::copy(rowsPerGpu.begin(), rowsPerGpu.end(), h_arrayOffsets.get());
         std::partial_sum(rowsPerGpu.begin(), rowsPerGpu.end(), h_arrayOffsetsPrefixSum.get() + 1);
         h_arrayOffsetsPrefixSum[0] = 0;
+
+
+        for(int i = 0; i < numGpus; i++){
+            cub::SwitchDevice sd(dataDeviceIds[i]);
+
+            DeviceBuffer<std::size_t> a(h_arrayOffsets.size());
+
+            cudaMemcpy(
+                a.get(),
+                h_arrayOffsets.get(),
+                h_arrayOffsets.size() * sizeof(std::size_t),
+                H2D
+            );
+
+            d_offsetsArrayForGpus.emplace_back(std::move(a));
+
+            DeviceBuffer<std::size_t> b(h_arrayOffsetsPrefixSum.size());
+
+            cudaMemcpy(
+                b.get(),
+                h_arrayOffsetsPrefixSum.get(),
+                h_arrayOffsetsPrefixSum.size() * sizeof(std::size_t),
+                H2D
+            );
+
+            d_offsetsPrefixSumArrayForGpus.emplace_back(std::move(a));
+        }
+
     }
 
     int getDeviceIdIndex(int deviceId) const{
@@ -1159,6 +1187,9 @@ private:
 
     HostBuffer<size_t> h_arrayOffsets;
     HostBuffer<size_t> h_arrayOffsetsPrefixSum;
+
+    std::vector<DeviceBuffer<std::size_t>> d_offsetsArrayForGpus{};
+    std::vector<DeviceBuffer<std::size_t>> d_offsetsPrefixSumArrayForGpus{};
 };
 
 

@@ -231,7 +231,9 @@ void FakeGpuMinhasher::constructFromReadStorage(
         remainingHashFunctions -= addedHashFunctions;
     }
 
-    setThreadPool(nullptr);      
+    setThreadPool(nullptr); 
+    
+    gpuReadStorage.destroyHandle(sequencehandle);
 }
 
 

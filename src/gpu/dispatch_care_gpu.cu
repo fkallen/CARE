@@ -175,8 +175,7 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        gpu::DistributedReadStorage readStorage(
-            runtimeOptions.deviceIds, 
+        cpu::ContiguousReadStorage cpuReadStorage(
             maximumNumberOfReads, 
             correctionOptions.useQualityScores, 
             minimumSequenceLength, 
@@ -185,18 +184,16 @@ namespace care{
 
         if(fileOptions.load_binary_reads_from != ""){
 
-            readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
+            cpuReadStorage.loadFromFile(fileOptions.load_binary_reads_from);
 
-            if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
+            if(correctionOptions.useQualityScores && !cpuReadStorage.canUseQualityScores())
                 throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
-            if(!correctionOptions.useQualityScores && readStorage.canUseQualityScores())
+            if(!correctionOptions.useQualityScores && cpuReadStorage.canUseQualityScores())
                 std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
 
             std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
-
-            readStorage.constructionIsComplete();
         }else{
-            readStorage.construct(
+            cpuReadStorage.construct(
                 fileOptions.inputfiles,
                 correctionOptions.useQualityScores,
                 maximumNumberOfReads,
@@ -210,7 +207,7 @@ namespace care{
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
-            readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            cpuReadStorage.saveToFile(fileOptions.save_binary_reads_to);
             timer.print();
     		std::cout << "Saved reads" << std::endl;
         }
@@ -219,9 +216,9 @@ namespace care{
         
         SequenceFileProperties totalInputFileProperties;
 
-        totalInputFileProperties.nReads = readStorage.getNumberOfReads();
-        totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-        totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+        totalInputFileProperties.nReads = cpuReadStorage.getNumberOfReads();
+        totalInputFileProperties.maxSequenceLength = cpuReadStorage.getStatistics().maximumSequenceLength;
+        totalInputFileProperties.minSequenceLength = cpuReadStorage.getStatistics().minimumSequenceLength;
 
         if(!scanned){
             std::cout << "Determined the following read properties:\n";
@@ -253,10 +250,24 @@ namespace care{
             std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
         }
 
-        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;
+        std::cout << "Reads with ambiguous bases: " << cpuReadStorage.getNumberOfReadsWithN() << std::endl;
         
 
-        printDataStructureMemoryUsage(readStorage, "reads");
+        
+
+        std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+
+        helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
+        gpu::MultiGpuReadStorage gpuReadStorage(
+            cpuReadStorage, 
+            runtimeOptions.deviceIds, 
+            gpumemorylimits
+        );
+        cpugputimer.print();
+
+        std::cout << "constructed gpu readstorage " << std::endl;
+
+        printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -267,7 +278,7 @@ namespace care{
             memoryOptions,
             correctionOptions,
             totalInputFileProperties,
-            readStorage,
+            gpuReadStorage,
             gpu::GpuMinhasherType::Single
         );
 
@@ -312,28 +323,54 @@ namespace care{
 
         step1timer.print();
 
-#define USENEWRS
+//#define USENEWRS
 
-#ifdef USENEWRS
-        readStorage.saveToFile("foootemp");
-        readStorage.destroy();
+// #ifdef USENEWRS
+//         readStorage.saveToFile("foootemp");
+//         readStorage.destroy();
 
-        care::cpu::ContiguousReadStorage cpuReadStorage(
-            totalInputFileProperties.nReads,
-            correctionOptions.useQualityScores, 
-            totalInputFileProperties.minSequenceLength, 
-            totalInputFileProperties.maxSequenceLength
-        );
+//         care::cpu::ContiguousReadStorage cpuReadStorage(
+//             totalInputFileProperties.nReads,
+//             correctionOptions.useQualityScores, 
+//             totalInputFileProperties.minSequenceLength, 
+//             totalInputFileProperties.maxSequenceLength
+//         );
             
-        cpuReadStorage.loadFromFile("foootemp");
-        std::cout << "Loaded cpu readstorage " << std::endl;
+//         cpuReadStorage.loadFromFile("foootemp");
+//         std::cout << "Loaded cpu readstorage " << std::endl;
 
-        std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+//         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
+//         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
+//             std::size_t total = 0;
+//             cudaMemGetInfo(&gpumemorylimits[i], &total);
+
+//             std::size_t safety = 1 << 30;
+//             if(gpumemorylimits[i] > safety){
+//                 gpumemorylimits[i] -= safety;
+//             }else{
+//                 gpumemorylimits[i] = 0;
+//             }
+//         }
+
+//         helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
+//         gpu::MultiGpuReadStorage gpuReadStorage(
+//             cpuReadStorage, 
+//             runtimeOptions.deviceIds, 
+//             gpumemorylimits
+//         );
+//         cpugputimer.print();
+
+//         std::cout << "constructed gpu readstorage " << std::endl;
+// #endif 
+
+        //After minhasher is constructed, remaining gpu memory can be used to store reads
+
+        std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
             std::size_t total = 0;
             cudaMemGetInfo(&gpumemorylimits[i], &total);
 
-            std::size_t safety = 1 << 30;
+            std::size_t safety = 1 << 30; //leave 1 GB for correction algorithm
             if(gpumemorylimits[i] > safety){
                 gpumemorylimits[i] -= safety;
             }else{
@@ -341,16 +378,14 @@ namespace care{
             }
         }
 
-        helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
-        gpu::MultiGpuReadStorage gpuReadStorage(
+        cpugputimer.reset();
+        cpugputimer.start();
+        gpuReadStorage.rebuild(
             cpuReadStorage, 
             runtimeOptions.deviceIds, 
             gpumemorylimits
         );
         cpugputimer.print();
-
-        std::cout << "constructed gpu readstorage " << std::endl;
-#endif        
 
 
 
@@ -366,11 +401,7 @@ namespace care{
             memoryOptions,
             totalInputFileProperties,
             *gpuMinhasher, 
-#ifdef USENEWRS                                  
-            gpuReadStorage
-#else            
-            readStorage
-#endif            
+            gpuReadStorage            
         );
 
         step2timer.print();
@@ -378,12 +409,9 @@ namespace care{
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
 
         gpuMinhasher->destroy();
-
-        readStorage.destroy();
-#ifdef USENEWRS        
+   
         gpuReadStorage.destroy();
-        cpuReadStorage.destroy();
-#endif        
+        cpuReadStorage.destroy();     
 
         //Merge corrected reads with input file to generate output file
 

@@ -325,6 +325,17 @@ public:
             return h;
         }
 
+        void destroyHandle(Handle& handle) const override{
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
         void areSequencesAmbiguous(
             Handle& handle,
             bool* d_result, 

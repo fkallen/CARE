@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <memory>
 #include <map>
+#include <limits>
+#include <array>
 
 #include <cub/cub.cuh>
 
@@ -290,6 +292,17 @@ public: //inherited GPUReadStorage interface
 
         tempdataVector.emplace_back(std::move(data));
         return h;
+    }
+
+    void destroyHandle(Handle& handle) const override{
+
+        std::unique_lock<SharedMutex> lock(sharedmutex);
+
+        const int id = handle.getId();
+        assert(id < int(tempdataVector.size()));
+        
+        tempdataVector[id] = nullptr;
+        handle = constructHandle(std::numeric_limits<int>::max());
     }
 
     void areSequencesAmbiguous(
@@ -847,9 +860,9 @@ public: //inherited GPUReadStorage interface
 
 private:
     TempData* getTempDataFromHandle(const Handle& handle) const{
-        assert(handle.getId() < tempdataVector.size());
-
         std::shared_lock<SharedMutex> lock(sharedmutex);
+
+        assert(handle.getId() < int(tempdataVector.size()));
 
         return tempdataVector[handle.getId()].get();
     }
@@ -879,24 +892,21 @@ private:
     }
 
     void destroyGpuReadData(){
-        auto deallocVector = [](auto& vec){
-            using T = typename std::remove_reference<decltype(vec)>::type;
-            T tmp{};
-            vec.swap(tmp);
-        };
-        sequencesGpu.destroy();
+        if(cpuReadStorage != nullptr){
+            sequencesGpu.destroy();
 
-        if(canUseQualityScores()){
-            qualitiesGpu.destroy();
+            if(canUseQualityScores()){
+                qualitiesGpu.destroy();
+            }
+
+            gpuLengthStorage.destroyGpuData();
+
+            for(auto& pair : bitArraysUndeterminedBase){
+                cub::SwitchDevice sd(pair.first); CUERR;
+                destroyGpuBitArray(pair.second);
+            }
+            bitArraysUndeterminedBase.clear();
         }
-
-        gpuLengthStorage.destroyGpuData();
-
-        for(auto& pair : bitArraysUndeterminedBase){
-            cub::SwitchDevice sd(pair.first); CUERR;
-            destroyGpuBitArray(pair.second);
-        }
-        bitArraysUndeterminedBase.clear();
     }
 
     void destroyTempData(){

@@ -265,6 +265,17 @@ namespace gpu{
             return h;
         }
 
+        void destroyHandle(QueryHandle& handle) const override{
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
         void determineNumValues(
             QueryHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
