@@ -356,9 +356,10 @@ public:
                 d_numSelected(1),
                 event(cudaEventDisableTiming)
             {        
-
+                cudaGetDevice(&deviceId);
             }
 
+            int deviceId{};
             DeviceBuffer<size_t> d_multigpuarrayOffsets{};
             DeviceBuffer<size_t> d_multigpuarrayOffsetsPrefixSum{};
             DeviceBuffer<size_t> d_numSelected{};
@@ -410,6 +411,16 @@ public:
         HandleStruct(HandleStruct&&) = default;
         HandleStruct(const HandleStruct&) = delete;
 
+        ~HandleStruct(){
+            auto info = getMemoryInfo();
+
+            std::cerr << "MultiGpuArray::HandleStruct: host: " << info.host;
+            for(const auto& pair : info.device){
+                std::cerr << ", device[" << pair.first << "]: " << pair.second;
+            }
+            std::cerr << "\n";                
+        }
+
         void setMaxNumberOfIndices(size_t num){
             maxNumberOfIndices = num;
             maxNumberOfIndicesIsSet = true;
@@ -430,6 +441,31 @@ public:
 
         MemoryUsage getMemoryInfo() const{
             MemoryUsage result{};
+
+            for(const auto& buffer : deviceBuffers){
+                const int deviceId = buffer.deviceId;
+
+                result.device[deviceId] += buffer.d_multigpuarrayOffsets.capacityInBytes();
+                result.device[deviceId] += buffer.d_numSelected.capacityInBytes();
+                result.device[deviceId] += buffer.d_cubTemp.capacityInBytes();
+                result.device[deviceId] += buffer.d_indices.capacityInBytes();
+                result.device[deviceId] += buffer.d_selectedIndices.capacityInBytes();
+                result.device[deviceId] += buffer.d_selectedPositions.capacityInBytes();
+                result.device[deviceId] += buffer.d_selectedIndicesWithPositions.capacityInBytes();
+                result.device[deviceId] += buffer.d_dataCommunicationBuffer.capacityInBytes();
+            }
+
+            result.device[deviceId] += callerBuffers.d_multigpuarrayOffsets.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_multigpuarrayOffsetsPrefixSum.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_numSelected.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_cubTemp.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_indices.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_selectedIndices.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_selectedPositions.capacityInBytes();
+            result.device[deviceId] += callerBuffers.d_selectedIndicesWithPositions.capacityInBytes();           
+            result.device[deviceId] += callerBuffers.d_dataCommunicationBuffer.capacityInBytes();
+
+            result.host = callerBuffers.h_numSelected.capacityInBytes();
 
             return result;
         }
