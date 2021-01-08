@@ -267,7 +267,8 @@ namespace care{
             cpuReadStorage, 
             runtimeOptions.deviceIds,
             //tempids2,
-            gpumemorylimits
+            gpumemorylimits,
+            0
         );
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -328,7 +329,7 @@ namespace care{
         std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
             std::size_t total = 0;
-            cudaMemGetInfo(&gpumemorylimits[i], &total);
+            //cudaMemGetInfo(&gpumemorylimits[i], &total);
 
             std::size_t safety = 1 << 30; //leave 1 GB for correction algorithm
             if(gpumemorylimits[i] > safety){
@@ -337,6 +338,10 @@ namespace care{
                 gpumemorylimits[i] = 0;
             }
         }
+
+        std::size_t memoryLimitHost = memoryOptions.memoryTotalLimit 
+            - cpuReadStorage.getMemoryInfo().host
+            - gpuMinhasher->getMemoryInfo().host;
 
         // gpumemorylimits.resize(2);
         // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 128000000);
@@ -349,13 +354,18 @@ namespace care{
             cpuReadStorage,
             runtimeOptions.deviceIds, 
             //tempids,
-            gpumemorylimits
+            gpumemorylimits,
+            memoryLimitHost
         );
         cpugputimer.print();
 
         std::cout << "constructed gpu readstorage " << std::endl;
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
+
+        if(gpuReadStorage.isStandalone()){
+            cpuReadStorage.destroy();
+        }
 
 
 

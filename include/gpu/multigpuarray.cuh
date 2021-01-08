@@ -725,7 +725,7 @@ public:
                 if(!hasSynchronized && currentCapacity < newbytes){
                     handle->syncevent.synchronize();
                     hasSynchronized = true;
-                    std::cerr << "SYNC" << "\n";
+                    //std::cerr << "SYNC" << "\n";
                 }
                 data.resize(size);
             };
@@ -932,7 +932,7 @@ public:
                 if(!hasSynchronized && currentCapacity < newbytes){
                     handle->syncevent.synchronize();
                     hasSynchronized = true;
-                    std::cerr << "SYNC" << "\n";
+                    //std::cerr << "SYNC" << "\n";
                 }
                 data.resize(size);
             };

@@ -4,7 +4,6 @@
 #include <readstorage.hpp>
 #include <gpu/gpureadstorage.cuh>
 
-#include <2darray.hpp>
 #include <gpu/multigpuarray.cuh>
 #include <sequencehelpers.hpp>
 #include <lengthstorage.hpp>
@@ -73,13 +72,15 @@ public:
     MultiGpuReadStorage(
         const cpu::ContiguousReadStorage& cpuReadStorage_, 
         std::vector<int> deviceIds_, 
-        std::vector<std::size_t> memoryLimitsPerDevice_
+        std::vector<std::size_t> memoryLimitsPerDevice_,
+        std::size_t memoryLimitHost
     ){
 
         rebuild(
             cpuReadStorage_,
             deviceIds_,
-            memoryLimitsPerDevice_
+            memoryLimitsPerDevice_,
+            memoryLimitHost
         );
 
     }
@@ -87,15 +88,21 @@ public:
     void rebuild(
         const cpu::ContiguousReadStorage& cpuReadStorage_, 
         std::vector<int> deviceIds_, 
-        std::vector<std::size_t> memoryLimitsPerDevice
+        std::vector<std::size_t> memoryLimitsPerDevice,
+        std::size_t memoryLimitHost
     ){
-        destroyGpuReadData();
+        destroyReadData();
 
         cpuReadStorage = &cpuReadStorage_;
         deviceIds = std::move(deviceIds_);
 
         const int numGpus = deviceIds.size();
         const std::size_t numReads = cpuReadStorage->getNumberOfReads();
+        numberOfAmbiguousReads = cpuReadStorage->getNumberOfReadsWithN();
+        numberOfReads = cpuReadStorage->getNumberOfReads();
+        useQualityScores = cpuReadStorage->canUseQualityScores();
+        sequenceLengthLowerBound = cpuReadStorage->getSequenceLengthLowerBound();
+        sequenceLengthUpperBound = cpuReadStorage->getSequenceLengthUpperBound();
 
         gpuLengthStorage = std::move(GPULengthStore2<std::uint32_t>(cpuReadStorage->getLengthStore(), deviceIds));
 
@@ -210,50 +217,6 @@ public:
 
                 cudaStreamSynchronize(stream); CUERR;
             }
-
-            // auto gatherhandle = makeHandle();
-
-            // helpers::SimpleAllocationPinnedHost<unsigned int> mysequencedata(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
-            // helpers::SimpleAllocationPinnedHost<unsigned int> cpusequencedata(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
-
-            // batchsize = 1000;
-
-            // for(std::size_t i = 0; i < numReads; i += batchsize){
-            //     const std::size_t currentBatchsize = std::min(batchsize, numReads - i);
-            //     std::iota(h_indices.begin(), h_indices.begin() + currentBatchsize, i);
-
-            //     gatherSequences(
-            //         gatherhandle,
-            //         mysequencedata.data(),
-            //         cpuReadStorage->getSequencePitch() / sizeof(unsigned int),
-            //         h_indices.data(),
-            //         h_indices.data(),
-            //         batchsize,
-            //         stream
-            //     );
-
-            //     cudaStreamSynchronize(stream); CUERR;
-
-            //     cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
-            //     cpuReadStorage->gatherSequenceData(
-            //         cpuhandle,
-            //         h_indices.data(),
-            //         batchsize,
-            //         cpusequencedata.data(),
-            //         cpuReadStorage->getSequencePitch() / sizeof(unsigned int)
-            //     );
-
-            //     for(std::size_t k = 0; k < cpuReadStorage->getSequencePitch() / sizeof(unsigned int) * batchsize; k++){
-            //         if(cpusequencedata[k] != mysequencedata[k]){
-            //             std::cerr << "error i = " << i << ", k = " << k << ", pitch = " << cpuReadStorage->getSequencePitch() << "\n";
-            //             assert(false);
-            //         }
-            //     }
-            // }
-
-            
-
-            // destroyHandle(gatherhandle);
         }
 
         auto meminfo = sequencesGpu.getMemoryInfo();
@@ -316,6 +279,42 @@ public:
             std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", qualitiesGpu.getNumRows(): " << qualitiesGpu.getNumRows() << "\n";
         }
 
+        numHostSequences = numReads - sequencesGpu.getNumRows();
+        numHostQualities = numReads - qualitiesGpu.getNumRows();
+        hostSequencePitch = cpuReadStorage->getSequencePitch();
+        hostQualityPitch = cpuReadStorage->getQualityPitch();
+
+        std::size_t memoryOfHostSequences = numHostSequences * cpuReadStorage->getSequencePitch();
+        std::size_t memoryOfHostQualities = numHostSequences * cpuReadStorage->getQualityPitch();
+
+        if((hasHostSequences() || hasHostQualities()) && (memoryLimitHost >= memoryOfHostSequences + memoryOfHostQualities)){
+            const std::size_t seqpitchints = cpuReadStorage->getSequencePitch() / sizeof(unsigned int);
+
+            hostsequences.resize(numHostSequences * seqpitchints);
+            hostqualities.resize(numHostSequences * cpuReadStorage->getQualityPitch());
+
+            std::copy(
+                cpuReadStorage->getSequenceArray() + seqpitchints * sequencesGpu.getNumRows(),
+                cpuReadStorage->getSequenceArray() + seqpitchints * numReads,
+                hostsequences.begin()
+            );
+
+            std::copy(
+                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * sequencesGpu.getNumRows(),
+                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
+                hostqualities.begin()
+            );
+
+            cpuReadStorage = nullptr;
+            //std::cerr << "GpuReadstorage is standalone\n";
+
+        }else{
+            //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
+        }
+    }
+
+    bool isStandalone() const noexcept{
+        return cpuReadStorage == nullptr;
     }
 
 public: //inherited GPUReadStorage interface
@@ -397,7 +396,7 @@ public: //inherited GPUReadStorage interface
             if(!hasSynchronized && currentCapacity < newbytes){
                 tempData->event.synchronize();
                 hasSynchronized = true;
-                std::cerr << "SYNC" << "\n";
+                //std::cerr << "SYNC" << "\n";
             }
             data.resize(size);
         };
@@ -420,8 +419,6 @@ public: //inherited GPUReadStorage interface
         };
 
         auto hostGather = [&](){
-            care::cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
-
             const std::size_t sequencepitch = sizeof(unsigned int) * outSequencePitchInInts;
 
             constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
@@ -504,8 +501,7 @@ public: //inherited GPUReadStorage interface
                             tempData->streams[bufferIndex]
                         ); CUERR;
 
-                        cpuReadStorage->gatherSequenceData(
-                            cpuhandle,
+                        gatherHostSequences(
                             hostindicesarray[bufferIndex].data(),
                             k,
                             h_hostdataArr[bufferIndex],
@@ -574,8 +570,7 @@ public: //inherited GPUReadStorage interface
 
                     cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
 
-                    cpuReadStorage->gatherSequenceData(
-                        cpuhandle,
+                    gatherHostSequences(
                         h_readIds + begin,
                         sizeOfCurrentBatch,
                         hostpointers[bufferIndex],
@@ -658,7 +653,7 @@ public: //inherited GPUReadStorage interface
             if(!hasSynchronized && currentCapacity < newbytes){
                 tempData->event.synchronize();
                 hasSynchronized = true;
-                std::cerr << "SYNC" << "\n";
+                //std::cerr << "SYNC" << "\n";
             }
             data.resize(size);
         };
@@ -680,7 +675,6 @@ public: //inherited GPUReadStorage interface
         };
 
         auto hostGather = [&](){
-            care::cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
 
             constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
 
@@ -762,8 +756,7 @@ public: //inherited GPUReadStorage interface
                             tempData->streams[bufferIndex]
                         ); CUERR;
 
-                        cpuReadStorage->gatherSequenceQualities(
-                            cpuhandle,
+                        gatherHostQualities(
                             hostindicesarray[bufferIndex].data(),
                             k,
                             h_hostdataArr[bufferIndex],
@@ -832,8 +825,7 @@ public: //inherited GPUReadStorage interface
 
                     cudaStreamSynchronize(tempData->streams[bufferIndex]); CUERR; // protect pinned buffer
 
-                    cpuReadStorage->gatherSequenceQualities(
-                        cpuhandle,
+                    gatherHostQualities(
                         h_readIds + begin,
                         sizeOfCurrentBatch,
                         hostpointers[bufferIndex],
@@ -893,13 +885,18 @@ public: //inherited GPUReadStorage interface
     }
 
     std::int64_t getNumberOfReadsWithN() const override{
-        return cpuReadStorage->getNumberOfReadsWithN();
+        return numberOfAmbiguousReads;
     }
 
     MemoryUsage getMemoryInfo() const override{
         MemoryUsage result;
 
-        result += cpuReadStorage->getMemoryInfo();
+        if(!isStandalone()){
+            result += cpuReadStorage->getMemoryInfo();
+        }
+
+        result.host += sizeof(unsigned int) * hostsequences.capacity();
+        result.host += sizeof(char) * hostqualities.capacity();
 
         result += sequencesGpu.getMemoryInfo();
 
@@ -922,29 +919,138 @@ public: //inherited GPUReadStorage interface
     }
 
     read_number getNumberOfReads() const override{
-        return cpuReadStorage->getNumberOfReads();
+        return numberOfReads;
     }
 
     bool canUseQualityScores() const override{
-        return cpuReadStorage->canUseQualityScores();
+        return useQualityScores;
     }
 
     int getSequenceLengthLowerBound() const override{
-        return cpuReadStorage->getSequenceLengthLowerBound();
+        return sequenceLengthLowerBound;
     }
 
     int getSequenceLengthUpperBound() const override{
-        return cpuReadStorage->getSequenceLengthUpperBound();
+        return sequenceLengthUpperBound;
     }
 
     void destroy() override{
-        destroyGpuReadData();
+        destroyReadData();
 
         destroyTempData();
     }
-
-
+    
 private:
+    template<class T, class IndexGenerator>
+    void gatherHostStandaloneImpl(
+        const T* source,
+        std::size_t numColumns,
+        size_t sourcePitchBytes,
+        IndexGenerator readIds,
+        int numReadIds,
+        T* destination,
+        size_t destinationPitchBytes
+    ) const noexcept{
+        
+        if(numReadIds == 0){
+            return;
+        }
+
+        constexpr int prefetch_distance = 4;
+
+        for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
+            const int index = i;
+            const read_number nextReadId = readIds(index);
+            const T* const nextData = (const T*)(((const char*)source) + sourcePitchBytes * nextReadId);
+            __builtin_prefetch(nextData, 0, 0);
+        }
+
+        for(int i = 0; i < numReadIds; i++){
+            if(i + prefetch_distance < numReadIds) {
+                const int index = i + prefetch_distance;
+                const read_number nextReadId = readIds(index);
+                const T* const nextData = (const T*)(((const char*)source) + sourcePitchBytes * nextReadId);
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            const int index = i;
+            const read_number readId = readIds(index);
+            const T* const data = (const T*)(((const char*)source) + sourcePitchBytes * readId);
+
+            T* const destData = (T*)(((char*)destination) + destinationPitchBytes * index);
+            std::copy_n(data, numColumns, destData);
+        }
+    }
+    
+    void gatherHostSequences(
+        const read_number* readIds,
+        int numSequences,
+        unsigned int* outputarray,
+        std::size_t outputPitchInInts
+    ) const {
+        if(!isStandalone()){
+            cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
+
+            cpuReadStorage->gatherSequenceData(
+                cpuhandle,
+                readIds,
+                numSequences,
+                outputarray,
+                outputPitchInInts
+            );
+        }else{
+            //convert readIds into local indices for host partition
+            auto indexGenerator = [&](auto i){
+                return readIds[i] - sequencesGpu.getNumRows();
+            };
+
+            gatherHostStandaloneImpl(
+                hostsequences.data(),
+                hostSequencePitch / sizeof(unsigned int),
+                hostSequencePitch,
+                indexGenerator,
+                numSequences,
+                outputarray,
+                outputPitchInInts * sizeof(unsigned int)
+            );
+        }
+    }
+
+    void gatherHostQualities(
+        const read_number* readIds,
+        int numSequences,
+        char* outputarray,
+        std::size_t outputPitchInBytes
+    ) const {
+        if(!isStandalone()){
+            cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
+
+            cpuReadStorage->gatherSequenceQualities(
+                cpuhandle,
+                readIds,
+                numSequences,
+                outputarray,
+                outputPitchInBytes
+            );
+        }else{
+
+            //convert readIds into local indices for host partition
+            auto indexGenerator = [&](auto i){
+                return readIds[i] - qualitiesGpu.getNumRows();
+            };
+
+            gatherHostStandaloneImpl(
+                hostqualities.data(),
+                hostQualityPitch,
+                hostQualityPitch,
+                indexGenerator,
+                numSequences,
+                outputarray,
+                outputPitchInBytes
+            );
+        }
+    }
+
     TempData* getTempDataFromHandle(const Handle& handle) const{
         std::shared_lock<SharedMutex> lock(sharedmutex);
 
@@ -954,11 +1060,11 @@ private:
     }
 
     bool hasHostSequences() const noexcept{
-        return getNumberOfReads() > sequencesGpu.getNumRows();
+        return numHostSequences > 0;
     }
 
     bool hasHostQualities() const noexcept{
-        return canUseQualityScores() && getNumberOfReads() > qualitiesGpu.getNumRows();
+        return canUseQualityScores() && numHostQualities > 0;
     }
 
     bool hasGpuSequences() const noexcept{
@@ -977,8 +1083,8 @@ private:
         return qualitiesGpu.getNumRows() <= index;
     }
 
-    void destroyGpuReadData(){
-        if(cpuReadStorage != nullptr){
+    void destroyReadData(){
+        if(numberOfReads > 0){
             sequencesGpu.destroy();
 
             if(canUseQualityScores()){
@@ -992,7 +1098,24 @@ private:
                 destroyGpuBitArray(pair.second);
             }
             bitArraysUndeterminedBase.clear();
+
+            auto deallocVector = [](auto& vec){
+                using T = typename std::remove_reference<decltype(vec)>::type;
+                T tmp{};
+                vec.swap(tmp);
+            };
+
+            deallocVector(hostsequences);
+            deallocVector(hostqualities);
         }
+
+        useQualityScores = false;
+        sequenceLengthLowerBound = 0;
+        sequenceLengthUpperBound = 0;
+        numberOfReads = 0;
+        numberOfAmbiguousReads = 0;
+        numHostSequences = 0;
+        numHostQualities = 0;
     }
 
     void destroyTempData(){
@@ -1005,6 +1128,16 @@ private:
         deallocVector(tempdataVector);
     }
     
+    bool useQualityScores{};
+    int sequenceLengthLowerBound{};
+    int sequenceLengthUpperBound{};
+    read_number numberOfReads{};
+    std::int64_t numberOfAmbiguousReads{};
+
+    std::size_t numHostSequences{};
+    std::size_t numHostQualities{};
+    std::size_t hostSequencePitch{};
+    std::size_t hostQualityPitch{};
     const cpu::ContiguousReadStorage* cpuReadStorage{};
 
     MultiGpu2dArray<unsigned int, IndexType> sequencesGpu{};
@@ -1013,6 +1146,8 @@ private:
 
 
     GPULengthStore2<std::uint32_t> gpuLengthStorage{};
+    std::vector<unsigned int> hostsequences{};
+    std::vector<char> hostqualities{};
 
     std::vector<int> deviceIds{};
 
