@@ -263,19 +263,12 @@ namespace care{
         // std::vector<int> tempids2(gpumemorylimits.size(), 0);
 
 
-        helpers::CpuTimer cpugputimer("cpu->gpu readstorage");
         gpu::MultiGpuReadStorage gpuReadStorage(
             cpuReadStorage, 
             runtimeOptions.deviceIds,
             //tempids2,
             gpumemorylimits
         );
-        cpugputimer.print();
-
-        std::cout << "constructed gpu readstorage " << std::endl;
-
-        printDataStructureMemoryUsage(gpuReadStorage, "reads");
-
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
@@ -350,7 +343,7 @@ namespace care{
 
         // std::vector<int> tempids(gpumemorylimits.size(), 0);
 
-        cpugputimer.reset();
+        helpers::CpuTimer cpugputimer("cpu->gpu reads");
         cpugputimer.start();
         gpuReadStorage.rebuild(
             cpuReadStorage,
@@ -359,6 +352,10 @@ namespace care{
             gpumemorylimits
         );
         cpugputimer.print();
+
+        std::cout << "constructed gpu readstorage " << std::endl;
+
+        printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
 
 

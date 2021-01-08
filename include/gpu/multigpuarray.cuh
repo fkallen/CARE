@@ -412,13 +412,13 @@ public:
         HandleStruct(const HandleStruct&) = delete;
 
         ~HandleStruct(){
-            auto info = getMemoryInfo();
+            // auto info = getMemoryInfo();
 
-            std::cerr << "MultiGpuArray::HandleStruct: host: " << info.host;
-            for(const auto& pair : info.device){
-                std::cerr << ", device[" << pair.first << "]: " << pair.second;
-            }
-            std::cerr << "\n";                
+            // std::cerr << "MultiGpuArray::HandleStruct: host: " << info.host;
+            // for(const auto& pair : info.device){
+            //     std::cerr << ", device[" << pair.first << "]: " << pair.second;
+            // }
+            // std::cerr << "\n";                
         }
 
         void setMaxNumberOfIndices(size_t num){
