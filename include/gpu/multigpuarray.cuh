@@ -395,6 +395,9 @@ public:
             DeviceBuffer<ArgIndexPair> d_selectedIndicesWithPositions{};
             DeviceBuffer<char> d_dataCommunicationBuffer{};
 
+            HostBuffer<size_t> h_numSelected{};
+
+
             CudaEvent event{cudaEventDisableTiming};
             std::vector<CudaEvent> events{};
             std::vector<CudaStream> streams{};
@@ -482,6 +485,7 @@ public:
             callerBuffers.d_multigpuarrayOffsets.resize(h_arrayOffsets.size()); CUERR;
             callerBuffers.d_multigpuarrayOffsetsPrefixSum.resize(h_arrayOffsetsPrefixSum.size()); CUERR;
             callerBuffers.d_numSelected.resize(h_arrayOffsets.size()); CUERR;
+            callerBuffers.h_numSelected.resize(h_arrayOffsets.size()); CUERR;
 
             cudaMemcpy(
                 callerBuffers.d_multigpuarrayOffsets.get(),
@@ -515,7 +519,7 @@ public:
 
         //TODO maybe perform batched gather to limit memory usage of handle
 
-        gather_internal(
+        gather_internal3(
             handle,
             d_dest,
             destRowPitchInBytes,
@@ -540,7 +544,7 @@ public:
 
         //TODO maybe perform batched gather to limit memory usage of handle
 
-        gather_internal(
+        gather_internal3(
             handle,
             d_dest,
             destRowPitchInBytes,
@@ -1150,6 +1154,213 @@ public:
         }
     }
 
+    void gather_internal3(
+        Handle& handle, T* d_dest, 
+        size_t destRowPitchInBytes, 
+        const IndexType* d_indices, 
+        size_t numIndices, 
+        bool mayContainInvalidIndices,
+        cudaStream_t destStream
+    ) const{
+        if(numIndices == 0) return;
+
+        int destDeviceId = 0;
+        cudaGetDevice(&destDeviceId); CUERR;
+
+        if(isSingleGpu() && !mayContainInvalidIndices){
+            if(gpuArrays[0]->getDeviceId() == destDeviceId){ 
+                //all data to be gathered resides on the destination device
+
+                auto indexGenerator = [d_indices] __device__ (auto i){
+                    return d_indices[i];
+                };
+
+                gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
+                return;
+            }else{
+                //all data resides on a different device
+
+                //using peer access on different device data
+
+                auto indexGenerator = [d_indices] __device__ (auto i){
+                    return d_indices[i];
+                };
+
+                gpuArrays[0]->gather(d_dest, destRowPitchInBytes, indexGenerator, numIndices, destStream);
+            }
+        }else{
+
+            //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
+            // and scatter into result array
+
+            const int numGpus = gpuArrays.size();
+
+            auto& callerBuffers = handle->callerBuffers;
+            callerBuffers.d_selectedIndices.resize(numIndices * gpuArrays.size());
+            callerBuffers.d_selectedPositions.resize(numIndices * gpuArrays.size());
+            callerBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
+
+            cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
+
+            //helpers::GpuTimer gpuTimer(destStream, "partitionsplit");
+
+            MultiGpu2dArrayKernels::partitionSplitKernel<<<SDIV(numIndices, 128), 128, 0, destStream>>>(
+                callerBuffers.d_selectedIndices.get(),
+                callerBuffers.d_selectedPositions.get(),
+                callerBuffers.d_numSelected.get(),
+                gpuArrays.size(),
+                callerBuffers.d_multigpuarrayOffsetsPrefixSum.get(),
+                numIndices,
+                d_indices
+            );
+
+            cudaMemcpyAsync(
+                callerBuffers.h_numSelected.data(), 
+                callerBuffers.d_numSelected.data(), 
+                sizeof(std::size_t) * numGpus, 
+                D2H, 
+                destStream
+            ); CUERR;
+            cudaStreamSynchronize(destStream);
+
+            std::vector<std::size_t> numSelectedPrefixSum(numGpus,0);
+            std::partial_sum(
+                callerBuffers.h_numSelected.data(),
+                callerBuffers.h_numSelected.data() + numGpus - 1,
+                numSelectedPrefixSum.begin() + 1
+            );
+
+            //allocate remote buffers
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    const auto& gpuArray = gpuArrays[d];
+                    auto& deviceBuffers = handle->deviceBuffers[d];
+                    const int deviceId = gpuArray->getDeviceId();
+
+                    cub::SwitchDevice sd(deviceId);
+
+                    deviceBuffers.d_selectedIndices.resize(num);
+                    deviceBuffers.d_dataCommunicationBuffer.resize(num * destRowPitchInBytes);
+                }
+            }
+
+            //copy selected indices to remote buffer
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    const auto& gpuArray = gpuArrays[d];
+                    auto& deviceBuffers = handle->deviceBuffers[d];
+                    const int deviceId = gpuArray->getDeviceId();
+
+                    cub::SwitchDevice sd(deviceId);
+
+                    //copy selected indices to remote device
+                    copy(
+                        deviceBuffers.d_selectedIndices.data(), 
+                        deviceId, 
+                        callerBuffers.d_selectedIndices.data() + d * numIndices, 
+                        destDeviceId, 
+                        sizeof(IndexType) * num, 
+                        deviceBuffers.stream
+                    );
+                }
+            }
+
+            //gather on remote gpus
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    const auto& gpuArray = gpuArrays[d];
+                    auto& deviceBuffers = handle->deviceBuffers[d];
+                    const int deviceId = gpuArray->getDeviceId();
+
+                    cub::SwitchDevice sd(deviceId);
+
+                    auto gatherIndexGenerator = [
+                        d_selectedIndices = deviceBuffers.d_selectedIndices.data(),
+                        indexoffset = h_arrayOffsetsPrefixSum[d]
+                    ] __device__ (auto i){
+                        const IndexType index = d_selectedIndices[i];
+                        return index - indexoffset; //transform into local index for this gpuArray
+                    };
+
+                    gpuArray->gather(
+                        (T*)deviceBuffers.d_dataCommunicationBuffer.get(), 
+                        destRowPitchInBytes, 
+                        gatherIndexGenerator, 
+                        num, 
+                        deviceBuffers.stream
+                    );
+
+                    cudaEventRecord(deviceBuffers.event, deviceBuffers.stream); CUERR;
+                }
+            }
+
+            //copy remote gathered data to caller
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    const auto& gpuArray = gpuArrays[d];
+                    auto& deviceBuffers = handle->deviceBuffers[d];
+                    const int deviceId = gpuArray->getDeviceId();
+
+                    cudaStreamWaitEvent(callerBuffers.streams[d], deviceBuffers.event, 0); CUERR;
+  
+                    copy(
+                        callerBuffers.d_dataCommunicationBuffer.data() + destRowPitchInBytes * numSelectedPrefixSum[d], 
+                        destDeviceId, 
+                        deviceBuffers.d_dataCommunicationBuffer.data(), 
+                        deviceId, 
+                        destRowPitchInBytes * num, 
+                        callerBuffers.streams[d]
+                    );
+                }
+            }
+
+            //scatter into result array
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    dim3 block(128, 1, 1);
+                    dim3 grid(SDIV(numIndices, block.x), 1, 1);
+
+                    MultiGpu2dArrayKernels::LinearAccessFunctor<std::size_t> scatterIndexGenerator(
+                        callerBuffers.d_selectedPositions.get() + d * numIndices
+                    );
+
+                    MultiGpu2dArrayKernels::scatterKernel<<<grid, block, 0, callerBuffers.streams[d]>>>(
+                        (const T*)(callerBuffers.d_dataCommunicationBuffer.data() + destRowPitchInBytes * numSelectedPrefixSum[d]), 
+                        destRowPitchInBytes, 
+                        getNumRows(),
+                        getNumColumns(),
+                        d_dest, 
+                        destRowPitchInBytes, 
+                        scatterIndexGenerator, 
+                        num
+                    ); CUERR; 
+
+                    cudaEventRecord(callerBuffers.events[d], callerBuffers.streams[d]); CUERR;
+                }
+            }
+
+            //join streams
+            for(int d = 0; d < numGpus; d++){
+                const int num = callerBuffers.h_numSelected[d];
+
+                if(num > 0){
+                    cudaStreamWaitEvent(destStream, callerBuffers.events[d], 0); CUERR;
+                }                
+            }
+            
+        }
+    }
+
     void scatter_internal(
         Handle& handle, 
         const T* d_src, 
@@ -1368,8 +1579,18 @@ private:
         }else{
             //std::cerr << "copy from device " << srcDevice << " to device " << dstDevice << "\n";
         }
+        CUERR;
+        cudaError_t status = cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream);
+        if(status != cudaSuccess){
+            cudaGetLastError();
+            std::cerr << "dst=" << dst << ", "
+            << "dstDevice=" << dstDevice << ", "
+            << "src=" << src << ", "
+            << "srcDevice=" << srcDevice << ", "
+            << "count=" << count << "\n";
 
-        cudaMemcpyPeerAsync(dst, dstDevice, src, srcDevice, count, stream); CUERR;
+            assert(false);
+        }
     }
 
     void init(
