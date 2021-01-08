@@ -264,6 +264,13 @@ namespace care{
         step2Timer.print();
 
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2Timer.elapsed()) << " reads/second.\n";
+        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
+        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
+        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
+
+        std::cerr << "Constructed " << numTemp << " corrections. "
+            << numTempInMem << " corrections are stored in memory. "
+            << numTempInFile << " corrections are stored in temporary file\n";
 
         cpuMinhasher->destroy();
         readStorage.destroy();

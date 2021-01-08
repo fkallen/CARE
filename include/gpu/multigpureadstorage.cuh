@@ -42,9 +42,9 @@ public:
         }
 
         ~TempData(){
-            auto info = getMemoryInfo();
-            std::cerr << "MultiGpuReadStorage::TempData: host: " << info.host 
-                << ", device[" << deviceId << "]: " << info.device[deviceId] << "\n";
+            // auto info = getMemoryInfo();
+            // std::cerr << "MultiGpuReadStorage::TempData: host: " << info.host 
+            //     << ", device[" << deviceId << "]: " << info.device[deviceId] << "\n";
         }
 
         MemoryUsage getMemoryInfo() const{
@@ -184,7 +184,7 @@ public:
             )
         );
 
-        std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", sequencesGpu.getNumRows(): " << sequencesGpu.getNumRows() << "\n";
+        //std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", sequencesGpu.getNumRows(): " << sequencesGpu.getNumRows() << "\n";
 
         {
             std::size_t batchsize = 65000;
@@ -276,7 +276,7 @@ public:
                 }
             }
 
-            std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", qualitiesGpu.getNumRows(): " << qualitiesGpu.getNumRows() << "\n";
+            //std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", qualitiesGpu.getNumRows(): " << qualitiesGpu.getNumRows() << "\n";
         }
 
         numHostSequences = numReads - sequencesGpu.getNumRows();
@@ -291,7 +291,6 @@ public:
             const std::size_t seqpitchints = cpuReadStorage->getSequencePitch() / sizeof(unsigned int);
 
             hostsequences.resize(numHostSequences * seqpitchints);
-            hostqualities.resize(numHostQualities * cpuReadStorage->getQualityPitch());
 
             std::copy(
                 cpuReadStorage->getSequenceArray() + seqpitchints * sequencesGpu.getNumRows(),
@@ -299,11 +298,17 @@ public:
                 hostsequences.begin()
             );
 
-            std::copy(
-                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * qualitiesGpu.getNumRows(),
-                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
-                hostqualities.begin()
-            );
+            if(canUseQualityScores()){
+
+                hostqualities.resize(numHostQualities * cpuReadStorage->getQualityPitch());
+
+                std::copy(
+                    cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * qualitiesGpu.getNumRows(),
+                    cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
+                    hostqualities.begin()
+                );
+            
+            }
 
             cpuReadStorage = nullptr;
             //std::cerr << "GpuReadstorage is standalone\n";

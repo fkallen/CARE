@@ -3,13 +3,9 @@
 
 
 #include <gpu/gpucorrector.cuh>
-#include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpureadstorage.cuh>
 
 #include <gpu/gpuminhasher.cuh>
-// #include <gpu/fakegpuminhasher.cuh>
-// #include <gpu/singlegpuminhasher.cuh>
-// #include <gpu/multigpuminhasher.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -1946,16 +1942,12 @@ auto runPipeline = [&](int deviceId){
 
     partialResults.flush();
 
-    std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
+    // std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
 
-    for(std::uint64_t i = 0; i < sequenceFileProperties.nReads; i++){
-        flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
-            << correctionFlags.isNotCorrectedAsAnchor(i) << "\n";
-    }
-
-
-    std::cerr << partialResults.getNumElementsInMemory() << ", " 
-        << partialResults.getNumElementsInFile() << "\n";
+    // for(std::uint64_t i = 0; i < sequenceFileProperties.nReads; i++){
+    //     flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
+    //         << correctionFlags.isNotCorrectedAsAnchor(i) << "\n";
+    // }
 
     return partialResults;
 }

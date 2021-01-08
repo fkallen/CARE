@@ -6,7 +6,6 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 
-#include <gpu/distributedreadstorage.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
 
@@ -329,7 +328,7 @@ namespace care{
         std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 0);
         for(int i = 0; i < int(runtimeOptions.deviceIds.size()); i++){
             std::size_t total = 0;
-            //cudaMemGetInfo(&gpumemorylimits[i], &total);
+            cudaMemGetInfo(&gpumemorylimits[i], &total);
 
             std::size_t safety = 1 << 30; //leave 1 GB for correction algorithm
             if(gpumemorylimits[i] > safety){
@@ -387,6 +386,13 @@ namespace care{
         step2timer.print();
 
         std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
+        const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
+        const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
+        const std::size_t numTempInFile = partialResults.getNumElementsInFile();
+    
+        std::cerr << "Constructed " << numTemp << " corrections. "
+            << numTempInMem << " corrections are stored in memory. "
+            << numTempInFile << " corrections are stored in temporary file\n";
 
         gpuMinhasher->destroy();
    

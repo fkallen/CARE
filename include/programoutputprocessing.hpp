@@ -7,6 +7,7 @@
 #include <readlibraryio.hpp>
 #include <threadpool.hpp>
 #include <concurrencyhelpers.hpp>
+#include <util.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -224,6 +225,27 @@ namespace care{
 
         std::atomic<bool> noMoreOutputreadBatches{false};
 
+        // auto showProgress = [&](std::int64_t totalCount, int seconds){
+        //     if(true /*runtimeOptions.showProgress*/){
+
+        //         int hours = seconds / 3600;
+        //         seconds = seconds % 3600;
+        //         int minutes = seconds / 60;
+        //         seconds = seconds % 60;
+                
+        //         printf("Written %10lu reads to output file(Runtime: %03d:%02d:%02d)\r",
+        //             totalCount, hours, minutes, seconds);
+
+        //         std::fflush(stdout);
+        //     }
+        // };
+
+        // auto updateShowProgressInterval = [](auto duration){
+        //     return duration;
+        // };
+
+        // ProgressThread<std::int64_t> progressThread(std::numeric_limits<std::int64_t>::max(), showProgress, updateShowProgressInterval);
+
         auto outputWriterFuture = std::async(std::launch::async,
             [&](){
                 //no gz output
@@ -261,6 +283,10 @@ namespace care{
 
                         processed++;
                     }
+
+                    // if(processed == valid){
+                    //     progressThread.addProgress(valid);
+                    // }
 
                     // aend = std::chrono::system_clock::now();
                     // adelta += aend - abegin;
@@ -377,6 +403,9 @@ namespace care{
         decoderFuture.wait();
         inputReaderFuture.wait();
         outputWriterFuture.wait();
+        // progressThread.finished();
+
+        // std::cout << "\n";
 
         mergetimer.print();
     }

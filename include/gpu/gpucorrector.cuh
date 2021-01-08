@@ -7,10 +7,6 @@
 
 #include <gpu/cuda_block_select.cuh>
 
-#include <gpu/distributedreadstorage.hpp>
-// #include <gpu/fakegpuminhasher.cuh>
-// #include <gpu/singlegpuminhasher.cuh>
-// #include <gpu/multigpuminhasher.cuh>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
@@ -630,13 +626,13 @@ namespace gpucorrectorkernels{
         }
 
         ~GpuAnchorHasher(){
-            std::cerr << "GpuAnchorHasher::~GpuAnchorHasher(). Memory of minhash handle: ";
-            auto memoryUsage = gpuMinhasher->getMemoryInfo(minhashHandle);
-            std::cerr << memoryUsage.host;
-            for(auto pair : memoryUsage.device){
-                std::cerr << ", [" << pair.first << "] " << pair.second;
-            }
-            std::cerr << "\n";
+            // std::cerr << "GpuAnchorHasher::~GpuAnchorHasher(). Memory of minhash handle: ";
+            // auto memoryUsage = gpuMinhasher->getMemoryInfo(minhashHandle);
+            // std::cerr << memoryUsage.host;
+            // for(auto pair : memoryUsage.device){
+            //     std::cerr << ", [" << pair.first << "] " << pair.second;
+            // }
+            // std::cerr << "\n";
 
             gpuReadStorage->destroyHandle(readstorageHandle);
             gpuMinhasher->destroyHandle(minhashHandle);
