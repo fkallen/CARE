@@ -389,22 +389,24 @@ public: //inherited GPUReadStorage interface
 
         tempData->event.synchronize();
 
-        nvtx::push_range("sequencesGpu.gather", 5);
+        auto gpuGather = [&](){
 
-        sequencesGpu.gather(
-            tempData->handleSequences,
-            d_sequence_data,
-            sizeof(unsigned int) * outSequencePitchInInts,
-            d_readIds,
-            numSequences,
-            hasHostSequences(),
-            stream
-        );
+            nvtx::push_range("sequencesGpu.gather", 5);
 
-        nvtx::pop_range();
+            sequencesGpu.gather(
+                tempData->handleSequences,
+                d_sequence_data,
+                sizeof(unsigned int) * outSequencePitchInInts,
+                d_readIds,
+                numSequences,
+                hasHostSequences(),
+                stream
+            );
 
-        if(hasHostSequences()){
+            nvtx::pop_range();
+        };
 
+        auto hostGather = [&](){
             care::cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
 
             const std::size_t sequencepitch = sizeof(unsigned int) * outSequencePitchInInts;
@@ -596,6 +598,20 @@ public: //inherited GPUReadStorage interface
                 cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
 
             }
+        };
+
+        if(hasGpuSequences()){
+            if(hasHostSequences()){
+
+                hostGather();
+                cudaStreamSynchronize(stream);
+                gpuGather();
+            }else{
+                cudaStreamSynchronize(stream);
+                gpuGather();
+            }
+        }else{
+            hostGather();
         }
 
         cudaEventRecord(tempData->event, stream); CUERR;
@@ -618,27 +634,27 @@ public: //inherited GPUReadStorage interface
         cudaGetDevice(&deviceId); CUERR;
 
         TempData* tempData = getTempDataFromHandle(handle);
-        assert(tempData->deviceId == deviceId);
+        assert(tempData->deviceId == deviceId);        
 
         tempData->event.synchronize();
 
-        nvtx::push_range("qualitiesGpu.gather", 5);
+        auto gpuGather = [&](){
+            nvtx::push_range("qualitiesGpu.gather", 5);
 
-        qualitiesGpu.gather(
-            tempData->handleQualities,
-            d_quality_data,
-            out_quality_pitch,
-            d_readIds,
-            numSequences,
-            hasHostQualities(),
-            stream
-        );
+            qualitiesGpu.gather(
+                tempData->handleQualities,
+                d_quality_data,
+                out_quality_pitch,
+                d_readIds,
+                numSequences,
+                hasHostQualities(),
+                stream
+            );
 
-        nvtx::pop_range();
+            nvtx::pop_range();
+        };
 
-        if(hasHostQualities()){
-
-
+        auto hostGather = [&](){
             care::cpu::ContiguousReadStorage::GatherHandle cpuhandle{};
 
             constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
@@ -812,9 +828,21 @@ public: //inherited GPUReadStorage interface
                 cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
                 cudaEventRecord(tempData->event, tempData->streams[1]); CUERR;
                 cudaStreamWaitEvent(stream, tempData->event, 0); CUERR;
-
             }
 
+        };
+
+        
+
+        if(hasGpuQualities()){
+            if(hasHostQualities()){
+                hostGather();
+                gpuGather();
+            }else{
+                gpuGather();
+            }
+        }else{
+            hostGather();
         }
 
         cudaEventRecord(tempData->event, stream); CUERR;
