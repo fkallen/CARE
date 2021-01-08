@@ -1094,9 +1094,10 @@ namespace gpucorrectorkernels{
             goodAlignmentProperties{&goodAlignmentProperties_},
             sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_},
-            readstorageHandleAnchorQualities{gpuReadStorage->makeHandle()},
-            readstorageHandleCandidates{gpuReadStorage->makeHandle()},
-            readstorageHandleCandidateQualities{gpuReadStorage->makeHandle()}            
+            // readstorageHandleAnchorQualities{gpuReadStorage->makeHandle()},
+            // readstorageHandleCandidates{gpuReadStorage->makeHandle()},
+            // readstorageHandleCandidateQualities{gpuReadStorage->makeHandle()}
+            readstorageHandle{gpuReadStorage->makeHandle()}
         {
             cudaGetDevice(&deviceId); CUERR;
 
@@ -1130,9 +1131,10 @@ namespace gpucorrectorkernels{
         }
 
         ~GpuErrorCorrector(){
-            gpuReadStorage->destroyHandle(readstorageHandleAnchorQualities);
-            gpuReadStorage->destroyHandle(readstorageHandleCandidates);
-            gpuReadStorage->destroyHandle(readstorageHandleCandidateQualities);
+            // gpuReadStorage->destroyHandle(readstorageHandleAnchorQualities);
+            // gpuReadStorage->destroyHandle(readstorageHandleCandidates);
+            // gpuReadStorage->destroyHandle(readstorageHandleCandidateQualities);
+            gpuReadStorage->destroyHandle(readstorageHandle);
         }
 
         void correct(GpuErrorCorrectorInput& input, GpuErrorCorrectorRawOutput& output, cudaStream_t stream){
@@ -1231,9 +1233,10 @@ namespace gpucorrectorkernels{
                 info.device[deviceId] += d.sizeInBytes();
             };
 
-            info += gpuReadStorage->getMemoryInfo(readstorageHandleAnchorQualities);
-            info += gpuReadStorage->getMemoryInfo(readstorageHandleCandidates);
-            info += gpuReadStorage->getMemoryInfo(readstorageHandleCandidateQualities);
+            // info += gpuReadStorage->getMemoryInfo(readstorageHandleAnchorQualities);
+            // info += gpuReadStorage->getMemoryInfo(readstorageHandleCandidates);
+            // info += gpuReadStorage->getMemoryInfo(readstorageHandleCandidateQualities);
+            info += gpuReadStorage->getMemoryInfo(readstorageHandle);
 
             handleHost(h_high_quality_anchor_indices);
             handleHost(h_num_high_quality_anchor_indices);
@@ -1748,7 +1751,8 @@ namespace gpucorrectorkernels{
         void getAmbiguousFlagsOfAnchors(cudaStream_t stream){
 
             gpuReadStorage->areSequencesAmbiguous(
-                readstorageHandleAnchorQualities,
+                //readstorageHandleAnchorQualities,
+                readstorageHandle,
                 d_anchorContainsN.get(), 
                 d_anchorReadIds.get(), 
                 currentNumAnchors,
@@ -1758,7 +1762,8 @@ namespace gpucorrectorkernels{
 
         void getAmbiguousFlagsOfCandidates(cudaStream_t stream){
             gpuReadStorage->areSequencesAmbiguous(
-                readstorageHandleCandidateQualities,
+                //readstorageHandleCandidateQualities,
+                readstorageHandle,
                 d_candidateContainsN.get(), 
                 d_candidate_read_ids.get(), 
                 currentNumCandidates,
@@ -1769,7 +1774,8 @@ namespace gpucorrectorkernels{
         void getCandidateSequenceData(cudaStream_t stream){
 
             gpuReadStorage->gatherSequenceLengths(
-                readstorageHandleCandidates,
+                //readstorageHandleCandidates,
+                readstorageHandle,
                 d_candidate_sequences_lengths.get(),
                 d_candidate_read_ids.get(),
                 currentNumCandidates,            
@@ -1777,7 +1783,8 @@ namespace gpucorrectorkernels{
             );
 
             gpuReadStorage->gatherSequences(
-                readstorageHandleCandidates,
+                //readstorageHandleCandidates,
+                readstorageHandle,
                 d_candidate_sequences_data.get(),
                 encodedSequencePitchInInts,
                 currentInput->h_candidate_read_ids,
@@ -1805,7 +1812,8 @@ namespace gpucorrectorkernels{
 #ifndef COMPACT_GATHER
 
                 gpuReadStorage->gatherQualities(
-                    readstorageHandleAnchorQualities,
+                    //readstorageHandleAnchorQualities,
+                    readstorageHandle,
                     d_anchor_qualities,
                     qualityPitchInBytes,
                     currentInput->h_anchorReadIds,
@@ -1815,7 +1823,8 @@ namespace gpucorrectorkernels{
                 );
 
                 gpuReadStorage->gatherQualities(
-                    readstorageHandleCandidateQualities,
+                    //readstorageHandleCandidateQualities,
+                    readstorageHandle,
                     d_candidate_qualities,
                     qualityPitchInBytes,
                     currentInput->h_candidate_read_ids.get(),
@@ -1871,7 +1880,8 @@ namespace gpucorrectorkernels{
 
                 // std::cerr << "gather anchor qual\n";
                 gpuReadStorage->gatherQualities(
-                    readstorageHandleAnchorQualities,
+                    //readstorageHandleAnchorQualities,
+                    readstorageHandle,
                     d_anchor_qualities,
                     qualityPitchInBytes,
                     currentInput->h_anchorReadIds,
@@ -1885,7 +1895,8 @@ namespace gpucorrectorkernels{
 
                 nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
                 gpuReadStorage->gatherQualities(
-                    readstorageHandleCandidateQualities,
+                    //readstorageHandleCandidateQualities,
+                    readstorageHandle,
                     d_candidate_qualities_compact,
                     qualityPitchInBytes,
                     h_indicesForGather.data(),
@@ -2521,9 +2532,10 @@ namespace gpucorrectorkernels{
         ThreadPool::ParallelForHandle pforHandle;
         KernelLaunchHandle kernelLaunchHandle; 
 
-        GpuReadStorage::Handle readstorageHandleAnchorQualities;
-        GpuReadStorage::Handle readstorageHandleCandidates; 
-        GpuReadStorage::Handle readstorageHandleCandidateQualities;
+        // GpuReadStorage::Handle readstorageHandleAnchorQualities;
+        // GpuReadStorage::Handle readstorageHandleCandidates; 
+        // GpuReadStorage::Handle readstorageHandleCandidateQualities;
+        GpuReadStorage::Handle readstorageHandle;
 
         PinnedBuffer<int> h_high_quality_anchor_indices;
         PinnedBuffer<int> h_num_high_quality_anchor_indices; 

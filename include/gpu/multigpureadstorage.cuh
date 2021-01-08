@@ -387,7 +387,20 @@ public: //inherited GPUReadStorage interface
         TempData* tempData = getTempDataFromHandle(handle);
         assert(tempData->deviceId == deviceId);
 
-        tempData->event.synchronize();
+        
+        bool hasSynchronized = false;
+        auto resizeWithSync = [&](auto& data, std::size_t size){
+            using W = decltype(*data.get());
+
+            const std::size_t currentCapacity = data.capacityInBytes();
+            const std::size_t newbytes = size * sizeof(W);
+            if(!hasSynchronized && currentCapacity < newbytes){
+                tempData->event.synchronize();
+                hasSynchronized = true;
+                std::cerr << "SYNC" << "\n";
+            }
+            data.resize(size);
+        };
 
         auto gpuGather = [&](){
 
@@ -443,8 +456,8 @@ public: //inherited GPUReadStorage interface
                 );
                 assert(cubstatus == cudaSuccess);
 
-                tempData->tempbuffer.resize(temp_storage_bytes);
-                tempData->pinnedBuffer.resize(temp_storage_bytes);
+                resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
+                resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
 
                 cubstatus = cub::AliasTemporaries(
                     tempData->tempbuffer.data(),
@@ -543,7 +556,7 @@ public: //inherited GPUReadStorage interface
             }else{
                 const int batchsize = std::min(SDIV(memorylimitbatch, (sequencepitch)), std::size_t(numSequences));
 
-                tempData->pinnedBuffer.resize(2 * batchsize * sequencepitch);
+                resizeWithSync(tempData->pinnedBuffer, 2 * batchsize * sequencepitch);
 
                 std::array<unsigned int*, 2> hostpointers{ 
                     (unsigned int*)(tempData->pinnedBuffer.data()), 
@@ -636,7 +649,19 @@ public: //inherited GPUReadStorage interface
         TempData* tempData = getTempDataFromHandle(handle);
         assert(tempData->deviceId == deviceId);        
 
-        tempData->event.synchronize();
+        bool hasSynchronized = false;
+        auto resizeWithSync = [&](auto& data, std::size_t size){
+            using W = decltype(*data.get());
+
+            const std::size_t currentCapacity = data.capacityInBytes();
+            const std::size_t newbytes = size * sizeof(W);
+            if(!hasSynchronized && currentCapacity < newbytes){
+                tempData->event.synchronize();
+                hasSynchronized = true;
+                std::cerr << "SYNC" << "\n";
+            }
+            data.resize(size);
+        };
 
         auto gpuGather = [&](){
             nvtx::push_range("qualitiesGpu.gather", 5);
@@ -689,8 +714,8 @@ public: //inherited GPUReadStorage interface
                 );
                 assert(cubstatus == cudaSuccess);
 
-                tempData->tempbuffer.resize(temp_storage_bytes);
-                tempData->pinnedBuffer.resize(temp_storage_bytes);
+                resizeWithSync(tempData->tempbuffer, temp_storage_bytes);
+                resizeWithSync(tempData->pinnedBuffer, temp_storage_bytes);
 
                 cubstatus = cub::AliasTemporaries(
                     tempData->tempbuffer.data(),
@@ -789,7 +814,7 @@ public: //inherited GPUReadStorage interface
             }else{
                 const int batchsize = std::min(SDIV(memorylimitbatch, (out_quality_pitch)), std::size_t(numSequences));
 
-                tempData->pinnedBuffer.resize(2 * batchsize * out_quality_pitch);
+                resizeWithSync(tempData->pinnedBuffer, 2 * batchsize * out_quality_pitch);
 
                 std::array<char*, 2> hostpointers{
                     tempData->pinnedBuffer.data(), 

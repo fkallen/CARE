@@ -404,7 +404,7 @@ public:
             std::vector<CudaStream> streams{};
         };
 
-        HandleStruct(){
+        HandleStruct() : syncevent{cudaEventDisableTiming}{
             cudaGetDevice(&deviceId); CUERR;            
         }
 
@@ -435,7 +435,7 @@ public:
         bool maxNumberOfIndicesIsSet = false;
         int deviceId = 0;
         size_t maxNumberOfIndices = std::numeric_limits<size_t>::max();
-
+        CudaEvent syncevent{};
         std::vector<PerDevice> deviceBuffers{};
         PerCaller callerBuffers{};
 
@@ -550,7 +550,7 @@ public:
         size_t numIndices, 
         cudaStream_t destStream = 0
     ) const{
-        cudaStreamSynchronize(destStream);
+
         if(getNumRows() == 0) return;
 
         //TODO maybe perform batched gather to limit memory usage of handle
@@ -716,12 +716,27 @@ public:
             //perform multisplit to distribute indices and filter out invalid indices. then perform local gathers,
             // and scatter into result array
 
+            bool hasSynchronized = false;
+            auto resizeWithSync = [&](auto& data, std::size_t size){
+                using W = decltype(*data.get());
+
+                const std::size_t currentCapacity = data.capacityInBytes();
+                const std::size_t newbytes = size * sizeof(W);
+                if(!hasSynchronized && currentCapacity < newbytes){
+                    handle->syncevent.synchronize();
+                    hasSynchronized = true;
+                    std::cerr << "SYNC" << "\n";
+                }
+                data.resize(size);
+            };
+
             const int numGpus = gpuArrays.size();
 
             auto& callerBuffers = handle->callerBuffers;
-            callerBuffers.d_selectedIndices.resize(numIndices * gpuArrays.size());
-            callerBuffers.d_selectedPositions.resize(numIndices * gpuArrays.size());
-            callerBuffers.d_dataCommunicationBuffer.resize(numIndices * destRowPitchInBytes);
+
+            resizeWithSync(callerBuffers.d_selectedIndices, numIndices * gpuArrays.size());
+            resizeWithSync(callerBuffers.d_selectedPositions, numIndices * gpuArrays.size());
+            resizeWithSync(callerBuffers.d_dataCommunicationBuffer, numIndices * destRowPitchInBytes);
 
             cudaMemsetAsync(callerBuffers.d_numSelected.get(), 0, callerBuffers.d_numSelected.sizeInBytes(), destStream); CUERR;
 
@@ -764,8 +779,8 @@ public:
 
                     cub::SwitchDevice sd(deviceId);
 
-                    deviceBuffers.d_selectedIndices.resize(num);
-                    deviceBuffers.d_dataCommunicationBuffer.resize(num * destRowPitchInBytes);
+                    resizeWithSync(deviceBuffers.d_selectedIndices, num);
+                    resizeWithSync(deviceBuffers.d_dataCommunicationBuffer, num * destRowPitchInBytes);
                 }
             }
 
@@ -880,7 +895,8 @@ public:
                     cudaStreamWaitEvent(destStream, callerBuffers.events[d], 0); CUERR;
                 }                
             }
-            
+
+            handle->syncevent.record(destStream);            
         }
     }
 
@@ -907,12 +923,26 @@ public:
             return;
         }else{
 
+            bool hasSynchronized = false;
+            auto resizeWithSync = [&](auto& data, std::size_t size){
+                using W = decltype(*data.get());
+
+                const std::size_t currentCapacity = data.capacityInBytes();
+                const std::size_t newbytes = size * sizeof(W);
+                if(!hasSynchronized && currentCapacity < newbytes){
+                    handle->syncevent.synchronize();
+                    hasSynchronized = true;
+                    std::cerr << "SYNC" << "\n";
+                }
+                data.resize(size);
+            };
+
             const int numGpus = gpuArrays.size();
             cub::ArgIndexInputIterator<const IndexType*, size_t> d_indicesWithPosition(d_indices);
 
             auto& callerBuffers = handle->callerBuffers;
-            callerBuffers.d_selectedIndicesWithPositions.resize(numIndices);
-            callerBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
+            resizeWithSync(callerBuffers.d_selectedIndicesWithPositions, numIndices);
+            resizeWithSync(callerBuffers.d_dataCommunicationBuffer, numIndices * srcRowPitchInBytes);
 
             size_t temp_storage_bytes = 0;
             {
@@ -937,7 +967,7 @@ public:
                 );
             }
 
-            callerBuffers.d_cubTemp.resize(temp_storage_bytes);
+            resizeWithSync(callerBuffers.d_cubTemp, temp_storage_bytes);
 
             for(int d = 0; d < numGpus; d++){
                 const auto& gpuArray = gpuArrays[d];
@@ -945,8 +975,8 @@ public:
                 cub::SwitchDevice sddev(deviceId);
 
                 auto& targetDeviceBuffers = handle->deviceBuffers[d];
-                targetDeviceBuffers.d_selectedIndicesWithPositions.resize(numIndices);
-                targetDeviceBuffers.d_dataCommunicationBuffer.resize(numIndices * srcRowPitchInBytes);
+                resizeWithSync(targetDeviceBuffers.d_selectedIndicesWithPositions, numIndices);
+                resizeWithSync(targetDeviceBuffers.d_dataCommunicationBuffer, numIndices * srcRowPitchInBytes);
             }
 
             for(int d = 0; d < numGpus; d++){
@@ -1073,6 +1103,8 @@ public:
 
                 cudaStreamWaitEvent(srcStream, handle->deviceBuffers[d].event, 0); CUERR;
             }
+
+            handle->syncevent.record(srcStream);
         }
     }
 

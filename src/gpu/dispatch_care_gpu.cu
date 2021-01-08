@@ -345,17 +345,17 @@ namespace care{
             }
         }
 
-        gpumemorylimits.resize(2);
-        std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
+        // gpumemorylimits.resize(2);
+        // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 128000000);
 
-        std::vector<int> tempids(gpumemorylimits.size(), 0);
+        // std::vector<int> tempids(gpumemorylimits.size(), 0);
 
         cpugputimer.reset();
         cpugputimer.start();
         gpuReadStorage.rebuild(
             cpuReadStorage,
-            //runtimeOptions.deviceIds, 
-            tempids,
+            runtimeOptions.deviceIds, 
+            //tempids,
             gpumemorylimits
         );
         cpugputimer.print();
