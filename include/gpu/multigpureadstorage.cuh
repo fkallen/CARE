@@ -285,13 +285,13 @@ public:
         hostQualityPitch = cpuReadStorage->getQualityPitch();
 
         std::size_t memoryOfHostSequences = numHostSequences * cpuReadStorage->getSequencePitch();
-        std::size_t memoryOfHostQualities = numHostSequences * cpuReadStorage->getQualityPitch();
+        std::size_t memoryOfHostQualities = numHostQualities * cpuReadStorage->getQualityPitch();
 
         if((hasHostSequences() || hasHostQualities()) && (memoryLimitHost >= memoryOfHostSequences + memoryOfHostQualities)){
             const std::size_t seqpitchints = cpuReadStorage->getSequencePitch() / sizeof(unsigned int);
 
             hostsequences.resize(numHostSequences * seqpitchints);
-            hostqualities.resize(numHostSequences * cpuReadStorage->getQualityPitch());
+            hostqualities.resize(numHostQualities * cpuReadStorage->getQualityPitch());
 
             std::copy(
                 cpuReadStorage->getSequenceArray() + seqpitchints * sequencesGpu.getNumRows(),
@@ -300,7 +300,7 @@ public:
             );
 
             std::copy(
-                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * sequencesGpu.getNumRows(),
+                cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * qualitiesGpu.getNumRows(),
                 cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
                 hostqualities.begin()
             );
