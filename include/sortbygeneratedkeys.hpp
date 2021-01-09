@@ -167,17 +167,42 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         return false;
     }
 
+    // Need to explicitly instanciate radix sort for OffsetT = IndexType. 
+    // The default API only uses OffsetT = int which may be insufficient to enumerate keys
+    auto DeviceRadixSort_SortPairs = [](
+        void* d_temp_storage, 
+        std::size_t& temp_storage_bytes, 
+        cub::DoubleBuffer<KeyType>& d_keys, 
+        cub::DoubleBuffer<ValueType>& d_values,
+        IndexType num_items,
+        cudaStream_t stream
+    ){
+        return cub::DispatchRadixSort<false, KeyType, ValueType, IndexType>::Dispatch(
+            d_temp_storage,
+            temp_storage_bytes,
+            d_keys,
+            d_values,
+            num_items,
+            0,
+            sizeof(KeyType) * 8,
+            true,
+            stream,
+            false
+        );
+    };
+
     cub::DoubleBuffer<KeyType> d_keys_dbl{nullptr, nullptr};
     cub::DoubleBuffer<ValueType> d_values_dbl{nullptr, nullptr};
 
     std::size_t requiredCubSize = 0;
 
-    cudaError_t cubstatus = cub::DeviceRadixSort::SortPairs(
+    cudaError_t cubstatus = DeviceRadixSort_SortPairs(
         nullptr,
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
-        numValues
+        numValues,
+        (cudaStream_t)0
     );
 
     if(cubstatus != cudaSuccess) return false;
@@ -255,14 +280,22 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 
     helpers::CpuTimer timer3("cub sort");
 
-    cubstatus = cub::DeviceRadixSort::SortPairs(
+    cubstatus = DeviceRadixSort_SortPairs(
         temp_allocations[4],
         requiredCubSize,
         d_keys_dbl,
         d_values_dbl,
-        numValues
+        numValues,
+        (cudaStream_t)0
     );
     cudaDeviceSynchronize(); CUERR;
+
+    if(cubstatus != cudaSuccess){
+        std::cerr << "cub::DeviceRadixSort::SortPairs error: " << cudaGetErrorString(cubstatus) << "\n";
+        cudaGetLastError();
+        cudaFree(temp_storage); CUERR;
+        return false;
+    }
 
     timer3.stop();
     timer3.print();
