@@ -51,8 +51,8 @@ namespace care{
             };
 
             Stage previousStage = Stage::None;
-            std::vector<Range_t> ranges;
-            SetUnionHandle suHandle;
+            std::vector<Range_t> ranges{};
+            SetUnionHandle suHandle{};
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage info{};
@@ -241,11 +241,13 @@ namespace care{
 
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
+            queryData->ranges.clear();
+
+            totalNumValues = 0;
+
             for(int s = 0; s < numSequences; s++){
                 const int length = h_sequenceLengths[s];
                 const unsigned int* sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
-
-                totalNumValues = 0;
 
                 if(length < getKmerSize()){
                     h_numValuesPerSequence[s] = 0;
@@ -265,8 +267,6 @@ namespace care{
                             hash &= kmermask;
                         }
                     );
-
-                    queryData->ranges.clear();
 
                     for(int map = 0; map < getNumberOfMaps(); ++map){
                         const kmer_type key = hashValues[map];
@@ -305,6 +305,17 @@ namespace care{
                 auto rangesbegin = queryData->ranges.data() + s * getNumberOfMaps();
 
                 auto end = k_way_set_union(queryData->suHandle, first, rangesbegin, getNumberOfMaps());
+                if(h_readIds != nullptr){
+                    auto readIdPos = std::lower_bound(
+                        first,
+                        end,
+                        h_readIds[s]
+                    );
+
+                    if(readIdPos != end && *readIdPos == h_readIds[s]){
+                        end = std::copy(readIdPos + 1, end, readIdPos);
+                    }
+                }
                 h_numValuesPerSequence[s] = std::distance(first, end);
                 h_offsets[s+1] = h_offsets[s] + std::distance(first, end);
                 first = end;
