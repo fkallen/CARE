@@ -226,26 +226,6 @@ struct MemoryFileFixedSize{
         return getNumElementsInMemory() + getNumElementsInFile();
     }
 
-    //returns true if operation was successful, else false. Does not work with elements in file
-    template<class Key, class ExtractKey, class KeyComparator>
-    bool trySortByKeyFast(
-        ExtractKey extractKey,
-        KeyComparator keyComparator,
-        std::size_t memoryForSortingInBytes
-    ){
-        if(getNumElementsInFile() > 0){
-            return false;
-        }
-        if(getNumElementsInMemory() == 0){
-            return true;
-        }
-
-        std::cerr << "Try sorting memory file fast:";
-        std::cerr << " elements in memory = " << getNumElementsInMemory() << "\n";
-
-        return memoryStorage.template trySortByKeyFast<Key>(extractKey, keyComparator, memoryForSortingInBytes);
-    }
-
 
     template<class ExtractKey, class KeyComparator, class TComparator>
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
@@ -272,57 +252,64 @@ struct MemoryFileFixedSize{
         }
 
 
-        //if all elements from memory and file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
-        //insert all elements into that, then sort it in memory.
-        try{
+        auto tryLoadFileIntoMemoryAndSort = [&](){
+            bool returnValue = false;
 
-            auto sdiv = [](auto x, auto y){
-                return ((x+y-1) / y);
-            };
+            try{
 
-            outputstream.flush();
-            std::size_t filesizeBytes = filehelpers::getSizeOfFileBytes(filename);
-
-            std::size_t requiredMemForAllElements = memoryStorage.getNumOccupiedRawElementBytes();
-            requiredMemForAllElements += filesizeBytes;
-            requiredMemForAllElements += sizeof(std::size_t) * getNumElements();
-            requiredMemForAllElements = sdiv(requiredMemForAllElements, sizeof(std::size_t)) * sizeof(std::size_t);
-
-            std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
-            
-            if(requiredMemForAllElements < memoryForSortingInBytes){
-                FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
-
-                success = newMemoryStorage.insert(memoryStorage);
-                assert(success);
-
-                Reader r = makeFileOnlyReader();
-
-                auto serialize = [](const auto& element, auto beginptr, auto endptr){
-                    return element.copyToContiguousMemory(beginptr, endptr);
+                auto sdiv = [](auto x, auto y){
+                    return ((x+y-1) / y);
                 };
 
-                while(r.hasNext()){
-                    const T* element = r.next();
-                    const bool inserted = newMemoryStorage.insert(*element, serialize);
-                    assert(inserted);
+                outputstream.flush();
+                std::size_t filesizeBytes = filehelpers::getSizeOfFileBytes(filename);
+
+                std::size_t requiredMemForAllElements = memoryStorage.getNumOccupiedRawElementBytes();
+                requiredMemForAllElements += filesizeBytes;
+                requiredMemForAllElements += sizeof(std::size_t) * getNumElements();
+                requiredMemForAllElements = sdiv(requiredMemForAllElements, sizeof(std::size_t)) * sizeof(std::size_t);
+
+                std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
+                
+                if(requiredMemForAllElements < memoryForSortingInBytes){
+                    FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
+
+                    returnValue = newMemoryStorage.insert(memoryStorage);
+                    assert(returnValue);
+
+                    Reader r = makeFileOnlyReader();
+
+                    auto serialize = [](const auto& element, auto beginptr, auto endptr){
+                        return element.copyToContiguousMemory(beginptr, endptr);
+                    };
+
+                    while(r.hasNext()){
+                        const T* element = r.next();
+                        const bool inserted = newMemoryStorage.insert(*element, serialize);
+                        assert(inserted);
+                    }
+                    const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
+                    memoryStorage.destroy();
+                    std::swap(memoryStorage, newMemoryStorage);
+                    memoryForSortingInBytes = memoryForSortingInBytes - requiredMemForAllElements + oldOccupiedBytes;
+
+                    std::cerr << "Loaded every element from file to memory. memoryForSortingInBytes = " << memoryForSortingInBytes << "\n";
+
+                    memoryStorage.sort(memoryForSortingInBytes, extractKey, keyComparator);
+
+                    numStoredElementsInFile = 0;
+                    outputstream = std::ofstream(filename, std::ios::binary);
                 }
-                const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
-                memoryStorage.destroy();
-                std::swap(memoryStorage, newMemoryStorage);
-                memoryForSortingInBytes = memoryForSortingInBytes - requiredMemForAllElements + oldOccupiedBytes;
+            }catch(...){
 
-                std::cerr << "Loaded every element from file to memory. memoryForSortingInBytes = " << memoryForSortingInBytes << "\n";
-
-                memoryStorage.sort(memoryForSortingInBytes, extractKey, keyComparator);
-
-                numStoredElementsInFile = 0;
-                outputstream = std::ofstream(filename, std::ios::binary);
             }
-        }catch(...){
 
-        }
-     
+            return returnValue;
+        };
+
+        //if all elements from memory and file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
+        //insert all elements into that, then sort it in memory.
+        success = tryLoadFileIntoMemoryAndSort();
     
         if(success){
             return;
@@ -344,8 +331,15 @@ struct MemoryFileFixedSize{
 
         memoryForSortingInBytes += oldOccupiedBytes;
 
-        //perform mergesort on file
+        //if all elements from file fit into memoryForSortingInBytes bytes, create new fixed size storage with that size
+        //insert all elements into that, then sort it in memory.
+        success = tryLoadFileIntoMemoryAndSort();     
+    
+        if(success){
+            return;
+        }
 
+        //Last resort: Perform mergesort on file
         auto wrappercomparator = [&](const auto& l, const auto& r){
             return elementcomparator(l.data, r.data);
         };
