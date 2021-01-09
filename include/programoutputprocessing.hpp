@@ -24,7 +24,7 @@
 
 namespace care{
 
-    template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator>
+    template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator, class ProgressFunction>
     void mergeResultsWithOriginalReads_multithreaded(
         const std::string& tempdir,
         const std::vector<std::string>& originalReadFiles,
@@ -34,7 +34,8 @@ namespace care{
         const std::vector<std::string>& outputfiles,
         bool isSorted,
         Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
-        ReadIdComparator origIdResultIdLessThan
+        ReadIdComparator origIdResultIdLessThan,
+        ProgressFunction addProgress
     ){
 
         assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
@@ -225,27 +226,6 @@ namespace care{
 
         std::atomic<bool> noMoreOutputreadBatches{false};
 
-        // auto showProgress = [&](std::int64_t totalCount, int seconds){
-        //     if(true /*runtimeOptions.showProgress*/){
-
-        //         int hours = seconds / 3600;
-        //         seconds = seconds % 3600;
-        //         int minutes = seconds / 60;
-        //         seconds = seconds % 60;
-                
-        //         printf("Written %10lu reads to output file(Runtime: %03d:%02d:%02d)\r",
-        //             totalCount, hours, minutes, seconds);
-
-        //         std::fflush(stdout);
-        //     }
-        // };
-
-        // auto updateShowProgressInterval = [](auto duration){
-        //     return duration;
-        // };
-
-        // ProgressThread<std::int64_t> progressThread(std::numeric_limits<std::int64_t>::max(), showProgress, updateShowProgressInterval);
-
         auto outputWriterFuture = std::async(std::launch::async,
             [&](){
                 //no gz output
@@ -284,9 +264,9 @@ namespace care{
                         processed++;
                     }
 
-                    // if(processed == valid){
-                    //     progressThread.addProgress(valid);
-                    // }
+                    if(processed == valid){
+                        addProgress(valid);
+                    }
 
                     // aend = std::chrono::system_clock::now();
                     // adelta += aend - abegin;
@@ -411,31 +391,31 @@ namespace care{
     }
 
 
-    template<class ResultType, class MemoryFile_t, class Combiner>
-    void mergeResultsWithOriginalReads_multithreaded(
-        const std::string& tempdir,
-        const std::vector<std::string>& originalReadFiles,
-        MemoryFile_t& partialResults, 
-        std::size_t memoryForSorting,
-        FileFormat outputFormat,
-        const std::vector<std::string>& outputfiles,
-        bool isSorted,
-        Combiner combineResultsWithRead /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
-    ){
-        std::less<read_number> origIdResultIdLessThan{};
+    // template<class ResultType, class MemoryFile_t, class Combiner>
+    // void mergeResultsWithOriginalReads_multithreaded(
+    //     const std::string& tempdir,
+    //     const std::vector<std::string>& originalReadFiles,
+    //     MemoryFile_t& partialResults, 
+    //     std::size_t memoryForSorting,
+    //     FileFormat outputFormat,
+    //     const std::vector<std::string>& outputfiles,
+    //     bool isSorted,
+    //     Combiner combineResultsWithRead /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
+    // ){
+    //     std::less<read_number> origIdResultIdLessThan{};
 
-        mergeResultsWithOriginalReads_multithreaded<ResultType>(
-            tempdir,
-            originalReadFiles,
-            partialResults,
-            memoryForSorting,
-            outputFormat,
-            outputfiles,
-            isSorted,
-            combineResultsWithRead,
-            origIdResultIdLessThan
-        );
-    }
+    //     mergeResultsWithOriginalReads_multithreaded<ResultType>(
+    //         tempdir,
+    //         originalReadFiles,
+    //         partialResults,
+    //         memoryForSorting,
+    //         outputFormat,
+    //         outputfiles,
+    //         isSorted,
+    //         combineResultsWithRead,
+    //         origIdResultIdLessThan
+    //     );
+    // }
 
 
 

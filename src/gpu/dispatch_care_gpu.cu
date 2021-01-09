@@ -427,7 +427,8 @@ namespace care{
             memoryForSorting,
             formats[0],
             outputfiles, 
-            false
+            false,
+            runtimeOptions.showProgress
         );
 
         step3timer.print();

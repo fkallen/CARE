@@ -563,8 +563,21 @@ void constructOutputFileFromCorrectionResults(
     std::size_t memoryForSorting,
     FileFormat outputFormat,
     const std::vector<std::string>& outputfiles,
-    bool isSorted
+    bool isSorted,
+    bool showProgress
 ){
+
+    std::less<read_number> origIdResultIdLessThan{};
+
+    auto addProgress = [total = 0ull, showProgress](auto i) mutable {
+        if(showProgress){
+            total += i;
+
+            printf("Written %10llu reads\r", total);
+
+            std::fflush(stdout);
+        }
+    };
 
     mergeResultsWithOriginalReads_multithreaded<TempCorrectedSequence>(
         tempdir,
@@ -574,8 +587,14 @@ void constructOutputFileFromCorrectionResults(
         outputFormat,
         outputfiles,
         isSorted,
-        combineMultipleCorrectionResults1_rawtcs2
+        combineMultipleCorrectionResults1_rawtcs2,
+        origIdResultIdLessThan,
+        addProgress
     );
+
+    if(showProgress){
+        std::cout << "\n";
+    }
 }
 
 
