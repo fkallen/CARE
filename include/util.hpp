@@ -179,7 +179,7 @@ void permute(T* data, Index* indices, std::size_t N){
 */
 
 struct SetUnionHandle{
-    std::vector<char> buffer;
+    std::vector<char> buffer{};
 };
 
 template<class OutputIt, class Iter>
