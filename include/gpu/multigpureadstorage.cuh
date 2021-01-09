@@ -287,34 +287,38 @@ public:
         std::size_t memoryOfHostSequences = numHostSequences * cpuReadStorage->getSequencePitch();
         std::size_t memoryOfHostQualities = numHostQualities * cpuReadStorage->getQualityPitch();
 
-        if((hasHostSequences() || hasHostQualities()) && (memoryLimitHost >= memoryOfHostSequences + memoryOfHostQualities)){
-            const std::size_t seqpitchints = cpuReadStorage->getSequencePitch() / sizeof(unsigned int);
+        if(hasHostSequences() || hasHostQualities()){
+            if(memoryLimitHost >= memoryOfHostSequences + memoryOfHostQualities){
+                const std::size_t seqpitchints = cpuReadStorage->getSequencePitch() / sizeof(unsigned int);
 
-            hostsequences.resize(numHostSequences * seqpitchints);
-
-            std::copy(
-                cpuReadStorage->getSequenceArray() + seqpitchints * sequencesGpu.getNumRows(),
-                cpuReadStorage->getSequenceArray() + seqpitchints * numReads,
-                hostsequences.begin()
-            );
-
-            if(canUseQualityScores()){
-
-                hostqualities.resize(numHostQualities * cpuReadStorage->getQualityPitch());
+                hostsequences.resize(numHostSequences * seqpitchints);
 
                 std::copy(
-                    cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * qualitiesGpu.getNumRows(),
-                    cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
-                    hostqualities.begin()
+                    cpuReadStorage->getSequenceArray() + seqpitchints * sequencesGpu.getNumRows(),
+                    cpuReadStorage->getSequenceArray() + seqpitchints * numReads,
+                    hostsequences.begin()
                 );
-            
-            }
 
+                if(canUseQualityScores()){
+
+                    hostqualities.resize(numHostQualities * cpuReadStorage->getQualityPitch());
+
+                    std::copy(
+                        cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * qualitiesGpu.getNumRows(),
+                        cpuReadStorage->getQualityArray() + cpuReadStorage->getQualityPitch() * numReads,
+                        hostqualities.begin()
+                    );
+                
+                }
+
+                cpuReadStorage = nullptr;
+                //std::cerr << "GpuReadstorage is standalone\n";
+            }else{
+                //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
+            }
+        }else{
             cpuReadStorage = nullptr;
             //std::cerr << "GpuReadstorage is standalone\n";
-
-        }else{
-            //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
         }
     }
 
