@@ -280,7 +280,7 @@ public:
         }
 
         numHostSequences = numReads - sequencesGpu.getNumRows();
-        numHostQualities = numReads - qualitiesGpu.getNumRows();
+        numHostQualities = canUseQualityScores() ? numReads - qualitiesGpu.getNumRows() : 0;
         hostSequencePitch = cpuReadStorage->getSequencePitch();
         hostQualityPitch = cpuReadStorage->getQualityPitch();
 
