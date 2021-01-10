@@ -1044,7 +1044,7 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
     stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(std::size_t));
     stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
-    std::size_t ambigBytes = sizeof(std::size_t) * numUndeterminedReads * sizeof(read_number);
+    std::size_t ambigBytes = sizeof(std::size_t) + numUndeterminedReads * sizeof(read_number);
 
     stream.seekp(pos);
     stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
