@@ -203,6 +203,8 @@ namespace care{
             );
         }
 
+        buildReadStorageTimer.print();
+
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
@@ -211,8 +213,6 @@ namespace care{
     		std::cout << "Saved reads" << std::endl;
         }
 
-        buildReadStorageTimer.print();
-        
         SequenceFileProperties totalInputFileProperties;
 
         totalInputFileProperties.nReads = cpuReadStorage.getNumberOfReads();
