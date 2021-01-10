@@ -66,11 +66,11 @@ namespace cpu{
         read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
         std::size_t quality_data_bytes = 0;
-        std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
-        std::mutex mutexUndeterminedBaseReads;
-        Statistics statistics;
+        std::vector<read_number> readIdsOfReadsWithUndeterminedBase{}; //sorted in ascending order
+        std::mutex mutexUndeterminedBaseReads{};
+        Statistics statistics{};
         std::atomic<read_number> numberOfInsertedReads{0};
-        LengthStore_t lengthStorage;
+        LengthStore_t lengthStorage{};
 
         const unsigned int* getSequenceArray() const noexcept{
             return h_sequence_data.get();
@@ -778,6 +778,7 @@ public:
             }else{
                 //!canUseQualityScores() && !loaded_hasQualityScores
                 //std::cerr << "no q in file, and no q required. Ok\n";
+                stream.ignore(qualitiesBytes);
             }
             
 

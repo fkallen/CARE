@@ -1117,6 +1117,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     }else{
         //!canUseQualityScores() && !loaded_hasQualityScores
         //std::cerr << "no q in file, and no q required. Ok\n";
+        stream.ignore(qualitiesBytes);
     }
 
     //read ids with N
