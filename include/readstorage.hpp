@@ -66,11 +66,35 @@ namespace cpu{
         read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
         std::size_t quality_data_bytes = 0;
-        std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
-        std::mutex mutexUndeterminedBaseReads;
-        Statistics statistics;
+        std::vector<read_number> readIdsOfReadsWithUndeterminedBase{}; //sorted in ascending order
+        std::mutex mutexUndeterminedBaseReads{};
+        Statistics statistics{};
         std::atomic<read_number> numberOfInsertedReads{0};
-        LengthStore_t lengthStorage;
+        LengthStore_t lengthStorage{};
+
+        const unsigned int* getSequenceArray() const noexcept{
+            return h_sequence_data.get();
+        }
+
+        const char* getQualityArray() const noexcept{
+            return h_quality_data.get();
+        }
+
+        const LengthStore_t& getLengthStore() const noexcept{
+            return lengthStorage;
+        }
+
+        std::size_t getSequencePitch() const noexcept{
+            return sequenceDataPitchInInts * sizeof(unsigned int);
+        }
+
+        std::size_t getQualityPitch() const noexcept{
+            return sequenceQualitiesPitchInBytes;
+        }
+
+        const read_number* getAmbiguousIds() const noexcept{
+            return readIdsOfReadsWithUndeterminedBase.data();
+        }
 
 
 
@@ -689,7 +713,7 @@ public:
             stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
             stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
-            std::size_t ambigBytes = sizeof(std::size_t) * numUndeterminedReads * sizeof(read_number);
+            std::size_t ambigBytes = sizeof(std::size_t) + numUndeterminedReads * sizeof(read_number);
 
             stream.seekp(pos);
             stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
@@ -754,6 +778,7 @@ public:
             }else{
                 //!canUseQualityScores() && !loaded_hasQualityScores
                 //std::cerr << "no q in file, and no q required. Ok\n";
+                stream.ignore(qualitiesBytes);
             }
             
 

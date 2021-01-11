@@ -3,11 +3,9 @@
 
 
 #include <gpu/gpucorrector.cuh>
-#include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
+
 #include <gpu/gpuminhasher.cuh>
-// #include <gpu/fakegpuminhasher.cuh>
-// #include <gpu/singlegpuminhasher.cuh>
-// #include <gpu/multigpuminhasher.cuh>
 
 #include <options.hpp>
 #include <readlibraryio.hpp>
@@ -177,7 +175,7 @@ public:
     };
 
     SimpleGpuCorrectionPipeline(
-        const DistributedReadStorage& readStorage_,
+        const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
@@ -671,7 +669,9 @@ public:
 
                 hashingTimer.stop();
                 //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
-                elapsedHashingTime += hashingTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedHashingTime += hashingTimer.elapsed();
+                }
 
                 helpers::CpuTimer correctionTimer;
 
@@ -683,7 +683,9 @@ public:
 
                 correctionTimer.stop();
                 //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-                elapsedCorrectionTime += correctionTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedCorrectionTime += correctionTimer.elapsed();
+                }
 
                 helpers::CpuTimer outputTimer;
 
@@ -699,7 +701,9 @@ public:
 
                 outputTimer.stop();
                 //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-                elapsedOutputTime += outputTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedOutputTime += outputTimer.elapsed();
+                }
 
                 processResults(
                     std::move(correctionOutput)
@@ -713,9 +717,11 @@ public:
 
         cudaSetDevice(cur); CUERR;
 
-        runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
-        runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
-        runStatistics.outputconstructorTimeAverage = elapsedOutputTime / iterations;
+        const int timediterations = std::max(1, iterations - 10);
+
+        runStatistics.hasherTimeAverage = elapsedHashingTime / timediterations;
+        runStatistics.correctorTimeAverage = elapsedCorrectionTime / timediterations;
+        runStatistics.outputconstructorTimeAverage = elapsedOutputTime / timediterations;
         runStatistics.memoryHasher = gpuAnchorHasher.getMemoryInfo();
         runStatistics.memoryCorrector = gpuErrorCorrector.getMemoryInfo();
         runStatistics.memoryOutputConstructor = outputConstructor.getMemoryInfo();
@@ -744,7 +750,7 @@ public:
     }
 
 private:
-    const DistributedReadStorage* readStorage;
+    const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
 };
@@ -761,7 +767,7 @@ public:
     };
 
     ComplexGpuCorrectionPipeline(
-        const DistributedReadStorage& readStorage_,
+        const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_          
     ) :
@@ -1338,7 +1344,7 @@ public:
     };
 
 private:
-    const DistributedReadStorage* readStorage;
+    const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
 
@@ -1366,7 +1372,7 @@ correct_gpu_impl(
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
         Minhasher& minhasher,
-        DistributedReadStorage& readStorage){
+        GpuReadStorage& readStorage){
 
     assert(runtimeOptions.canUseGpu);
     //assert(runtimeOptions.max_candidates > 0);
@@ -1513,6 +1519,8 @@ correct_gpu_impl(
             //outputFunction();
         }
     };
+
+    outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
     outputThread.start();
 
@@ -1944,16 +1952,12 @@ auto runPipeline = [&](int deviceId){
 
     partialResults.flush();
 
-    std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
+    // std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
 
-    for(std::uint64_t i = 0; i < sequenceFileProperties.nReads; i++){
-        flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
-            << correctionFlags.isNotCorrectedAsAnchor(i) << "\n";
-    }
-
-
-    std::cerr << partialResults.getNumElementsInMemory() << ", " 
-        << partialResults.getNumElementsInFile() << "\n";
+    // for(std::uint64_t i = 0; i < sequenceFileProperties.nReads; i++){
+    //     flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
+    //         << correctionFlags.isNotCorrectedAsAnchor(i) << "\n";
+    // }
 
     return partialResults;
 }
@@ -1968,7 +1972,7 @@ correct_gpu(
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
         GpuMinhasher& minhasher,
-        DistributedReadStorage& readStorage){
+        GpuReadStorage& readStorage){
 
     return correct_gpu_impl(
         goodAlignmentProperties,

@@ -24,7 +24,7 @@ namespace gpu{
             const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
-            const DistributedReadStorage& gpuReadStorage
+            const GpuReadStorage& gpuReadStorage
         ){
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
                 totalInputFileProperties.nReads,
@@ -62,7 +62,7 @@ namespace gpu{
             const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& /*memoryOptions*/,
-            const DistributedReadStorage& gpuReadStorage
+            const GpuReadStorage& gpuReadStorage
         ){
             
             auto gpuMinhasher = std::make_unique<SingleGpuMinhasher>(
@@ -89,7 +89,7 @@ namespace gpu{
             const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& /*memoryOptions*/,
-            const DistributedReadStorage& gpuReadStorage
+            const GpuReadStorage& gpuReadStorage
         ){
             
             auto gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
@@ -118,7 +118,7 @@ namespace gpu{
             const MemoryOptions& memoryOptions,
             const CorrectionOptions& correctionOptions,
             const SequenceFileProperties& totalInputFileProperties,
-            const DistributedReadStorage& gpuReadStorage,
+            const GpuReadStorage& gpuReadStorage,
             GpuMinhasherType requestedType
         ){
             if(requestedType == GpuMinhasherType::Fake || runtimeOptions.warpcore == 0){

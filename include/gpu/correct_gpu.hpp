@@ -1,16 +1,14 @@
 #ifndef CARE_CORRECT_GPU_HPP
 #define CARE_CORRECT_GPU_HPP
 
-#include <gpu/distributedreadstorage.hpp>
 #include <gpu/gpuminhasher.cuh>
+#include <gpu/gpureadstorage.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
 #include <memoryfile.hpp>
 
 #include <options.hpp>
-#include <readlibraryio.hpp>
-#include <readstorage.hpp>
 
 #include <mutex>
 #include <memory>
@@ -29,7 +27,7 @@ correct_gpu(
 	const MemoryOptions& memoryOptions,
 	const SequenceFileProperties& sequenceFileProperties,
 	GpuMinhasher& minhasher,
-	DistributedReadStorage& readStorage
+	GpuReadStorage& readStorage
 );
 
 }

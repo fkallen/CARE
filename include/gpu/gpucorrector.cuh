@@ -7,14 +7,12 @@
 
 #include <gpu/cuda_block_select.cuh>
 
-#include <gpu/distributedreadstorage.hpp>
-// #include <gpu/fakegpuminhasher.cuh>
-// #include <gpu/singlegpuminhasher.cuh>
-// #include <gpu/multigpuminhasher.cuh>
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/cudagraphhelpers.cuh>
+
+#include <gpu/gpureadstorage.cuh>
 
 #include <corrector_common.hpp>
 #include <threadpool.hpp>
@@ -605,7 +603,7 @@ namespace gpucorrectorkernels{
         GpuAnchorHasher() = default;
 
         GpuAnchorHasher(
-            const DistributedReadStorage& gpuReadStorage_,
+            const GpuReadStorage& gpuReadStorage_,
             const GpuMinhasher& gpuMinhasher_,
             const SequenceFileProperties& sequenceFileProperties_,
             ThreadPool* threadPool_
@@ -614,7 +612,8 @@ namespace gpucorrectorkernels{
             gpuMinhasher{&gpuMinhasher_},
             sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_},
-            minhashHandle{gpuMinhasher->makeQueryHandle()}
+            minhashHandle{gpuMinhasher->makeQueryHandle()},
+            readstorageHandle{gpuReadStorage->makeHandle()}
         {
             cudaGetDevice(&deviceId); CUERR;            
 
@@ -624,17 +623,19 @@ namespace gpucorrectorkernels{
             previousBatchFinishedEvent = CudaEvent{};
 
             encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties->maxSequenceLength);
-            anchorSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
         }
 
         ~GpuAnchorHasher(){
-            std::cerr << "GpuAnchorHasher::~GpuAnchorHasher(). Memory of minhash handle: ";
-            auto memoryUsage = gpuMinhasher->getMemoryInfo(minhashHandle);
-            std::cerr << memoryUsage.host;
-            for(auto pair : memoryUsage.device){
-                std::cerr << ", [" << pair.first << "] " << pair.second;
-            }
-            std::cerr << "\n";
+            // std::cerr << "GpuAnchorHasher::~GpuAnchorHasher(). Memory of minhash handle: ";
+            // auto memoryUsage = gpuMinhasher->getMemoryInfo(minhashHandle);
+            // std::cerr << memoryUsage.host;
+            // for(auto pair : memoryUsage.device){
+            //     std::cerr << ", [" << pair.first << "] " << pair.second;
+            // }
+            // std::cerr << "\n";
+
+            gpuReadStorage->destroyHandle(readstorageHandle);
+            gpuMinhasher->destroyHandle(minhashHandle);
         }
 
         void makeErrorCorrectorInput(
@@ -693,7 +694,7 @@ namespace gpucorrectorkernels{
        
             info += gpuMinhasher->getMemoryInfo(minhashHandle);
           
-            info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(anchorSequenceGatherHandle);
+            info += gpuReadStorage->getMemoryInfo(readstorageHandle);
             return info;
         } 
 
@@ -719,21 +720,19 @@ namespace gpucorrectorkernels{
         }
         
         void getAnchorReads(GpuErrorCorrectorInput& ecinput, cudaStream_t stream){
-            gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
-                threadPool,
-                anchorSequenceGatherHandle,
+            gpuReadStorage->gatherSequences(
+                readstorageHandle,
                 ecinput.d_anchor_sequences_data.get(),
                 encodedSequencePitchInInts,
                 ecinput.h_anchorReadIds.get(),
                 ecinput.d_anchorReadIds.get(),
                 (*ecinput.h_numAnchors.get()),
-                deviceId,
                 stream
             );
 
-            gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
+            gpuReadStorage->gatherSequenceLengths(
+                readstorageHandle,
                 ecinput.d_anchor_sequences_lengths.get(),
-                deviceId,
                 ecinput.d_anchorReadIds.get(),
                 (*ecinput.h_numAnchors.get()),
                 stream
@@ -811,13 +810,14 @@ namespace gpucorrectorkernels{
         std::size_t encodedSequencePitchInInts;
         CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
-        const DistributedReadStorage* gpuReadStorage;
+        const GpuReadStorage* gpuReadStorage;
         const GpuMinhasher* gpuMinhasher;
         const SequenceFileProperties* sequenceFileProperties;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
         GpuMinhasher::QueryHandle minhashHandle;
+        GpuReadStorage::Handle readstorageHandle;
     };
 
 
@@ -1076,7 +1076,7 @@ namespace gpucorrectorkernels{
         GpuErrorCorrector() = default;
 
         GpuErrorCorrector(
-            const DistributedReadStorage& gpuReadStorage_,
+            const GpuReadStorage& gpuReadStorage_,
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
             const SequenceFileProperties& sequenceFileProperties_,
@@ -1089,7 +1089,8 @@ namespace gpucorrectorkernels{
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
             sequenceFileProperties{&sequenceFileProperties_},
-            threadPool{threadPool_}
+            threadPool{threadPool_},
+            readstorageHandle{gpuReadStorage->makeHandle()}
         {
             cudaGetDevice(&deviceId); CUERR;
 
@@ -1119,12 +1120,11 @@ namespace gpucorrectorkernels{
             //round up to 32 elements
             msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
-            //anchorSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
-            candidateSequenceGatherHandle = gpuReadStorage->makeGatherHandleSequences();
-            anchorQualitiesGatherHandle = gpuReadStorage->makeGatherHandleQualities();
-            candidateQualitiesGatherHandle = gpuReadStorage->makeGatherHandleQualities();
-
             initFixedSizeBuffers();
+        }
+
+        ~GpuErrorCorrector(){
+            gpuReadStorage->destroyHandle(readstorageHandle);
         }
 
         void correct(GpuErrorCorrectorInput& input, GpuErrorCorrectorRawOutput& output, cudaStream_t stream){
@@ -1223,9 +1223,7 @@ namespace gpucorrectorkernels{
                 info.device[deviceId] += d.sizeInBytes();
             };
 
-            info += gpuReadStorage->getMemoryInfoOfGatherHandleSequences(candidateSequenceGatherHandle);
-            info += gpuReadStorage->getMemoryInfoOfGatherHandleQualities(anchorQualitiesGatherHandle);
-            info += gpuReadStorage->getMemoryInfoOfGatherHandleQualities(candidateQualitiesGatherHandle);
+            info += gpuReadStorage->getMemoryInfo(readstorageHandle);
 
             handleHost(h_high_quality_anchor_indices);
             handleHost(h_num_high_quality_anchor_indices);
@@ -1738,46 +1736,43 @@ namespace gpucorrectorkernels{
 
 
         void getAmbiguousFlagsOfAnchors(cudaStream_t stream){
-            gpuReadStorage->readsContainN_async(
-                deviceId,
+
+            gpuReadStorage->areSequencesAmbiguous(
+                readstorageHandle,
                 d_anchorContainsN.get(), 
                 d_anchorReadIds.get(), 
-                d_numAnchors,
-                maxAnchors, 
+                currentNumAnchors,
                 stream
             );
         }
 
         void getAmbiguousFlagsOfCandidates(cudaStream_t stream){
-            gpuReadStorage->readsContainN_async(
-                deviceId,
+            gpuReadStorage->areSequencesAmbiguous(
+                readstorageHandle,
                 d_candidateContainsN.get(), 
                 d_candidate_read_ids.get(), 
-                d_numCandidates,
-                maxCandidates, 
+                currentNumCandidates,
                 stream
             ); 
         }
 
         void getCandidateSequenceData(cudaStream_t stream){
 
-            gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
+            gpuReadStorage->gatherSequenceLengths(
+                readstorageHandle,
                 d_candidate_sequences_lengths.get(),
-                deviceId,
                 d_candidate_read_ids.get(),
                 currentNumCandidates,            
                 stream
             );
 
-            gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
-                threadPool,
-                candidateSequenceGatherHandle,
+            gpuReadStorage->gatherSequences(
+                readstorageHandle,
                 d_candidate_sequences_data.get(),
                 encodedSequencePitchInInts,
                 currentInput->h_candidate_read_ids,
                 d_candidate_read_ids,
                 currentNumCandidates,
-                deviceId,
                 stream
             );
 
@@ -1799,27 +1794,23 @@ namespace gpucorrectorkernels{
 
 #ifndef COMPACT_GATHER
 
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                    threadPool,
-                    anchorQualitiesGatherHandle,
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
                     d_anchor_qualities,
                     qualityPitchInBytes,
                     currentInput->h_anchorReadIds,
                     d_anchorReadIds,
                     maxAnchors,
-                    deviceId,
                     stream
                 );
 
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                    threadPool,
-                    candidateQualitiesGatherHandle,
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
                     d_candidate_qualities,
                     qualityPitchInBytes,
                     currentInput->h_candidate_read_ids.get(),
                     d_candidate_read_ids.get(),
                     currentNumCandidates,
-                    deviceId,
                     stream
                 );
 
@@ -1868,16 +1859,13 @@ namespace gpucorrectorkernels{
 
                 cudaMemcpyAsync(h_num_indices, d_num_indices, sizeof(int), D2H, stream); CUERR;
 
-                // std::cerr << "gather anchor qual\n";
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                    threadPool,
-                    anchorQualitiesGatherHandle,
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
                     d_anchor_qualities,
                     qualityPitchInBytes,
                     currentInput->h_anchorReadIds,
                     d_anchorReadIds,
                     maxAnchors,
-                    deviceId,
                     stream
                 );
 
@@ -1885,15 +1873,13 @@ namespace gpucorrectorkernels{
                 const int hNumIndices = h_num_indices[0];
 
                 nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                    threadPool,
-                    candidateQualitiesGatherHandle,
+                gpuReadStorage->gatherQualities(
+                    readstorageHandle,
                     d_candidate_qualities_compact,
                     qualityPitchInBytes,
                     h_indicesForGather.data(),
                     d_indicesForGather.data(),
                     currentNumCandidates,
-                    deviceId,
                     stream
                 );
                 nvtx::pop_range();
@@ -2510,7 +2496,7 @@ namespace gpucorrectorkernels{
         int currentNumAnchors;
         int currentNumCandidates;
 
-        const DistributedReadStorage* gpuReadStorage;
+        const GpuReadStorage* gpuReadStorage;
 
         const CorrectionOptions* correctionOptions;
         const GoodAlignmentProperties* goodAlignmentProperties;
@@ -2522,11 +2508,9 @@ namespace gpucorrectorkernels{
 
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
-        //DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
-        DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
-        DistributedReadStorage::GatherHandleQualities anchorQualitiesGatherHandle;
-        DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
-        KernelLaunchHandle kernelLaunchHandle;  
+        KernelLaunchHandle kernelLaunchHandle; 
+
+        GpuReadStorage::Handle readstorageHandle;
 
         PinnedBuffer<int> h_high_quality_anchor_indices;
         PinnedBuffer<int> h_num_high_quality_anchor_indices; 

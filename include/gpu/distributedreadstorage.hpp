@@ -15,6 +15,10 @@
 #include <options.hpp>
 #include <readlibraryio.hpp>
 
+#include <gpu/gpureadstorage.cuh>
+
+#include <sharedmutex.hpp>
+
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -24,42 +28,38 @@
 namespace care{
 namespace gpu{
 
-struct DistributedReadStorage {
+struct DistributedReadStorage : public GpuReadStorage{
 public:
 
-    // struct MemoryInfo{
-    //     size_t hostSizeInBytes{};
-    //     std::vector<size_t> deviceSizeInBytes{};
-    //     std::vector<int> deviceIds{};
-    // };
+    using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
+    using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
+
+    struct TempData{
+        struct CallerData{
+            bool isInit = false;
+            GatherHandleSequences handleS{};
+            GatherHandleQualities handleQ{};
+        };
+
+        CallerData& getCallerData(int deviceId){
+            cub::SwitchDevice sd(deviceId);
+            return callerDataMap[deviceId];
+        }
+
+        std::map<int, CallerData> callerDataMap{};
+    };
+
+    void initCallerData(TempData::CallerData& data) const {
+        if(!data.isInit){
+            data.handleS = makeGatherHandleSequences();
+            data.handleQ = makeGatherHandleQualities();
+            data.isInit = true;
+        }
+    }
 
     struct Statistics{
         int maximumSequenceLength = 0;
         int minimumSequenceLength = std::numeric_limits<int>::max();
-    };
-
-    struct SavedGpuPartitionData{
-        void clear(){
-            *this = SavedGpuPartitionData{};
-        }
- 
-        enum class Type {Memory, File};
-
-        Type sequenceDataLocation = Type::File;
-        Type qualityDataLocation = Type::File;
-
-        int partitionId = -42;
-
-        std::vector<char> sequenceData;
-        std::vector<char> qualityData;
-    };
-
-    struct SavedGpuData{
-        void clear(){
-            *this = SavedGpuData{};
-        }
-
-        std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
 
     struct ReadInserterHandle{
@@ -129,76 +129,10 @@ public:
             cudaSetDevice(cur); CUERR;
         }    
     };
-
-    // struct ReadInserter{
-    // public:
-    //     ReadInserter() = default;
-    //     ReadInserter(const ReadInserter&) = delete;
-    //     ReadInserter& operator=(const ReadInserter&) = delete;
-    //     ReadInserter(ReadInserter&&) = default;
-    //     ReadInserter& operator=(ReadInserter&&) = default;
-
-    //     void setReads(
-    //         ThreadPool* threadPool, 
-    //         const read_number* indices, 
-    //         const Read* reads, 
-    //         int numReads
-    //     )
-    // private:
-    //     struct ReadInserterHandle{
-    //     public:
-    //         int deviceId;
-
-    //         cudaStream_t stream1 = nullptr;
-    //         cudaStream_t stream2 = nullptr;
-    //         helpers::SimpleAllocationPinnedHost<char> h_decodedSequences;
-    //         helpers::SimpleAllocationDevice<char> d_decodedSequences;
-    //         helpers::SimpleAllocationPinnedHost<char> h_encodedSequences;
-    //         helpers::SimpleAllocationDevice<char> d_encodedSequences;
-    //         helpers::SimpleAllocationPinnedHost<char> h_lengths;
-    //         helpers::SimpleAllocationDevice<char> d_lengths;
-
-    //         ReadInserterHandle(){
-    //             cudaGetDevice(&deviceId); CUERR;
-    //             create();
-    //         }
-
-    //         ReadInserterHandle(int deviceId) : deviceId(deviceId){
-    //             create();
-    //         }
-
-    //         ~ReadInserterHandle(){
-    //             int cur = 0;
-    //             cudaGetDevice(&cur); CUERR;
-    //             cudaSetDevice(deviceId); CUERR;
-    //             cudaStreamDestroy(stream1); CUERR;
-    //             cudaStreamDestroy(stream2); CUERR;
-    //             cudaSetDevice(cur); CUERR;
-    //         }
-
-    //         ReadInserterHandle(const ReadInserterHandle&) = delete;
-    //         ReadInserterHandle& operator=(const ReadInserterHandle&) = delete;
-    //         ReadInserterHandle(ReadInserterHandle&&) = default;
-    //         ReadInserterHandle& operator=(ReadInserterHandle&&) = default;
-            
-    //         void create(){
-    //             int cur = 0;
-    //             cudaGetDevice(&cur); CUERR;
-    //             cudaSetDevice(deviceId); CUERR;
-    //             cudaStreamCreate(&stream1); CUERR;
-    //             cudaStreamCreate(&stream2); CUERR;
-    //             cudaSetDevice(cur); CUERR;
-    //         }    
-    //     };
-
-        
-    //     ReadInserterHandle handle;
-    // }; 
     
     using Length_t = int;
 
-    using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
-    using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
+    
 
     using LengthStore_t = LengthStore<std::uint32_t>;
     using GPULengthStore_t = GPULengthStore<std::uint32_t>;
@@ -280,33 +214,8 @@ public:
     void saveToFile(const std::string& filename) const;
     void loadFromFile(const std::string& filename);
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
-    // void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
-    // void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
-    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numUsableBytes) const;
-    SavedGpuPartitionData saveGpuPartitionData(
-            int deviceId,
-            std::ofstream& stream, 
-            std::size_t* numBytesMustRemainFree) const;
 
-    void loadGpuPartitionData(int deviceId, 
-                                        std::ifstream& stream, 
-                                        const SavedGpuPartitionData& saved) const;
-
-    void allocateGpuData(int deviceId) const;
-    void deallocateGpuData(int deviceId) const;
-
-    SavedGpuPartitionData saveGpuPartitionDataAndFreeGpuMem(
-                    int deviceId,
-                    std::ofstream& stream, 
-                    std::size_t* numUsableBytes) const;
-
-    void allocGpuMemAndLoadGpuPartitionData(int deviceId, 
-                                            std::ifstream& stream, 
-                                            const SavedGpuPartitionData& saved) const;
-
-    void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
-
-    
+ 
 
     void setReads(
         ReadInserterHandle& handle,
@@ -403,6 +312,146 @@ public:
                                 int nReadIds) const;
 
 
+    public: //inherited interface
+
+        Handle makeHandle() const override {
+            auto data = std::make_unique<TempData>();
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+            const int handleid = counter++;
+            Handle h = constructHandle(handleid);
+
+            tempdataVector.emplace_back(std::move(data));
+            return h;
+        }
+
+        void destroyHandle(Handle& handle) const override{
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
+        void areSequencesAmbiguous(
+            Handle& handle,
+            bool* d_result, 
+            const read_number* d_readIds, 
+            int numSequences, 
+            cudaStream_t stream
+        ) const override{
+            int deviceId = 0;
+            cudaGetDevice(&deviceId); CUERR;
+
+            readsContainN_async(
+                deviceId,
+                d_result,
+                d_readIds,
+                numSequences,
+                stream
+            );
+        }
+
+        void gatherSequences(
+            Handle& handle,
+            unsigned int* d_sequence_data,
+            size_t outSequencePitchInInts,
+            const read_number* h_readIds,
+            const read_number* d_readIds,
+            int numSequences,
+            cudaStream_t stream
+        ) const override{
+            int deviceId = 0;
+            cudaGetDevice(&deviceId); CUERR;
+
+            TempData* tempData = getTempDataFromHandle(handle);
+            auto& callerData = tempData->getCallerData(deviceId);
+            initCallerData(callerData);
+
+            auto& gatherHandleS = callerData.handleS;
+
+            gatherSequenceDataToGpuBufferAsync(
+                nullptr,
+                gatherHandleS,
+                d_sequence_data,
+                outSequencePitchInInts,
+                h_readIds,
+                d_readIds,
+                numSequences,
+                deviceId,
+                stream
+            );
+        }
+
+        virtual void gatherQualities(
+            Handle& handle,
+            char* d_quality_data,
+            size_t out_quality_pitch,
+            const read_number* h_readIds,
+            const read_number* d_readIds,
+            int numSequences,
+            cudaStream_t stream
+        ) const override{
+            int deviceId = 0;
+            cudaGetDevice(&deviceId); CUERR;
+
+            TempData* tempData = getTempDataFromHandle(handle);
+            auto& callerData = tempData->getCallerData(deviceId);
+            initCallerData(callerData);
+
+            auto& gatherHandleQ = callerData.handleQ;
+
+            gatherQualitiesToGpuBufferAsync(
+                nullptr,
+                gatherHandleQ,
+                d_quality_data,
+                out_quality_pitch,
+                h_readIds,
+                d_readIds,
+                numSequences,
+                deviceId,
+                stream
+            );
+        }
+
+        virtual void gatherSequenceLengths(
+            Handle& handle,
+            int* d_lengths,
+            const read_number* d_readIds,
+            int numSequences,    
+            cudaStream_t stream
+        ) const override{
+            int deviceId = 0;
+            cudaGetDevice(&deviceId); CUERR;
+
+            gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths,
+                deviceId,
+                d_readIds,
+                numSequences,
+                stream
+            );
+        }
+
+        MemoryUsage getMemoryInfo(const Handle& handle) const noexcept{
+            int deviceId = 0;
+            cudaGetDevice(&deviceId); CUERR;
+
+            TempData* tempData = getTempDataFromHandle(handle);
+            auto& callerData = tempData->getCallerData(deviceId);
+            initCallerData(callerData);
+
+            MemoryUsage result{};
+            result += getMemoryInfoOfGatherHandleSequences(callerData.handleS);
+            result += getMemoryInfoOfGatherHandleQualities(callerData.handleQ);
+
+            return result;
+        }
+
+
     private:
         void init(const std::vector<int>& deviceIds, read_number nReads, bool b, 
                     int minimum_sequence_length, int maximum_sequence_length);
@@ -415,6 +464,17 @@ public:
         void setSequenceLengths(const read_number* indices, const Length_t* data, int numReads);
         void setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setQualities(const read_number* indices, const char* data, int numReads);
+
+        TempData* getTempDataFromHandle(const Handle& handle) const{
+            std::shared_lock<SharedMutex> lock(sharedmutex);
+
+            return tempdataVector[handle.getId()].get();
+        }
+
+    private:
+        mutable int counter = 0;
+        mutable SharedMutex sharedmutex{};
+        mutable std::vector<std::unique_ptr<TempData>> tempdataVector{};
 };
 
 

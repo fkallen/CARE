@@ -7,7 +7,7 @@
 
 #include <warpcore.cuh>
 
-#include <gpu/distributedreadstorage.hpp>
+#include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
 #include <gpu/gpuhashtable.cuh>
@@ -92,7 +92,7 @@ namespace gpu{
         int constructFromReadStorage(
             const RuntimeOptions &runtimeOptions,
             std::uint64_t nReads,
-            const DistributedReadStorage& gpuReadStorage,
+            const GpuReadStorage& gpuReadStorage,
             int upperBoundSequenceLength,
             int maxNumHashfunctions,
             int hashFunctionOffset = 0
@@ -139,7 +139,7 @@ namespace gpu{
 
             CudaStream stream{};
 
-            auto sequencehandle = gpuReadStorage.makeGatherHandleSequences();
+            auto sequencehandle = gpuReadStorage.makeHandle();
 
             // auto showProgress = [&](auto totalCount, auto seconds){
             //     if(runtimeOptions.showProgress){
@@ -201,21 +201,19 @@ namespace gpu{
 
                     cudaMemcpyAsync(d_indices, h_indices, sizeof(read_number) * curBatchsize, H2D, stream); CUERR;
 
-                    gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
-                        &threadPool,
+                    gpuReadStorage.gatherSequences(
                         sequencehandle,
                         d_sequenceData,
                         encodedSequencePitchInInts,
                         h_indices,
                         d_indices,
                         curBatchsize,
-                        deviceId,
                         stream
                     );
                 
-                    gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
+                    gpuReadStorage.gatherSequenceLengths(
+                        sequencehandle,
                         d_lengths,
-                        deviceId,
                         d_indices,
                         curBatchsize,
                         stream
@@ -252,6 +250,8 @@ namespace gpu{
 
             h_currentHashFunctionNumbers.resize(numberOfAvailableHashFunctions);
             std::copy(usedHashFunctionNumbers.begin(), usedHashFunctionNumbers.end(), h_currentHashFunctionNumbers.begin());
+
+            gpuReadStorage.destroyHandle(sequencehandle);
 
             return numberOfAvailableHashFunctions; 
         }
@@ -397,6 +397,17 @@ namespace gpu{
             return h;
         }
 
+        void destroyHandle(QueryHandle& handle) const override{
+
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
         void compact(cudaStream_t stream = 0) override {
             DeviceSwitcher ds(deviceId);
 
@@ -416,6 +427,9 @@ namespace gpu{
                 cudaMalloc(&temp, required_temp_bytes); CUERR;
             }else{
                 cudaMallocManaged(&temp, required_temp_bytes); CUERR;
+                int deviceId = 0;
+                cudaGetDevice(&deviceId); CUERR;
+                cudaMemAdvise(temp, required_temp_bytes, cudaMemAdviseSetAccessedBy, deviceId); CUERR;
             }
 
             for(auto& table : gpuHashTables){

@@ -37,6 +37,8 @@ public:
 
     virtual QueryHandle makeQueryHandle() const = 0;
 
+    virtual void destroyHandle(QueryHandle& handle) const = 0;
+
     virtual void determineNumValues(
         QueryHandle& queryHandle,
         const unsigned int* d_sequenceData2Bit,

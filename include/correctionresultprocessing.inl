@@ -327,11 +327,11 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     constexpr bool outputLQOnlyAnchor = true;
     // constexpr bool outputOnlyCand = false;
 
-    auto isValidSequence = [](const std::string& s){
-        return std::all_of(s.begin(), s.end(), [](char c){
-            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-        });
-    };
+    // auto isValidSequence = [](const std::string& s){
+    //     return std::all_of(s.begin(), s.end(), [](char c){
+    //         return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+    //     });
+    // };
 
     auto isAnchor = [](const auto& tcs){
         return tcs.type == TempCorrectedSequence::Type::Anchor;
@@ -473,12 +473,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                             std::swap(readWithId.read.sequence, tmpresults[0].sequence);
                         }
 
-                        if(!isValidSequence(readWithId.read.sequence)){
-                            std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                                    << " with header " << readWithId.read.header
-                                    << "does contain an invalid DNA base!\n"
-                                    << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
-                        }
+                        // if(!isValidSequence(readWithId.read.sequence)){
+                        //     std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                        //             << " with header " << readWithId.read.header
+                        //             << " does contain an invalid DNA base!\n"
+                        //             << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
+                        // }
 
                         
                         return result;
@@ -502,12 +502,12 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
                         std::swap(readWithId.read.sequence, anchorIter->sequence);
                     }
 
-                    if(!isValidSequence(readWithId.read.sequence)){
-                        std::cerr << "Warning. Corrected read " << readWithId.globalReadId
-                                << " with header " << readWithId.read.header
-                                << "does contain an invalid DNA base!\n"
-                                << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
-                    }
+                    // if(!isValidSequence(readWithId.read.sequence)){
+                    //     std::cerr << "Warning. Corrected read " << readWithId.globalReadId
+                    //             << " with header " << readWithId.read.header
+                    //             << " does contain an invalid DNA base!\n"
+                    //             << "Corrected sequence is: "  << readWithId.read.sequence << '\n';
+                    // }
                     
                     CombinedCorrectionResult result;
                     result.corrected = true;
@@ -563,8 +563,21 @@ void constructOutputFileFromCorrectionResults(
     std::size_t memoryForSorting,
     FileFormat outputFormat,
     const std::vector<std::string>& outputfiles,
-    bool isSorted
+    bool isSorted,
+    bool showProgress
 ){
+
+    std::less<read_number> origIdResultIdLessThan{};
+
+    auto addProgress = [total = 0ull, showProgress](auto i) mutable {
+        if(showProgress){
+            total += i;
+
+            printf("Written %10llu reads\r", total);
+
+            std::fflush(stdout);
+        }
+    };
 
     mergeResultsWithOriginalReads_multithreaded<TempCorrectedSequence>(
         tempdir,
@@ -574,8 +587,14 @@ void constructOutputFileFromCorrectionResults(
         outputFormat,
         outputfiles,
         isSorted,
-        combineMultipleCorrectionResults1_rawtcs2
+        combineMultipleCorrectionResults1_rawtcs2,
+        origIdResultIdLessThan,
+        addProgress
     );
+
+    if(showProgress){
+        std::cout << "\n";
+    }
 }
 
 

@@ -413,8 +413,8 @@ namespace gpu{
             std::size_t& temp_bytes,
             cudaStream_t stream = 0
         ){
-            Index numUniqueKeys = gpuMvTable->num_keys(stream);
-            Index numValuesInTable = gpuMvTable->num_values(stream);
+            Index numUniqueKeys = gpuMvTable != nullptr ? gpuMvTable->num_keys(stream) : 0;
+            Index numValuesInTable = gpuMvTable != nullptr ? gpuMvTable->num_values(stream) : 0;
 
             const std::size_t batchsize = 100000;
             const std::size_t iters =  SDIV(numUniqueKeys, batchsize);
@@ -426,20 +426,23 @@ namespace gpu{
             temp_allocation_sizes[1] = sizeof(Index) * (numUniqueKeys+1); // h_compactOffsetTmp
             temp_allocation_sizes[2] = sizeof(int) * batchsize; // h_ids
             temp_allocation_sizes[3] = sizeof(Value) * numValuesInTable; // h_compactValues
-            
+            std::size_t requiredbytes = d_temp == nullptr ? 0 : temp_bytes;
             cudaError_t cubstatus = cub::AliasTemporaries(
                 d_temp,
-                temp_bytes,
+                requiredbytes,
                 temp_allocations,
                 temp_allocation_sizes
             );
             assert(cubstatus == cudaSuccess);
 
             if(d_temp == nullptr){
+                temp_bytes = requiredbytes;
                 return;
             }
 
             if(isCompact) return;
+
+            assert(temp_bytes >= requiredbytes);
 
             Key* const d_tmp_uniqueKeys = static_cast<Key*>(temp_allocations[0]);
             Index* const d_tmp_compactOffset = static_cast<Index*>(temp_allocations[1]);
