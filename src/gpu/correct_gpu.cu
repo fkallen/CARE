@@ -669,7 +669,9 @@ public:
 
                 hashingTimer.stop();
                 //elapsedHashingTimes.emplace_back(hashingTimer.elapsed());
-                elapsedHashingTime += hashingTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedHashingTime += hashingTimer.elapsed();
+                }
 
                 helpers::CpuTimer correctionTimer;
 
@@ -681,7 +683,9 @@ public:
 
                 correctionTimer.stop();
                 //elapsedCorrectionTimes.emplace_back(correctionTimer.elapsed());
-                elapsedCorrectionTime += correctionTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedCorrectionTime += correctionTimer.elapsed();
+                }
 
                 helpers::CpuTimer outputTimer;
 
@@ -697,7 +701,9 @@ public:
 
                 outputTimer.stop();
                 //elapsedOutputTimes.emplace_back(outputTimer.elapsed());
-                elapsedOutputTime += outputTimer.elapsed();
+                if(iterations >= 10){
+                    elapsedOutputTime += outputTimer.elapsed();
+                }
 
                 processResults(
                     std::move(correctionOutput)
@@ -711,9 +717,11 @@ public:
 
         cudaSetDevice(cur); CUERR;
 
-        runStatistics.hasherTimeAverage = elapsedHashingTime / iterations;
-        runStatistics.correctorTimeAverage = elapsedCorrectionTime / iterations;
-        runStatistics.outputconstructorTimeAverage = elapsedOutputTime / iterations;
+        const int timediterations = std::max(1, iterations - 10);
+
+        runStatistics.hasherTimeAverage = elapsedHashingTime / timediterations;
+        runStatistics.correctorTimeAverage = elapsedCorrectionTime / timediterations;
+        runStatistics.outputconstructorTimeAverage = elapsedOutputTime / timediterations;
         runStatistics.memoryHasher = gpuAnchorHasher.getMemoryInfo();
         runStatistics.memoryCorrector = gpuErrorCorrector.getMemoryInfo();
         runStatistics.memoryOutputConstructor = outputConstructor.getMemoryInfo();
