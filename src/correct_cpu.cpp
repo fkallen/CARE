@@ -112,6 +112,7 @@ correct_cpu(
     };
 
     BackgroundThread outputThread(true);
+    outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
     

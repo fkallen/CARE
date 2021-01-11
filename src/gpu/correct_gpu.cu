@@ -1520,6 +1520,8 @@ correct_gpu_impl(
         }
     };
 
+    outputThread.setMaximumQueueSize(runtimeOptions.threads);
+
     outputThread.start();
 
     //const int threadPoolSize = std::max(1, runtimeOptions.threads - 2*int(deviceIds.size()));

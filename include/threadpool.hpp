@@ -20,6 +20,7 @@ namespace care{
 struct BackgroundThread{
     enum class StopType{FinishAndStop, Stop};
 
+    std::size_t maxtasks = 16;
     std::vector<std::function<void()>> tasks{};
     std::mutex m{};
     std::condition_variable consumer_cv{};
@@ -35,6 +36,13 @@ struct BackgroundThread{
         if(doStart){
             start();
         }
+    }
+
+    void setMaximumQueueSize(std::size_t newsize){
+        assert(newsize > 0);
+
+        std::unique_lock<std::mutex> mylock(m);
+        maxtasks = newsize;
     }
 
     void start(){
@@ -55,7 +63,7 @@ struct BackgroundThread{
 
         {
             std::unique_lock<std::mutex> mylock(m);
-            producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
+            producer_cv.wait(mylock, [&](){return tasks.size() < maxtasks;});
             tasks.emplace_back(std::move(wrapper));
             consumer_cv.notify_one();
         }        
