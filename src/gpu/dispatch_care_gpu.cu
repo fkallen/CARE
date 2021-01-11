@@ -426,7 +426,7 @@ namespace care{
             partialResults, 
             memoryForSorting,
             formats[0],
-            outputfiles, 
+            outputfiles,
             false,
             runtimeOptions.showProgress
         );

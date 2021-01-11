@@ -188,36 +188,48 @@ public:
 
         {
             constexpr std::size_t batchsize = 65000;
-            constexpr int numbuffers = 3;
+            constexpr int numbuffers = 2;
 
             std::array<CudaStream, numbuffers> streams{};
             auto arrayhandle = sequencesGpu.makeHandle();
 
             std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
+            std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
             std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
             std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicedatabuffers{};
 
             std::array<IndexType*, numbuffers> indexarray{};
+            std::array<IndexType*, numbuffers> deviceindexarray{};
             std::array<unsigned int*, numbuffers> hostdataarray{};
             std::array<unsigned int*, numbuffers> dataarray{};
 
             for(int i = 0; i < numbuffers; i++){
                 indexbuffers[i].resize(batchsize);
+                deviceindexbuffers[i].resize(batchsize);
                 hostdatabuffers[i].resize(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
                 devicedatabuffers[i].resize(batchsize * cpuReadStorage->getSequencePitch() / sizeof(unsigned int));
 
                 indexarray[i] = indexbuffers[i].data();
+                deviceindexarray[i] = deviceindexbuffers[i].data();
                 hostdataarray[i] = hostdatabuffers[i].data();
                 dataarray[i] = devicedatabuffers[i].data();
             }
             
             for(std::size_t i = 0, iteration = 0; i < sequencesGpu.getNumRows(); i += batchsize, iteration++){
-                const int bufferIndex = iteration % 3;
+                const int bufferIndex = iteration % numbuffers;
 
                 cudaStreamSynchronize(streams[bufferIndex]); CUERR;
 
                 const std::size_t currentBatchsize = std::min(batchsize, sequencesGpu.getNumRows() - i);
                 std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
+
+                cudaMemcpyAsync(
+                    deviceindexarray[bufferIndex],
+                    indexarray[bufferIndex],
+                    sizeof(IndexType) * currentBatchsize,
+                    H2D,
+                    streams[bufferIndex]
+                );
 
                 std::copy_n(
                     (const char*)(cpuReadStorage->getSequenceArray()) + (i) * cpuReadStorage->getSequencePitch(),
@@ -237,7 +249,7 @@ public:
                     arrayhandle, 
                     dataarray[bufferIndex], 
                     cpuReadStorage->getSequencePitch(), 
-                    indexarray[bufferIndex], 
+                    deviceindexarray[bufferIndex], 
                     currentBatchsize, 
                     streams[bufferIndex]
                 );
@@ -276,35 +288,47 @@ public:
 
             {
                 constexpr std::size_t batchsize = 65000;
-                constexpr int numbuffers = 3;
+                constexpr int numbuffers = 2;
 
                 std::array<CudaStream, numbuffers> streams{};
                 auto arrayhandle = qualitiesGpu.makeHandle();
 
                 std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
+                std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
                 std::array<helpers::SimpleAllocationPinnedHost<char>, numbuffers> hostdatabuffers{};
                 std::array<helpers::SimpleAllocationDevice<char>, numbuffers> devicedatabuffers{};
 
                 std::array<IndexType*, numbuffers> indexarray{};
+                std::array<IndexType*, numbuffers> deviceindexarray{};
                 std::array<char*, numbuffers> hostdataarray{};
                 std::array<char*, numbuffers> dataarray{};
 
                 for(int i = 0; i < numbuffers; i++){
                     indexbuffers[i].resize(batchsize);
+                    deviceindexbuffers[i].resize(batchsize);
                     hostdatabuffers[i].resize(batchsize * cpuReadStorage->getQualityPitch());
                     devicedatabuffers[i].resize(batchsize * cpuReadStorage->getQualityPitch());
 
                     indexarray[i] = indexbuffers[i].data();
+                    deviceindexarray[i] = deviceindexbuffers[i].data();
                     hostdataarray[i] = hostdatabuffers[i].data();
                     dataarray[i] = devicedatabuffers[i].data();
                 }
 
                 for(std::size_t i = 0, iteration = 0; i < qualitiesGpu.getNumRows(); i += batchsize, iteration++){
-                    const int bufferIndex = iteration % 3;
+                    const int bufferIndex = iteration % numbuffers;
                     cudaStreamSynchronize(streams[bufferIndex]); CUERR;
 
                     const std::size_t currentBatchsize = std::min(batchsize, qualitiesGpu.getNumRows() - i);
                     std::iota(indexarray[bufferIndex], indexarray[bufferIndex] + currentBatchsize, i);
+
+                    cudaMemcpyAsync(
+                        deviceindexarray[bufferIndex],
+                        indexarray[bufferIndex],
+                        sizeof(IndexType) * currentBatchsize,
+                        H2D,
+                        streams[bufferIndex]
+                    );
 
                     std::copy_n(
                         (const char*)(cpuReadStorage->getQualityArray()) + (i) * cpuReadStorage->getQualityPitch(),
@@ -324,7 +348,7 @@ public:
                         arrayhandle, 
                         dataarray[bufferIndex], 
                         cpuReadStorage->getQualityPitch(), 
-                        indexarray[bufferIndex], 
+                        deviceindexarray[bufferIndex], 
                         currentBatchsize, 
                         streams[bufferIndex]
                     );
