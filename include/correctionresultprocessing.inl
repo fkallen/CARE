@@ -327,11 +327,11 @@ CombinedCorrectionResult combineMultipleCorrectionResults1_rawtcs2(
     constexpr bool outputLQOnlyAnchor = true;
     // constexpr bool outputOnlyCand = false;
 
-    auto isValidSequence = [](const std::string& s){
-        return std::all_of(s.begin(), s.end(), [](char c){
-            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-        });
-    };
+    // auto isValidSequence = [](const std::string& s){
+    //     return std::all_of(s.begin(), s.end(), [](char c){
+    //         return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+    //     });
+    // };
 
     auto isAnchor = [](const auto& tcs){
         return tcs.type == TempCorrectedSequence::Type::Anchor;
