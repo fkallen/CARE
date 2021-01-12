@@ -6,7 +6,7 @@
 #include <memoryfile.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-#include <readstorage.hpp>
+#include <cpureadstorage.hpp>
 #include <cpuminhasher.hpp>
 
 namespace care{
@@ -23,7 +23,7 @@ namespace cpu{
 		const MemoryOptions& memoryOptions,
 		const SequenceFileProperties& sequenceFileProperties,
 		CpuMinhasher& minhasher,
-		cpu::ContiguousReadStorage& readStorage
+		CpuReadStorage& readStorage
 	);
 
 	

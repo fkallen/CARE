@@ -1,6 +1,6 @@
 
 #include <cpuminhasherconstruction.hpp>
-
+#include <cpureadstorage.hpp>
 #include <cpuminhasher.hpp>
 #include <ordinaryminhasher.hpp>
 
@@ -21,7 +21,7 @@ namespace care{
             const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
-            const cpu::ContiguousReadStorage& cpuReadStorage
+            const CpuReadStorage& cpuReadStorage
         ){
             auto cpuMinhasher = std::make_unique<OrdinaryCpuMinhasher>(
                 totalInputFileProperties.nReads,
@@ -59,7 +59,7 @@ namespace care{
             const MemoryOptions& memoryOptions,
             const CorrectionOptions& correctionOptions,
             const SequenceFileProperties& totalInputFileProperties,
-            const cpu::ContiguousReadStorage& gpuReadStorage,
+            const CpuReadStorage& cpuReadStorage,
             CpuMinhasherType requestedType
         ){
             if(requestedType == CpuMinhasherType::Ordinary){
@@ -70,7 +70,7 @@ namespace care{
                         totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
-                        gpuReadStorage
+                        cpuReadStorage
                     ),
                     CpuMinhasherType::Ordinary
                 );
@@ -82,7 +82,7 @@ namespace care{
                         totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
-                        gpuReadStorage
+                        cpuReadStorage
                     ),
                     CpuMinhasherType::Ordinary
                 );

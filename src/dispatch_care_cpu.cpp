@@ -3,7 +3,7 @@
 #include <config.hpp>
 #include <options.hpp>
 
-#include <readstorage.hpp>
+#include <contiguousreadstorage.hpp>
 
 #include <correct_cpu.hpp>
 

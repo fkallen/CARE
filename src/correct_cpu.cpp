@@ -8,7 +8,7 @@
 #include "options.hpp"
 
 
-#include <readstorage.hpp>
+#include <cpureadstorage.hpp>
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
 #include <msa.hpp>
@@ -56,7 +56,7 @@ correct_cpu(
     const SequenceFileProperties& sequenceFileProperties,
     //Minhasher& minhasher,
     CpuMinhasher& minhasher,
-    cpu::ContiguousReadStorage& readStorage
+    CpuReadStorage& readStorage
 ){
 
     omp_set_num_threads(runtimeOptions.threads);
@@ -148,20 +148,18 @@ correct_cpu(
         const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
         const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
 
-        std::unique_ptr<ReadProvider> readProvider = std::make_unique<CpuReadStorageReadProvider>(readStorage);
-        //std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<CpuMinhasherCandidateIdsProvider>(minhasher);
-
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
             decodedSequencePitchInBytes,
             qualityPitchInBytes,
             correctionOptions,
             goodAlignmentProperties,
-            //*candidateIdsProvider,
-            &minhasher,
-            *readProvider,
+            minhasher,
+            readStorage,
             correctionFlags
         );
+
+        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
 
         std::vector<read_number> batchReadIds(correctionOptions.batchsize);
         std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
@@ -185,25 +183,28 @@ correct_cpu(
 
             //collect input data of all reads in batch
 
-            readProvider->gatherSequenceLengths(
+            readStorage.gatherSequenceLengths(
+                readStorageHandle,
+                batchReadLengths.data(),
                 batchReadIds.data(),
-                batchReadIds.size(),
-                batchReadLengths.data()
+                batchReadIds.size()
             );
 
-            readProvider->gatherSequenceData(
-                batchReadIds.data(),
-                batchReadIds.size(),
+            readStorage.gatherSequences(
+                readStorageHandle,
                 batchEncodedData.data(),
-                encodedSequencePitchInInts2Bit
+                encodedSequencePitchInInts2Bit,
+                batchReadIds.data(),
+                batchReadIds.size()
             );
 
             if(correctionOptions.useQualityScores){
-                readProvider->gatherSequenceQualities(
-                    batchReadIds.data(),
-                    batchReadIds.size(),
+                readStorage.gatherQualities(
+                    readStorageHandle,
                     batchQualities.data(),
-                    qualityPitchInBytes
+                    qualityPitchInBytes,
+                    batchReadIds.data(),
+                    batchReadIds.size()
                 );
             }
 

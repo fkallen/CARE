@@ -1,7 +1,7 @@
 #ifndef CARE_MULTIGPUREADSTORAGE_CUH
 #define CARE_MULTIGPUREADSTORAGE_CUH
 
-#include <readstorage.hpp>
+#include <contiguousreadstorage.hpp>
 #include <gpu/gpureadstorage.cuh>
 
 #include <gpu/multigpuarray.cuh>

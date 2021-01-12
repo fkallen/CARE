@@ -3,6 +3,7 @@
 
 
 #include <cpuminhasher.hpp>
+#include <cpureadstorage.hpp>
 
 
 
@@ -18,7 +19,6 @@
 #include <sequencehelpers.hpp>
 #include <memorymanagement.hpp>
 #include <threadpool.hpp>
-#include <readstorage.hpp>
 #include <sharedmutex.hpp>
 
 
@@ -91,7 +91,7 @@ namespace care{
             const MemoryOptions& memoryOptions,
             std::uint64_t nReads,
             const CorrectionOptions& correctionOptions,
-            const cpu::ContiguousReadStorage& cpuReadStorage
+            const CpuReadStorage& cpuReadStorage
         ){
             auto& readStorage = cpuReadStorage;
 
@@ -135,7 +135,7 @@ namespace care{
             int remainingHashFunctions = requestedNumberOfMaps;
             bool keepGoing = true;
 
-            cpu::ContiguousReadStorage::GatherHandle gatherHandleSequences{};
+            ReadStorageHandle readStorageHandle = cpuReadStorage.makeHandle();
 
             while(remainingHashFunctions > 0 && keepGoing){
 
@@ -177,19 +177,19 @@ namespace care{
 
                     std::iota(currentReadIds.begin(), currentReadIds.end(), beginid);
 
-                    readStorage.gatherSequenceData(
-                        gatherHandleSequences,
-                        currentReadIds.data(),
-                        currentbatchsize,
+                    readStorage.gatherSequences(
+                        readStorageHandle,
                         sequencedata.data(),
-                        encodedSequencePitchInInts
+                        encodedSequencePitchInInts,
+                        currentReadIds.data(),
+                        currentbatchsize
                     );
 
                     readStorage.gatherSequenceLengths(
-                        gatherHandleSequences,
+                        readStorageHandle,
+                        sequencelengths.data(),
                         currentReadIds.data(),
-                        currentbatchsize,
-                        sequencelengths.data()
+                        currentbatchsize
                     );
 
                     insert(
@@ -211,7 +211,9 @@ namespace care{
                 remainingHashFunctions -= addedHashFunctions;
             }
 
-            setThreadPool(nullptr);  
+            setThreadPool(nullptr); 
+
+            cpuReadStorage.destroyHandle(readStorageHandle);
         }
  
 

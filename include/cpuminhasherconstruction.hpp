@@ -3,7 +3,7 @@
 
 
 #include <cpuminhasher.hpp>
-#include <readstorage.hpp>
+#include <cpureadstorage.hpp>
 
 #include <options.hpp>
 
@@ -24,7 +24,7 @@ namespace care{
         const MemoryOptions& memoryOptions,
         const CorrectionOptions& correctionOptions,
         const SequenceFileProperties& totalInputFileProperties,
-        const cpu::ContiguousReadStorage& cpuReadStorage,
+        const CpuReadStorage& cpuReadStorage,
         CpuMinhasherType requestedType = CpuMinhasherType::None
     );
 
