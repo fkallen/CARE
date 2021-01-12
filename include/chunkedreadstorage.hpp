@@ -10,6 +10,9 @@
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
 
+
+
+#include <unordered_set>
 #include <vector>
 #include <array>
 #include <mutex>
@@ -97,10 +100,6 @@ public:
         }
         std::sort(ambigStorage.begin(), ambigStorage.end(), lessThanFileAndBatch);
 
-        for(const auto& s : ambigStorage){
-            ambigReadIdsPerFile[s.fileId].insert(s.ids.begin(), s.ids.end());
-        }
-
         offsetsPrefixSum.reserve(sequenceStorage.size() + 1);
         offsetsPrefixSum.emplace_back(0);
 
@@ -125,6 +124,19 @@ public:
                 const std::size_t index = offset + i;
                 lengthStorage.setLength(index, s.sequenceLengths[i]);
             }
+        }
+
+        for(auto& s : ambigStorage){
+            std::size_t offset = 0;
+            for(int i = 0; i < s.fileId; i++){
+                offset += numReadsPerFile[i];
+            }
+            ambigReadIdsPerFile[s.fileId].insert(s.ids.begin(), s.ids.end());
+            for(auto& id : s.ids){
+                id += offset;
+            }
+
+            ambigReadIds.insert(s.ids.begin(), s.ids.end());
         }
 
         compactSequences(memoryLimitBytes);
@@ -289,7 +301,7 @@ public:
     void gatherQualities(
         const read_number* readIds,
         int numReadIds,
-        unsigned int* destination,
+        char* destination,
         int destinationPitchElements
     ) const noexcept{
 
@@ -370,6 +382,37 @@ public:
         }            
     }
 
+
+    void areSequencesAmbiguous(
+        /*Handle& handle,*/
+        bool* result, 
+        const read_number* readIds, 
+        int numSequences
+    ) const {
+
+        if(numSequences > 0 && getNumberOfReadsWithN() > 0){
+
+            for(int i = 0; i < numSequences; i++){
+                auto it = ambigReadIds.find(readIds[i]);
+                result[i] = (it != ambigReadIds.end());
+            }
+        }
+    }
+
+    void printAmbig(){
+
+        std::vector<read_number> vec(ambigReadIds.begin(), ambigReadIds.end());
+        std::sort(vec.begin(), vec.end());
+        for(auto x : vec){
+            std::cerr << x << " ";
+        }
+        std::cerr << "\n";
+    }
+
+    std::int64_t getNumberOfReadsWithN() const{
+        return ambigReadIds.size();
+    }
+
 private:
     std::size_t getChunkIndexOfRow(std::size_t row) const noexcept{
         auto it = std::lower_bound(offsetsPrefixSum.begin(), offsetsPrefixSum.end(), row + 1);
@@ -410,6 +453,7 @@ private:
     LengthStore<std::uint32_t> lengthStorage{};
     std::vector<StoredQualities> qualityStorage{};
     std::map<int, std::set<read_number>> ambigReadIdsPerFile{};
+    std::unordered_set<read_number> ambigReadIds{};
 
     bool hasShrinkedSequences = false;
     std::size_t encodedSequencePitchInInts{};

@@ -358,6 +358,13 @@ namespace cpu{
             return readIdsOfReadsWithUndeterminedBase.size();
         }
 
+        void printAmbig(){
+            for(auto x : readIdsOfReadsWithUndeterminedBase){
+                std::cerr << x << " ";
+            }
+            std::cerr << "\n";
+        }
+
         MemoryUsage getMemoryInfo() const{
             MemoryUsage info;
             info.host = sequence_data_bytes;

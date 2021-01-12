@@ -14,6 +14,10 @@
 #include <cpuminhasherconstruction.hpp>
 #include <ordinaryminhasher.hpp>
 
+
+#include <readstorageconstruction2.hpp>
+#include <chunkedreadstorage.hpp>
+
 #include <vector>
 #include <iostream>
 #include <mutex>
@@ -21,6 +25,9 @@
 #include <memory>
 
 #include <experimental/filesystem>
+
+
+#include <dynamic2darray.hpp>
 
 namespace filesys = std::experimental::filesystem;
 
@@ -64,6 +71,15 @@ namespace care{
                             MemoryOptions memoryOptions,
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
+
+        // ChunkedReadStorage fooStorage = constructReadStorageFromFiles2(
+        //     runtimeOptions,
+        //     memoryOptions,
+        //     fileOptions.inputfiles,
+        //     correctionOptions.useQualityScores
+        // );
+
+
 
         std::cout << "Running CARE CPU" << std::endl;
 
@@ -153,6 +169,69 @@ namespace care{
             timer.print();
     		std::cout << "Saved reads" << std::endl;
         }
+
+        // const int batchsize = 1024;
+        // int pitchInElements = 10;
+        // int qualPitch = 128;
+        // std::vector<read_number> readIds(batchsize);
+        // std::vector<unsigned int> data1(batchsize * pitchInElements);
+        // std::vector<unsigned int> data2(batchsize * pitchInElements);
+        // std::vector<int> lengths1(batchsize);
+        // std::vector<int> lengths2(batchsize);
+        // std::vector<char> qualities1(batchsize * qualPitch);
+        // std::vector<char> qualities2(batchsize * qualPitch);
+        // std::unique_ptr<bool[]> ambig1 = std::make_unique<bool[]>(batchsize);
+        // std::unique_ptr<bool[]> ambig2 = std::make_unique<bool[]>(batchsize);
+
+        // cpu::ContiguousReadStorage::GatherHandle gatherHandle{};
+
+        // helpers::CpuTimer footimer("footimer");
+        // helpers::CpuTimer normaltimer("normaltimer");
+
+
+
+        // for(int i = 0; i < 30085710; i += batchsize){
+        //     const int currentbatchsize = std::min(batchsize, 30085710 - i);
+        //     std::iota(readIds.begin(), readIds.end(), i);
+
+        //     std::fill(data1.begin(), data1.end(), 0);
+        //     std::fill(data2.begin(), data2.end(), 0);
+        //     std::fill(lengths1.begin(), lengths1.end(), 0);
+        //     std::fill(lengths2.begin(), lengths2.end(), 0);
+        //     std::fill(data2.begin(), data2.end(), 0);
+        //     std::fill(qualities1.begin(), qualities2.end(), 0);
+        //     std::fill(ambig1.get(), ambig1.get() + batchsize, 0);
+        //     std::fill(ambig2.get(), ambig2.get() + batchsize, 0);
+
+        //     footimer.start();
+        //     fooStorage.gatherSequenceData(readIds.data(), currentbatchsize, data1.data(), pitchInElements);
+        //     fooStorage.gatherSequenceLengths(readIds.data(), currentbatchsize, lengths1.data());
+        //     fooStorage.gatherQualities(readIds.data(), currentbatchsize, qualities1.data(), qualPitch);
+        //     fooStorage.areSequencesAmbiguous(ambig1.get(), readIds.data(), currentbatchsize);
+        //     footimer.stop();
+            
+        //     normaltimer.start();
+        //     readStorage.gatherSequenceData(gatherHandle, readIds.data(), currentbatchsize, data2.data(), pitchInElements);
+        //     readStorage.gatherSequenceLengths(gatherHandle, readIds.data(), currentbatchsize, lengths2.data());
+        //     readStorage.gatherSequenceQualities(gatherHandle, readIds.data(), currentbatchsize, qualities2.data(), qualPitch);
+        //     for(int k = 0; k < currentbatchsize; k++){
+        //         ambig2[k] = readStorage.readContainsN(readIds[k]);
+        //     }
+        //     normaltimer.stop();
+
+        //     assert(0 == std::memcmp(ambig1.get(), ambig2.get(), sizeof(bool) * batchsize));
+        //     assert(lengths1 == lengths2);
+        //     assert(qualities1 == qualities2);
+
+        //     for(int k = 0; k < currentbatchsize; k++){
+        //         if(!ambig1[k] && !ambig2[k]){
+        //             assert(0 == std::memcmp(data1.data() + pitchInElements * k, data2.data() + pitchInElements * k, pitchInElements * sizeof(unsigned int)));
+        //         }
+        //     }
+        // }
+
+        // footimer.print();
+        // normaltimer.print();
 
         
         
