@@ -817,7 +817,7 @@ namespace gpucorrectorkernels{
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
         GpuMinhasher::QueryHandle minhashHandle;
-        GpuReadStorage::Handle readstorageHandle;
+        ReadStorageHandle readstorageHandle;
     };
 
 
@@ -2510,7 +2510,7 @@ namespace gpucorrectorkernels{
         ThreadPool::ParallelForHandle pforHandle;
         KernelLaunchHandle kernelLaunchHandle; 
 
-        GpuReadStorage::Handle readstorageHandle;
+        ReadStorageHandle readstorageHandle;
 
         PinnedBuffer<int> h_high_quality_anchor_indices;
         PinnedBuffer<int> h_num_high_quality_anchor_indices; 

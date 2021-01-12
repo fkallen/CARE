@@ -5,12 +5,14 @@
 namespace care{
 
     class CpuReadStorage; //forward declaration
-    class GpuReadStorage; //forward declaration
+    namespace gpu{
+        class GpuReadStorage; //forward declaration
+    }
 
     class ReadStorageHandle{
-        
-    friend class CpuReadStorage;
-    friend class GpuReadStorage;
+
+        friend class CpuReadStorage;
+        friend class gpu::GpuReadStorage;
 
     public:
 
@@ -19,8 +21,8 @@ namespace care{
         }
 
     private:
-        Handle() = default;
-        Handle(int i) : id(i){}
+        ReadStorageHandle() = default;
+        ReadStorageHandle(int i) : id(i){}
 
         int id;
     };

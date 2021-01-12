@@ -411,7 +411,7 @@ public:
 
 public: //inherited GPUReadStorage interface
 
-    Handle makeHandle() const override {
+    ReadStorageHandle makeHandle() const override {
         auto data = std::make_unique<TempData>();
         data->handleSequences = sequencesGpu.makeHandle();
         data->handleQualities = qualitiesGpu.makeHandle();
@@ -419,13 +419,13 @@ public: //inherited GPUReadStorage interface
 
         std::unique_lock<SharedMutex> lock(sharedmutex);
         const int handleid = counter++;
-        Handle h = constructHandle(handleid);
+        ReadStorageHandle h = constructHandle(handleid);
 
         tempdataVector.emplace_back(std::move(data));
         return h;
     }
 
-    void destroyHandle(Handle& handle) const override{
+    void destroyHandle(ReadStorageHandle& handle) const override{
 
         std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -437,7 +437,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void areSequencesAmbiguous(
-        Handle& handle,
+        ReadStorageHandle& handle,
         bool* d_result, 
         const read_number* d_readIds, 
         int numSequences, 
@@ -462,7 +462,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void gatherSequences(
-        Handle& handle,
+        ReadStorageHandle& handle,
         unsigned int* d_sequence_data,
         size_t outSequencePitchInInts,
         const read_number* h_readIds,
@@ -720,7 +720,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void gatherQualities(
-        Handle& handle,
+        ReadStorageHandle& handle,
         char* d_quality_data,
         size_t out_quality_pitch,
         const read_number* h_readIds,
@@ -960,7 +960,7 @@ public: //inherited GPUReadStorage interface
     }
 
     void gatherSequenceLengths(
-        Handle& handle,
+        ReadStorageHandle& handle,
         int* d_lengths,
         const read_number* d_readIds,
         int numSequences,    
@@ -1001,7 +1001,7 @@ public: //inherited GPUReadStorage interface
         return result;
     }
 
-    MemoryUsage getMemoryInfo(const Handle& handle) const override{
+    MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
         int deviceId = 0;
         cudaGetDevice(&deviceId); CUERR;
 
@@ -1143,7 +1143,7 @@ private:
         }
     }
 
-    TempData* getTempDataFromHandle(const Handle& handle) const{
+    TempData* getTempDataFromHandle(const ReadStorageHandle& handle) const{
         std::shared_lock<SharedMutex> lock(sharedmutex);
 
         assert(handle.getId() < int(tempdataVector.size()));

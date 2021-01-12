@@ -6,6 +6,7 @@
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <readstoragehandle.hpp>
 
 #include <cstdint>
 
@@ -15,31 +16,15 @@ namespace gpu{
 
 class GpuReadStorage{
 public:
-    class Handle{
-    friend class GpuReadStorage;
-    public:
-
-        int getId() const noexcept{
-            return id;
-        }
-
-    private:
-        Handle() = default;
-        Handle(int i) : id(i){}
-
-        int id;
-        //const GpuMinhasher* parent;
-    };
-
 
     virtual ~GpuReadStorage() = default;
 
-    virtual Handle makeHandle() const = 0;
+    virtual ReadStorageHandle makeHandle() const = 0;
 
-    virtual void destroyHandle(Handle& handle) const = 0;
+    virtual void destroyHandle(ReadStorageHandle& handle) const = 0;
 
     virtual void areSequencesAmbiguous(
-        Handle& handle,
+        ReadStorageHandle& handle,
         bool* d_result, 
         const read_number* d_readIds, 
         int numSequences, 
@@ -47,7 +32,7 @@ public:
     ) const = 0;
 
     virtual void gatherSequences(
-        Handle& handle,
+        ReadStorageHandle& handle,
         unsigned int* d_sequence_data,
         size_t outSequencePitchInInts,
         const read_number* h_readIds,
@@ -57,7 +42,7 @@ public:
     ) const = 0;
 
     virtual void gatherQualities(
-        Handle& handle,
+        ReadStorageHandle& handle,
         char* d_quality_data,
         size_t out_quality_pitch,
         const read_number* h_readIds,
@@ -67,7 +52,7 @@ public:
     ) const = 0;
 
     virtual void gatherSequenceLengths(
-        Handle& handle,
+        ReadStorageHandle& handle,
         int* d_lengths,
         const read_number* d_readIds,
         int numSequences,    
@@ -78,7 +63,7 @@ public:
 
     virtual MemoryUsage getMemoryInfo() const = 0;
 
-    virtual MemoryUsage getMemoryInfo(const Handle& handle) const = 0;
+    virtual MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const = 0;
 
     virtual read_number getNumberOfReads() const = 0;
 
@@ -91,8 +76,8 @@ public:
     virtual void destroy() = 0;
 
 protected:
-    Handle constructHandle(int id) const{
-        return Handle{id};
+    ReadStorageHandle constructHandle(int id) const{
+        return ReadStorageHandle{id};
     }
 
 };

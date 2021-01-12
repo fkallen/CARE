@@ -10,6 +10,7 @@
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
 #include <chunkedreadstorage.hpp>
+#include <options.hpp>
 
 #include <vector>
 #include <array>
@@ -30,14 +31,15 @@ namespace care{
 
 
 ChunkedReadStorage constructReadStorageFromFiles2(
+    RuntimeOptions runtimeOptions,
+    MemoryOptions memoryOptions,
     const std::vector<std::string>& inputfiles,
-    bool useQualityScores,
-    int threads,
-    bool showProgress
+    bool useQualityScores
 ){
+    const bool showProgress = runtimeOptions.showProgress;
 
-    auto showProgressFunc = [show = showProgress](auto totalCount, auto seconds){
-        if(show){
+    auto showProgressFunc = [showProgress](auto totalCount, auto seconds){
+        if(showProgress){
             std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
                             << seconds << " seconds." << std::endl;
         }
@@ -323,7 +325,7 @@ ChunkedReadStorage constructReadStorageFromFiles2(
             if(sbatch != nullptr){
                 const int numSequences = sbatch->validItems;
 
-                StoredEncodedSequences finalSeq;
+                ChunkedReadStorage::StoredEncodedSequences finalSeq;
                 finalSeq.fileId = sbatch->fileId;
                 finalSeq.batchId = sbatch->batchId;
                 finalSeq.encodedSequencePitchInInts = sbatch->encodedSequencePitchInInts;
@@ -331,7 +333,7 @@ ChunkedReadStorage constructReadStorageFromFiles2(
 
                 sequenceStorage.emplace_back(std::move(finalSeq));
 
-                StoredSequenceLengths finalLength;
+                ChunkedReadStorage::StoredSequenceLengths finalLength;
                 finalLength.fileId = sbatch->fileId;
                 finalLength.batchId = sbatch->batchId;
                 finalLength.sequenceLengths = std::move(sbatch->sequenceLengths);
@@ -339,7 +341,7 @@ ChunkedReadStorage constructReadStorageFromFiles2(
                 lengthStorage.emplace_back(std::move(finalLength));
 
                 if(sbatch->ambiguousReadIds.size() > 0){
-                    StoredAmbigIds finalAmbig;
+                    ChunkedReadStorage::StoredAmbigIds finalAmbig;
                     finalAmbig.fileId = sbatch->fileId;
                     finalAmbig.batchId = sbatch->batchId;
                     finalAmbig.ids = std::move(sbatch->ambiguousReadIds);
@@ -355,7 +357,7 @@ ChunkedReadStorage constructReadStorageFromFiles2(
             }
 
             if(qbatch != nullptr){
-                StoredQualities finalQ;
+                ChunkedReadStorage::StoredQualities finalQ;
                 finalQ.fileId = qbatch->fileId;
                 finalQ.batchId = qbatch->batchId;
                 finalQ.qualityPitchInBytes = qbatch->qualityPitchInBytes;
@@ -476,7 +478,9 @@ ChunkedReadStorage constructReadStorageFromFiles2(
     }
     
     progressThread.finished();
-    std::cout << "\n";
+    if(showProgress){
+        std::cout << "\n";
+    }
 
     // auto lessThanFileAndBatch = [](const auto& l, const auto& r){
     //     if(l.fileId < r.fileId) return true;
@@ -497,13 +501,15 @@ ChunkedReadStorage constructReadStorageFromFiles2(
 
     helpers::CpuTimer footimer("footimer");
 
-    ChunkedReadStorage fooStorage;
+    ChunkedReadStorage fooStorage(useQualityScores);
+    
     fooStorage.init(
         std::move(numReadsPerFile),
         std::move(sequenceStorage),
         std::move(lengthStorage),
         std::move(qualityStorage),
-        std::move(ambigStorage)
+        std::move(ambigStorage),
+        memoryOptions.memoryTotalLimit
     );
 
     footimer.print();

@@ -314,18 +314,18 @@ public:
 
     public: //inherited interface
 
-        Handle makeHandle() const override {
+        ReadStorageHandle makeHandle() const override {
             auto data = std::make_unique<TempData>();
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            Handle h = constructHandle(handleid);
+            ReadStorageHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
         }
 
-        void destroyHandle(Handle& handle) const override{
+        void destroyHandle(ReadStorageHandle& handle) const override{
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -337,7 +337,7 @@ public:
         }
 
         void areSequencesAmbiguous(
-            Handle& handle,
+            ReadStorageHandle& handle,
             bool* d_result, 
             const read_number* d_readIds, 
             int numSequences, 
@@ -356,7 +356,7 @@ public:
         }
 
         void gatherSequences(
-            Handle& handle,
+            ReadStorageHandle& handle,
             unsigned int* d_sequence_data,
             size_t outSequencePitchInInts,
             const read_number* h_readIds,
@@ -387,7 +387,7 @@ public:
         }
 
         virtual void gatherQualities(
-            Handle& handle,
+            ReadStorageHandle& handle,
             char* d_quality_data,
             size_t out_quality_pitch,
             const read_number* h_readIds,
@@ -418,7 +418,7 @@ public:
         }
 
         virtual void gatherSequenceLengths(
-            Handle& handle,
+            ReadStorageHandle& handle,
             int* d_lengths,
             const read_number* d_readIds,
             int numSequences,    
@@ -436,7 +436,7 @@ public:
             );
         }
 
-        MemoryUsage getMemoryInfo(const Handle& handle) const noexcept{
+        MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const noexcept{
             int deviceId = 0;
             cudaGetDevice(&deviceId); CUERR;
 
@@ -465,7 +465,7 @@ public:
         void setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setQualities(const read_number* indices, const char* data, int numReads);
 
-        TempData* getTempDataFromHandle(const Handle& handle) const{
+        TempData* getTempDataFromHandle(const ReadStorageHandle& handle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[handle.getId()].get();
