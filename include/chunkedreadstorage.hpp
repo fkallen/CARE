@@ -148,11 +148,11 @@ public:
 
 
 
-        // compactSequences(memoryLimitBytes);
+        compactSequences(memoryLimitBytes);
 
-        // if(canUseQualityScores()){
-        //     compactQualities(memoryLimitBytes);
-        // }
+        if(canUseQualityScores()){
+            compactQualities(memoryLimitBytes);
+        }
 
     }
 
