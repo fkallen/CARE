@@ -18,13 +18,12 @@ namespace care{
         constructOrdinaryCpuMinhasherFromCpuReadStorage(
             const CorrectionOptions& correctionOptions,
             const FileOptions& fileOptions,
-            const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
             const CpuReadStorage& cpuReadStorage
         ){
             auto cpuMinhasher = std::make_unique<OrdinaryCpuMinhasher>(
-                totalInputFileProperties.nReads,
+                cpuReadStorage.getNumberOfReads(),
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
                 correctionOptions.kmerlength
             );
@@ -42,7 +41,7 @@ namespace care{
                     fileOptions,
                     runtimeOptions,
                     memoryOptions,
-                    totalInputFileProperties.nReads, 
+                    cpuReadStorage.getNumberOfReads(), 
                     correctionOptions,
                     cpuReadStorage
                 );
@@ -58,7 +57,6 @@ namespace care{
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
             const CorrectionOptions& correctionOptions,
-            const SequenceFileProperties& totalInputFileProperties,
             const CpuReadStorage& cpuReadStorage,
             CpuMinhasherType requestedType
         ){
@@ -67,7 +65,6 @@ namespace care{
                     constructOrdinaryCpuMinhasherFromCpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         cpuReadStorage
@@ -79,7 +76,6 @@ namespace care{
                     constructOrdinaryCpuMinhasherFromCpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         cpuReadStorage

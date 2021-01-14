@@ -23,7 +23,6 @@ namespace care{
         const RuntimeOptions &runtimeOptions,
         const MemoryOptions& memoryOptions,
         const CorrectionOptions& correctionOptions,
-        const SequenceFileProperties& totalInputFileProperties,
         const CpuReadStorage& cpuReadStorage,
         CpuMinhasherType requestedType = CpuMinhasherType::None
     );

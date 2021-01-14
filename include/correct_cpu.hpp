@@ -21,7 +21,6 @@ namespace cpu{
 		const RuntimeOptions& runtimeOptions,
 		const FileOptions& fileOptions,
 		const MemoryOptions& memoryOptions,
-		const SequenceFileProperties& sequenceFileProperties,
 		CpuMinhasher& minhasher,
 		CpuReadStorage& readStorage
 	);

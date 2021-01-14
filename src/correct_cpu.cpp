@@ -53,8 +53,6 @@ correct_cpu(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
-    //Minhasher& minhasher,
     CpuMinhasher& minhasher,
     CpuReadStorage& readStorage
 ){
@@ -77,7 +75,7 @@ correct_cpu(
     }
 
 
-    ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+    ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
 
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
@@ -99,7 +97,7 @@ correct_cpu(
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
     
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
@@ -118,25 +116,26 @@ correct_cpu(
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
+            std::size_t totalNumReads = readStorage.getNumberOfReads();
 
             printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, totalNumReads,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
-        }
 
-        if(totalCount == sequenceFileProperties.nReads){
-            std::cerr << '\n';
-        }
+            if(totalCount == totalNumReads){
+                std::cerr << '\n';
+            }
+        }        
     };
 
     auto updateShowProgressInterval = [](auto duration){
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     const int numThreads = runtimeOptions.threads;
 
@@ -144,9 +143,9 @@ correct_cpu(
     {
         //const int threadId = omp_get_thread_num();
 
-        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-        const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
-        const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(readStorage.getSequenceLengthUpperBound());
+        const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
+        const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
