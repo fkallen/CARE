@@ -72,12 +72,12 @@ namespace care{
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
 
-        // ChunkedReadStorage fooStorage = constructReadStorageFromFiles2(
-        //     runtimeOptions,
-        //     memoryOptions,
-        //     fileOptions.inputfiles,
-        //     correctionOptions.useQualityScores
-        // );
+        std::unique_ptr<CpuReadStorage> cpuReadStorage = constructReadStorageFromFiles2(
+            runtimeOptions,
+            memoryOptions,
+            fileOptions.inputfiles,
+            correctionOptions.useQualityScores
+        );
 
 
 
@@ -88,38 +88,38 @@ namespace care{
         int minimumSequenceLength = fileOptions.minimum_sequence_length;
         bool scanned = false;
 
-        if(fileOptions.load_binary_reads_from == ""){
+        // if(fileOptions.load_binary_reads_from == ""){
 
-            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
-                std::cout << "STEP 0: Determine input size" << std::endl;
+        //     if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
+        //         std::cout << "STEP 0: Determine input size" << std::endl;
                 
-                std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
+        //         std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
 
-                maximumNumberOfReads = 0;
-                maximumSequenceLength = 0;
-                minimumSequenceLength = std::numeric_limits<int>::max();
+        //         maximumNumberOfReads = 0;
+        //         maximumSequenceLength = 0;
+        //         minimumSequenceLength = std::numeric_limits<int>::max();
 
-                for(const auto& inputfile : fileOptions.inputfiles){
-                    auto prop = getSequenceFileProperties(inputfile, runtimeOptions.showProgress);
-                    maximumNumberOfReads += prop.nReads;
-                    maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
-                    minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
+        //         for(const auto& inputfile : fileOptions.inputfiles){
+        //             auto prop = getSequenceFileProperties(inputfile, runtimeOptions.showProgress);
+        //             maximumNumberOfReads += prop.nReads;
+        //             maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
+        //             minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
 
-                    std::cout << "----------------------------------------\n";
-                    std::cout << "File: " << inputfile << "\n";
-                    std::cout << "Reads: " << prop.nReads << "\n";
-                    std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
-                    std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
-                    std::cout << "----------------------------------------\n";
+        //             std::cout << "----------------------------------------\n";
+        //             std::cout << "File: " << inputfile << "\n";
+        //             std::cout << "Reads: " << prop.nReads << "\n";
+        //             std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
+        //             std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
+        //             std::cout << "----------------------------------------\n";
 
-                    //result.inputFileProperties.emplace_back(prop);
-                }
+        //             //result.inputFileProperties.emplace_back(prop);
+        //         }
 
-                scanned = true;
-            }else{
-                //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
-            }
-        }
+        //         scanned = true;
+        //     }else{
+        //         //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
+        //     }
+        // }
 
         std::cout << "STEP 1: Database construction" << std::endl;
 
@@ -127,48 +127,48 @@ namespace care{
         helpers::CpuTimer step1Timer("STEP1");
 
 
-        helpers::CpuTimer buildReadStorageTimer("build_readstorage");
+        // helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        care::cpu::ContiguousReadStorage readStorage(
-            maximumNumberOfReads, 
-            correctionOptions.useQualityScores, 
-            minimumSequenceLength, 
-            maximumSequenceLength
-        );
+        // care::cpu::ContiguousReadStorage readStorage(
+        //     maximumNumberOfReads, 
+        //     correctionOptions.useQualityScores, 
+        //     minimumSequenceLength, 
+        //     maximumSequenceLength
+        // );
 
-        if(fileOptions.load_binary_reads_from != ""){
+        // if(fileOptions.load_binary_reads_from != ""){
             
-            readStorage.loadFromFile(fileOptions.load_binary_reads_from);
+        //     readStorage.loadFromFile(fileOptions.load_binary_reads_from);
 
-            if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
-                throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
-            if(!correctionOptions.useQualityScores && readStorage.canUseQualityScores())
-                std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
+        //     if(correctionOptions.useQualityScores && !readStorage.canUseQualityScores())
+        //         throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
+        //     if(!correctionOptions.useQualityScores && readStorage.canUseQualityScores())
+        //         std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
 
-            std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
+        //     std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
 
-            //readStorage.constructionIsComplete();
-        }else{
-            readStorage.construct(
-                fileOptions.inputfiles,
-                correctionOptions.useQualityScores,
-                maximumNumberOfReads,
-                minimumSequenceLength,
-                maximumSequenceLength,
-                runtimeOptions.threads,
-                runtimeOptions.showProgress
-            );
-        }
+        //     //readStorage.constructionIsComplete();
+        // }else{
+        //     readStorage.construct(
+        //         fileOptions.inputfiles,
+        //         correctionOptions.useQualityScores,
+        //         maximumNumberOfReads,
+        //         minimumSequenceLength,
+        //         maximumSequenceLength,
+        //         runtimeOptions.threads,
+        //         runtimeOptions.showProgress
+        //     );
+        // }
 
-        buildReadStorageTimer.print();
+        // buildReadStorageTimer.print();
 
-        if(fileOptions.save_binary_reads_to != "") {
-            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
-            helpers::CpuTimer timer("save_to_file");
-            readStorage.saveToFile(fileOptions.save_binary_reads_to);
-            timer.print();
-    		std::cout << "Saved reads" << std::endl;
-        }
+        // if(fileOptions.save_binary_reads_to != "") {
+        //     std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+        //     helpers::CpuTimer timer("save_to_file");
+        //     readStorage.saveToFile(fileOptions.save_binary_reads_to);
+        //     timer.print();
+    	// 	std::cout << "Saved reads" << std::endl;
+        // }
 
         // const int batchsize = 1024;
         // int pitchInElements = 10;
@@ -237,9 +237,13 @@ namespace care{
         
         SequenceFileProperties totalInputFileProperties;
 
-        totalInputFileProperties.nReads = readStorage.getNumberOfReads();
-        totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-        totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+        // totalInputFileProperties.nReads = readStorage.getNumberOfReads();
+        // totalInputFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        // totalInputFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+
+        totalInputFileProperties.nReads = cpuReadStorage->getNumberOfReads();
+        totalInputFileProperties.maxSequenceLength = cpuReadStorage->getSequenceLengthUpperBound();
+        totalInputFileProperties.minSequenceLength = cpuReadStorage->getSequenceLengthLowerBound();
 
         if(!scanned){
             std::cout << "Determined the following read properties:\n";
@@ -266,9 +270,9 @@ namespace care{
             std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
         }
 
-        std::cout << "Reads with ambiguous bases: " << readStorage.getNumberOfReadsWithN() << std::endl;        
+        std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;        
 
-        printDataStructureMemoryUsage(readStorage, "reads");
+        printDataStructureMemoryUsage(*cpuReadStorage, "reads");
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -279,7 +283,7 @@ namespace care{
             memoryOptions,
             correctionOptions,
             totalInputFileProperties,
-            readStorage,
+            *cpuReadStorage,
             CpuMinhasherType::Ordinary
         );
 
@@ -337,7 +341,7 @@ namespace care{
             totalInputFileProperties,
             *cpuMinhasher, 
             //readStorage
-            readStorage
+            *cpuReadStorage
         );
 
         step2Timer.print();
@@ -352,7 +356,8 @@ namespace care{
             << numTempInFile << " corrections are stored in temporary file\n";
 
         cpuMinhasher->destroy();
-        readStorage.destroy();
+        //readStorage.destroy();
+        cpuReadStorage->destroy();
 
         const std::size_t availableMemoryInBytes2 = getAvailableMemoryInKB() * 1024;
         std::size_t memoryForSorting = 0;

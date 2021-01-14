@@ -30,7 +30,7 @@ namespace care{
 
 
 
-ChunkedReadStorage constructReadStorageFromFiles2(
+std::unique_ptr<ChunkedReadStorage> constructReadStorageFromFiles2(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
     const std::vector<std::string>& inputfiles,
@@ -501,9 +501,9 @@ ChunkedReadStorage constructReadStorageFromFiles2(
 
     helpers::CpuTimer footimer("footimer");
 
-    ChunkedReadStorage fooStorage(useQualityScores);
+    std::unique_ptr<ChunkedReadStorage> fooStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
     
-    fooStorage.init(
+    fooStorage->init(
         std::move(numReadsPerFile),
         std::move(sequenceStorage),
         std::move(lengthStorage),

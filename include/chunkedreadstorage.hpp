@@ -9,8 +9,9 @@
 #include <dynamic2darray.hpp>
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
-
-
+#include <cpureadstorage.hpp>
+#include <readstoragehandle.hpp>
+#include <memorymanagement.hpp>
 
 #include <unordered_set>
 #include <vector>
@@ -23,10 +24,11 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <numeric>
 
 namespace care{
 
-class ChunkedReadStorage{
+class ChunkedReadStorage : public CpuReadStorage{
 public:
     struct StoredEncodedSequences{
         int fileId = 0;
@@ -58,9 +60,11 @@ public:
 
     }
 
-    bool canUseQualityScores() const{
-        return hasQualityScores;
-    }
+    ChunkedReadStorage(const ChunkedReadStorage&) = delete;
+    ChunkedReadStorage& operator=(const ChunkedReadStorage&) = delete;
+
+    ChunkedReadStorage(ChunkedReadStorage&&) = default;
+    ChunkedReadStorage& operator=(ChunkedReadStorage&&) = default;
 
     void init(
         std::vector<std::size_t>&& numReadsPerFile_,
@@ -139,13 +143,287 @@ public:
             ambigReadIds.insert(s.ids.begin(), s.ids.end());
         }
 
-        compactSequences(memoryLimitBytes);
+        // compactSequences(memoryLimitBytes);
 
-        if(canUseQualityScores()){
-            compactQualities(memoryLimitBytes);
-        }
+        // if(canUseQualityScores()){
+        //     compactQualities(memoryLimitBytes);
+        // }
 
     }
+
+
+
+public: //inherited interface
+
+    ReadStorageHandle makeHandle() const override {
+
+        std::unique_lock<SharedMutex> lock(sharedmutex);
+        const int handleid = counter++;
+        ReadStorageHandle h = constructHandle(handleid);
+
+        return h;
+    }
+
+    void destroyHandle(ReadStorageHandle& handle) const override{
+        //std::unique_lock<SharedMutex> lock(sharedmutex);
+
+        //const int id = handle.getId();
+        //assert(id < int(tempdataVector.size()));
+        
+        //tempdataVector[id] = nullptr;
+        handle = constructHandle(std::numeric_limits<int>::max());
+    };
+
+    void areSequencesAmbiguous(
+        ReadStorageHandle& handle,
+        bool* result, 
+        const read_number* readIds, 
+        int numSequences
+    ) const override{
+        if(numSequences > 0 && getNumberOfReadsWithN() > 0){
+
+            for(int i = 0; i < numSequences; i++){
+                auto it = ambigReadIds.find(readIds[i]);
+                result[i] = (it != ambigReadIds.end());
+            }
+        }
+    }
+
+    void gatherSequences(
+        ReadStorageHandle& handle,
+        unsigned int* sequence_data,
+        size_t outSequencePitchInInts,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        if(numSequences == 0){
+            return;
+        }
+
+        constexpr int prefetch_distance = 4;
+
+        if(hasShrinkedSequences){
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const unsigned int* const nextData = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * nextReadId;
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            std::size_t destinationPitchBytes = outSequencePitchInInts * sizeof(unsigned int);
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const unsigned int* const nextData = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * nextReadId;
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+
+                const unsigned int* const data = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * readId;
+
+                unsigned int* const destData = (unsigned int*)(((char*)sequence_data) + destinationPitchBytes * i);
+                std::copy_n(data, encodedSequencePitchInInts, destData);
+            }
+        }else{
+
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const unsigned int* const nextData = getPointerToSequenceRow(nextReadId);
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            std::size_t destinationPitchBytes = outSequencePitchInInts * sizeof(unsigned int);
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const unsigned int* const nextData = getPointerToSequenceRow(nextReadId);
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
+                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
+
+                const unsigned int* const data = sequenceStorage[chunkIndex].encodedSequences.data()
+                    + rowInChunk * sequenceStorage[chunkIndex].encodedSequencePitchInInts;
+
+                unsigned int* const destData = (unsigned int*)(((char*)sequence_data) + destinationPitchBytes * i);
+                std::copy_n(data, sequenceStorage[chunkIndex].encodedSequencePitchInInts, destData);
+            }
+
+        }
+    }
+
+    void gatherQualities(
+        ReadStorageHandle& handle,
+        char* quality_data,
+        size_t out_quality_pitch,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        if(numSequences == 0){
+            return;
+        }
+
+        constexpr int prefetch_distance = 4;
+
+        if(hasShrinkedQualities){
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            std::size_t destinationPitchBytes = out_quality_pitch * sizeof(char);
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+
+                const char* const data = shrinkedQualities.data() + qualityPitchInBytes * readId;
+
+                char* const destData = (char*)(((char*)quality_data) + destinationPitchBytes * i);
+                std::copy_n(data, qualityPitchInBytes, destData);
+            }
+        }else{
+
+            for(int i = 0; i < numSequences && i < prefetch_distance; ++i) {
+                const int index = i;
+                const std::size_t nextReadId = readIds[index];
+                const char* const nextData = getPointerToQualityRow(nextReadId);
+                __builtin_prefetch(nextData, 0, 0);
+            }
+
+            std::size_t destinationPitchBytes = out_quality_pitch * sizeof(char);
+
+            for(int i = 0; i < numSequences; i++){
+                if(i + prefetch_distance < numSequences) {
+                    const int index = i + prefetch_distance;
+                    const std::size_t nextReadId = readIds[index];
+                    const char* const nextData = getPointerToQualityRow(nextReadId);
+                    __builtin_prefetch(nextData, 0, 0);
+                }
+
+                const std::size_t readId = readIds[i];
+                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
+                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
+
+                const char* const data = qualityStorage[chunkIndex].qualities.data()
+                    + rowInChunk * qualityStorage[chunkIndex].qualityPitchInBytes;
+
+                char* const destData = (char*)(((char*)quality_data) + destinationPitchBytes * i);
+                std::copy_n(data, qualityStorage[chunkIndex].qualityPitchInBytes, destData);
+            }
+
+        }
+    }
+
+    void gatherSequenceLengths(
+        ReadStorageHandle& handle,
+        int* lengths,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        for(int i = 0; i < numSequences; i++){
+            lengths[i] = lengthStorage.getLength(readIds[i]);
+        }
+    }
+
+    std::int64_t getNumberOfReadsWithN() const override{
+        return ambigReadIds.size();
+    }
+
+    MemoryUsage getMemoryInfo() const override{
+
+        MemoryUsage result{};
+        result += lengthStorage.getMemoryInfo();
+
+        result.host += sizeof(std::size_t) * numReadsPerFile.capacity();
+        result.host += sizeof(std::size_t) * offsetsPrefixSum.capacity();
+        result.host += sizeof(unsigned int) * shrinkedEncodedSequences.capacity();
+        result.host += sizeof(char) * shrinkedQualities.capacity();
+
+        result.host += sizeof(StoredEncodedSequences) * sequenceStorage.capacity();
+        result.host += sizeof(StoredQualities) * qualityStorage.capacity();
+        result.host += sizeof(read_number) * ambigReadIds.size();
+
+        for(const auto& p : ambigReadIdsPerFile){
+            result.host += sizeof(read_number) * p.second.size();
+        }
+        for(const auto& s : sequenceStorage){
+            result.host += sizeof(unsigned int) * s.encodedSequences.capacity();
+        }
+        for(const auto& s : qualityStorage){
+            result.host += sizeof(char) * s.qualities.capacity();
+        }
+        return result;
+    }
+
+    MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
+        //no data associated with handle
+        MemoryUsage result{};
+        return result;
+    }
+
+    read_number getNumberOfReads() const override{
+        return std::accumulate(numReadsPerFile.begin(), numReadsPerFile.end(), std::size_t(0));
+    }
+
+    bool canUseQualityScores() const override{
+        return hasQualityScores;
+    }
+
+    int getSequenceLengthLowerBound() const override{
+        return lengthStorage.getMinLength();
+    }
+
+    int getSequenceLengthUpperBound() const override{
+        return lengthStorage.getMaxLength();
+    }
+
+    void destroy() override{
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+
+        lengthStorage.destroy();
+
+        deallocVector(numReadsPerFile);
+        deallocVector(offsetsPrefixSum);
+        deallocVector(sequenceStorage);
+        deallocVector(qualityStorage);
+        deallocVector(ambigReadIdsPerFile);
+        deallocVector(ambigReadIds);
+        deallocVector(shrinkedEncodedSequences);
+        deallocVector(shrinkedQualities);
+        //deallocVector(tempdataVector);
+
+        hasShrinkedSequences = false;
+        encodedSequencePitchInInts = 0;
+        hasShrinkedQualities = false;
+        qualityPitchInBytes = 0;
+
+        counter = 0;
+
+        offsetsPrefixSum.emplace_back(0);
+    }
+
+public:
 
     int getNumFiles() const noexcept{
         return numReadsPerFile.size();
@@ -181,6 +459,14 @@ public:
 
                 availableMem += pitchInts * num * sizeof(unsigned int);
             }
+
+            auto deallocVector = [](auto& vec){
+                using W = typename std::remove_reference<decltype(vec)>::type;
+                W tmp{};
+                vec.swap(tmp);
+            };
+
+            deallocVector(sequenceStorage);
 
             hasShrinkedSequences = true;
             std::cerr << "shrinked sequences\n";
@@ -218,6 +504,13 @@ public:
                 availableMem += pitchBytes * num;
             }
 
+            auto deallocVector = [](auto& vec){
+                using W = typename std::remove_reference<decltype(vec)>::type;
+                W tmp{};
+                vec.swap(tmp);
+            };
+            deallocVector(qualityStorage);
+
             hasShrinkedQualities = true;
             std::cerr << "shrinked qualities\n";
 
@@ -227,177 +520,7 @@ public:
         }
     }
 
-    void gatherSequenceData(
-        const read_number* readIds,
-        int numReadIds,
-        unsigned int* destination,
-        int destinationPitchElements
-    ) const noexcept{
-
-        if(numReadIds == 0){
-            return;
-        }
-
-        constexpr int prefetch_distance = 4;
-
-        if(hasShrinkedSequences){
-            for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
-                const int index = i;
-                const std::size_t nextReadId = readIds[index];
-                const unsigned int* const nextData = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * nextReadId;
-                __builtin_prefetch(nextData, 0, 0);
-            }
-
-            std::size_t destinationPitchBytes = destinationPitchElements * sizeof(unsigned int);
-
-            for(int i = 0; i < numReadIds; i++){
-                if(i + prefetch_distance < numReadIds) {
-                    const int index = i + prefetch_distance;
-                    const std::size_t nextReadId = readIds[index];
-                    const unsigned int* const nextData = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * nextReadId;
-                    __builtin_prefetch(nextData, 0, 0);
-                }
-
-                const std::size_t readId = readIds[i];
-
-                const unsigned int* const data = shrinkedEncodedSequences.data() + encodedSequencePitchInInts * readId;
-
-                unsigned int* const destData = (unsigned int*)(((char*)destination) + destinationPitchBytes * i);
-                std::copy_n(data, encodedSequencePitchInInts, destData);
-            }
-        }else{
-
-            for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
-                const int index = i;
-                const std::size_t nextReadId = readIds[index];
-                const unsigned int* const nextData = getPointerToSequenceRow(nextReadId);
-                __builtin_prefetch(nextData, 0, 0);
-            }
-
-            std::size_t destinationPitchBytes = destinationPitchElements * sizeof(unsigned int);
-
-            for(int i = 0; i < numReadIds; i++){
-                if(i + prefetch_distance < numReadIds) {
-                    const int index = i + prefetch_distance;
-                    const std::size_t nextReadId = readIds[index];
-                    const unsigned int* const nextData = getPointerToSequenceRow(nextReadId);
-                    __builtin_prefetch(nextData, 0, 0);
-                }
-
-                const std::size_t readId = readIds[i];
-                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
-                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
-
-                const unsigned int* const data = sequenceStorage[chunkIndex].encodedSequences.data()
-                    + rowInChunk * sequenceStorage[chunkIndex].encodedSequencePitchInInts;
-
-                unsigned int* const destData = (unsigned int*)(((char*)destination) + destinationPitchBytes * i);
-                std::copy_n(data, sequenceStorage[chunkIndex].encodedSequencePitchInInts, destData);
-            }
-
-        }
-    }
-
-    void gatherQualities(
-        const read_number* readIds,
-        int numReadIds,
-        char* destination,
-        int destinationPitchElements
-    ) const noexcept{
-
-        if(numReadIds == 0){
-            return;
-        }
-
-        constexpr int prefetch_distance = 4;
-
-        if(hasShrinkedQualities){
-            for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
-                const int index = i;
-                const std::size_t nextReadId = readIds[index];
-                const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
-                __builtin_prefetch(nextData, 0, 0);
-            }
-
-            std::size_t destinationPitchBytes = destinationPitchElements * sizeof(char);
-
-            for(int i = 0; i < numReadIds; i++){
-                if(i + prefetch_distance < numReadIds) {
-                    const int index = i + prefetch_distance;
-                    const std::size_t nextReadId = readIds[index];
-                    const char* const nextData = shrinkedQualities.data() + qualityPitchInBytes * nextReadId;
-                    __builtin_prefetch(nextData, 0, 0);
-                }
-
-                const std::size_t readId = readIds[i];
-
-                const char* const data = shrinkedQualities.data() + qualityPitchInBytes * readId;
-
-                char* const destData = (char*)(((char*)destination) + destinationPitchBytes * i);
-                std::copy_n(data, qualityPitchInBytes, destData);
-            }
-        }else{
-
-            for(int i = 0; i < numReadIds && i < prefetch_distance; ++i) {
-                const int index = i;
-                const std::size_t nextReadId = readIds[index];
-                const char* const nextData = getPointerToQualityRow(nextReadId);
-                __builtin_prefetch(nextData, 0, 0);
-            }
-
-            std::size_t destinationPitchBytes = destinationPitchElements * sizeof(char);
-
-            for(int i = 0; i < numReadIds; i++){
-                if(i + prefetch_distance < numReadIds) {
-                    const int index = i + prefetch_distance;
-                    const std::size_t nextReadId = readIds[index];
-                    const char* const nextData = getPointerToQualityRow(nextReadId);
-                    __builtin_prefetch(nextData, 0, 0);
-                }
-
-                const std::size_t readId = readIds[i];
-                const std::size_t chunkIndex = getChunkIndexOfRow(readId);
-                const std::size_t rowInChunk = getRowIndexInChunk(chunkIndex, readId);
-
-                const char* const data = qualityStorage[chunkIndex].qualities.data()
-                    + rowInChunk * qualityStorage[chunkIndex].qualityPitchInBytes;
-
-                char* const destData = (char*)(((char*)destination) + destinationPitchBytes * i);
-                std::copy_n(data, qualityStorage[chunkIndex].qualityPitchInBytes, destData);
-            }
-
-        }
-    }
-
-
-    void gatherSequenceLengths(
-            const read_number* readIds,
-            int numReadIds,
-            int* destination,
-            int destinationPitchElements = 1) const noexcept{
-
-        for(int i = 0; i < numReadIds; i++){
-            int* const destLength = destination + i * destinationPitchElements;
-            *destLength = lengthStorage.getLength(readIds[i]);
-        }            
-    }
-
-
-    void areSequencesAmbiguous(
-        /*Handle& handle,*/
-        bool* result, 
-        const read_number* readIds, 
-        int numSequences
-    ) const {
-
-        if(numSequences > 0 && getNumberOfReadsWithN() > 0){
-
-            for(int i = 0; i < numSequences; i++){
-                auto it = ambigReadIds.find(readIds[i]);
-                result[i] = (it != ambigReadIds.end());
-            }
-        }
-    }
+   
 
     void printAmbig(){
 
@@ -409,9 +532,7 @@ public:
         std::cerr << "\n";
     }
 
-    std::int64_t getNumberOfReadsWithN() const{
-        return ambigReadIds.size();
-    }
+    
 
 private:
     std::size_t getChunkIndexOfRow(std::size_t row) const noexcept{
@@ -462,6 +583,10 @@ private:
     bool hasShrinkedQualities = false;
     std::size_t qualityPitchInBytes{};
     std::vector<char> shrinkedQualities{};
+
+    mutable int counter = 0;
+    mutable SharedMutex sharedmutex{};
+    //mutable std::vector<std::unique_ptr<TempData>> tempdataVector{};
 };
 
 
