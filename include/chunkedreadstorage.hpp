@@ -30,34 +30,8 @@ namespace care{
 
 class ChunkedReadStorage : public CpuReadStorage{
 public:
-    struct StoredEncodedSequences{
-        int fileId = 0;
-        int batchId = 0;
-        std::size_t encodedSequencePitchInInts = 0;
-        std::vector<unsigned int> encodedSequences{};
-    };
-
-    struct StoredSequenceLengths{
-        int fileId = 0;
-        int batchId = 0;
-        std::vector<int> sequenceLengths{};
-    };
-
-    struct StoredQualities{
-        int fileId = 0;
-        int batchId = 0;
-        std::size_t qualityPitchInBytes = 0;
-        std::vector<char> qualities{};
-    };
-
-    struct StoredAmbigIds{
-        int fileId = 0;
-        int batchId = 0;
-        std::vector<read_number> ids{};
-    };
-public:
     ChunkedReadStorage(bool hasQualityScores_ = false) : hasQualityScores(hasQualityScores_){
-
+        offsetsPrefixSum.emplace_back(0);
     }
 
     ChunkedReadStorage(const ChunkedReadStorage&) = delete;
@@ -66,12 +40,51 @@ public:
     ChunkedReadStorage(ChunkedReadStorage&&) = default;
     ChunkedReadStorage& operator=(ChunkedReadStorage&&) = default;
 
+    void appendConsecutiveReads(
+        read_number firstReadId,
+        int numReads,
+        std::vector<int> sequenceLengths,
+        std::vector<unsigned int> encodedSequences,
+        std::size_t sequencePitchInInts,
+        std::vector<char> qualities,
+        std::size_t qualityPitchBytes
+    ){
+        StoredEncodedSequencesAppend s;
+        s.firstReadId = firstReadId;
+        s.numReads = numReads;
+        s.data.encodedSequencePitchInInts = sequencePitchInInts;
+        s.data.encodedSequences = std::move(encodedSequences);
+
+        sequenceStorageAppend.emplace_back(std::move(s));
+
+        StoredSequenceLengthsAppend l;
+        l.firstReadId = firstReadId;
+        l.numReads = numReads;
+        l.sequenceLengths = std::move(sequenceLengths);
+
+        lengthdataAppend.emplace_back(std::move(l));
+
+        if(canUseQualityScores()){
+
+            StoredQualitiesAppend q;
+            q.firstReadId = firstReadId;
+            q.numReads = numReads;
+            q.data.qualityPitchInBytes = qualityPitchBytes;
+            q.data.qualities = std::move(qualities);
+
+            qualityStorageAppend.emplace_back(std::move(q));
+        }
+
+        totalNumberOfReads += numReads;        
+    }
+
+    void appendAmbiguousReadIds(
+        const std::vector<read_number>& ambiguousIds
+    ){
+        ambigReadIds.insert(ambiguousIds.begin(), ambiguousIds.end());
+    }
+
     void init(
-        std::vector<std::size_t>&& numReadsPerFile_,
-        std::vector<StoredEncodedSequences>&& sequenceStorage_,
-        std::vector<StoredSequenceLengths>&& lengthStorage_,
-        std::vector<StoredQualities>&& qualityStorage_,
-        std::vector<StoredAmbigIds>&& ambigIds_,
         std::size_t memoryLimitBytes
     ){
         auto deallocVector = [](auto& vec){
@@ -80,74 +93,66 @@ public:
             vec.swap(tmp);
         };
 
-        numReadsPerFile = std::move(numReadsPerFile_);
-        sequenceStorage = std::move(sequenceStorage_);
-        std::vector<StoredSequenceLengths> lengthdata = std::move(lengthStorage_);
-        qualityStorage = std::move(qualityStorage_);
-
         if(!canUseQualityScores()){
             deallocVector(qualityStorage);
         }
 
-        std::vector<StoredAmbigIds> ambigStorage = std::move(ambigIds_);
 
-        auto lessThanFileAndBatch = [](const auto& l, const auto& r){
-            if(l.fileId < r.fileId) return true;
-            if(l.fileId > r.fileId) return false;
-            return l.batchId < r.batchId;
+        auto segmentLessThan = [](const auto& l, const auto& r){
+            return l.firstReadId < r.firstReadId;            
         };
 
-        std::sort(sequenceStorage.begin(), sequenceStorage.end(), lessThanFileAndBatch);
-        std::sort(lengthdata.begin(), lengthdata.end(), lessThanFileAndBatch);
+        std::sort(sequenceStorageAppend.begin(), sequenceStorageAppend.end(), segmentLessThan);
+        std::sort(lengthdataAppend.begin(), lengthdataAppend.end(), segmentLessThan);
         if(canUseQualityScores()){
-            std::sort(qualityStorage.begin(), qualityStorage.end(), lessThanFileAndBatch);
+            std::sort(qualityStorageAppend.begin(), qualityStorageAppend.end(), segmentLessThan);
         }
-        std::sort(ambigStorage.begin(), ambigStorage.end(), lessThanFileAndBatch);
 
-        offsetsPrefixSum.reserve(sequenceStorage.size() + 1);
-        offsetsPrefixSum.emplace_back(0);
+        const std::size_t chunksTotal = sequenceStorageAppend.size();
+        sequenceStorage.reserve(chunksTotal);
+        if(canUseQualityScores()){
+            qualityStorage.reserve(chunksTotal);
+        }
+
+        for(std::size_t chunk = 0; chunk < sequenceStorageAppend.size(); chunk++){
+            offsetsPrefixSum.emplace_back(offsetsPrefixSum.back() + sequenceStorageAppend[chunk].numReads);
+
+            sequenceStorage.emplace_back(std::move(sequenceStorageAppend[chunk].data));
+            if(canUseQualityScores()){
+                qualityStorage.emplace_back(std::move(qualityStorageAppend[chunk].data));
+            }
+        }
 
         int minLength = std::numeric_limits<int>::max();
         int maxLength = 0;
 
-        for(const auto& s : lengthdata){
-            std::size_t num = offsetsPrefixSum.back() + s.sequenceLengths.size();
-            offsetsPrefixSum.emplace_back(num);
-
+        for(const auto& s : lengthdataAppend){
             auto minmax = std::minmax_element(s.sequenceLengths.begin(), s.sequenceLengths.end());
             minLength = std::min(*minmax.first, minLength);
             maxLength = std::max(*minmax.second, maxLength);
         }
 
-        lengthStorage = std::move(LengthStore<std::uint32_t>(minLength, maxLength, getNumSequences()));
+        lengthStorage = std::move(LengthStore<std::uint32_t>(minLength, maxLength, totalNumberOfReads));
 
-        for(std::size_t chunk = 0; chunk < lengthdata.size(); chunk++){
-            const auto& s = lengthdata[chunk];
+        for(std::size_t chunk = 0; chunk < lengthdataAppend.size(); chunk++){
+            const auto& s = lengthdataAppend[chunk];
             const std::size_t offset = offsetsPrefixSum[chunk];
             for(std::size_t i = 0; i < s.sequenceLengths.size(); i++){
                 const std::size_t index = offset + i;
                 lengthStorage.setLength(index, s.sequenceLengths[i]);
             }
         }
+        deallocVector(lengthdataAppend);
+        deallocVector(sequenceStorageAppend);
+        deallocVector(qualityStorageAppend);
 
-        for(auto& s : ambigStorage){
-            std::size_t offset = 0;
-            for(int i = 0; i < s.fileId; i++){
-                offset += numReadsPerFile[i];
-            }
-            ambigReadIdsPerFile[s.fileId].insert(s.ids.begin(), s.ids.end());
-            for(auto& id : s.ids){
-                id += offset;
-            }
 
-            ambigReadIds.insert(s.ids.begin(), s.ids.end());
+
+        compactSequences(memoryLimitBytes);
+
+        if(canUseQualityScores()){
+            compactQualities(memoryLimitBytes);
         }
-
-        // compactSequences(memoryLimitBytes);
-
-        // if(canUseQualityScores()){
-        //     compactQualities(memoryLimitBytes);
-        // }
 
     }
 
@@ -351,7 +356,6 @@ public: //inherited interface
         MemoryUsage result{};
         result += lengthStorage.getMemoryInfo();
 
-        result.host += sizeof(std::size_t) * numReadsPerFile.capacity();
         result.host += sizeof(std::size_t) * offsetsPrefixSum.capacity();
         result.host += sizeof(unsigned int) * shrinkedEncodedSequences.capacity();
         result.host += sizeof(char) * shrinkedQualities.capacity();
@@ -360,9 +364,6 @@ public: //inherited interface
         result.host += sizeof(StoredQualities) * qualityStorage.capacity();
         result.host += sizeof(read_number) * ambigReadIds.size();
 
-        for(const auto& p : ambigReadIdsPerFile){
-            result.host += sizeof(read_number) * p.second.size();
-        }
         for(const auto& s : sequenceStorage){
             result.host += sizeof(unsigned int) * s.encodedSequences.capacity();
         }
@@ -379,7 +380,7 @@ public: //inherited interface
     }
 
     read_number getNumberOfReads() const override{
-        return std::accumulate(numReadsPerFile.begin(), numReadsPerFile.end(), std::size_t(0));
+        return totalNumberOfReads;
     }
 
     bool canUseQualityScores() const override{
@@ -403,11 +404,9 @@ public: //inherited interface
 
         lengthStorage.destroy();
 
-        deallocVector(numReadsPerFile);
         deallocVector(offsetsPrefixSum);
         deallocVector(sequenceStorage);
         deallocVector(qualityStorage);
-        deallocVector(ambigReadIdsPerFile);
         deallocVector(ambigReadIds);
         deallocVector(shrinkedEncodedSequences);
         deallocVector(shrinkedQualities);
@@ -425,17 +424,10 @@ public: //inherited interface
 
 public:
 
-    int getNumFiles() const noexcept{
-        return numReadsPerFile.size();
-    }
-
-    std::size_t getNumSequences() const noexcept{
-        return offsetsPrefixSum.back();
-    }
 
     bool compactSequences(std::size_t& availableMem){
         std::size_t maxLength = lengthStorage.getMaxLength();
-        std::size_t numSequences = getNumSequences();
+        std::size_t numSequences = totalNumberOfReads;
 
         encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
 
@@ -479,7 +471,7 @@ public:
 
     bool compactQualities(std::size_t& availableMem){
         std::size_t maxLength = lengthStorage.getMaxLength();
-        std::size_t numSequences = getNumSequences();
+        std::size_t numSequences = totalNumberOfReads;
 
         qualityPitchInBytes = maxLength;
 
@@ -566,15 +558,46 @@ private:
         return data;
     }
 
-    bool hasQualityScores{};
+    struct StoredEncodedSequences{
+        std::size_t encodedSequencePitchInInts = 0;
+        std::vector<unsigned int> encodedSequences{};
+    };
 
-    std::vector<std::size_t> numReadsPerFile{};
+    struct StoredQualities{
+        std::size_t qualityPitchInBytes = 0;
+        std::vector<char> qualities{};
+    };
+
+    struct StoredEncodedSequencesAppend{
+        read_number firstReadId = 0;
+        int numReads = 0;
+        StoredEncodedSequences data;
+    };
+
+    struct StoredSequenceLengthsAppend{
+        read_number firstReadId = 0;
+        int numReads = 0;
+        std::vector<int> sequenceLengths{};
+    };
+
+    struct StoredQualitiesAppend{
+        read_number firstReadId = 0;
+        int numReads = 0;
+        StoredQualities data;
+    };
+
+    bool hasQualityScores{};
+    std::size_t totalNumberOfReads{};
+
     std::vector<std::size_t> offsetsPrefixSum{};
     std::vector<StoredEncodedSequences> sequenceStorage{};
     LengthStore<std::uint32_t> lengthStorage{};
     std::vector<StoredQualities> qualityStorage{};
-    std::map<int, std::set<read_number>> ambigReadIdsPerFile{};
     std::unordered_set<read_number> ambigReadIds{};
+
+    std::vector<StoredSequenceLengthsAppend> lengthdataAppend{};
+    std::vector<StoredEncodedSequencesAppend> sequenceStorageAppend{};
+    std::vector<StoredQualitiesAppend> qualityStorageAppend{};
 
     bool hasShrinkedSequences = false;
     std::size_t encodedSequencePitchInInts{};
