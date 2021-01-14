@@ -33,331 +33,342 @@ namespace care{
 std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
-    const std::vector<std::string>& inputfiles,
+    FileOptions fileOptions,
     bool useQualityScores
 ){
-    const bool showProgress = runtimeOptions.showProgress;
 
-    auto showProgressFunc = [showProgress](auto totalCount, auto seconds){
-        if(showProgress){
-            std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
-                            << seconds << " seconds." << std::endl;
-        }
-    };
+    if(fileOptions.load_binary_reads_from != ""){
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
 
-    auto updateShowProgressInterval = [](auto duration){
-        return duration * 2;
-    };
+        readStorage->loadFromFile(fileOptions.load_binary_reads_from);
+        std::cerr << "Loaded readstorage from file " << fileOptions.load_binary_reads_from << "\n";
 
-    ProgressThread<std::size_t> progressThread(
-        std::numeric_limits<std::size_t>::max(), 
-        showProgressFunc, 
-        updateShowProgressInterval
-    );
-            
+        return readStorage;
+    }else{
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
 
-    auto preprocessSequence = [&](std::string& sequence, int& Ncount){
+        const bool showProgress = runtimeOptions.showProgress;
 
-        auto isValidBase = [](char c){
-            constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
-            return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
-        };
-
-        const int numundeterminedBasesInSequence = std::count_if(sequence.begin(), sequence.end(), [&](char c){
-            return !isValidBase(c);
-        });
-
-        constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
-
-        for(auto& c : sequence){
-            if(c == 'a') c = 'A';
-            else if(c == 'c') c = 'C';
-            else if(c == 'g') c = 'G';
-            else if(c == 't') c = 'T';
-            else if(!isValidBase(c)){
-                c = bases[Ncount];
-                Ncount = (Ncount + 1) % 4;
-            }
-        }
-
-        return numundeterminedBasesInSequence > 0;
-    };
-
-
-    struct BatchFromFile{
-        int validItems = 0;
-        read_number firstReadId = 0;
-        std::vector<std::string> sequences{};
-        std::vector<std::string> qualities{};
-    };
-
-   
-    SimpleConcurrentQueue<BatchFromFile*> freeBatchFromFile;
-    SimpleConcurrentQueue<BatchFromFile*> unprocessedBatchFromFile;
-
-    constexpr int fileParserMaxBatchsize = 65536;
-
-    auto fileParserThreadFunction = [&](const std::string& filename, int fileId, std::size_t readIdOffset){
-        int batchId = 0;
-
-        BatchFromFile* sbatch = nullptr;
-
-        auto initbatch = [&](){
-            sbatch = freeBatchFromFile.pop();
-            sbatch->validItems = 0;
-            sbatch->firstReadId = readIdOffset;
-            sbatch->sequences.resize(fileParserMaxBatchsize);
-            if(useQualityScores){
-                sbatch->qualities.resize(fileParserMaxBatchsize);
+        auto showProgressFunc = [showProgress](auto totalCount, auto seconds){
+            if(showProgress){
+                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                << seconds << " seconds." << std::endl;
             }
         };
 
-        initbatch();
+        auto updateShowProgressInterval = [](auto duration){
+            return duration * 2;
+        };
 
-        batchId++;
+        ProgressThread<std::size_t> progressThread(
+            std::numeric_limits<std::size_t>::max(), 
+            showProgressFunc, 
+            updateShowProgressInterval
+        );
+                
 
-        std::size_t totalNumberOfReads = 0;
+        auto preprocessSequence = [&](std::string& sequence, int& Ncount){
 
-        forEachReadInFile(
-            filename,
-            [&](auto readnum, auto& read){
+            auto isValidBase = [](char c){
+                constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
+                return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+            };
 
-                std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
+            const int numundeterminedBasesInSequence = std::count_if(sequence.begin(), sequence.end(), [&](char c){
+                return !isValidBase(c);
+            });
+
+            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
+
+            for(auto& c : sequence){
+                if(c == 'a') c = 'A';
+                else if(c == 'c') c = 'C';
+                else if(c == 'g') c = 'G';
+                else if(c == 't') c = 'T';
+                else if(!isValidBase(c)){
+                    c = bases[Ncount];
+                    Ncount = (Ncount + 1) % 4;
+                }
+            }
+
+            return numundeterminedBasesInSequence > 0;
+        };
+
+
+        struct BatchFromFile{
+            int validItems = 0;
+            read_number firstReadId = 0;
+            std::vector<std::string> sequences{};
+            std::vector<std::string> qualities{};
+        };
+
+    
+        SimpleConcurrentQueue<BatchFromFile*> freeBatchFromFile;
+        SimpleConcurrentQueue<BatchFromFile*> unprocessedBatchFromFile;
+
+        constexpr int fileParserMaxBatchsize = 65536;
+
+        auto fileParserThreadFunction = [&](const std::string& filename, int fileId, std::size_t readIdOffset){
+            int batchId = 0;
+
+            BatchFromFile* sbatch = nullptr;
+
+            auto initbatch = [&](){
+                sbatch = freeBatchFromFile.pop();
+                sbatch->validItems = 0;
+                sbatch->firstReadId = readIdOffset;
+                sbatch->sequences.resize(fileParserMaxBatchsize);
                 if(useQualityScores){
-                    std::swap(sbatch->qualities[sbatch->validItems], read.quality);
+                    sbatch->qualities.resize(fileParserMaxBatchsize);
                 }
-                sbatch->validItems++;
+            };
 
-                if(sbatch->validItems >= fileParserMaxBatchsize){
-                    unprocessedBatchFromFile.push(sbatch);
+            initbatch();
 
-                    readIdOffset += sbatch->validItems;
+            batchId++;
 
-                    initbatch();
+            std::size_t totalNumberOfReads = 0;
 
-                    batchId++;
+            forEachReadInFile(
+                filename,
+                [&](auto readnum, auto& read){
+
+                    std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
+                    if(useQualityScores){
+                        std::swap(sbatch->qualities[sbatch->validItems], read.quality);
+                    }
+                    sbatch->validItems++;
+
+                    if(sbatch->validItems >= fileParserMaxBatchsize){
+                        unprocessedBatchFromFile.push(sbatch);
+
+                        readIdOffset += sbatch->validItems;
+
+                        initbatch();
+
+                        batchId++;
+                    }
+
+                    totalNumberOfReads++;
                 }
+            );        
 
-                totalNumberOfReads++;
-            }
-        );        
+            sbatch->sequences.resize(sbatch->validItems);
+            sbatch->qualities.resize(sbatch->validItems);
+            unprocessedBatchFromFile.push(sbatch);
 
-        sbatch->sequences.resize(sbatch->validItems);
-        sbatch->qualities.resize(sbatch->validItems);
-        unprocessedBatchFromFile.push(sbatch);
-
-        return totalNumberOfReads;
-    };
-
-
-    struct EncodedBatch{
-        int validItems = 0;
-        read_number firstReadId = 0;
-        std::size_t encodedSequencePitchInInts = 0;
-        std::size_t qualityPitchInBytes = 0;
-        std::vector<int> sequenceLengths{};
-        std::vector<unsigned int> encodedSequences{};
-        std::vector<char> qualities{};
-        std::vector<read_number> ambiguousReadIds{};
-    };
-
-    SimpleConcurrentQueue<EncodedBatch*> freeEncodedBatches;
-    SimpleConcurrentQueue<EncodedBatch*> unprocessedEncodedBatches;
-
-    auto encoderThreadFunction = [&](){
-        BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
-        EncodedBatch* encbatch = nullptr;
-
-        auto initEncBatch = [&](auto sequencepitchInInts, auto qualitypitchInBytes){
-            encbatch = freeEncodedBatches.pop();
-            assert(encbatch != nullptr);
-
-            encbatch->validItems = sbatch->validItems;
-            encbatch->firstReadId = sbatch->firstReadId;
-            encbatch->encodedSequencePitchInInts = sequencepitchInInts;
-            encbatch->sequenceLengths.resize(encbatch->validItems);
-            encbatch->encodedSequences.resize(encbatch->validItems * sequencepitchInInts);
-            if(useQualityScores){
-                encbatch->qualityPitchInBytes = qualitypitchInBytes;
-                encbatch->qualities.resize(encbatch->validItems * qualitypitchInBytes);
-            }
-            encbatch->ambiguousReadIds.clear();
+            return totalNumberOfReads;
         };
 
-        while(sbatch != nullptr){
-            int maxLength = 0;
-            int Ncount = 0;
 
-            for(int i = 0; i < sbatch->validItems; i++){
-                const int length = sbatch->sequences[i].length();
-                maxLength = std::max(maxLength, length);
-            }
+        struct EncodedBatch{
+            int validItems = 0;
+            read_number firstReadId = 0;
+            std::size_t encodedSequencePitchInInts = 0;
+            std::size_t qualityPitchInBytes = 0;
+            std::vector<int> sequenceLengths{};
+            std::vector<unsigned int> encodedSequences{};
+            std::vector<char> qualities{};
+            std::vector<read_number> ambiguousReadIds{};
+        };
 
-            const std::size_t sequencepitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
-            const std::size_t qualitypitchInBytes = maxLength;
+        SimpleConcurrentQueue<EncodedBatch*> freeEncodedBatches;
+        SimpleConcurrentQueue<EncodedBatch*> unprocessedEncodedBatches;
 
-            initEncBatch(sequencepitchInInts, qualitypitchInBytes);
+        auto encoderThreadFunction = [&](){
+            BatchFromFile* sbatch = unprocessedBatchFromFile.pop();
+            EncodedBatch* encbatch = nullptr;
 
-            for(int i = 0; i < sbatch->validItems; i++){
-                const int length = sbatch->sequences[i].length();
-                encbatch->sequenceLengths[i] = length;
+            auto initEncBatch = [&](auto sequencepitchInInts, auto qualitypitchInBytes){
+                encbatch = freeEncodedBatches.pop();
+                assert(encbatch != nullptr);
 
-                bool isAmbig = preprocessSequence(sbatch->sequences[i], Ncount);
-                if(isAmbig){
-                    const read_number readId = sbatch->firstReadId + i;
-                    encbatch->ambiguousReadIds.emplace_back(readId);
+                encbatch->validItems = sbatch->validItems;
+                encbatch->firstReadId = sbatch->firstReadId;
+                encbatch->encodedSequencePitchInInts = sequencepitchInInts;
+                encbatch->sequenceLengths.resize(encbatch->validItems);
+                encbatch->encodedSequences.resize(encbatch->validItems * sequencepitchInInts);
+                if(useQualityScores){
+                    encbatch->qualityPitchInBytes = qualitypitchInBytes;
+                    encbatch->qualities.resize(encbatch->validItems * qualitypitchInBytes);
+                }
+                encbatch->ambiguousReadIds.clear();
+            };
+
+            while(sbatch != nullptr){
+                int maxLength = 0;
+                int Ncount = 0;
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const int length = sbatch->sequences[i].length();
+                    maxLength = std::max(maxLength, length);
                 }
 
-                SequenceHelpers::encodeSequence2Bit(
-                    encbatch->encodedSequences.data() + i * sequencepitchInInts,
-                    sbatch->sequences[i].c_str(),
-                    length
-                );
+                const std::size_t sequencepitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maxLength);
+                const std::size_t qualitypitchInBytes = maxLength;
 
-                if(useQualityScores){
-                    std::copy(
-                        sbatch->qualities[i].begin(),
-                        sbatch->qualities[i].end(),
-                        encbatch->qualities.data() + i * qualitypitchInBytes
+                initEncBatch(sequencepitchInInts, qualitypitchInBytes);
+
+                for(int i = 0; i < sbatch->validItems; i++){
+                    const int length = sbatch->sequences[i].length();
+                    encbatch->sequenceLengths[i] = length;
+
+                    bool isAmbig = preprocessSequence(sbatch->sequences[i], Ncount);
+                    if(isAmbig){
+                        const read_number readId = sbatch->firstReadId + i;
+                        encbatch->ambiguousReadIds.emplace_back(readId);
+                    }
+
+                    SequenceHelpers::encodeSequence2Bit(
+                        encbatch->encodedSequences.data() + i * sequencepitchInInts,
+                        sbatch->sequences[i].c_str(),
+                        length
+                    );
+
+                    if(useQualityScores){
+                        std::copy(
+                            sbatch->qualities[i].begin(),
+                            sbatch->qualities[i].end(),
+                            encbatch->qualities.data() + i * qualitypitchInBytes
+                        );
+                    }
+                    
+                    encbatch->sequenceLengths[i] = length;
+                }
+
+                freeBatchFromFile.push(sbatch);
+                unprocessedEncodedBatches.push(encbatch);           
+
+                sbatch = unprocessedBatchFromFile.pop();
+            }
+        };
+
+        auto inserterThreadFunction = [&](){
+            EncodedBatch* sbatch = unprocessedEncodedBatches.pop();
+
+            while(sbatch != nullptr){
+                const int numSequences = sbatch->validItems;
+
+                if(sbatch->ambiguousReadIds.size() > 0){
+                    readStorage->appendAmbiguousReadIds(
+                        sbatch->ambiguousReadIds
                     );
                 }
-                
-                encbatch->sequenceLengths[i] = length;
-            }
 
-            freeBatchFromFile.push(sbatch);
-            unprocessedEncodedBatches.push(encbatch);           
-
-            sbatch = unprocessedBatchFromFile.pop();
-        }
-    };
-
-    
-    std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
-
-    auto inserterThreadFunction = [&](){
-        EncodedBatch* sbatch = unprocessedEncodedBatches.pop();
-
-        while(sbatch != nullptr){
-            const int numSequences = sbatch->validItems;
-
-            if(sbatch->ambiguousReadIds.size() > 0){
-                readStorage->appendAmbiguousReadIds(
-                    sbatch->ambiguousReadIds
+                readStorage->appendConsecutiveReads(
+                    sbatch->firstReadId,
+                    sbatch->validItems,
+                    std::move(sbatch->sequenceLengths),
+                    std::move(sbatch->encodedSequences),
+                    sbatch->encodedSequencePitchInInts,
+                    std::move(sbatch->qualities),
+                    sbatch->qualityPitchInBytes
                 );
-            }
 
-            readStorage->appendConsecutiveReads(
-                sbatch->firstReadId,
-                sbatch->validItems,
-                std::move(sbatch->sequenceLengths),
-                std::move(sbatch->encodedSequences),
-                sbatch->encodedSequencePitchInInts,
-                std::move(sbatch->qualities),
-                sbatch->qualityPitchInBytes
+                progressThread.addProgress(numSequences);
+
+                freeEncodedBatches.push(sbatch);
+                sbatch = unprocessedEncodedBatches.pop();
+            }
+                    
+        };
+
+
+
+        constexpr int numParsers = 1;
+        int numEncoders = 4;
+        int numInserters = 1;
+
+        const int numFilebatches = numParsers + numEncoders;
+
+        std::vector<BatchFromFile> batchesFromFile(numFilebatches);
+
+        for(int i = 0; i < numFilebatches; i++){
+            freeBatchFromFile.push(&batchesFromFile[i]);
+        }
+
+        const int numEncodedBatches = numEncoders + numInserters;
+
+        std::vector<EncodedBatch> encodedBatches(numEncodedBatches);
+
+        for(int i = 0; i < numEncodedBatches; i++){
+            freeEncodedBatches.push(&encodedBatches[i]);
+        }
+
+        std::vector<std::size_t> numReadsPerFile;
+        std::vector<std::future<void>> encoderFutures;
+        std::vector<std::future<void>> inserterFutures;
+        
+        for(int i = 0; i < numEncoders; i++){
+            encoderFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    encoderThreadFunction
+                )
+            );
+        }
+
+        for(int i = 0; i < numInserters; i++){
+            inserterFutures.emplace_back(
+                std::async(
+                    std::launch::async,
+                    inserterThreadFunction
+                )
+            );
+        }
+
+        std::size_t totalNumReads = 0;
+
+        const int numInputFiles = fileOptions.inputfiles.size();
+
+        for(int i = 0; i < numInputFiles; i++){
+            std::string inputfile = fileOptions.inputfiles[i];
+
+            std::future<std::size_t> future = std::async(
+                std::launch::async,
+                fileParserThreadFunction,
+                std::move(inputfile), i, totalNumReads
             );
 
-            progressThread.addProgress(numSequences);
+            std::size_t numReads = future.get();
+            totalNumReads += numReads;
 
-            freeEncodedBatches.push(sbatch);
-            sbatch = unprocessedEncodedBatches.pop();
+            numReadsPerFile.emplace_back(numReads);
         }
-                
-    };
 
+        //parsing done. flush queues to exit other threads
 
+        for(int i = 0; i < numEncoders; i++){
+            unprocessedBatchFromFile.push(nullptr);      
+        }
 
-    constexpr int numParsers = 1;
-    int numEncoders = 4;
-    int numInserters = 1;
+        for(auto& f : encoderFutures){
+            f.wait();
+        }
 
-    const int numFilebatches = numParsers + numEncoders;
+        for(int i = 0; i < numInserters; i++){
+            unprocessedEncodedBatches.push(nullptr);
+        }
+        
+        for(auto& f : inserterFutures){
+            f.wait();
+        }
+        
+        progressThread.finished();
+        if(showProgress){
+            std::cout << "\n";
+        }
 
-    std::vector<BatchFromFile> batchesFromFile(numFilebatches);
-
-    for(int i = 0; i < numFilebatches; i++){
-        freeBatchFromFile.push(&batchesFromFile[i]);
-    }
-
-    const int numEncodedBatches = numEncoders + numInserters;
-
-    std::vector<EncodedBatch> encodedBatches(numEncodedBatches);
-
-    for(int i = 0; i < numEncodedBatches; i++){
-        freeEncodedBatches.push(&encodedBatches[i]);
-    }
-
-    std::vector<std::size_t> numReadsPerFile;
-    std::vector<std::future<void>> encoderFutures;
-    std::vector<std::future<void>> inserterFutures;
-    
-    for(int i = 0; i < numEncoders; i++){
-        encoderFutures.emplace_back(
-            std::async(
-                std::launch::async,
-                encoderThreadFunction
-            )
-        );
-    }
-
-    for(int i = 0; i < numInserters; i++){
-        inserterFutures.emplace_back(
-            std::async(
-                std::launch::async,
-                inserterThreadFunction
-            )
-        );
-    }
-
-    std::size_t totalNumReads = 0;
-
-    for(int i = 0; i < int(inputfiles.size()); i++){
-        std::string inputfile = inputfiles[i];
-
-        std::future<std::size_t> future = std::async(
-            std::launch::async,
-            fileParserThreadFunction,
-            std::move(inputfile), i, totalNumReads
+        helpers::CpuTimer footimer("init readstorage after construction");
+        
+        readStorage->appendingFinished(
+            memoryOptions.memoryTotalLimit
         );
 
-        std::size_t numReads = future.get();
-        totalNumReads += numReads;
+        footimer.print();
 
-        numReadsPerFile.emplace_back(numReads);
+        return readStorage;
     }
-
-    //parsing done. flush queues to exit other threads
-
-    for(int i = 0; i < numEncoders; i++){
-        unprocessedBatchFromFile.push(nullptr);      
-    }
-
-    for(auto& f : encoderFutures){
-        f.wait();
-    }
-
-    for(int i = 0; i < numInserters; i++){
-        unprocessedEncodedBatches.push(nullptr);
-    }
-    
-    for(auto& f : inserterFutures){
-        f.wait();
-    }
-    
-    progressThread.finished();
-    if(showProgress){
-        std::cout << "\n";
-    }
-
-    helpers::CpuTimer footimer("init readstorage after construction");
-    
-    readStorage->init(
-        memoryOptions.memoryTotalLimit
-    );
-
-    footimer.print();
-
-    return readStorage;
     
 }
 

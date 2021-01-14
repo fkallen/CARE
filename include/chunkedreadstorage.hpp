@@ -84,7 +84,7 @@ public:
         ambigReadIds.insert(ambiguousIds.begin(), ambiguousIds.end());
     }
 
-    void init(
+    void appendingFinished(
         std::size_t memoryLimitBytes
     ){
         auto deallocVector = [](auto& vec){
@@ -148,15 +148,255 @@ public:
 
 
 
-        compactSequences(memoryLimitBytes);
+        // compactSequences(memoryLimitBytes);
 
-        if(canUseQualityScores()){
-            compactQualities(memoryLimitBytes);
-        }
+        // if(canUseQualityScores()){
+        //     compactQualities(memoryLimitBytes);
+        // }
 
     }
 
+    void loadFromFile(const std::string& filename){
+            std::ifstream stream(filename, std::ios::binary);
+            if(!stream)
+                throw std::runtime_error("Cannot open file " + filename);
 
+            destroy();
+
+            std::size_t loaded_numreads = 0;
+            int loaded_sequenceLengthLowerBound = 0;
+            int loaded_sequenceLengthUpperBound = 0;
+            bool loaded_hasQualityScores = false;        
+
+            stream.read(reinterpret_cast<char*>(&loaded_numreads), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
+            stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
+
+            std::size_t lengthsBytes = 0;
+            std::size_t sequencesBytes = 0;      
+            std::size_t qualitiesBytes = 0;       
+            std::size_t ambigBytes = 0;
+
+            stream.read(reinterpret_cast<char*>(&lengthsBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&sequencesBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&qualitiesBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&ambigBytes), sizeof(std::size_t));
+
+            totalNumberOfReads = loaded_numreads;
+            offsetsPrefixSum = {0, totalNumberOfReads};
+            //lengthStorage = std::move(LengthStore<std::uint32_t>(loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound, totalNumberOfReads));
+            lengthStorage.readFromStream(stream);
+
+            /*
+            std::size_t pitch = encodedSequencePitchInInts;
+            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //pitch
+
+            std::size_t numelements = shrinkedEncodedSequences.size();
+            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //numdataelements
+
+            stream.write(reinterpret_cast<const char*>(shrinkedEncodedSequences.data()), numelements * sizeof(unsigned int));            
+            writtenSequenceBytes += numelements * sizeof(unsigned int); //dataelements
+
+            */
+
+
+            hasShrinkedSequences = true;
+            stream.read(reinterpret_cast<char*>(&encodedSequencePitchInInts), sizeof(std::size_t));
+            std::size_t numsequencedataelements = 0;
+            stream.read(reinterpret_cast<char*>(&numsequencedataelements), sizeof(std::size_t));
+            shrinkedEncodedSequences.resize(numsequencedataelements);
+            stream.read(reinterpret_cast<char*>(shrinkedEncodedSequences.data()), numsequencedataelements * sizeof(unsigned int));
+
+
+            if(canUseQualityScores() && loaded_hasQualityScores){
+                //std::cerr << "load qualities\n";
+
+                hasShrinkedQualities = true;
+                stream.read(reinterpret_cast<char*>(&qualityPitchInBytes), sizeof(std::size_t));
+                std::size_t numqualitydataelements = 0;
+                stream.read(reinterpret_cast<char*>(&numqualitydataelements), sizeof(std::size_t));
+                shrinkedQualities.resize(numqualitydataelements);
+                stream.read(reinterpret_cast<char*>(shrinkedQualities.data()), numqualitydataelements * sizeof(char));
+
+            }else if(canUseQualityScores() && !loaded_hasQualityScores){
+                    //std::cerr << "no q in bin file\n";
+                    throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
+            }else if(!canUseQualityScores() && loaded_hasQualityScores){
+                    //std::cerr << "skip qualities\n";
+                    stream.ignore(qualitiesBytes);
+            }else{
+                //!canUseQualityScores() && !loaded_hasQualityScores
+                //std::cerr << "no q in file, and no q required. Ok\n";
+                stream.ignore(qualitiesBytes);
+            }
+            
+
+            std::size_t numAmbigDataElements = 0;
+            stream.read(reinterpret_cast<char*>(&numAmbigDataElements), sizeof(std::size_t));
+
+            std::vector<read_number> tmpambig(numAmbigDataElements);
+            stream.read(reinterpret_cast<char*>(tmpambig.data()), numAmbigDataElements * sizeof(read_number));
+
+            ambigReadIds.insert(tmpambig.begin(), tmpambig.end());
+        }
+
+
+    void saveToFile(const std::string& filename) const{
+        std::ofstream stream(filename, std::ios::binary);
+
+        std::size_t numReads = getNumberOfReads();
+        int sequenceLengthUpperBound = getSequenceLengthUpperBound();
+        int sequenceLengthLowerBound = getSequenceLengthLowerBound();
+        bool qual = canUseQualityScores();
+
+        stream.write(reinterpret_cast<const char*>(&numReads), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&qual), sizeof(bool));
+
+        auto pos = stream.tellp();
+
+        stream.seekp(sizeof(std::size_t) * 4, std::ios_base::cur);
+
+        std::size_t lengthsBytes = lengthStorage.writeToStream(stream);
+
+        std::size_t writtenSequenceBytes = 0;
+        if(hasShrinkedSequences){
+
+            std::size_t pitch = encodedSequencePitchInInts;
+            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //pitch
+
+            std::size_t numelements = shrinkedEncodedSequences.size();
+            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //numdataelements
+
+            stream.write(reinterpret_cast<const char*>(shrinkedEncodedSequences.data()), numelements * sizeof(unsigned int));            
+            writtenSequenceBytes += numelements * sizeof(unsigned int); //dataelements
+
+            assert(numelements == getNumberOfReads() * pitch);
+        }else{
+
+            std::size_t pitch = 0;
+            for(const auto& s : sequenceStorage){
+                pitch = std::max(pitch, s.encodedSequencePitchInInts);
+            }
+            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //pitch
+
+            auto numelementspos = stream.tellp();
+            stream.seekp(sizeof(std::size_t) * 1, std::ios_base::cur);
+
+            std::size_t numelements = 0;
+
+            for(std::size_t c = 0; c < sequenceStorage.size(); c++){
+                const auto& s = sequenceStorage[c];
+                const std::size_t numsequencesInChunk = s.encodedSequences.size() / s.encodedSequencePitchInInts;
+                
+
+                if(s.encodedSequencePitchInInts == pitch){
+                    stream.write(reinterpret_cast<const char*>(s.encodedSequences.data()), s.encodedSequences.size() * sizeof(unsigned int));
+                    writtenSequenceBytes += s.encodedSequences.size() * sizeof(unsigned int); //dataelements
+                    numelements += s.encodedSequences.size();
+                }else{
+                    std::vector<unsigned int> temp(pitch);
+
+                    for(std::size_t i = 0; i < numsequencesInChunk; i++){
+                        std::copy_n(s.encodedSequences.data() + i * s.encodedSequencePitchInInts, s.encodedSequencePitchInInts, temp.begin());
+                        stream.write(reinterpret_cast<const char*>(temp.data()), temp.size() * sizeof(unsigned int));
+                        writtenSequenceBytes += temp.size() * sizeof(unsigned int); //dataelements
+                        numelements += temp.size();
+                    }
+                }
+            }
+
+            assert(numelements == getNumberOfReads() * pitch);
+
+            auto curpos = stream.tellp();
+            stream.seekp(numelementspos);
+            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
+            writtenSequenceBytes += sizeof(std::size_t); //numdataelements
+            stream.seekp(curpos);
+        }
+
+
+        std::size_t writtenQualityBytes = 0;
+        if(hasShrinkedQualities){
+
+            std::size_t pitch = qualityPitchInBytes;
+            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
+            writtenQualityBytes += sizeof(std::size_t); //pitch
+
+            std::size_t numelements = shrinkedQualities.size();
+            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
+            writtenQualityBytes += sizeof(std::size_t); //numdataelements
+
+            stream.write(reinterpret_cast<const char*>(shrinkedQualities.data()), numelements * sizeof(char));            
+            writtenQualityBytes += numelements * sizeof(char); //dataelements
+
+            assert(numelements == getNumberOfReads() * pitch);
+        }else{
+
+            std::size_t pitch = 0;
+            for(const auto& q : qualityStorage){
+                pitch = std::max(pitch, q.qualityPitchInBytes);
+            }
+            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
+            writtenQualityBytes += sizeof(std::size_t); //pitch
+
+            auto numelementspos = stream.tellp();
+            stream.seekp(sizeof(std::size_t) * 1, std::ios_base::cur);
+
+            std::size_t numelements = 0;
+
+            for(std::size_t c = 0; c < qualityStorage.size(); c++){
+                const auto& q = qualityStorage[c];
+                const std::size_t numsequencesInChunk = q.qualities.size() / q.qualityPitchInBytes;
+                
+
+                if(q.qualityPitchInBytes == pitch){
+                    stream.write(reinterpret_cast<const char*>(q.qualities.data()), q.qualities.size() * sizeof(char));
+                    writtenQualityBytes += q.qualities.size() * sizeof(char); //dataelements
+                    numelements += q.qualities.size();
+                }else{
+                    std::vector<char> temp(pitch);
+
+                    for(std::size_t i = 0; i < numsequencesInChunk; i++){
+                        std::copy_n(q.qualities.data() + i * q.qualityPitchInBytes, q.qualityPitchInBytes, temp.begin());
+                        stream.write(reinterpret_cast<const char*>(temp.data()), temp.size() * sizeof(char));
+                        writtenQualityBytes += temp.size() * sizeof(char); //dataelements
+                        numelements += temp.size();
+                    }
+                }
+            }
+
+            assert(numelements == getNumberOfReads() * pitch);
+
+            auto curpos = stream.tellp();
+            stream.seekp(numelementspos);
+            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
+            writtenQualityBytes += sizeof(std::size_t); //numdataelements
+            stream.seekp(curpos);
+        }
+
+        std::size_t numUndeterminedReads = ambigReadIds.size();
+        std::vector<read_number> ambigtemp(ambigReadIds.begin(), ambigReadIds.end());
+
+        stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
+        stream.write(reinterpret_cast<const char*>(ambigtemp.data()), numUndeterminedReads * sizeof(read_number));
+
+        std::size_t ambigBytes = sizeof(std::size_t) + numUndeterminedReads * sizeof(read_number);
+
+        stream.seekp(pos);
+        stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&writtenSequenceBytes), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&writtenQualityBytes), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&ambigBytes), sizeof(std::size_t));
+
+    }
 
 public: //inherited interface
 

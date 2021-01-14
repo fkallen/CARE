@@ -68,12 +68,16 @@ namespace care{
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
 
-        std::unique_ptr<CpuReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
+        std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,
-            fileOptions.inputfiles,
+            fileOptions,
             correctionOptions.useQualityScores
         );
+
+        if(fileOptions.save_binary_reads_to != ""){
+            cpuReadStorage->saveToFile(fileOptions.save_binary_reads_to);
+        }
 
 
 
