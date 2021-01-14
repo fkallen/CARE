@@ -91,7 +91,7 @@ void FakeGpuMinhasher::constructFromReadStorage(
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
 
     auto sequencehandle = gpuReadStorage.makeHandle();
-    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(unsigned int);
+    const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     constexpr read_number parallelReads = 1000000;
     const int numIters = SDIV(numReads, parallelReads);

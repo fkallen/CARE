@@ -99,7 +99,7 @@ namespace care{
 
             const std::uint64_t numReads = readStorage.getNumberOfReads();
             const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
-            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength) * sizeof(unsigned int);
+            const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
             const MemoryUsage memoryUsageOfReadStorage = readStorage.getMemoryInfo();
             std::size_t totalLimit = memoryOptions.memoryTotalLimit;
