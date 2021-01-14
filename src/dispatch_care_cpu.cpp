@@ -3,8 +3,6 @@
 #include <config.hpp>
 #include <options.hpp>
 
-#include <contiguousreadstorage.hpp>
-
 #include <correct_cpu.hpp>
 
 #include <minhasherlimit.hpp>
@@ -15,7 +13,7 @@
 #include <ordinaryminhasher.hpp>
 
 
-#include <readstorageconstruction2.hpp>
+#include <chunkedreadstorageconstruction.hpp>
 #include <chunkedreadstorage.hpp>
 
 #include <vector>
@@ -26,8 +24,6 @@
 
 #include <experimental/filesystem>
 
-
-#include <dynamic2darray.hpp>
 
 namespace filesys = std::experimental::filesystem;
 
@@ -72,7 +68,7 @@ namespace care{
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
 
-        std::unique_ptr<CpuReadStorage> cpuReadStorage = constructReadStorageFromFiles2(
+        std::unique_ptr<CpuReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
             runtimeOptions,
             memoryOptions,
             fileOptions.inputfiles,
@@ -83,10 +79,10 @@ namespace care{
 
         std::cout << "Running CARE CPU" << std::endl;
 
-        std::uint64_t maximumNumberOfReads = fileOptions.nReads;
-        int maximumSequenceLength = fileOptions.maximum_sequence_length;
-        int minimumSequenceLength = fileOptions.minimum_sequence_length;
-        bool scanned = false;
+        // std::uint64_t maximumNumberOfReads = fileOptions.nReads;
+        // int maximumSequenceLength = fileOptions.maximum_sequence_length;
+        // int minimumSequenceLength = fileOptions.minimum_sequence_length;
+        // bool scanned = false;
 
         // if(fileOptions.load_binary_reads_from == ""){
 
@@ -245,7 +241,8 @@ namespace care{
         totalInputFileProperties.maxSequenceLength = cpuReadStorage->getSequenceLengthUpperBound();
         totalInputFileProperties.minSequenceLength = cpuReadStorage->getSequenceLengthLowerBound();
 
-        if(!scanned){
+        //if(!scanned)
+        {
             std::cout << "Determined the following read properties:\n";
             std::cout << "----------------------------------------\n";
             std::cout << "Total number of reads: " << totalInputFileProperties.nReads << "\n";

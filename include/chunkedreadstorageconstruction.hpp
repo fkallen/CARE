@@ -30,7 +30,7 @@ namespace care{
 
 
 
-std::unique_ptr<ChunkedReadStorage> constructReadStorageFromFiles2(
+std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
     const std::vector<std::string>& inputfiles,
@@ -233,7 +233,7 @@ std::unique_ptr<ChunkedReadStorage> constructReadStorageFromFiles2(
     };
 
     
-    std::unique_ptr<ChunkedReadStorage> fooStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
+    std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
 
     auto inserterThreadFunction = [&](){
         EncodedBatch* sbatch = unprocessedEncodedBatches.pop();
@@ -242,12 +242,12 @@ std::unique_ptr<ChunkedReadStorage> constructReadStorageFromFiles2(
             const int numSequences = sbatch->validItems;
 
             if(sbatch->ambiguousReadIds.size() > 0){
-                fooStorage->appendAmbiguousReadIds(
+                readStorage->appendAmbiguousReadIds(
                     sbatch->ambiguousReadIds
                 );
             }
 
-            fooStorage->appendConsecutiveReads(
+            readStorage->appendConsecutiveReads(
                 sbatch->firstReadId,
                 sbatch->validItems,
                 std::move(sbatch->sequenceLengths),
@@ -349,32 +349,15 @@ std::unique_ptr<ChunkedReadStorage> constructReadStorageFromFiles2(
         std::cout << "\n";
     }
 
-    // auto lessThanFileAndBatch = [](const auto& l, const auto& r){
-    //     if(l.fileId < r.fileId) return true;
-    //     if(l.fileId > r.fileId) return false;
-    //     return l.batchId < r.batchId;
-    // };
-
-    // std::sort(sequenceStorage.begin(), sequenceStorage.end(), lessThanFileAndBatch);
-    // std::sort(lengthStorage.begin(), lengthStorage.end(), lessThanFileAndBatch);
-    // std::sort(qualityStorage.begin(), qualityStorage.end(), lessThanFileAndBatch);
-    // std::sort(ambigStorage.begin(), ambigStorage.end(), lessThanFileAndBatch);
-
-    std::cerr << "numReadsPerFile: ";
-    for(auto n : numReadsPerFile){
-        std::cerr << n << " ";
-    }
-    std::cerr << "\n";
-
-    helpers::CpuTimer footimer("footimer");
+    helpers::CpuTimer footimer("init readstorage after construction");
     
-    fooStorage->init(
+    readStorage->init(
         memoryOptions.memoryTotalLimit
     );
 
     footimer.print();
 
-    return fooStorage;
+    return readStorage;
     
 }
 
