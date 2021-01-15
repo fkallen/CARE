@@ -48,6 +48,11 @@ public:
         int numSequences
     ) const = 0;
 
+    virtual void getIdsOfAmbiguousReads(
+        ReadStorageHandle& handle,
+        read_number* ids
+    ) const = 0;
+
     virtual std::int64_t getNumberOfReadsWithN() const = 0;
 
     virtual MemoryUsage getMemoryInfo() const = 0;

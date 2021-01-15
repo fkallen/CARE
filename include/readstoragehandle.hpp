@@ -1,6 +1,7 @@
 #ifndef CARE_READSTORAGEHANDLE_HPP
 #define CARE_READSTORAGEHANDLE_HPP
 
+#include <limits>
 
 namespace care{
 
@@ -16,15 +17,16 @@ namespace care{
 
     public:
 
+        ReadStorageHandle() = default;
+        ReadStorageHandle(int i) : id(i){}
+
         int getId() const noexcept{
             return id;
         }
 
     private:
-        ReadStorageHandle() = default;
-        ReadStorageHandle(int i) : id(i){}
 
-        int id;
+        int id = std::numeric_limits<int>::max();
     };
 
 

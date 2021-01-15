@@ -572,6 +572,13 @@ public: //inherited interface
         }
     }
 
+    void getIdsOfAmbiguousReads(
+        ReadStorageHandle& handle,
+        read_number* ids
+    ) const override{
+        std::copy(ambigReadIds.begin(), ambigReadIds.end(), ids);
+    }
+
     std::int64_t getNumberOfReadsWithN() const override{
         return ambigReadIds.size();
     }

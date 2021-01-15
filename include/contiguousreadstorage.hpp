@@ -163,6 +163,13 @@ namespace cpu{
         );
     }
 
+    void getIdsOfAmbiguousReads(
+        ReadStorageHandle& handle,
+        read_number* ids
+    ) const override{
+        std::copy(readIdsOfReadsWithUndeterminedBase.begin(), readIdsOfReadsWithUndeterminedBase.end(), ids);
+    }
+
     std::int64_t getNumberOfReadsWithN() const override {
         return readIdsOfReadsWithUndeterminedBase.size();
     }

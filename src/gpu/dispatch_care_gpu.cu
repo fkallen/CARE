@@ -10,6 +10,7 @@
 #include <correctionresultprocessing.hpp>
 
 #include <gpu/multigpureadstorage.cuh>
+#include <contiguousreadstorage.hpp>
 
 #include <rangegenerator.hpp>
 
