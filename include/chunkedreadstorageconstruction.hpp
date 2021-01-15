@@ -362,7 +362,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
         helpers::CpuTimer footimer("init readstorage after construction");
         
         readStorage->appendingFinished(
-            memoryOptions.memoryTotalLimit
+            memoryOptions.memoryTotalLimit - readStorage->getMemoryInfo().host
         );
 
         footimer.print();
