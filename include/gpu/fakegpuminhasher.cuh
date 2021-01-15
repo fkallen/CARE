@@ -361,7 +361,7 @@ namespace gpu{
             int id;
             cudaGetDevice(&id); CUERR;
             for(auto& ptr : minhashTables){
-                ptr->finalize(getNumResultsPerMapThreshold(), {id});
+                ptr->finalize(getNumResultsPerMapThreshold(), false, {id});
             }
         }
 

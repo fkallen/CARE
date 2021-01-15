@@ -328,7 +328,7 @@ namespace care{
 
         void compact() override{
             for(auto& ptr : minhashTables){
-                ptr->finalize(getNumResultsPerMapThreshold(), {});
+                ptr->finalize(getNumResultsPerMapThreshold(), true, {});
             }
         }
 
