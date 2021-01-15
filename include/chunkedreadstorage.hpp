@@ -157,91 +157,76 @@ public:
     }
 
     void loadFromFile(const std::string& filename){
-            std::ifstream stream(filename, std::ios::binary);
-            if(!stream)
-                throw std::runtime_error("Cannot open file " + filename);
+        std::ifstream stream(filename, std::ios::binary);
+        if(!stream)
+            throw std::runtime_error("Cannot open file " + filename);
 
-            destroy();
+        destroy();
 
-            std::size_t loaded_numreads = 0;
-            int loaded_sequenceLengthLowerBound = 0;
-            int loaded_sequenceLengthUpperBound = 0;
-            bool loaded_hasQualityScores = false;        
+        std::size_t loaded_numreads = 0;
+        int loaded_sequenceLengthLowerBound = 0;
+        int loaded_sequenceLengthUpperBound = 0;
+        bool loaded_hasQualityScores = false;        
 
-            stream.read(reinterpret_cast<char*>(&loaded_numreads), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
-            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
-            stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
+        stream.read(reinterpret_cast<char*>(&loaded_numreads), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+        stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
+        stream.read(reinterpret_cast<char*>(&loaded_hasQualityScores), sizeof(bool));
 
-            std::size_t lengthsBytes = 0;
-            std::size_t sequencesBytes = 0;      
-            std::size_t qualitiesBytes = 0;       
-            std::size_t ambigBytes = 0;
+        std::size_t lengthsBytes = 0;
+        std::size_t sequencesBytes = 0;      
+        std::size_t qualitiesBytes = 0;       
+        std::size_t ambigBytes = 0;
 
-            stream.read(reinterpret_cast<char*>(&lengthsBytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&sequencesBytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&qualitiesBytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&ambigBytes), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&lengthsBytes), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&sequencesBytes), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&qualitiesBytes), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&ambigBytes), sizeof(std::size_t));
 
-            totalNumberOfReads = loaded_numreads;
-            offsetsPrefixSum = {0, totalNumberOfReads};
-            //lengthStorage = std::move(LengthStore<std::uint32_t>(loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound, totalNumberOfReads));
-            lengthStorage.readFromStream(stream);
+        totalNumberOfReads = loaded_numreads;
+        offsetsPrefixSum = {0, totalNumberOfReads};
 
-            /*
-            std::size_t pitch = encodedSequencePitchInInts;
-            stream.write(reinterpret_cast<const char*>(&pitch), sizeof(std::size_t));
-            writtenSequenceBytes += sizeof(std::size_t); //pitch
+        lengthStorage.readFromStream(stream);
 
-            std::size_t numelements = shrinkedEncodedSequences.size();
-            stream.write(reinterpret_cast<const char*>(&numelements), sizeof(std::size_t));
-            writtenSequenceBytes += sizeof(std::size_t); //numdataelements
-
-            stream.write(reinterpret_cast<const char*>(shrinkedEncodedSequences.data()), numelements * sizeof(unsigned int));            
-            writtenSequenceBytes += numelements * sizeof(unsigned int); //dataelements
-
-            */
+        hasShrinkedSequences = true;
+        stream.read(reinterpret_cast<char*>(&encodedSequencePitchInInts), sizeof(std::size_t));
+        std::size_t numsequencedataelements = 0;
+        stream.read(reinterpret_cast<char*>(&numsequencedataelements), sizeof(std::size_t));
+        shrinkedEncodedSequences.resize(numsequencedataelements);
+        stream.read(reinterpret_cast<char*>(shrinkedEncodedSequences.data()), numsequencedataelements * sizeof(unsigned int));
 
 
-            hasShrinkedSequences = true;
-            stream.read(reinterpret_cast<char*>(&encodedSequencePitchInInts), sizeof(std::size_t));
-            std::size_t numsequencedataelements = 0;
-            stream.read(reinterpret_cast<char*>(&numsequencedataelements), sizeof(std::size_t));
-            shrinkedEncodedSequences.resize(numsequencedataelements);
-            stream.read(reinterpret_cast<char*>(shrinkedEncodedSequences.data()), numsequencedataelements * sizeof(unsigned int));
+        if(canUseQualityScores() && loaded_hasQualityScores){
+            //std::cerr << "load qualities\n";
 
+            hasShrinkedQualities = true;
+            stream.read(reinterpret_cast<char*>(&qualityPitchInBytes), sizeof(std::size_t));
+            std::size_t numqualitydataelements = 0;
+            stream.read(reinterpret_cast<char*>(&numqualitydataelements), sizeof(std::size_t));
+            shrinkedQualities.resize(numqualitydataelements);
+            stream.read(reinterpret_cast<char*>(shrinkedQualities.data()), numqualitydataelements * sizeof(char));
 
-            if(canUseQualityScores() && loaded_hasQualityScores){
-                //std::cerr << "load qualities\n";
-
-                hasShrinkedQualities = true;
-                stream.read(reinterpret_cast<char*>(&qualityPitchInBytes), sizeof(std::size_t));
-                std::size_t numqualitydataelements = 0;
-                stream.read(reinterpret_cast<char*>(&numqualitydataelements), sizeof(std::size_t));
-                shrinkedQualities.resize(numqualitydataelements);
-                stream.read(reinterpret_cast<char*>(shrinkedQualities.data()), numqualitydataelements * sizeof(char));
-
-            }else if(canUseQualityScores() && !loaded_hasQualityScores){
-                    //std::cerr << "no q in bin file\n";
-                    throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
-            }else if(!canUseQualityScores() && loaded_hasQualityScores){
-                    //std::cerr << "skip qualities\n";
-                    stream.ignore(qualitiesBytes);
-            }else{
-                //!canUseQualityScores() && !loaded_hasQualityScores
-                //std::cerr << "no q in file, and no q required. Ok\n";
+        }else if(canUseQualityScores() && !loaded_hasQualityScores){
+                //std::cerr << "no q in bin file\n";
+                throw std::runtime_error("Quality scores expected in preprocessed reads file to load, but none are present. Abort.");
+        }else if(!canUseQualityScores() && loaded_hasQualityScores){
+                //std::cerr << "skip qualities\n";
                 stream.ignore(qualitiesBytes);
-            }
-            
-
-            std::size_t numAmbigDataElements = 0;
-            stream.read(reinterpret_cast<char*>(&numAmbigDataElements), sizeof(std::size_t));
-
-            std::vector<read_number> tmpambig(numAmbigDataElements);
-            stream.read(reinterpret_cast<char*>(tmpambig.data()), numAmbigDataElements * sizeof(read_number));
-
-            ambigReadIds.insert(tmpambig.begin(), tmpambig.end());
+        }else{
+            //!canUseQualityScores() && !loaded_hasQualityScores
+            //std::cerr << "no q in file, and no q required. Ok\n";
+            stream.ignore(qualitiesBytes);
         }
+        
+
+        std::size_t numAmbigDataElements = 0;
+        stream.read(reinterpret_cast<char*>(&numAmbigDataElements), sizeof(std::size_t));
+
+        std::vector<read_number> tmpambig(numAmbigDataElements);
+        stream.read(reinterpret_cast<char*>(tmpambig.data()), numAmbigDataElements * sizeof(read_number));
+
+        ambigReadIds.insert(tmpambig.begin(), tmpambig.end());
+    }
 
 
     void saveToFile(const std::string& filename) const{
