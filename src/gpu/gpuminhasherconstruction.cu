@@ -21,13 +21,12 @@ namespace gpu{
         constructFakeGpuMinhasherFromGpuReadStorage(
             const CorrectionOptions& correctionOptions,
             const FileOptions& fileOptions,
-            const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
             const GpuReadStorage& gpuReadStorage
         ){
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
-                totalInputFileProperties.nReads,
+                gpuReadStorage.getNumberOfReads(),
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
                 correctionOptions.kmerlength
             );
@@ -45,7 +44,7 @@ namespace gpu{
                     fileOptions,
                     runtimeOptions,
                     memoryOptions,
-                    totalInputFileProperties.nReads, 
+                    gpuReadStorage.getNumberOfReads(), 
                     correctionOptions,
                     gpuReadStorage
                 );
@@ -59,23 +58,22 @@ namespace gpu{
         constructSingleGpuMinhasherFromGpuReadStorage(
             const CorrectionOptions& correctionOptions,
             const FileOptions& /*fileOptions*/,
-            const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& /*memoryOptions*/,
             const GpuReadStorage& gpuReadStorage
         ){
             
             auto gpuMinhasher = std::make_unique<SingleGpuMinhasher>(
-                totalInputFileProperties.nReads, 
+                gpuReadStorage.getNumberOfReads(), 
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), 
                 correctionOptions.kmerlength
             );
 
             gpuMinhasher->constructFromReadStorage(
                 runtimeOptions,
-                totalInputFileProperties.nReads,
+                gpuReadStorage.getNumberOfReads(),
                 gpuReadStorage,
-                totalInputFileProperties.maxSequenceLength,
+                gpuReadStorage.getSequenceLengthUpperBound(),
                 correctionOptions.numHashFunctions
             );
 
@@ -86,14 +84,13 @@ namespace gpu{
         constructMultiGpuMinhasherFromGpuReadStorage(
             const CorrectionOptions& correctionOptions,
             const FileOptions& /*fileOptions*/,
-            const SequenceFileProperties& totalInputFileProperties,
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& /*memoryOptions*/,
             const GpuReadStorage& gpuReadStorage
         ){
             
             auto gpuMinhasher = std::make_unique<MultiGpuMinhasher>(
-                totalInputFileProperties.nReads, 
+                gpuReadStorage.getNumberOfReads(), 
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), 
                 correctionOptions.kmerlength,
                 std::vector<int>{0,0} //runtimeOptions.deviceIds
@@ -101,9 +98,9 @@ namespace gpu{
 
             gpuMinhasher->constructFromReadStorage(
                 runtimeOptions,
-                totalInputFileProperties.nReads,
+                gpuReadStorage.getNumberOfReads(),
                 gpuReadStorage,
-                totalInputFileProperties.maxSequenceLength,
+                gpuReadStorage.getSequenceLengthUpperBound(),
                 correctionOptions.numHashFunctions
             );
 
@@ -117,7 +114,6 @@ namespace gpu{
             const RuntimeOptions& runtimeOptions,
             const MemoryOptions& memoryOptions,
             const CorrectionOptions& correctionOptions,
-            const SequenceFileProperties& totalInputFileProperties,
             const GpuReadStorage& gpuReadStorage,
             GpuMinhasherType requestedType
         ){
@@ -126,7 +122,6 @@ namespace gpu{
                     constructFakeGpuMinhasherFromGpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         gpuReadStorage
@@ -139,7 +134,6 @@ namespace gpu{
                     constructSingleGpuMinhasherFromGpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         gpuReadStorage
@@ -151,7 +145,6 @@ namespace gpu{
                     constructMultiGpuMinhasherFromGpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         gpuReadStorage
@@ -164,7 +157,6 @@ namespace gpu{
                     constructFakeGpuMinhasherFromGpuReadStorage(
                         correctionOptions,
                         fileOptions,
-                        totalInputFileProperties,
                         runtimeOptions,
                         memoryOptions,
                         gpuReadStorage

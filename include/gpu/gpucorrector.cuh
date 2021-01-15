@@ -605,12 +605,10 @@ namespace gpucorrectorkernels{
         GpuAnchorHasher(
             const GpuReadStorage& gpuReadStorage_,
             const GpuMinhasher& gpuMinhasher_,
-            const SequenceFileProperties& sequenceFileProperties_,
             ThreadPool* threadPool_
         ) : 
             gpuReadStorage{&gpuReadStorage_},
             gpuMinhasher{&gpuMinhasher_},
-            sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_},
             minhashHandle{gpuMinhasher->makeQueryHandle()},
             readstorageHandle{gpuReadStorage->makeHandle()}
@@ -622,7 +620,7 @@ namespace gpucorrectorkernels{
             backgroundStream = CudaStream{};
             previousBatchFinishedEvent = CudaEvent{};
 
-            encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties->maxSequenceLength);
+            encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
         }
 
         ~GpuAnchorHasher(){
@@ -812,7 +810,6 @@ namespace gpucorrectorkernels{
         CudaEvent previousBatchFinishedEvent;
         const GpuReadStorage* gpuReadStorage;
         const GpuMinhasher* gpuMinhasher;
-        const SequenceFileProperties* sequenceFileProperties;
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
@@ -1079,7 +1076,6 @@ namespace gpucorrectorkernels{
             const GpuReadStorage& gpuReadStorage_,
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
-            const SequenceFileProperties& sequenceFileProperties_,
             int maxAnchorsPerCall,
             ThreadPool* threadPool_
         ) : 
@@ -1088,7 +1084,6 @@ namespace gpucorrectorkernels{
             gpuReadStorage{&gpuReadStorage_},
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
-            sequenceFileProperties{&sequenceFileProperties_},
             threadPool{threadPool_},
             readstorageHandle{gpuReadStorage->makeHandle()}
         {
@@ -1102,10 +1097,10 @@ namespace gpucorrectorkernels{
             backgroundStream = CudaStream{};
             previousBatchFinishedEvent = CudaEvent{};
 
-            encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties->maxSequenceLength);
-            decodedSequencePitchInBytes = SDIV(sequenceFileProperties->maxSequenceLength, 4) * 4;
-            qualityPitchInBytes = SDIV(sequenceFileProperties->maxSequenceLength, 32) * 32;
-            maxNumEditsPerSequence = std::max(1,sequenceFileProperties->maxSequenceLength / 7);
+            encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
+            decodedSequencePitchInBytes = SDIV(gpuReadStorage->getSequenceLengthUpperBound(), 4) * 4;
+            qualityPitchInBytes = SDIV(gpuReadStorage->getSequenceLengthUpperBound(), 32) * 32;
+            maxNumEditsPerSequence = std::max(1,gpuReadStorage->getSequenceLengthUpperBound() / 7);
             //pad to multiple of 128 bytes
             editsPitchInBytes = SDIV(maxNumEditsPerSequence * sizeof(TempCorrectedSequence::EncodedEdit), 128) * 128;
 
@@ -1113,10 +1108,10 @@ namespace gpucorrectorkernels{
                 1, 
                 std::max(
                     goodAlignmentProperties->min_overlap, 
-                    int(sequenceFileProperties->maxSequenceLength * goodAlignmentProperties->min_overlap_ratio)
+                    int(gpuReadStorage->getSequenceLengthUpperBound() * goodAlignmentProperties->min_overlap_ratio)
                 )
             );
-            const std::size_t msa_max_column_count = (3*sequenceFileProperties->maxSequenceLength - 2*min_overlap);
+            const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
             //round up to 32 elements
             msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
 
@@ -1507,7 +1502,7 @@ namespace gpucorrectorkernels{
                 removeAmbiguousCandidates,
                 maxAnchors,
                 maxCandidates,
-                sequenceFileProperties->maxSequenceLength,
+                gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
                 goodAlignmentProperties->min_overlap,
                 goodAlignmentProperties->maxErrorRate,
@@ -1992,7 +1987,7 @@ namespace gpucorrectorkernels{
                 removeAmbiguousCandidates,
                 maxAnchors,
                 maxCandidates,
-                sequenceFileProperties->maxSequenceLength,
+                gpuReadStorage->getSequenceLengthUpperBound(),
                 encodedSequencePitchInInts,
                 goodAlignmentProperties->min_overlap,
                 goodAlignmentProperties->maxErrorRate,
@@ -2256,7 +2251,7 @@ namespace gpucorrectorkernels{
                 maxAnchors,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                sequenceFileProperties->maxSequenceLength,
+                gpuReadStorage->getSequenceLengthUpperBound(),
                 correctionOptions->estimatedErrorrate,
                 goodAlignmentProperties->maxErrorRate,
                 avg_support_threshold,
@@ -2264,7 +2259,7 @@ namespace gpucorrectorkernels{
                 min_coverage_threshold,
                 max_coverage_threshold,
                 correctionOptions->kmerlength,
-                sequenceFileProperties->maxSequenceLength,
+                gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
                 kernelLaunchHandle
             );
@@ -2404,7 +2399,7 @@ namespace gpucorrectorkernels{
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
                 editsPitchInBytes,
-                sequenceFileProperties->maxSequenceLength,
+                gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
                 kernelLaunchHandle
             );    
@@ -2500,7 +2495,6 @@ namespace gpucorrectorkernels{
 
         const CorrectionOptions* correctionOptions;
         const GoodAlignmentProperties* goodAlignmentProperties;
-        const SequenceFileProperties* sequenceFileProperties;
 
         GpuErrorCorrectorInput* currentInput;
         GpuErrorCorrectorRawOutput* currentOutput;

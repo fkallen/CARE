@@ -26,7 +26,6 @@ namespace gpu{
         const RuntimeOptions &runtimeOptions,
         const MemoryOptions& memoryOptions,
         const CorrectionOptions& correctionOptions,
-        const SequenceFileProperties& totalInputFileProperties,
         const GpuReadStorage& gpuReadStorage,
         GpuMinhasherType requestedType = GpuMinhasherType::None
     );

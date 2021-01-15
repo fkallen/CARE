@@ -25,7 +25,6 @@ correct_gpu(
 	const RuntimeOptions& runtimeOptions,
 	const FileOptions& fileOptions,
 	const MemoryOptions& memoryOptions,
-	const SequenceFileProperties& sequenceFileProperties,
 	GpuMinhasher& minhasher,
 	GpuReadStorage& readStorage
 );

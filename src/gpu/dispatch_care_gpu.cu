@@ -10,7 +10,8 @@
 #include <correctionresultprocessing.hpp>
 
 #include <gpu/multigpureadstorage.cuh>
-#include <contiguousreadstorage.hpp>
+#include <chunkedreadstorageconstruction.hpp>
+#include <chunkedreadstorage.hpp>
 
 #include <rangegenerator.hpp>
 
@@ -115,54 +116,7 @@ namespace care{
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
         peerAccess.enableAllPeerAccesses();
 
-        std::uint64_t maximumNumberOfReads = fileOptions.nReads;
-        int maximumSequenceLength = fileOptions.maximum_sequence_length;
-        int minimumSequenceLength = fileOptions.minimum_sequence_length;
-        bool scanned = false;
-
-        if(fileOptions.load_binary_reads_from == ""){
-
-            if(maximumNumberOfReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
-                std::cout << "Error. " << maximumNumberOfReads << " reads cannot be processed with the current config.hpp" << std::endl;
-                std::exit(1);
-            }
-
-            if(maximumNumberOfReads == 0 || maximumSequenceLength == 0 || minimumSequenceLength == 0) {
-                std::cout << "STEP 0: Determine input size" << std::endl;
-                
-                std::cout << "Scanning file(s) to get number of reads and min/max sequence length." << std::endl;
-
-                maximumNumberOfReads = 0;
-                maximumSequenceLength = 0;
-                minimumSequenceLength = std::numeric_limits<int>::max();
-
-                for(const auto& inputfile : fileOptions.inputfiles){
-                    auto prop = getSequenceFileProperties(inputfile, runtimeOptions.showProgress);
-                    maximumNumberOfReads += prop.nReads;
-                    maximumSequenceLength = std::max(maximumSequenceLength, prop.maxSequenceLength);
-                    minimumSequenceLength = std::min(minimumSequenceLength, prop.minSequenceLength);
-
-                    std::cout << "----------------------------------------\n";
-                    std::cout << "File: " << inputfile << "\n";
-                    std::cout << "Reads: " << prop.nReads << "\n";
-                    std::cout << "Minimum sequence length: " << prop.minSequenceLength << "\n";
-                    std::cout << "Maximum sequence length: " << prop.maxSequenceLength << "\n";
-                    std::cout << "----------------------------------------\n";
-
-                    //result.inputFileProperties.emplace_back(prop);
-                }
-
-                scanned = true;
-            }else{
-                //std::cout << "Using the supplied max number of reads and min/max sequence length." << std::endl;
-            }
-
-            if(maximumNumberOfReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
-                std::cout << "Error. " << maximumNumberOfReads << " reads cannot be processed with the current config.hpp" << std::endl;
-                std::exit(1);
-            }
-        }
-
+        
         /*
             Step 1: 
             - load all reads from all input files into (gpu-)memory
@@ -175,67 +129,32 @@ namespace care{
 
         helpers::CpuTimer buildReadStorageTimer("build_readstorage");
 
-        cpu::ContiguousReadStorage cpuReadStorage(
-            maximumNumberOfReads, 
-            correctionOptions.useQualityScores, 
-            minimumSequenceLength, 
-            maximumSequenceLength
+        std::unique_ptr<ChunkedReadStorage> cpuReadStorage = constructChunkedReadStorageFromFiles(
+            runtimeOptions,
+            memoryOptions,
+            fileOptions,
+            correctionOptions.useQualityScores
         );
-
-        if(fileOptions.load_binary_reads_from != ""){
-
-            cpuReadStorage.loadFromFile(fileOptions.load_binary_reads_from);
-
-            if(correctionOptions.useQualityScores && !cpuReadStorage.canUseQualityScores())
-                throw std::runtime_error("Quality scores are required but not present in preprocessed reads file!");
-            if(!correctionOptions.useQualityScores && cpuReadStorage.canUseQualityScores())
-                std::cerr << "Warning. The loaded preprocessed reads file contains quality scores, but program does not use them!\n";
-
-            std::cout << "Loaded preprocessed reads from " << fileOptions.load_binary_reads_from << std::endl;
-        }else{
-            cpuReadStorage.construct(
-                fileOptions.inputfiles,
-                correctionOptions.useQualityScores,
-                maximumNumberOfReads,
-                minimumSequenceLength,
-                maximumSequenceLength,
-                runtimeOptions.threads,
-                runtimeOptions.showProgress
-            );
-        }
 
         buildReadStorageTimer.print();
 
-        if(fileOptions.save_binary_reads_to != "") {
+        std::cout << "Determined the following read properties:\n";
+        std::cout << "----------------------------------------\n";
+        std::cout << "Total number of reads: " << cpuReadStorage->getNumberOfReads() << "\n";
+        std::cout << "Minimum sequence length: " << cpuReadStorage->getSequenceLengthLowerBound() << "\n";
+        std::cout << "Maximum sequence length: " << cpuReadStorage->getSequenceLengthUpperBound() << "\n";
+        std::cout << "----------------------------------------\n";
+
+        if(fileOptions.save_binary_reads_to != ""){
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
             helpers::CpuTimer timer("save_to_file");
-            cpuReadStorage.saveToFile(fileOptions.save_binary_reads_to);
+            cpuReadStorage->saveToFile(fileOptions.save_binary_reads_to);
             timer.print();
-    		std::cout << "Saved reads" << std::endl;
-        }
-
-        SequenceFileProperties totalInputFileProperties;
-
-        totalInputFileProperties.nReads = cpuReadStorage.getNumberOfReads();
-        totalInputFileProperties.maxSequenceLength = cpuReadStorage.getStatistics().maximumSequenceLength;
-        totalInputFileProperties.minSequenceLength = cpuReadStorage.getStatistics().minimumSequenceLength;
-
-        if(!scanned){
-            std::cout << "Determined the following read properties:\n";
-            std::cout << "----------------------------------------\n";
-            std::cout << "Total number of reads: " << totalInputFileProperties.nReads << "\n";
-            std::cout << "Minimum sequence length: " << totalInputFileProperties.minSequenceLength << "\n";
-            std::cout << "Maximum sequence length: " << totalInputFileProperties.maxSequenceLength << "\n";
-            std::cout << "----------------------------------------\n";
-
-            if(totalInputFileProperties.nReads >= std::uint64_t(std::numeric_limits<read_number>::max())){
-                std::cout << "Error. " << totalInputFileProperties.nReads << " reads cannot be processed with the current config.hpp" << std::endl;
-                std::exit(1);
-            }
+            std::cout << "Saved reads" << std::endl;
         }
 
         if(correctionOptions.autodetectKmerlength){
-            const int maxlength = totalInputFileProperties.maxSequenceLength;
+            const int maxlength = cpuReadStorage->getSequenceLengthUpperBound();
 
             auto getKmerSizeForHashing = [](int maximumReadLength){
                 if(maximumReadLength < 160){
@@ -250,10 +169,7 @@ namespace care{
             std::cout << "Will use k-mer length = " << correctionOptions.kmerlength << " for hashing.\n";
         }
 
-        std::cout << "Reads with ambiguous bases: " << cpuReadStorage.getNumberOfReadsWithN() << std::endl;
-        
-
-        
+        std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;
 
         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
 
@@ -264,7 +180,7 @@ namespace care{
 
 
         gpu::MultiGpuReadStorage gpuReadStorage(
-            cpuReadStorage, 
+            *cpuReadStorage, 
             runtimeOptions.deviceIds,
             //tempids2,
             gpumemorylimits,
@@ -278,7 +194,6 @@ namespace care{
             runtimeOptions,
             memoryOptions,
             correctionOptions,
-            totalInputFileProperties,
             gpuReadStorage,
             gpu::GpuMinhasherType::Single
         );
@@ -340,7 +255,7 @@ namespace care{
         }
 
         std::size_t memoryLimitHost = memoryOptions.memoryTotalLimit 
-            - cpuReadStorage.getMemoryInfo().host
+            - cpuReadStorage->getMemoryInfo().host
             - gpuMinhasher->getMemoryInfo().host;
 
         // gpumemorylimits.resize(2);
@@ -351,7 +266,7 @@ namespace care{
         helpers::CpuTimer cpugputimer("cpu->gpu reads");
         cpugputimer.start();
         gpuReadStorage.rebuild(
-            cpuReadStorage,
+            *cpuReadStorage,
             runtimeOptions.deviceIds, 
             //tempids,
             gpumemorylimits,
@@ -364,7 +279,7 @@ namespace care{
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
         if(gpuReadStorage.isStandalone()){
-            cpuReadStorage.destroy();
+            cpuReadStorage->destroy();
         }
 
 
@@ -379,14 +294,13 @@ namespace care{
             runtimeOptions,
             fileOptions, 
             memoryOptions,
-            totalInputFileProperties,
             *gpuMinhasher, 
             gpuReadStorage            
         );
 
         step2timer.print();
 
-        std::cout << "Correction throughput : ~" << (totalInputFileProperties.nReads / step2timer.elapsed()) << " reads/second.\n";
+        std::cout << "Correction throughput : ~" << (gpuReadStorage.getNumberOfReads() / step2timer.elapsed()) << " reads/second.\n";
         const std::size_t numTemp = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
         const std::size_t numTempInMem = partialResults.getNumElementsInMemory();
         const std::size_t numTempInFile = partialResults.getNumElementsInFile();
@@ -398,7 +312,7 @@ namespace care{
         gpuMinhasher->destroy();
    
         gpuReadStorage.destroy();
-        cpuReadStorage.destroy();     
+        cpuReadStorage->destroy();     
 
         //Merge corrected reads with input file to generate output file
 

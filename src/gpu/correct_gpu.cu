@@ -40,7 +40,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ReadProvider* readProvider,
         const CandidateIdsProvider* candidateIdsProvider,
@@ -51,9 +50,9 @@ public:
 #if 0                
         //const int threadId = omp_get_thread_num();
 
-        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-        const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
-        const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(gpuReadStorage->getSequenceLengthUpperBound());
+        const std::size_t decodedSequencePitchInBytes = gpuReadStorage->getSequenceLengthUpperBound();
+        const std::size_t qualityPitchInBytes = gpuReadStorage->getSequenceLengthUpperBound();
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
@@ -192,7 +191,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -205,7 +203,6 @@ public:
             readIdGenerator,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -219,7 +216,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -233,7 +229,6 @@ public:
             readIdGenerator,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -247,7 +242,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -260,7 +254,6 @@ public:
             readIdGenerator,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -274,7 +267,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -288,7 +280,6 @@ public:
             readIdGenerator,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionFlags,
             processResults,
             batchCompleted,
@@ -302,7 +293,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -338,7 +328,6 @@ public:
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            sequenceFileProperties,
             threadPool
         );
 
@@ -346,7 +335,6 @@ public:
             *readStorage,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionOptions.batchsize,
             threadPool
         };
@@ -583,7 +571,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted,
@@ -607,7 +594,6 @@ public:
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            sequenceFileProperties,
             threadPool
         );
 
@@ -615,7 +601,6 @@ public:
             *readStorage,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionOptions.batchsize,
             threadPool
         };
@@ -785,7 +770,6 @@ public:
         cpu::RangeGenerator<read_number>& readIdGenerator,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -831,7 +815,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             hasherThreadFunction(deviceId, readIdGenerator, 
-                                correctionOptions,sequenceFileProperties); 
+                                correctionOptions); 
                         }
                     )
                 );
@@ -843,7 +827,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             correctorThreadFunctionMultiBufferWithOutput(deviceId, correctionOptions, 
-                                goodAlignmentProperties, sequenceFileProperties,
+                                goodAlignmentProperties, 
                                 correctionFlags,
                                 processResults, batchCompleted);                          
                         }
@@ -878,7 +862,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             hasherThreadFunction(deviceId, readIdGenerator, 
-                                correctionOptions,sequenceFileProperties); 
+                                correctionOptions); 
                         }
                     )
                 );
@@ -890,7 +874,7 @@ public:
                         std::launch::async,
                         [&](){ 
                             correctorThreadFunction(deviceId, correctionOptions, 
-                                goodAlignmentProperties, sequenceFileProperties);                          
+                                goodAlignmentProperties);                          
                         }
                     )
                 );
@@ -941,15 +925,13 @@ public:
     void hasherThreadFunction(
         int deviceId,
         cpu::RangeGenerator<read_number>& readIdGenerator,
-        const CorrectionOptions& correctionOptions,
-        const SequenceFileProperties& sequenceFileProperties
+        const CorrectionOptions& correctionOptions
     ){
         cudaSetDevice(deviceId);
 
         AnchorHasher gpuAnchorHasher(
             *readStorage,
             *minhasher,
-            sequenceFileProperties,
             nullptr//threadPool
         );
 
@@ -1008,8 +990,7 @@ public:
     void correctorThreadFunction(
         int deviceId,
         const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties
+        const GoodAlignmentProperties& goodAlignmentProperties
     ){
         cudaSetDevice(deviceId);
 
@@ -1017,7 +998,6 @@ public:
             *readStorage,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionOptions.batchsize,
             threadPool
         };
@@ -1095,7 +1075,6 @@ public:
         int deviceId,
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
-        const SequenceFileProperties& sequenceFileProperties,
         ReadCorrectionFlags& correctionFlags,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
@@ -1106,7 +1085,6 @@ public:
             *readStorage,
             correctionOptions,
             goodAlignmentProperties,
-            sequenceFileProperties,
             correctionOptions.batchsize,
             threadPool
         };
@@ -1370,7 +1348,6 @@ correct_gpu_impl(
         const RuntimeOptions& runtimeOptions,
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
-        const SequenceFileProperties& sequenceFileProperties,
         Minhasher& minhasher,
         GpuReadStorage& readStorage){
 
@@ -1397,7 +1374,7 @@ correct_gpu_impl(
         memoryAvailableBytesHost = 0;
     }
 
-    ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+    ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
 
     std::cerr << "Status flags per reads require " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
 
@@ -1535,9 +1512,11 @@ correct_gpu_impl(
             seconds = seconds % 3600;
             int minutes = seconds / 60;
             seconds = seconds % 60;
+
+            std::size_t numreads = readStorage.getNumberOfReads();
             
             printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-            totalCount, sequenceFileProperties.nReads,
+            totalCount, numreads,
             hours, minutes, seconds);
 
             std::fflush(stdout);
@@ -1548,7 +1527,7 @@ correct_gpu_impl(
         return duration;
     };
 
-    ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<std::int64_t> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     auto batchCompleted = [&](int size){
         //std::cerr << "Add progress " << size << "\n";
@@ -1556,7 +1535,7 @@ correct_gpu_impl(
     };
 
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
     if(false /* && runtimeOptions.threads <= 6*/){
@@ -1574,7 +1553,6 @@ correct_gpu_impl(
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
-                sequenceFileProperties,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1613,7 +1591,6 @@ correct_gpu_impl(
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
-                sequenceFileProperties,
                 correctionFlags,
                 processResults,
                 batchCompleted,
@@ -1634,7 +1611,6 @@ correct_gpu_impl(
         //         readIdGenerator,
         //         correctionOptions,
         //         goodAlignmentProperties,
-        //         sequenceFileProperties,
         //         correctionFlags,
         //         readProvider.get(),
         //         candidateIdsProvider.get(),
@@ -1670,7 +1646,6 @@ correct_gpu_impl(
         //         readIdGenerator,
         //         correctionOptions,
         //         goodAlignmentProperties,
-        //         sequenceFileProperties,
         //         correctionFlags,
         //         processResults,
         //         batchCompleted
@@ -1718,7 +1693,6 @@ correct_gpu_impl(
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
-                sequenceFileProperties,
                 correctionFlags,
                 processResults,
                 batchCompleted,
@@ -1742,7 +1716,6 @@ correct_gpu_impl(
         //     //     readIdGenerator,
         //     //     correctionOptions,
         //     //     goodAlignmentProperties,
-        //     //     sequenceFileProperties,
         //     //     correctionFlags,
         //     //     readProvider.get(),
         //     //     candidateIdsProvider.get(),
@@ -1763,7 +1736,6 @@ correct_gpu_impl(
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
-                sequenceFileProperties,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1780,7 +1752,6 @@ correct_gpu_impl(
                 readIdGenerator,
                 correctionOptions,
                 goodAlignmentProperties,
-                sequenceFileProperties,
                 correctionFlags,
                 processResults,
                 batchCompleted
@@ -1954,7 +1925,7 @@ auto runPipeline = [&](int deviceId){
 
     // std::ofstream flagsstream(fileOptions.outputfilenames[0] + "_flags");
 
-    // for(std::uint64_t i = 0; i < sequenceFileProperties.nReads; i++){
+    // for(std::uint64_t i = 0; i < gpuReadStorage->getNumberOfReads(); i++){
     //     flagsstream << correctionFlags.isCorrectedAsHQAnchor(i) << " " 
     //         << correctionFlags.isNotCorrectedAsAnchor(i) << "\n";
     // }
@@ -1970,7 +1941,6 @@ correct_gpu(
         const RuntimeOptions& runtimeOptions,
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
-        const SequenceFileProperties& sequenceFileProperties,
         GpuMinhasher& minhasher,
         GpuReadStorage& readStorage){
 
@@ -1980,7 +1950,6 @@ correct_gpu(
         runtimeOptions,
         fileOptions,
         memoryOptions,
-        sequenceFileProperties,
         minhasher,
         readStorage
     );
