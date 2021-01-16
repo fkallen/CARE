@@ -3,6 +3,8 @@
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <threadpool.hpp>
+
 
 #include <vector>
 #include <cassert>
@@ -251,7 +253,7 @@ namespace cpuhashtabledetail{
             }
 
             bool checkIotaValues(const std::vector<Value_t>& values){
-                auto policy = thrust::omp::par;
+                auto policy = thrust::host;
 
                 bool isIotaValues = thrust::equal(
                     policy,
@@ -445,7 +447,9 @@ namespace cpuhashtabledetail{
             }
 
             bool checkIotaValues(const std::vector<Value_t>& values){
-                auto policy = thrust::omp::par;
+                auto policy = thrust::host;
+
+                nvtx::push_range("checkIotaValues", 6);
 
                 bool isIotaValues = thrust::equal(
                     policy,
@@ -453,6 +457,8 @@ namespace cpuhashtabledetail{
                     thrust::counting_iterator<Value_t>{0} + values.size(),
                     values.data()
                 ); 
+
+                nvtx::pop_range();
 
                 return isIotaValues;
             }
@@ -653,7 +659,7 @@ namespace cpuhashtabledetail{
             }
 
             bool checkIotaValues(const std::vector<Value_t>& values){
-                auto policy = thrust::omp::par;
+                auto policy = thrust::host;
 
                 bool isIotaValues = thrust::equal(
                     policy,
@@ -1267,15 +1273,17 @@ namespace cpuhashtabledetail{
             std::vector<Key> keys, 
             std::vector<Value> vals, 
             int maxValuesPerKey,
+            ThreadPool* threadPool,
             bool valuesOfSameKeyMustBeSorted = true
         ){
-            init(std::move(keys), std::move(vals), maxValuesPerKey, {}, valuesOfSameKeyMustBeSorted);
+            init(std::move(keys), std::move(vals), maxValuesPerKey, threadPool, {}, valuesOfSameKeyMustBeSorted);
         }
 
         void init(
             std::vector<Key> keys, 
             std::vector<Value> vals, 
             int maxValuesPerKey,
+            ThreadPool* threadPool,
             const std::vector<int>& gpuIds,
             bool valuesOfSameKeyMustBeSorted = true
         ){
@@ -1333,22 +1341,39 @@ namespace cpuhashtabledetail{
             #endif
 
             lookup = std::move(NaiveCpuSingleValueHashTable<Key, ValueIndex>(keys.size(), 0.8f));
+
+            auto buildKeyLookup = [me=this, keys = std::move(keys), countsPrefixSum = std::move(countsPrefixSum)](){
+                for(std::size_t i = 0; i < keys.size(); i++){
+                    me->lookup.insert(
+                        keys[i], 
+                        ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
+                    );
+                }
+                me->isInit = true;
+            };
+
+            if(threadPool != nullptr){
+                threadPool->enqueue(std::move(buildKeyLookup));
+            }else{
+                buildKeyLookup();
+            }
+
             //std::cerr << "keys.size(): " << keys.size() << "\n";
             //nvtx::push_range("build_key_to_index_table", 0);
-            for(std::size_t i = 0; i < keys.size(); i++){
-                // if(keys[i] == 390602873081ull){
-                //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
-                // }
+            // for(std::size_t i = 0; i < keys.size(); i++){
+            //     // if(keys[i] == 390602873081ull){
+            //     //     std::cerr << keys[i] << " " << countsPrefixSum[i] << " " << (countsPrefixSum[i+1] - countsPrefixSum[i]) << "\n";
+            //     // }
                 
-                lookup.insert(
-                    keys[i], 
-                    ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
-                );
+            //     lookup.insert(
+            //         keys[i], 
+            //         ValueIndex{countsPrefixSum[i], countsPrefixSum[i+1] - countsPrefixSum[i]}
+            //     );
                 
-            }
+            // }
             //nvtx::pop_range();
 
-            isInit = true;
+            //isInit = true;
         }
 
         void insert(const Key* keys, const Value* values, int N){
@@ -1360,8 +1385,12 @@ namespace cpuhashtabledetail{
             buildvalues.insert(buildvalues.end(), values, values + N);
         }
 
-        void finalize(int maxValuesPerKey, bool valuesOfSameKeyMustBeSorted, const std::vector<int>& gpuIds = {}){
-            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, gpuIds, valuesOfSameKeyMustBeSorted);            
+        void finalize(int maxValuesPerKey, ThreadPool* threadPool, bool valuesOfSameKeyMustBeSorted, const std::vector<int>& gpuIds = {}){
+            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, threadPool, gpuIds, valuesOfSameKeyMustBeSorted);            
+        }
+
+        bool isInitialized() const noexcept{
+            return isInit;
         }
 
         QueryResult query(const Key& key) const{

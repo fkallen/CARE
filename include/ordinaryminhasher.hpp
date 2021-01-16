@@ -127,9 +127,9 @@ namespace care{
             
             std::vector<int> usedHashFunctionNumbers;
 
-            ThreadPool tp(runtimeOptions.threads);
+            ThreadPool tpForHashing(runtimeOptions.threads);
+            ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
 
-            setThreadPool(&tp);
             setMemoryLimitForConstruction(maxMemoryForTables);
 
             int remainingHashFunctions = requestedNumberOfMaps;
@@ -137,8 +137,11 @@ namespace care{
 
             ReadStorageHandle readStorageHandle = cpuReadStorage.makeHandle();
 
+            std::vector<std::uint64_t> tempvector{};
+
             while(remainingHashFunctions > 0 && keepGoing){
 
+                setThreadPool(&tpForHashing);
 
                 const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
                 int addedHashFunctions = addHashfunctions(remainingHashFunctions);
@@ -193,6 +196,7 @@ namespace care{
                     );
 
                     insert(
+                        tempvector,
                         sequencedata.data(),
                         currentbatchsize,
                         sequencelengths.data(),
@@ -206,6 +210,13 @@ namespace care{
                 }
 
                 std::cerr << "Compacting\n";
+                //setThreadPool(nullptr);
+                if(tpForCompacting.getConcurrency() > 1){
+                    setThreadPool(&tpForCompacting);
+                }else{
+                    setThreadPool(nullptr);
+                }
+                
                 finalize();
 
                 remainingHashFunctions -= addedHashFunctions;
@@ -327,8 +338,24 @@ namespace care{
         }
 
         void compact() override{
-            for(auto& ptr : minhashTables){
-                ptr->finalize(getNumResultsPerMapThreshold(), true, {});
+            const int num = minhashTables.size();
+
+            for(int i = 0, l = 0; i < num; i++){
+                auto& ptr = minhashTables[i];
+            
+                if(!ptr->isInitialized()){
+                    //after processing 3 tables, available memory should be sufficient for multithreading
+                    if(l >= 3){
+                        ptr->finalize(getNumResultsPerMapThreshold(), threadPool, true, {});
+                    }else{
+                        ptr->finalize(getNumResultsPerMapThreshold(), nullptr, true, {});
+                    }
+                    l++;
+                }                
+            }
+
+            if(threadPool != nullptr){
+                threadPool->wait();
             }
         }
 
@@ -448,6 +475,7 @@ namespace care{
         } 
 
         void insert(
+            std::vector<std::uint64_t>& tempvector,
             const unsigned int* h_sequenceData2Bit,
             int numSequences,
             const int* h_sequenceLengths,
@@ -463,7 +491,8 @@ namespace care{
 
             ForLoopExecutor forLoopExecutor(threadPool, &pforHandle);
 
-            std::vector<std::uint64_t> allHashValues(numSequences * getNumberOfMaps());
+            auto& allHashValues = tempvector;
+            allHashValues.resize(numSequences * getNumberOfMaps());
 
             auto hashloopbody = [&](auto begin, auto end, int /*threadid*/){
                 for(int s = begin; s < end; s++){

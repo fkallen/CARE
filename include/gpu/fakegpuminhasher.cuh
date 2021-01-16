@@ -360,8 +360,24 @@ namespace gpu{
         void compact(cudaStream_t stream) override{
             int id;
             cudaGetDevice(&id); CUERR;
-            for(auto& ptr : minhashTables){
-                ptr->finalize(getNumResultsPerMapThreshold(), false, {id});
+
+            const int num = minhashTables.size();
+            for(int i = 0, l = 0; i < num; i++){
+                auto& ptr = minhashTables[i];
+            
+                if(!ptr->isInitialized()){
+                    //after processing 3 tables, available memory should be sufficient for multithreading
+                    if(l >= 3){
+                        ptr->finalize(getNumResultsPerMapThreshold(), threadPool, false, {id});
+                    }else{
+                        ptr->finalize(getNumResultsPerMapThreshold(), nullptr, false, {id});
+                    }
+                    l++;
+                }                
+            }
+
+            if(threadPool != nullptr){
+                threadPool->wait();
             }
         }
 
@@ -441,7 +457,6 @@ namespace gpu{
             int numTablesToConstruct = (memoryLimit - bytesOfCachedConstructedTables) / requiredMemPerTable;
             numTablesToConstruct -= 2; // keep free memory of 2 tables to perform transformation 
             numTablesToConstruct = std::min(numTablesToConstruct, numExtraFunctions);
-            //maxNumTablesInIteration = std::min(numTablesToConstruct, 4);
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{

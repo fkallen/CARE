@@ -147,14 +147,12 @@ void FakeGpuMinhasher::constructFromReadStorage(
         (cudaStream_t)0
     );
     
-    helpers::SimpleAllocationDevice<char, 0> d_temp(d_insert_temp_size);
-    //std::vector<char> h_temp(h_insert_temp_size);
-    helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
     
     CudaStream stream{};
-    ThreadPool tp(runtimeOptions.threads);
+    ThreadPool tpForHashing(runtimeOptions.threads);
+    ThreadPool tpForCompacting(std::min(2,runtimeOptions.threads));
 
-    setThreadPool(&tp);
+    
     setMemoryLimitForConstruction(maxMemoryForTables);
     
     //std::size_t bytesOfCachedConstructedTables = 0;
@@ -163,6 +161,8 @@ void FakeGpuMinhasher::constructFromReadStorage(
 
     while(remainingHashFunctions > 0 && keepGoing){
 
+        setThreadPool(&tpForHashing);
+
         const int alreadyExistingHashFunctions = requestedNumberOfMaps - remainingHashFunctions;
         int addedHashFunctions = addHashfunctions(remainingHashFunctions);
 
@@ -170,6 +170,9 @@ void FakeGpuMinhasher::constructFromReadStorage(
             keepGoing = false;
             break;
         }
+
+        helpers::SimpleAllocationDevice<char, 0> d_temp(d_insert_temp_size);
+        helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
 
         std::cout << "Constructing maps: ";
         for(int i = 0; i < addedHashFunctions; i++){
@@ -237,7 +240,16 @@ void FakeGpuMinhasher::constructFromReadStorage(
             cudaStreamSynchronize(stream); CUERR;
         }
 
+        d_temp.destroy();
+        h_temp.destroy();
+
         std::cerr << "Compacting\n";
+        if(tpForCompacting.getConcurrency() > 1){
+            setThreadPool(&tpForCompacting);
+        }else{
+            setThreadPool(nullptr);
+        }
+        
         finalize();
 
         remainingHashFunctions -= addedHashFunctions;
