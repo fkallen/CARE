@@ -459,12 +459,15 @@ namespace gpu{
 
         void insert(
             void* d_temp,
-            std::size_t& temp_storage_bytes,
+            std::size_t& d_temp_storage_bytes,
+            void* h_temp,
+            std::size_t& h_temp_storage_bytes,
             const unsigned int* d_sequenceData2Bit,
             int numSequences,
             const int* d_sequenceLengths,
             std::size_t encodedSequencePitchInInts,
             const read_number* d_readIds,
+            const read_number* h_readIds,
             int firstHashfunction,
             int numHashfunctions,
             const int* h_hashFunctionNumbers,
@@ -476,30 +479,41 @@ namespace gpu{
 
             const std::size_t signaturesRowPitchElements = numHashfunctions;
 
-            void* temp_allocations[3];
-            std::size_t temp_allocation_sizes[3];
-            
-            temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
-            temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
-            temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
+            void* d_temp_allocations[3]{};
+            std::size_t d_temp_allocation_sizes[3]{};            
+            d_temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig
+            d_temp_allocation_sizes[1] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // d_sig_trans
+            d_temp_allocation_sizes[2] = sizeof(int) * numHashfunctions; // d_hashFunctionNumbers
             
             cudaError_t cubstatus = cub::AliasTemporaries(
                 d_temp,
-                temp_storage_bytes,
-                temp_allocations,
-                temp_allocation_sizes
+                d_temp_storage_bytes,
+                d_temp_allocations,
+                d_temp_allocation_sizes
             );
             assert(cubstatus == cudaSuccess);
 
-            if(d_temp == nullptr){
+            void* h_temp_allocations[1]{};
+            std::size_t h_temp_allocation_sizes[1]{};            
+            h_temp_allocation_sizes[0] = sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences; // h_signatures_transposed
+    
+            cubstatus = cub::AliasTemporaries(
+                h_temp,
+                h_temp_storage_bytes,
+                h_temp_allocations,
+                h_temp_allocation_sizes
+            );
+            assert(cubstatus == cudaSuccess);
+
+            if(d_temp == nullptr || h_temp == nullptr){
                 return;
             }
 
             assert(firstHashfunction + numHashfunctions <= int(minhashTables.size()));
 
-            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(temp_allocations[0]);
-            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(temp_allocations[1]);
-            int* const d_hashFunctionNumbers = static_cast<int*>(temp_allocations[2]);
+            std::uint64_t* const d_signatures = static_cast<std::uint64_t*>(d_temp_allocations[0]);
+            std::uint64_t* const d_signatures_transposed = static_cast<std::uint64_t*>(d_temp_allocations[1]);
+            int* const d_hashFunctionNumbers = static_cast<int*>(d_temp_allocations[2]);
 
             cudaMemcpyAsync(
                 d_hashFunctionNumbers, 
@@ -531,21 +545,12 @@ namespace gpu{
                 stream
             );
 
-            std::vector<std::uint64_t> h_signatures_transposed(signaturesRowPitchElements * numSequences);
-            std::vector<read_number> h_readIds(numSequences);
+            std::uint64_t* const h_signatures_transposed = static_cast<std::uint64_t*>(h_temp_allocations[0]);
 
             cudaMemcpyAsync(
-                h_signatures_transposed.data(), 
+                h_signatures_transposed, 
                 d_signatures_transposed, 
                 sizeof(std::uint64_t) * signaturesRowPitchElements * numSequences, 
-                D2H, 
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_readIds.data(), 
-                d_readIds, 
-                sizeof(read_number) * numSequences, 
                 D2H, 
                 stream
             ); CUERR;
@@ -565,7 +570,7 @@ namespace gpu{
                     );
 
                     minhashTables[firstHashfunction + h]->insert(
-                        hashesBegin, h_readIds.data(), numSequences
+                        hashesBegin, h_readIds, numSequences
                     );
                 }
             };

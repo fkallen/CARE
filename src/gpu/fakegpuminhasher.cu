@@ -128,14 +128,18 @@ void FakeGpuMinhasher::constructFromReadStorage(
     helpers::SimpleAllocationPinnedHost<read_number, 0> h_indices(parallelReads);
     helpers::SimpleAllocationDevice<read_number, 0> d_indices(parallelReads);
     
-    std::size_t insert_temp_size = 0;
+    std::size_t d_insert_temp_size = 0;
+    std::size_t h_insert_temp_size = 0;
     insert(
         nullptr,
-        insert_temp_size,
+        d_insert_temp_size,
+        nullptr,
+        h_insert_temp_size,
         (const unsigned int*)nullptr,
         int(parallelReads),
         (const int*)nullptr,
         encodedSequencePitchInInts,
+        (const read_number*)nullptr,
         (const read_number*)nullptr,
         0,
         requestedNumberOfMaps,
@@ -143,7 +147,9 @@ void FakeGpuMinhasher::constructFromReadStorage(
         (cudaStream_t)0
     );
     
-    helpers::SimpleAllocationDevice<char, 0> d_temp(insert_temp_size);
+    helpers::SimpleAllocationDevice<char, 0> d_temp(d_insert_temp_size);
+    //std::vector<char> h_temp(h_insert_temp_size);
+    helpers::SimpleAllocationPinnedHost<char> h_temp(h_insert_temp_size);
     
     CudaStream stream{};
     ThreadPool tp(runtimeOptions.threads);
@@ -208,14 +214,20 @@ void FakeGpuMinhasher::constructFromReadStorage(
                 stream
             );
 
+            std::size_t s1 = d_insert_temp_size;
+            std::size_t s2 = h_insert_temp_size;
+
             insert(
                 d_temp.data(),
-                insert_temp_size,
+                s1,
+                h_temp.data(),
+                s2,
                 d_sequenceData,
                 curBatchsize,
                 d_lengths,
                 encodedSequencePitchInInts,
                 d_indices,
+                h_indices,
                 alreadyExistingHashFunctions,
                 addedHashFunctions,
                 h_hashfunctionNumbers.data(),

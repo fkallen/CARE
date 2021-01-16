@@ -1308,7 +1308,7 @@ namespace cpuhashtabledetail{
 
                 
 
-                if(valuesOfSameKeyMustBeSorted){
+                if(true || valuesOfSameKeyMustBeSorted){
 
                     GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
                     success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
