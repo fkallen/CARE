@@ -317,11 +317,21 @@ namespace care{
         //Merge corrected reads with input file to generate output file
 
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
-        std::size_t memoryForSorting = 0;
+        const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        if(availableMemoryInBytes > 1*(std::size_t(1) << 30)){
-            memoryForSorting = availableMemoryInBytes - 1*(std::size_t(1) << 30);
-        }               
+        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+
+        std::size_t memoryForSorting = std::min(
+            availableMemoryInBytes,
+            memoryOptions.memoryTotalLimit - partialResultMemUsage.host
+        );
+
+        if(memoryForSorting > 1*(std::size_t(1) << 30)){
+            memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
+        }
+        std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 

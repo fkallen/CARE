@@ -226,6 +226,11 @@ struct MemoryFileFixedSize{
         return getNumElementsInMemory() + getNumElementsInFile();
     }
 
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage result{};
+        result.host = memoryStorage.getSizeInBytes();
+        return result;
+    }
 
     template<class ExtractKey, class KeyComparator, class TComparator>
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
@@ -272,6 +277,9 @@ struct MemoryFileFixedSize{
                 std::cerr << "requiredMemForAllElements " << requiredMemForAllElements << ", memoryForSortingInBytes " << memoryForSortingInBytes << "\n";
                 
                 if(requiredMemForAllElements < memoryForSortingInBytes){
+                    //Grow memory storage to fit all elements:
+                    //Create new memory storage, append current memory storage, append elements from file
+
                     FixedSizeStorage<T> newMemoryStorage(requiredMemForAllElements);
 
                     returnValue = newMemoryStorage.insert(memoryStorage);
@@ -288,7 +296,7 @@ struct MemoryFileFixedSize{
                         const bool inserted = newMemoryStorage.insert(*element, serialize);
                         assert(inserted);
                     }
-                    const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
+                    const std::size_t oldOccupiedBytes = memoryStorage.getSizeInBytes();
                     memoryStorage.destroy();
                     std::swap(memoryStorage, newMemoryStorage);
                     memoryForSortingInBytes = memoryForSortingInBytes - requiredMemForAllElements + oldOccupiedBytes;
@@ -318,15 +326,15 @@ struct MemoryFileFixedSize{
         
         
         //append unsorted elements in memory to file
-        const std::size_t memoryBytes = memoryStorage.getNumOccupiedRawElementBytes();
-        outputstream.write(reinterpret_cast<const char*>(memoryStorage.getElementsData()), memoryBytes);
+        const std::size_t memoryOfElementsBytes = memoryStorage.getNumOccupiedRawElementBytes();
+        outputstream.write(reinterpret_cast<const char*>(memoryStorage.getElementsData()), memoryOfElementsBytes);
         outputstream.flush();
 
 
         std::size_t numElements = getNumElements();
         numStoredElementsInFile = numElements;
         
-        const std::size_t oldOccupiedBytes = memoryStorage.getNumOccupiedRawElementBytes();
+        const std::size_t oldOccupiedBytes = memoryStorage.getSizeInBytes();
         memoryStorage.destroy();
 
         memoryForSortingInBytes += oldOccupiedBytes;
@@ -355,8 +363,7 @@ struct MemoryFileFixedSize{
 
         filehelpers::renameFileSameMount(filename+"2", filename);
 
-        outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);
-#        
+        outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);      
     }
 
 private:
