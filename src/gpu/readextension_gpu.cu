@@ -1,8 +1,10 @@
 
+#include <gpu/gpuminhasher.cuh>
+#include <gpu/gpureadstorage.cuh>
+#include <gpu/readextender_gpu.hpp>
+
 #include <config.hpp>
 #include <sequencehelpers.hpp>
-#include <minhasher.hpp>
-#include <readstorage.hpp>
 #include <options.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
@@ -20,7 +22,7 @@
 #include <mutex>
 #include <numeric>
 
-#include <gpu/readextender_gpu.hpp>
+
 #include <extensionresultprocessing.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
@@ -48,9 +50,8 @@ extend_gpu_pairedend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const GpuMinhasher& minhasher,
-    const gpu::DistributedReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage
 ){
     const auto rsMemInfo = gpuReadStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
@@ -67,17 +68,17 @@ extend_gpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
+    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(gpuReadStorage.getNumberOfReads());
 
     #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+    for(read_number i = 0; i < gpuReadStorage.getNumberOfReads(); i++){
         correctionStatusFlagsPerRead[i] = 0;
     }
 
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads() / 1024. / 1024. << " MB\n";
 
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
+    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads()){
+        memoryAvailableBytesHost -= sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads();
     }else{
         memoryAvailableBytesHost = 0;
     }
@@ -94,13 +95,13 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(100000);
     //readIdGenerator.skip(4200000);
  
     BackgroundThread outputThread(true);
 
-    const std::uint64_t totalNumReadPairs = sequenceFileProperties.nReads / 2;
+    const std::uint64_t totalNumReadPairs = gpuReadStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -127,7 +128,7 @@ extend_gpu_pairedend(
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -164,6 +165,7 @@ extend_gpu_pairedend(
             insertSizeStddev,
             maxextensionPerStep,
             maximumSequenceLength,
+            correctionOptions.kmerlength,
             gpuReadStorage, 
             minhasher,
             correctionOptions,
@@ -178,7 +180,7 @@ extend_gpu_pairedend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        auto gatherHandleSequences = gpuReadStorage.makeGatherHandleSequences();
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
         const int batchsizePairs = correctionOptions.batchsize;
 
@@ -207,27 +209,25 @@ extend_gpu_pairedend(
                 continue; //this should only happen if all reads have been processed
             }
 
-            gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
-                nullptr,
-                gatherHandleSequences,
-                currentEncodedReads.get(), //device acccessible
+            gpuReadStorage.gatherSequences(
+                readStorageHandle,
+                currentEncodedReads.get(),
                 encodedSequencePitchInInts,
                 currentIds.get(),
                 currentIds.get(), //device accessible
                 numReadsInBatch,
-                deviceId,
                 stream
-            ); CUERR;
-    
-            gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
-                currentReadLengths.get(), //device accessible
-                deviceId,
-                currentIds.get(), //device accessible
-                numReadsInBatch,    
-                stream
-            ); CUERR;
+            );
 
-            cudaStreamSynchronize(stream);
+            gpuReadStorage.gatherSequenceLengths(
+                readStorageHandle,
+                currentReadLengths.get(),
+                currentIds.get(),
+                numReadsInBatch,
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
@@ -320,7 +320,8 @@ extend_gpu_pairedend(
         }
 
         
-        
+        gpuReadStorage.destroyHandle(readStorageHandle);
+
     } //end omp parallel
 
     progressThread.finished();
@@ -365,9 +366,8 @@ extend_gpu_singleend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const GpuMinhasher& minhasher,
-    const gpu::DistributedReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage
 ){
     std::cerr << "extend_gpu_singleend\n";
 
@@ -386,17 +386,17 @@ extend_gpu_singleend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
+    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(gpuReadStorage.getNumberOfReads());
 
     #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+    for(read_number i = 0; i < gpuReadStorage.getNumberOfReads(); i++){
         correctionStatusFlagsPerRead[i] = 0;
     }
 
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads() / 1024. / 1024. << " MB\n";
 
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
+    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads()){
+        memoryAvailableBytesHost -= sizeof(std::uint8_t) * gpuReadStorage.getNumberOfReads();
     }else{
         memoryAvailableBytesHost = 0;
     }
@@ -413,7 +413,7 @@ extend_gpu_singleend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
@@ -421,15 +421,17 @@ extend_gpu_singleend(
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
 
+            std::size_t numreads = gpuReadStorage.getNumberOfReads();
+
             printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, numreads,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
         }
 
-        if(totalCount == sequenceFileProperties.nReads){
+        if(totalCount == gpuReadStorage.getNumberOfReads()){
             std::cerr << '\n';
         }
     };
@@ -438,12 +440,12 @@ extend_gpu_singleend(
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(gpuReadStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -480,6 +482,7 @@ extend_gpu_singleend(
             insertSizeStddev,
             maxextensionPerStep,
             maximumSequenceLength,
+            correctionOptions.kmerlength,
             gpuReadStorage, 
             minhasher,
             correctionOptions,
@@ -494,7 +497,7 @@ extend_gpu_singleend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        auto gatherHandleSequences = gpuReadStorage.makeGatherHandleSequences();
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
         const int batchsize = correctionOptions.batchsize;
 
@@ -519,27 +522,25 @@ extend_gpu_singleend(
                 continue; //this should only happen if all reads have been processed
             }
 
-            gpuReadStorage.gatherSequenceDataToGpuBufferAsync(
-                nullptr,
-                gatherHandleSequences,
-                currentEncodedReads.get(), //device acccessible
+            gpuReadStorage.gatherSequences(
+                readStorageHandle,
+                currentEncodedReads.get(),
                 encodedSequencePitchInInts,
                 currentIds.get(),
                 currentIds.get(), //device accessible
                 numReadsInBatch,
-                deviceId,
                 stream
-            ); CUERR;
-    
-            gpuReadStorage.gatherSequenceLengthsToGpuBufferAsync(
-                currentReadLengths.get(), //device accessible
-                deviceId,
-                currentIds.get(), //device accessible
-                numReadsInBatch,    
-                stream
-            ); CUERR;
+            );
 
-            cudaStreamSynchronize(stream);
+            gpuReadStorage.gatherSequenceLengths(
+                readStorageHandle,
+                currentReadLengths.get(),
+                currentIds.get(),
+                numReadsInBatch,
+                stream
+            );
+    
+            cudaStreamSynchronize(stream); CUERR;
 
             std::vector<ReadExtenderGpu::ExtendInput> inputs(numReadsInBatch); 
 
@@ -629,7 +630,7 @@ extend_gpu_singleend(
             }      
         }
 
-        
+        gpuReadStorage.destroyHandle(readStorageHandle);
         
     } //end omp parallel
 
@@ -673,9 +674,8 @@ extend_gpu(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const GpuMinhasher& gpumMinhasher,
-    const gpu::DistributedReadStorage& gpuReadStorage
+    const GpuReadStorage& gpuReadStorage
 ){
     if(fileOptions.pairType == SequencePairType::SingleEnd){
         return extend_gpu_singleend(
@@ -685,7 +685,6 @@ extend_gpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             gpumMinhasher,
             gpuReadStorage
         );
@@ -697,7 +696,6 @@ extend_gpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             gpumMinhasher,
             gpuReadStorage
         );

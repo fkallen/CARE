@@ -150,6 +150,9 @@ struct SingleProducerSingleConsumerQueue{
     }
 };
 
+template<class T>
+using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
+
 
 }
 

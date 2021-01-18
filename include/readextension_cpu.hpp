@@ -5,8 +5,8 @@
 #include <config.hpp>
 #include <options.hpp>
 #include <memoryfile.hpp>
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+#include <cpuminhasher.hpp>
+#include <cpureadstorage.hpp>
 #include <correctionresultprocessing.hpp>
 #include <extensionresultprocessing.hpp>
 
@@ -23,8 +23,8 @@ namespace care{
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
         const SequenceFileProperties& sequenceFileProperties,
-        const Minhasher& minhasher,
-        const cpu::ContiguousReadStorage& readStorage
+        const CpuMinhasher& minhasher,
+        const CpuReadStorage& readStorage
     );
 
 

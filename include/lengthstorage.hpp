@@ -70,6 +70,21 @@ struct LengthStore{
             && data == rhs.data;
     }
 
+    void destroy(){
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+
+        deallocVector(data);
+        numElements = 0;
+        minLength = 0;
+        maxLength = 0;
+        bitsPerLength = 0;
+        bitsMask = 0;
+    }
+
     bool operator!=(const LengthStore& rhs) const noexcept{
         return !(operator==(rhs));
     }

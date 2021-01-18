@@ -34,14 +34,18 @@ public:
         int insertSizeStddev,
         int maxextensionPerStep,
         int maximumSequenceLength,
-        const gpu::DistributedReadStorage& rs, 
+        int kmerLength_,
+        const gpu::GpuReadStorage& rs, 
         const gpu::GpuMinhasher& gmh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) 
     : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
+        kmerLength(kmerLength_),
         gpuReadStorage(&rs),
-        gpuMinhasher(&gmh){
+        gpuMinhasher(&gmh),
+        readStorageHandle(gpuReadStorage->makeHandle()),
+        minhashHandle(gpuMinhasher->makeQueryHandle()){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -50,10 +54,11 @@ public:
         h_numCandidates.resize(1);
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
+    }
 
-        gatherHandleSequences = gpuReadStorage->makeGatherHandleSequences();
-
-        gpuMinhashHandle = gpu::GpuMinhasher::makeQueryHandle();
+    ~ReadExtenderGpu(){
+        gpuReadStorage->destroyHandle(readStorageHandle);
+        gpuMinhasher->destroyHandle(minhashHandle);
     }
      
 private:
@@ -136,9 +141,6 @@ private:
         const int numIndices = indicesOfActiveTasks.size();
         const std::size_t encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
 
-        const int resultsPerMap = calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage);
-        const int maxNumCandidateIds = (resultsPerMap * gpuMinhasher->getNumberOfMaps()) * numIndices;
-
         cudaStream_t stream = streams[primary_stream_index];
 
         //input buffers
@@ -148,14 +150,12 @@ private:
         d_anchorSequencesLength.resize(numIndices);
 
         //output buffers
-        h_candidateReadIds.resize(maxNumCandidateIds);
-        d_candidateReadIds.resize(maxNumCandidateIds);
         h_numCandidatesPerAnchor.resize(numIndices);
         d_numCandidatesPerAnchor.resize(numIndices);
         h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
         d_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
 
-        #if 1
+        #if 0
         constexpr int batchsize = 64;
         const int batches = SDIV(numIndices, batchsize);
 
@@ -182,14 +182,14 @@ private:
                     const int extendedPositionsPreviousIteration 
                         = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
 
-                    const int lengthToHash = std::min(task.currentAnchorLength, gpuMinhasher->getKmerSize() + extendedPositionsPreviousIteration - 1);
+                    const int lengthToHash = std::min(task.currentAnchorLength, kmerLength + extendedPositionsPreviousIteration - 1);
                     h_anchorSequencesLength[t] = lengthToHash;
 
                     //std::cerr << "lengthToHash = " << lengthToHash << "\n";
 
                     std::vector<char> buf(task.currentAnchorLength);
-                    decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
-                    encodeSequence2Bit(
+                    SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+                    SequenceHelpers::encodeSequence2Bit(
                         h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
                         buf.data() + task.currentAnchorLength - lengthToHash, 
                         lengthToHash
@@ -203,7 +203,7 @@ private:
                 h_subjectSequencesData.get() + encodedSequencePitchInInts2Bit * begin,
                 sizeof(unsigned int) * num * encodedSequencePitchInInts2Bit,
                 H2D,
-                streams[batch % streams.size()];
+                streams[batch % streams.size()]
             ); CUERR;
 
             cudaMemcpyAsync(
@@ -235,7 +235,7 @@ private:
                 const int extendedPositionsPreviousIteration 
                     = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
 
-                const int lengthToHash = std::min(task.currentAnchorLength, gpuMinhasher->getKmerSize() + extendedPositionsPreviousIteration - 1);
+                const int lengthToHash = std::min(task.currentAnchorLength, kmerLength + extendedPositionsPreviousIteration - 1);
                 h_anchorSequencesLength[t] = lengthToHash;
 
                 //std::cerr << "lengthToHash = " << lengthToHash << "\n";
@@ -250,6 +250,8 @@ private:
 
             }
         }
+
+        #endif
 
         cudaMemcpyAsync(
             d_subjectSequencesData.get(),
@@ -266,19 +268,41 @@ private:
             H2D,
             stream
         ); CUERR;
-        
-        gpuMinhasher->query(
-            gpuMinhashHandle,
-            d_subjectSequencesData.get(), //device accessible
+
+        int totalNumValues = 0;
+
+        gpuMinhasher->determineNumValues(
+            minhashHandle,
+            d_subjectSequencesData.get(),
             encodedSequencePitchInInts2Bit,
-            d_anchorSequencesLength.get(), //device accessible
+            d_anchorSequencesLength.get(),
             numIndices,
-            deviceId, 
-            stream,
-            d_candidateReadIds.get(), //device accessible
-            d_numCandidatesPerAnchor.get(), //device accessible
-            d_numCandidatesPerAnchorPrefixSum.get() //device accessible
-        ); CUERR;
+            d_numCandidatesPerAnchor.get(),
+            totalNumValues,
+            stream
+        );
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        d_candidateReadIds.resize(totalNumValues);
+        h_candidateReadIds.resize(totalNumValues);
+
+        if(totalNumValues == 0){
+            cudaMemsetAsync(d_numCandidatesPerAnchor.get(), 0, sizeof(int) * numIndices, stream); CUERR;
+            cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + numIndices), stream); CUERR;
+            return;
+        }
+
+        gpuMinhasher->retrieveValues(
+            minhashHandle,
+            nullptr,
+            numIndices,                
+            totalNumValues,
+            d_candidateReadIds.get(),
+            d_numCandidatesPerAnchor.get(),
+            d_numCandidatesPerAnchorPrefixSum.get(),
+            stream
+        );
 
         //d_numCandidatesPerAnchor not copied to host because unused
 
@@ -370,25 +394,23 @@ private:
             stream
         ); CUERR;
 
-        gpuReadStorage->gatherSequenceDataToGpuBufferAsync(
-            nullptr,
-            gatherHandleSequences,
-            h_candidateSequencesData.get(), //device acccessible
+        gpuReadStorage->gatherSequences(
+            readStorageHandle,
+            h_candidateSequencesData.get(),
             encodedSequencePitchInInts,
             h_candidateReadIds.get(),
             d_candidateReadIds.get(), //device accessible
             totalNumCandidates,
-            deviceId,
             stream
-        ); CUERR;
+        );
 
-        gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(
-            h_candidateSequencesLength.get(), //device accessible
-            deviceId,
-            d_candidateReadIds.get(), //device accessible
-            totalNumCandidates,    
+        gpuReadStorage->gatherSequenceLengths(
+            readStorageHandle,
+            h_candidateSequencesLength.get(),
+            d_candidateReadIds.get(),
+            totalNumCandidates,
             stream
-        ); CUERR;
+        );
 
         cudaStreamSynchronize(stream); CUERR;
 
@@ -606,6 +628,7 @@ private:
     }
 
     int deviceId;
+    int kmerLength;
 
     PinnedBuffer<read_number> h_readIds;
     DeviceBuffer<read_number> d_readIds;
@@ -641,11 +664,11 @@ private:
 
     gpu::KernelLaunchHandle kernelLaunchHandle;
 
-    const gpu::DistributedReadStorage* gpuReadStorage;
-    gpu::DistributedReadStorage::GatherHandleSequences gatherHandleSequences;
-
+    const gpu::GpuReadStorage* gpuReadStorage;
     const gpu::GpuMinhasher* gpuMinhasher;
-    gpu::GpuMinhasher::QueryHandle gpuMinhashHandle;
+
+    ReadStorageHandle readStorageHandle;
+    gpu::GpuMinhasher::QueryHandle minhashHandle;
 
 };
 

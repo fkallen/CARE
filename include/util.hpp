@@ -155,6 +155,23 @@ std::vector<std::string> split(const std::string& str, char c){
 	return result;
 }
 
+// https://devblogs.microsoft.com/oldnewthing/20170102-00/?p=95095
+// permutes data according to indices. indices is left in unspecified state
+template<class T, class Index>
+void permute(T* data, Index* indices, std::size_t N){
+    using std::swap;
+
+    for (size_t i = 0; i < N; i++) {
+        auto current = i;
+        while (i != indices[current]) {
+            auto next = indices[current];
+            swap(data[current], data[next]);
+            indices[current] = current;
+            current = next;
+        }
+        indices[current] = current;
+    }
+}
 
 
 /*
@@ -162,7 +179,7 @@ std::vector<std::string> split(const std::string& str, char c){
 */
 
 struct SetUnionHandle{
-    std::vector<char> buffer;
+    std::vector<char> buffer{};
 };
 
 template<class OutputIt, class Iter>

@@ -5,8 +5,8 @@
 
 #include <config.hpp>
 #include <sequencehelpers.hpp>
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+#include <cpuminhasher.hpp>
+#include <cpureadstorage.hpp>
 #include <options.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
@@ -1531,13 +1531,18 @@ public:
         int insertSizeStddev,
         int maxextensionPerStep,
         int maximumSequenceLength,
-        const cpu::ContiguousReadStorage& rs, 
-        const Minhasher& mh,
+        const CpuReadStorage& rs, 
+        const CpuMinhasher& mh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap        
     ) : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
-        readStorage(&rs), minhasher(&mh){
+        readStorage(&rs), minhasher(&mh), readStorageHandle{rs.makeHandle()}, minhashHandle{mh.makeQueryHandle()}{
 
+    }
+
+    ~ReadExtenderCpu(){
+        readStorage->destroyHandle(readStorageHandle);
+        //minhasher->destroyHandle(minhashHandle);
     }
      
 private:
@@ -1552,7 +1557,8 @@ private:
 
         result.clear();
 
-        const bool containsN = readStorage->readContainsN(readId);
+        bool containsN = false;
+        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions.excludeAmbiguousReads && containsN)){
@@ -1566,31 +1572,49 @@ private:
                 length
             );
 
-            minhasher->getCandidates_any_map(
-                minhashHandle,
-                sequence.c_str() + beginPos,
-                std::max(0, readLength - beginPos),
-                0
+            int numValuesPerSequence = 0;
+            int totalNumValues = 0;
+
+            minhasher->determineNumValues(
+                minhashHandle,encodedRead,
+                encodedSequencePitchInInts,
+                &readLength,
+                1,
+                &numValuesPerSequence,
+                totalNumValues
             );
 
-            auto minhashResultsEnd = minhashHandle.result().end();
+            result.resize(totalNumValues);
+            std::array<int, 2> offsets{};
+
+            minhasher->retrieveValues(
+                minhashHandle,
+                nullptr, //do not remove selfid
+                1,
+                totalNumValues,
+                result.data(),
+                &numValuesPerSequence,
+                offsets.data()
+            );
+
+            result.erase(result.begin() + numValuesPerSequence, result.end());
+
             //exclude candidates with ambiguous bases
 
             if(correctionOptions.excludeAmbiguousReads){
-                minhashResultsEnd = std::remove_if(
-                    minhashHandle.result().begin(),
-                    minhashHandle.result().end(),
+                auto minhashResultsEnd = std::remove_if(
+                    result.begin(),
+                    result.end(),
                     [&](read_number readId){
-                        return readStorage->readContainsN(readId);
+                        bool containsN = false;
+                        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
+                        return containsN;
                     }
                 );
+
+                result.erase(minhashResultsEnd, result.end());
             }            
 
-            result.insert(
-                result.begin(),
-                minhashHandle.result().begin(),
-                minhashResultsEnd
-            );
         }else{
             ; // no candidates
         }
@@ -1621,18 +1645,18 @@ private:
             task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
             readStorage->gatherSequenceLengths(
-                readStorageGatherHandle,
+                readStorageHandle,
+                task.candidateSequenceLengths.data(),
                 task.candidateReadIds.data(),
-                task.candidateReadIds.size(),
-                task.candidateSequenceLengths.data()
+                task.candidateReadIds.size()
             );
 
-            readStorage->gatherSequenceData(
-                readStorageGatherHandle,
-                task.candidateReadIds.data(),
-                task.candidateReadIds.size(),
+            readStorage->gatherSequences(
+                readStorageHandle,
                 task.candidateSequencesFwdData.data(),
-                encodedSequencePitchInInts
+                encodedSequencePitchInInts,
+                task.candidateReadIds.data(),
+                task.candidateReadIds.size()
             );
         }
     }
@@ -1705,11 +1729,11 @@ private:
         }
     }
 
-    cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-    const cpu::ContiguousReadStorage* readStorage;
+    const CpuReadStorage* readStorage;
+    const CpuMinhasher* minhasher;
 
-    const Minhasher* minhasher;
-    Minhasher::Handle minhashHandle;
+    ReadStorageHandle readStorageHandle;
+    CpuMinhasher::QueryHandle minhashHandle;
     cpu::shd::CpuAlignmentHandle alignmentHandle;
 
 };

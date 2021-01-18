@@ -23,21 +23,31 @@ void writeExtensionResultsToFile(
 ){
 
     if(!isSorted){
-        auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-            read_number lid1;
-            read_number rid1;
-            std::memcpy(&lid1, ptr1, sizeof(read_number));
-            std::memcpy(&rid1, ptr2, sizeof(read_number));
-            
-            return lid1 < rid1;
-        };
 
         auto elementcomparator = [](const auto& l, const auto& r){
-            return l.readId < r.readId;
+            return l.getReadId() < r.getReadId();
         };
 
+        auto extractKey = [](const std::uint8_t* ptr){
+            using ValueType = typename MemoryFileFixedSize<ExtendedRead>::ValueType;
+
+            const read_number id = ValueType::parseReadId(ptr);
+            
+            return id;
+        };
+
+        auto keyComparator = std::less<read_number>{};
+
         helpers::CpuTimer timer("sort_results_by_read_id");
-        partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+
+        bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
+
+        if(!fastSuccess){            
+            partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
+        }else{
+            std::cerr << "fast sort worked!\n";
+        }
+
         timer.print();
     }
 

@@ -4,6 +4,10 @@
 #include <algorithm>
 #include <memory>
 #include <cstdint>
+#include <util.hpp>
+
+#include <hpc_helpers.cuh>
+#include <sortbygeneratedkeys.hpp>
 
 namespace care{
 
@@ -194,12 +198,55 @@ namespace care{
             }
         }
 
-        // Ptrcomparator::operator()(ptr1, ptr2)
-        // compare serialized element pointed to by ptr1 with serialized element pointer to by ptr2
-        template<class Ptrcomparator>
-        void sort(Ptrcomparator&& ptrcomparator){
+
+
+        template<class ExtractKey, class KeyComparator>
+        void sort(std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator){
+            using Key = decltype(extractKey(nullptr));
+
+            if(getNumStoredElements() == 0) return;
+#if 1
+            bool sortValuesSuccess = false;
+
+            auto keyGenerator = [&](auto i){
+                const std::uint8_t* ptr = elementsBegin + offsetsBegin[i];
+                const Key key = extractKey(ptr);
+                return key;
+            };
+
+            try{
+
+                if(std::size_t(getNumStoredElements()) <= std::size_t(std::numeric_limits<std::uint32_t>::max())){
+                    sortValuesSuccess = sortValuesByGeneratedKeys<std::uint32_t>(
+                        memoryForSortingInBytes,
+                        offsetsBegin,
+                        getNumStoredElements(),
+                        keyGenerator,
+                        keyComparator
+                    );
+                }else{
+                    sortValuesSuccess = sortValuesByGeneratedKeys<std::uint64_t>(
+                        memoryForSortingInBytes,
+                        offsetsBegin,
+                        getNumStoredElements(),
+                        keyGenerator,
+                        keyComparator
+                    );
+                }
+
+            } catch (...){
+                std::cerr << "Final fallback\n";
+            }
+
+            if(sortValuesSuccess) return;
+#endif
             auto offsetcomparator = [&](std::size_t elementOffset1, std::size_t elementOffset2){
-                return ptrcomparator(elementsBegin + elementOffset1, elementsBegin + elementOffset2);
+                const std::uint8_t* ptr1 = elementsBegin + elementOffset1;
+                const std::uint8_t* ptr2 = elementsBegin + elementOffset2;
+                const Key key1 = extractKey(ptr1);
+                const Key key2 = extractKey(ptr2);
+
+                return keyComparator(key1, key2);
             };
 
             std::sort(offsetsBegin, offsetsEnd, offsetcomparator);

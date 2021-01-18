@@ -5,8 +5,8 @@
 #include <config.hpp>
 #include <options.hpp>
 #include <memoryfile.hpp>
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+#include <gpu/gpuminhasher.cuh>
+#include <gpu/gpureadstorage.cuh>
 #include <correctionresultprocessing.hpp>
 #include <extensionresultprocessing.hpp>
 
@@ -25,9 +25,8 @@ namespace gpu{
         const RuntimeOptions& runtimeOptions,
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
-        const SequenceFileProperties& sequenceFileProperties,
         const GpuMinhasher& minhasher,
-        const gpu::DistributedReadStorage& gpuReadStorage
+        const GpuReadStorage& gpuReadStorage
     );
 
 

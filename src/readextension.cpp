@@ -1,8 +1,8 @@
 
 #include <config.hpp>
 #include <sequencehelpers.hpp>
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+#include <cpuminhasher.hpp>
+#include <cpureadstorage.hpp>
 #include <options.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
@@ -49,8 +49,8 @@ extend_cpu_pairedend(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const SequenceFileProperties& sequenceFileProperties,
-    const Minhasher& minhasher,
-    const cpu::ContiguousReadStorage& readStorage
+    const CpuMinhasher& minhasher,
+    const CpuReadStorage& readStorage
 ){
     const auto rsMemInfo = readStorage.getMemoryInfo();
     const auto mhMemInfo = minhasher.getMemoryInfo();
@@ -169,7 +169,7 @@ extend_cpu_pairedend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
 
         const int batchsizePairs = correctionOptions.batchsize;
 
@@ -196,18 +196,18 @@ extend_cpu_pairedend(
             }
 
             readStorage.gatherSequenceLengths(
-                readStorageGatherHandle,
+                readStorageHandle,
+                currentReadLengths.data(),
                 currentIds.data(),
-                currentIds.size(),
-                currentReadLengths.data()
+                currentIds.size()
             );
 
-            readStorage.gatherSequenceData(
-                readStorageGatherHandle,
-                currentIds.data(),
-                currentIds.size(),
+            readStorage.gatherSequences(
+                readStorageHandle,
                 currentEncodedReads.data(),
-                encodedSequencePitchInInts
+                encodedSequencePitchInInts,
+                currentIds.data(),
+                currentIds.size()
             );
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
@@ -298,7 +298,8 @@ extend_cpu_pairedend(
         }
 
         
-        
+        readStorage.destroyHandle(readStorageHandle);
+
     } //end omp parallel
 
     progressThread.finished();
@@ -344,8 +345,8 @@ extend_cpu_singleend(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const SequenceFileProperties& sequenceFileProperties,
-    const Minhasher& minhasher,
-    const cpu::ContiguousReadStorage& readStorage
+    const CpuMinhasher& minhasher,
+    const CpuReadStorage& readStorage
 ){
     std::cerr << "extend_cpu_singleend\n";
     
@@ -463,7 +464,7 @@ extend_cpu_singleend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
 
         const int batchsize = correctionOptions.batchsize;
 
@@ -486,18 +487,18 @@ extend_cpu_singleend(
             }
 
             readStorage.gatherSequenceLengths(
-                readStorageGatherHandle,
+                readStorageHandle,
+                currentReadLengths.data(),
                 currentIds.data(),
-                currentIds.size(),
-                currentReadLengths.data()
+                currentIds.size()
             );
 
-            readStorage.gatherSequenceData(
-                readStorageGatherHandle,
-                currentIds.data(),
-                currentIds.size(),
+            readStorage.gatherSequences(
+                readStorageHandle,
                 currentEncodedReads.data(),
-                encodedSequencePitchInInts
+                encodedSequencePitchInInts,
+                currentIds.data(),
+                currentIds.size()
             );
 
             std::vector<ReadExtenderCpu::ExtendInput> inputs(numReadsInBatch);
@@ -586,6 +587,7 @@ extend_cpu_singleend(
         }
 
         
+        readStorage.destroyHandle(readStorageHandle);
         
     } //end omp parallel
 
@@ -631,8 +633,8 @@ extend_cpu(
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
     const SequenceFileProperties& sequenceFileProperties,
-    const Minhasher& minhasher,
-    const cpu::ContiguousReadStorage& readStorage
+    const CpuMinhasher& minhasher,
+    const CpuReadStorage& readStorage
 ){
     if(fileOptions.pairType == SequencePairType::SingleEnd){
         return extend_cpu_singleend(

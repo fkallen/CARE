@@ -4,6 +4,18 @@ CUDA_DIR=$(shell cat .CUDA_DIR)
 CUB_INCDIR=$(shell cat .CUB_INCDIR)
 THRUST_INCDIR=$(shell cat .THRUST_INCDIR)
 
+BUILD_WITH_WARPCORE = 1
+
+ifeq ($(BUILD_WITH_WARPCORE), 1)
+	WARPCORE_INCDIR = $(shell cat .WARPCORE_INCDIR)
+	WARPCORE_INCLUDE_FLAGS = -I$(WARPCORE_INCDIR)
+	WARPCORE_CFLAGS = -DCARE_HAS_WARPCORE
+else
+	WARPCORE_INCDIR = 
+	WARPCORE_INCLUDE_FLAGS = 
+	WARPCORE_CFLAGS = 
+endif
+
 CXX=g++
 CUDACC=$(CUDA_DIR)/bin/nvcc
 HOSTLINKER=g++
@@ -16,26 +28,28 @@ CFLAGS_DEBUG_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_IN
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
-NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
-NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR)
+NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
+NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
-			-gencode=arch=compute_70,code=sm_70 \
-  			-gencode=arch=compute_70,code=compute_70
+		-gencode=arch=compute_70,code=sm_70 \
+		-gencode=arch=compute_80,code=sm_80 \
+  		-gencode=arch=compute_80,code=compute_80
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -lz 
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -lz 
-
-# sources which are used by both cpu version and gpu version
-SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out src/correct_cpu.cpp src/dispatch_care_cpu.cpp src/readextension.cpp,$(SOURCES_CPU_AND_GPU_))
 
 # sources which are used by gpu version exclusively
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
-SOURCES_ONLY_CPU = src/correct_cpu.cpp src/dispatch_care_cpu.cpp src/readextension.cpp
+# src/correct_cpu.cpp 
+SOURCES_ONLY_CPU = src/dispatch_care_cpu.cpp src/correctionresultprocessing.cpp src/readextension.cpp
+
+# sources which are used by both cpu version and gpu version
+SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
+SOURCES_CPU_AND_GPU = $(filter-out $(SOURCES_ONLY_CPU), $(SOURCES_CPU_AND_GPU_))
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))

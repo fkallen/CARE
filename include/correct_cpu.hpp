@@ -4,26 +4,28 @@
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
 #include <memoryfile.hpp>
-#include <minhasher.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-#include <readstorage.hpp>
-
+#include <cpureadstorage.hpp>
+#include <cpuminhasher.hpp>
 
 namespace care{
 namespace cpu{
 
-    MemoryFileFixedSize<EncodedTempCorrectedSequence>
+
+
+	MemoryFileFixedSize<EncodedTempCorrectedSequence>
 	correct_cpu(
 		const GoodAlignmentProperties& goodAlignmentProperties,
 		const CorrectionOptions& correctionOptions,
 		const RuntimeOptions& runtimeOptions,
 		const FileOptions& fileOptions,
 		const MemoryOptions& memoryOptions,
-		const SequenceFileProperties& sequenceFileProperties,
-		Minhasher& minhasher,
-		cpu::ContiguousReadStorage& readStorage
+		CpuMinhasher& minhasher,
+		CpuReadStorage& readStorage
 	);
+
+	
 
 
 }

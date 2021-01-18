@@ -1,5 +1,5 @@
-#ifndef READ_STORAGE_HPP
-#define READ_STORAGE_HPP
+#ifndef CARE_CONTIGUOUSREADSTORAGE_HPP
+#define CARE_CONTIGUOUSREADSTORAGE_HPP
 
 #include <config.hpp>
 #include <sequencehelpers.hpp>
@@ -9,6 +9,8 @@
 #include <threadpool.hpp>
 #include <util.hpp>
 #include <readstorageconstruction.hpp>
+#include <cpureadstorage.hpp>
+#include <sharedmutex.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -29,7 +31,7 @@ namespace care{
 
 namespace cpu{
 
-    struct ContiguousReadStorage{
+    struct ContiguousReadStorage : public CpuReadStorage{
 
         struct Statistics{
             int maximumSequenceLength = 0;
@@ -66,11 +68,187 @@ namespace cpu{
         read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
         std::size_t quality_data_bytes = 0;
-        std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
-        std::mutex mutexUndeterminedBaseReads;
-        Statistics statistics;
+        std::vector<read_number> readIdsOfReadsWithUndeterminedBase{}; //sorted in ascending order
+        std::mutex mutexUndeterminedBaseReads{};
+        Statistics statistics{};
         std::atomic<read_number> numberOfInsertedReads{0};
-        LengthStore_t lengthStorage;
+        LengthStore_t lengthStorage{};
+
+        mutable int counter = 0;
+        mutable SharedMutex sharedmutex{};
+        //mutable std::vector<std::unique_ptr<TempData>> tempdataVector{};
+
+    public: //inherited interface
+
+    ReadStorageHandle makeHandle() const override {
+
+        std::unique_lock<SharedMutex> lock(sharedmutex);
+        const int handleid = counter++;
+        ReadStorageHandle h = constructHandle(handleid);
+
+        return h;
+    }
+
+    void destroyHandle(ReadStorageHandle& handle) const override{
+        //std::unique_lock<SharedMutex> lock(sharedmutex);
+
+        //const int id = handle.getId();
+        //assert(id < int(tempdataVector.size()));
+        
+        //tempdataVector[id] = nullptr;
+        handle = constructHandle(std::numeric_limits<int>::max());
+    };
+
+    void areSequencesAmbiguous(
+        ReadStorageHandle& handle,
+        bool* result, 
+        const read_number* readIds, 
+        int numSequences
+    ) const override{
+        for(int k = 0; k < numSequences; k++){
+            result[k] = readContainsN(readIds[k]);
+        }
+    }
+
+    void gatherSequences(
+        ReadStorageHandle& handle,
+        unsigned int* sequence_data,
+        size_t outSequencePitchInInts,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        GatherHandle myhandle{};
+
+        gatherSequenceData(
+            myhandle,
+            readIds,
+            numSequences,
+            sequence_data,
+            outSequencePitchInInts
+        );
+    }
+
+    void gatherQualities(
+        ReadStorageHandle& handle,
+        char* quality_data,
+        size_t out_quality_pitch,
+        const read_number* readIds,
+        int numSequences
+    ) const override{
+        GatherHandle myhandle{};
+
+        gatherSequenceQualities(
+            myhandle,
+            readIds,
+            numSequences,
+            quality_data,
+            out_quality_pitch
+        );
+    }
+
+    void gatherSequenceLengths(
+        ReadStorageHandle& handle,
+        int* lengths,
+        const read_number* readIds,
+        int numSequences
+    ) const override {
+        GatherHandle myhandle{};
+
+        gatherSequenceLengths(
+            myhandle,
+            readIds,
+            numSequences,
+            lengths,
+            1
+        );
+    }
+
+    void getIdsOfAmbiguousReads(
+        ReadStorageHandle& handle,
+        read_number* ids
+    ) const override{
+        std::copy(readIdsOfReadsWithUndeterminedBase.begin(), readIdsOfReadsWithUndeterminedBase.end(), ids);
+    }
+
+    std::int64_t getNumberOfReadsWithN() const override {
+        return readIdsOfReadsWithUndeterminedBase.size();
+    }
+
+    MemoryUsage getMemoryInfo() const override {
+        MemoryUsage info;
+        info.host = sequence_data_bytes;
+        info.host += lengthStorage.getRawSizeInBytes();
+        info.host += sizeof(read_number) * readIdsOfReadsWithUndeterminedBase.capacity();
+
+        if(useQualityScores){
+            info.host += quality_data_bytes;
+        }         
+
+        return info;
+    }
+
+    MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
+        //no data associated with handle
+        MemoryUsage result{};
+        return result;
+    }
+
+    read_number getNumberOfReads() const override {
+        return numberOfInsertedReads;
+    }
+
+    bool canUseQualityScores() const override {
+        return useQualityScores;
+    }
+
+    int getSequenceLengthLowerBound() const override {
+        return sequenceLengthLowerBound;
+    }
+
+    int getSequenceLengthUpperBound() const override {
+        return sequenceLengthUpperBound;
+    }
+
+    void destroy() override {
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+        
+        h_sequence_data.reset();
+        h_quality_data.reset();
+        lengthStorage.destroy();
+
+        deallocVector(readIdsOfReadsWithUndeterminedBase);
+
+    }
+
+    public:
+
+        const unsigned int* getSequenceArray() const noexcept{
+            return h_sequence_data.get();
+        }
+
+        const char* getQualityArray() const noexcept{
+            return h_quality_data.get();
+        }
+
+        const LengthStore_t& getLengthStore() const noexcept{
+            return lengthStorage;
+        }
+
+        std::size_t getSequencePitch() const noexcept{
+            return sequenceDataPitchInInts * sizeof(unsigned int);
+        }
+
+        std::size_t getQualityPitch() const noexcept{
+            return sequenceQualitiesPitchInBytes;
+        }
+
+        const read_number* getAmbiguousIds() const noexcept{
+            return readIdsOfReadsWithUndeterminedBase.data();
+        }
 
 
 
@@ -286,18 +464,11 @@ namespace cpu{
             maximumNumberOfSequences = nReads;
     	}
 
-    	void destroy(){
-            h_sequence_data.reset();
-            h_quality_data.reset();
-    	}
-
         Statistics getStatistics() const{
             return statistics;
         }
 
-        read_number getNumberOfReads() const{
-            return numberOfInsertedReads;
-        }
+        
 
         void setReadContainsN(read_number readId, bool contains){
 
@@ -330,22 +501,14 @@ namespace cpu{
             return b2;
         }
 
-        std::int64_t getNumberOfReadsWithN() const{
-            return readIdsOfReadsWithUndeterminedBase.size();
+        void printAmbig(){
+            for(auto x : readIdsOfReadsWithUndeterminedBase){
+                std::cerr << x << " ";
+            }
+            std::cerr << "\n";
         }
 
-        MemoryUsage getMemoryInfo() const{
-            MemoryUsage info;
-            info.host = sequence_data_bytes;
-            info.host += lengthStorage.getRawSizeInBytes();
-            info.host += sizeof(read_number) * readIdsOfReadsWithUndeterminedBase.capacity();
-
-            if(useQualityScores){
-                info.host += quality_data_bytes;
-            }         
-
-            return info;
-        }
+        
 
 private:
         void insertSequence(read_number readNumber, const std::string& sequence){
@@ -635,15 +798,7 @@ public:
             );
         }
 
-
-
-
-
-        bool canUseQualityScores() const{
-            return useQualityScores;
-        }
-
-    	std::uint64_t getMaximumNumberOfSequences() const{
+       	std::uint64_t getMaximumNumberOfSequences() const{
     		return maximumNumberOfSequences;
     	}
 
@@ -651,13 +806,7 @@ public:
             return sequenceDataPitchInInts * sizeof(unsigned int);
         }
 
-        int getSequenceLengthLowerBound() const{
-            return sequenceLengthLowerBound;
-        }
 
-        int getSequenceLengthUpperBound() const{
-            return sequenceLengthUpperBound;
-        }
 
         void saveToFile(const std::string& filename) const{
             std::ofstream stream(filename, std::ios::binary);
@@ -689,7 +838,7 @@ public:
             stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
             stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
-            std::size_t ambigBytes = sizeof(std::size_t) * numUndeterminedReads * sizeof(read_number);
+            std::size_t ambigBytes = sizeof(std::size_t) + numUndeterminedReads * sizeof(read_number);
 
             stream.seekp(pos);
             stream.write(reinterpret_cast<const char*>(&lengthsBytes), sizeof(std::size_t));
@@ -754,6 +903,7 @@ public:
             }else{
                 //!canUseQualityScores() && !loaded_hasQualityScores
                 //std::cerr << "no q in file, and no q required. Ok\n";
+                stream.ignore(qualitiesBytes);
             }
             
 
@@ -763,6 +913,8 @@ public:
             stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
         }
     };
+
+
 
 }
 
