@@ -126,6 +126,8 @@ namespace care{
 
         printDataStructureMemoryUsage(*cpuReadStorage, "reads");
 
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
@@ -137,6 +139,8 @@ namespace care{
             *cpuReadStorage,
             CpuMinhasherType::Ordinary
         );
+
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
 
         CpuMinhasher* const cpuMinhasher = minhasherAndType.first.get();
 
@@ -204,6 +208,8 @@ namespace care{
             << numTempInMem << " corrections are stored in memory. "
             << numTempInFile << " corrections are stored in temporary file\n";
 
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+
         cpuMinhasher->destroy();
         cpuReadStorage->destroy();
 
@@ -250,6 +256,8 @@ namespace care{
         );
 
         step3Timer.print();
+
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
