@@ -5,7 +5,7 @@
 #include <config.hpp>
 #include <options.hpp>
 #include <readlibraryio.hpp>
-
+#include <memorymanagement.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
 
@@ -171,13 +171,14 @@ namespace care{
 
         std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;
 
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+
         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
 
         // gpumemorylimits.resize(2);
         // std::fill(gpumemorylimits.begin(), gpumemorylimits.end(), 512000000);
 
         // std::vector<int> tempids2(gpumemorylimits.size(), 0);
-
 
         gpu::MultiGpuReadStorage gpuReadStorage(
             *cpuReadStorage, 
@@ -197,6 +198,8 @@ namespace care{
             gpuReadStorage,
             gpu::GpuMinhasherType::Single
         );
+
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
 
         gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
 
@@ -274,6 +277,8 @@ namespace care{
         );
         cpugputimer.print();
 
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
+
         std::cout << "constructed gpu readstorage " << std::endl;
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
@@ -308,6 +313,8 @@ namespace care{
         std::cerr << "Constructed " << numTemp << " corrections. "
             << numTempInMem << " corrections are stored in memory. "
             << numTempInFile << " corrections are stored in temporary file\n";
+
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
         gpuMinhasher->destroy();
    
@@ -357,6 +364,8 @@ namespace care{
         );
 
         step3timer.print();
+
+        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
