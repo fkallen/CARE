@@ -12,7 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
-
+#include <iostream>
 
     struct MemoryUsage{
         std::size_t host = 0;
