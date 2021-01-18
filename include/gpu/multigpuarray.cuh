@@ -25,11 +25,6 @@ namespace cg = cooperative_groups;
 
 namespace MultiGpu2dArrayKernels{
 
-    __global__
-    void printkernel(int* i){
-        printf("printkernel: i = %d\n", *i);
-    }
-
     template<class T, class IndexGenerator>
     __global__
     void gatherKernel(
