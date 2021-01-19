@@ -407,7 +407,7 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
                 std::string inputfile = fileOptions.inputfiles[0];
 
-                std::cout << "Converting paired reads of files " 
+                std::cout << "Converting paired reads of file " 
                     << inputfile  << "\n";
 
                 std::future<std::size_t> future = std::async(
