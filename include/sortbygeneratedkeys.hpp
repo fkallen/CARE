@@ -257,7 +257,12 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         temp_allocations,
         temp_allocation_sizes
     );
-    if(cubstatus != cudaSuccess) return false;
+    if(cubstatus != cudaSuccess){
+        if(temp_storage != nullptr){
+            cudaFree(temp_storage);
+        }
+        return false;
+    }
 
     auto keys = std::make_unique<KeyType[]>(numValues);
 
@@ -266,6 +271,11 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     for(IndexType i = 0; i < numValues; i++){
         keys[i] = keyGenerator(i);
     }
+
+    // {
+    //     std::ofstream os("keys_2");
+    //     os.write((char*)keys.get(), sizeof(KeyType) * numValues);
+    // }
 
     timer1.stop();
     timer1.print();
@@ -278,6 +288,11 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     cudaMemcpy(d_keys_dbl.Current(), keys.get(), sizeof(KeyType) * numValues, H2D); CUERR;
     keys = nullptr;
     cudaMemcpy(d_values_dbl.Current(), values, sizeof(ValueType) * numValues, H2D); CUERR;
+
+    // {
+    //     std::ofstream os("offsets_2");
+    //     os.write((char*)keys.get(), sizeof(ValueType) * numValues);
+    // }
 
     timer2.stop();
     timer2.print();
@@ -316,6 +331,11 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     cudaError_t cudastatus = cudaDeviceSynchronize();
 
     if(cubstatus != cudaSuccess && cudastatus != cudaSuccess) return false;
+
+    // {
+    //     std::ofstream os("sortedoffsets_2");
+    //     os.write((char*)values, sizeof(ValueType) * numValues);
+    // }
 
     return true;
 }

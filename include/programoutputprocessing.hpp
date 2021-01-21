@@ -129,6 +129,9 @@ namespace care{
 
                 // TIMERSTARTCPU(tcsparsing);
 
+                read_number previousId = 0;
+                std::size_t itemnumber = 0;
+
                 while(partialResultsReader.hasNext()){
                     ResultTypeBatch* batch = freeTcsBatches.pop();
 
@@ -139,7 +142,13 @@ namespace care{
                     int batchsize = 0;
                     while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
                         batch->items[batchsize] = *(partialResultsReader.next());
+                        if(batch->items[batchsize].readId < previousId){
+                            std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
+                            assert(false);
+                        }
                         batchsize++;
+                        itemnumber++;
+                        previousId = batch->items[batchsize].readId;
                     }
 
                     // aend = std::chrono::system_clock::now();

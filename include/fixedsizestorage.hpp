@@ -28,6 +28,55 @@ namespace care{
         
         std::int64_t numStoredElementsInMemory = 0;
 
+        void saveToStream(std::ostream& stream) {
+            const std::size_t numSizeTs = memoryLimitBytes / sizeof(std::size_t);
+
+            stream.write(reinterpret_cast<const char*>(&memoryLimitBytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&numSizeTs), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(rawData.get()), sizeof(std::size_t) * numSizeTs);
+
+            std::size_t distanceEB = std::distance((char*)rawData.get(), (char*)elementsBegin);
+            std::size_t distanceEE = std::distance((char*)rawData.get(), (char*)elementsEnd);
+            std::size_t distanceOB = std::distance((char*)rawData.get(), (char*)offsetsBegin);
+            std::size_t distanceOE = std::distance((char*)rawData.get(), (char*)offsetsEnd);
+
+            stream.write(reinterpret_cast<const char*>(&distanceEB), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&distanceEE), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&distanceOB), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&distanceOE), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&numStoredElementsInMemory), sizeof(std::int64_t));
+
+            stream.flush();
+        }
+
+        void loadFromStream(std::istream& stream){
+            std::size_t numSizeTs = 0;
+            stream.read(reinterpret_cast<char*>(&memoryLimitBytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&numSizeTs), sizeof(std::size_t));
+
+            rawData = nullptr;
+            rawData = std::make_unique<std::size_t[]>(numSizeTs);
+
+            stream.read(reinterpret_cast<char*>(rawData.get()), sizeof(std::size_t) * numSizeTs);
+
+            std::size_t distanceEB = 0;
+            std::size_t distanceEE = 0;
+            std::size_t distanceOB = 0;
+            std::size_t distanceOE = 0;
+
+            stream.read(reinterpret_cast<char*>(&distanceEB), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&distanceEE), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&distanceOB), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&distanceOE), sizeof(std::size_t));
+
+            elementsBegin = (std::uint8_t*)(((char*)rawData.get()) + distanceEB);
+            elementsEnd = (std::uint8_t*)(((char*)rawData.get()) + distanceEE);
+            offsetsBegin = (std::size_t*)(((char*)rawData.get()) + distanceOB);
+            offsetsEnd = (std::size_t*)(((char*)rawData.get()) + distanceOE);
+
+            stream.read(reinterpret_cast<char*>(&numStoredElementsInMemory), sizeof(std::int64_t));
+        }
+
 
         FixedSizeStorage() = default;
         FixedSizeStorage(const FixedSizeStorage&) = delete;
@@ -71,6 +120,8 @@ namespace care{
             offsetsEnd = rawData.get() + numSizeTs;
             offsetsBegin = offsetsEnd;
         }
+
+        
 
         std::int64_t getNumStoredElements() const{
             return numStoredElementsInMemory;
@@ -215,8 +266,9 @@ namespace care{
             };
 
             try{
-
+                std::cerr << "getNumStoredElements() = " << getNumStoredElements() << "\n";
                 if(std::size_t(getNumStoredElements()) <= std::size_t(std::numeric_limits<std::uint32_t>::max())){
+                    std::cerr << "sortValuesByGeneratedKeys<std::uint32_t>\n";
                     sortValuesSuccess = sortValuesByGeneratedKeys<std::uint32_t>(
                         memoryForSortingInBytes,
                         offsetsBegin,
@@ -225,6 +277,7 @@ namespace care{
                         keyComparator
                     );
                 }else{
+                    std::cerr << "sortValuesByGeneratedKeys<std::uint64_t>\n";
                     sortValuesSuccess = sortValuesByGeneratedKeys<std::uint64_t>(
                         memoryForSortingInBytes,
                         offsetsBegin,
@@ -233,6 +286,19 @@ namespace care{
                         keyComparator
                     );
                 }
+
+                // for(std::size_t i = 1; i < getNumStoredElements(); i++){
+                //     const std::uint8_t* ptrl = elementsBegin + offsetsBegin[i-1];
+                //     const Key keyl = extractKey(ptrl);
+
+                //     const std::uint8_t* ptrr = elementsBegin + offsetsBegin[i];
+                //     const Key keyr = extractKey(ptrr);
+
+                //     if(keyl > keyr){
+                //         std::cerr << "Error, results not sorted. i = " << i << ", keyl = " << keyl << ", keyr = " << keyr << "\n";
+                //         assert(false);
+                //     }
+                // }
 
             } catch (...){
                 std::cerr << "Final fallback\n";
