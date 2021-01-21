@@ -22,7 +22,7 @@ grid_search() {
 
     EVALFILE=${4}_${5}_thresh_grid
 
-    for (( THRESH=0; THRESH<=100; THRESH+=10 )); do
+    for (( THRESH="$6"; THRESH<="$7"; THRESH+="$8" )); do
         $CARE -i $1 -c $3 -o ${4}_${5}-a${THRESH}_${5}-c${THRESH} $FLAGS \
         --correctionType 1 --ml-forestfile ${5}_anchor.rf \
         --candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${5}_cands.rf \
@@ -78,65 +78,71 @@ TESTCOV1=30
 
 mkdir $EVALDIR
 cd $EVALDIR
-cp $SCRIPTDIR $(basename $SCRIPTDIR).log.2
+SCRIPTNAME=$(basename $SCRIPTDIR)
+num=0
+while [ -f ${SCRIPTNAME}.log.${num} ]; do
+    num=$(( $num + 1 ))
+done
+cp $SCRIPTDIR $SCRIPTNAME.log.${num}
 
-$CARE -i $FILE1 -c $COV1 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${PREFIX1}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX1}_cands.samples \
-	$(auto_preprocess $PREFIX1)
 
-$CARE -i $FILE2 -c $COV2 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${PREFIX2}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX2}_cands.samples \
-	$(auto_preprocess $PREFIX2)
+# $CARE -i $FILE1 -c $COV1 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${PREFIX1}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX1}_cands.samples \
+# 	$(auto_preprocess $PREFIX1)
 
-$CARE -i $FILE3 -c $COV3 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${PREFIX3}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX3}_cands.samples \
-	$(auto_preprocess $PREFIX3)
+# $CARE -i $FILE2 -c $COV2 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${PREFIX2}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX2}_cands.samples \
+# 	$(auto_preprocess $PREFIX2)
 
-$CARE -i $TESTFILE1 -c $TESTCOV1 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${TESTPREFIX1}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${TESTPREFIX1}_cands.samples \
-	$(auto_preprocess $TESTPREFIX1)
+# $CARE -i $FILE3 -c $COV3 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${PREFIX3}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX3}_cands.samples \
+# 	$(auto_preprocess $PREFIX3)
 
-python3 - <<EOF
-import sys
-sys.path.append("$MLCDIR")
-from mlcorrector import *
+# $CARE -i $TESTFILE1 -c $TESTCOV1 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${TESTPREFIX1}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${TESTPREFIX1}_cands.samples \
+# 	$(auto_preprocess $TESTPREFIX1)
 
-data = read_data(37, [{"X":"${PREFIX1}_anchor.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_anchor.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_anchor.samples", "y":"$FILE3EF"}])
-np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_anchor.npy", data)
-clf = train(data, "rf")
-extract_forest(clf, "${CLF1}_anchor.rf")
+# python3 - <<EOF
+# import sys
+# sys.path.append("$MLCDIR")
+# from mlcorrector import *
 
-data = read_data(37, [{"X":"${TESTPREFIX1}_anchor.samples", "y":"$TESTFILE1EF"}])
-np.save("${TESTPREFIX1}_anchor.npy", data)
-test(data, clf, "${CLF1}_anchor_${TESTPREFIX1}_anchor.roc.png")
+# data = read_data(37, [{"X":"${PREFIX1}_anchor.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_anchor.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_anchor.samples", "y":"$FILE3EF"}])
+# np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_anchor.npy", data)
+# clf = train(data, "rf")
+# extract_forest(clf, "${CLF1}_anchor.rf")
 
-data = read_data(42, [{"X":"${PREFIX1}_cands.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_cands.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_cands.samples", "y":"$FILE3EF"}])
-np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_cands.npy", data)
-clf = train(data, "rf")
-extract_forest(clf, "${CLF1}_cands.rf")
+# data = read_data(37, [{"X":"${TESTPREFIX1}_anchor.samples", "y":"$TESTFILE1EF"}])
+# np.save("${TESTPREFIX1}_anchor.npy", data)
+# test(data, clf, "${CLF1}_anchor_${TESTPREFIX1}_anchor.roc.png")
 
-data = read_data(42, [{"X":"${TESTPREFIX1}_cands.samples", "y":"$TESTFILE1EF"}])
-np.save("${TESTPREFIX1}_cands.npy", data)
-test(data, clf, "${CLF1}_cands_${TESTPREFIX1}_cands.roc.png")
+# data = read_data(42, [{"X":"${PREFIX1}_cands.samples", "y":"$FILE1EF"}, {"X":"${PREFIX2}_cands.samples", "y":"$FILE2EF"}, {"X":"${PREFIX3}_cands.samples", "y":"$FILE3EF"}])
+# np.save("${PREFIX1}+${PREFIX2}+${PREFIX3}_cands.npy", data)
+# clf = train(data, "rf")
+# extract_forest(clf, "${CLF1}_cands.rf")
 
-EOF
+# data = read_data(42, [{"X":"${TESTPREFIX1}_cands.samples", "y":"$TESTFILE1EF"}])
+# np.save("${TESTPREFIX1}_cands.npy", data)
+# test(data, clf, "${CLF1}_cands_${TESTPREFIX1}_cands.roc.png")
+
+# EOF
 
 # $1: File
 # $2: File error-free
 # $3: cov
 # $4: file-prefix
 # $5: classifier-prefix
-grid_search $TESTFILE1 $TESTFILE1EF $TESTCOV1 $TESTPREFIX1 $CLF1
+grid_search $TESTFILE1 $TESTFILE1EF $TESTCOV1 $TESTPREFIX1 $CLF1 $1 $2 $3
 
-$CAREGPU -i $TESTFILE1 -c $TESTCOV1 -o ${TESTPREFIX1}_c_c $FLAGS \
-    --correctionType 0 \
-    --candidateCorrection \
-    $(auto_preprocess $TESTPREFIX1)
+# $CAREGPU -i $TESTFILE1 -c $TESTCOV1 -o ${TESTPREFIX1}_c_c $FLAGS \
+#     --correctionType 0 \
+#     --candidateCorrection \
+#     $(auto_preprocess $TESTPREFIX1)
 
-$ARTEVAL $TESTFILE1 $TESTFILE1EF ${TESTPREFIX1}_c_c >> ${TESTPREFIX1}_c_c_eval
+# $ARTEVAL $TESTFILE1 $TESTFILE1EF ${TESTPREFIX1}_c_c >> ${TESTPREFIX1}_c_c_eval
 
 
