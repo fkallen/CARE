@@ -45,7 +45,7 @@ SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
 # src/correct_cpu.cpp 
-SOURCES_ONLY_CPU = src/dispatch_care_cpu.cpp src/correctionresultprocessing.cpp src/readextension.cpp
+SOURCES_ONLY_CPU = src/dispatch_care_cpu.cpp src/correctionresultprocessing.cpp src/extensionresultprocessing.cpp src/readextension.cpp
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
