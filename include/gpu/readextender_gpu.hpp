@@ -8,6 +8,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
+#include <sequencehelpers.hpp>
 
 #include <algorithm>
 #include <vector>
@@ -15,6 +16,149 @@
 
 
 namespace care{
+
+
+namespace readextendergpukernels{
+
+    template<int blocksize>
+    __global__
+    void reverseComplement2bitKernel(
+        const int* __restrict__ lengths,
+        const unsigned int* __restrict__ forward,
+        unsigned int* __restrict__ reverse,
+        int num,
+        int encodedSequencePitchInInts
+    ){
+
+        for(int s = threadIdx.x + blockIdx.x * blockDim.x; s < num; s += blockDim.x * gridDim.x){
+            const unsigned int* input = forward + encodedSequencePitchInInts * s;
+            unsigned int* output = reverse + encodedSequencePitchInInts * s;
+            const int length = lengths[s];
+
+            SequenceHelpers::reverseComplementSequence2Bit(
+                output,
+                input,
+                length,
+                [](auto i){return i;},
+                [](auto i){return i;}
+            );
+        }
+
+        // constexpr int smemsizeints = blocksize * 16;
+        // __shared__ unsigned int sharedsequences[smemsizeints]; //sequences will be stored transposed
+
+        // const int sequencesPerSmem = std::min(blocksize, smemsizeints / encodedSequencePitchInInts);
+        // assert(sequencesPerSmem > 0);
+
+        // const int smemiterations = SDIV(num, sequencesPerSmem);
+
+        // for(int smemiteration = blockIdx.x; smemiteration < smemiterations; smemiteration += gridDim.x){
+
+        //     const int idBegin = smemiteration * sequencesPerSmem;
+        //     const int idEnd = std::min((smemiteration+1) * sequencesPerSmem, num);
+
+        //     __syncthreads();
+
+        //     for(int s = idBegin + threadIdx.x; s < idEnd; s += blockDim.x){
+        //         for(int intindex = 0; intindex < encodedSequencePitchInInts; intindex++){ //load intindex-th element of sequence s
+        //             sharedsequences[intindex * sequencesPerSmem + s] = forward[encodedSequencePitchInInts * s + intindex];
+        //         }
+        //     }
+
+        //     __syncthreads();
+
+        //     for(int s = idBegin + threadIdx.x; s < idEnd; s += blockDim.x){
+        //         SequenceHelpers::reverseComplementSequenceInplace2Bit(&sharedsequences[s], lengths[s], [&](auto i){return i * sequencesPerSmem;});
+        //     }
+
+        //     __syncthreads();
+
+        //     for(int s = idBegin + threadIdx.x; s < idEnd; s += blockDim.x){
+        //         for(int intindex = 0; intindex < encodedSequencePitchInInts; intindex++){ //load intindex-th element of sequence s
+        //             reverse[encodedSequencePitchInInts * s + intindex] = sharedsequences[intindex * sequencesPerSmem + s];
+        //         }
+        //     }
+        // }
+    }
+
+
+    template<int blocksize, int groupsize>
+    __global__
+    void filtermatekernel(
+        const unsigned int* __restrict__ anchormatedata,
+        const unsigned int* __restrict__ candidatefwddata,
+        //const unsigned int* __restrict__ candidatefwddata2,
+        int encodedSequencePitchInInts,
+        const int* __restrict__ numCandidatesPerAnchor,
+        const int* __restrict__ numCandidatesPerAnchorPrefixSum,
+        const int* __restrict__ activeTaskIndices,
+        int numTasksWithRemovedMate,
+        bool* __restrict__ outputflags,
+        bool printme
+    ){
+
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupindex = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int numgroups = (gridDim.x * blockDim.x) / groupsize;
+
+        for(int task = groupindex; task < numTasksWithRemovedMate; task += numgroups){
+
+            const int globalTaskIndex = activeTaskIndices[task];
+            const int numCandidates = numCandidatesPerAnchor[globalTaskIndex];
+            const int candidatesOffset = numCandidatesPerAnchorPrefixSum[globalTaskIndex];
+            const unsigned int* const mateptr = anchormatedata + encodedSequencePitchInInts * task;
+
+            if(printme && threadIdx.x == 0){
+            //if(threadIdx.x == 0){
+                printf("task %d, globalTaskIndex %d, numCandidates %d, candidatesOffset %d\n", task, globalTaskIndex, numCandidates, candidatesOffset);
+            }
+
+            //compare mate to candidates. 1 thread per candidate
+            for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
+                bool doRemove = true;
+                const unsigned int* const candidateptr = candidatefwddata + encodedSequencePitchInInts * (candidatesOffset + c);
+
+                // if(printme){
+                //     printf("c=%d\n", c);
+                //     for(int i = 0; i < encodedSequencePitchInInts; i++){
+                //         printf("%u ", candidateptr[i]);
+                //         //assert(candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i] == candidateptr[i]);
+                //     }
+                //     printf("\n");
+                
+                //     for(int i = 0; i < encodedSequencePitchInInts; i++){
+                //         printf("%u ", candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i]);
+                //         //assert(candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i] == candidateptr[i]);
+                //     }
+                // }
+                // if(c == 0){
+                //     printf(
+                //         "encodedSequencePitchInInts %d, candidatesOffset %d, globalTaskIndex %d, numCandidates %d\n", 
+                //         encodedSequencePitchInInts, 
+                //         candidatesOffset,
+                //         globalTaskIndex,
+                //         numCandidates
+                //     );
+                // }
+                //__syncthreads();
+                for(int p = 0; p < encodedSequencePitchInInts; p++){
+                    const unsigned int aaa = mateptr[p];
+                    const unsigned int bbb = candidateptr[p];
+
+                    if(aaa != bbb){
+                        if(printme){
+                            printf("t %d c %d p %d, aaa %u, bbb %u\n", task, c, p, aaa, bbb);
+                        }
+                        doRemove = false;
+                        break;
+                    }
+                }
+
+                outputflags[(candidatesOffset + c)] = doRemove;
+            }
+        }
+    }
+}
 
 
 struct ReadExtenderGpu final : public ReadExtenderBase{
@@ -373,6 +517,11 @@ private:
         //output buffers
         h_candidateSequencesLength.resize(totalNumCandidates);
         h_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
+        h_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
+
+        d_candidateSequencesLength.resize(totalNumCandidates);
+        d_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
+        d_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
 
         for(int t = 0; t < numIndices; t++){
             const auto& task = tasks[indicesOfActiveTasks[t]];
@@ -396,7 +545,7 @@ private:
 
         gpuReadStorage->gatherSequences(
             readStorageHandle,
-            h_candidateSequencesData.get(),
+            d_candidateSequencesData.get(),
             encodedSequencePitchInInts,
             h_candidateReadIds.get(),
             d_candidateReadIds.get(), //device accessible
@@ -406,11 +555,43 @@ private:
 
         gpuReadStorage->gatherSequenceLengths(
             readStorageHandle,
-            h_candidateSequencesLength.get(),
+            d_candidateSequencesLength.get(),
             d_candidateReadIds.get(),
             totalNumCandidates,
             stream
         );
+
+        readextendergpukernels::reverseComplement2bitKernel<128><<<320,128,0,stream>>>(
+            d_candidateSequencesLength.get(),
+            d_candidateSequencesData.get(),
+            d_candidateSequencesRevcData.get(),
+            totalNumCandidates,
+            encodedSequencePitchInInts
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_candidateSequencesLength.get(),
+            d_candidateSequencesLength.get(),
+            sizeof(int) * totalNumCandidates,
+            H2D,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_candidateSequencesData.get(),
+            d_candidateSequencesData.get(),
+            sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+            H2D,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_candidateSequencesRevcData.get(),
+            d_candidateSequencesRevcData.get(),
+            sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+            H2D,
+            stream
+        ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
 
@@ -423,8 +604,13 @@ private:
 
             task.candidateSequenceLengths.resize(numCandidates);
             task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+            task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
             const int offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+            if(task.myReadId == 2720 && task.iteration == 4){
+                std::cerr << h_candidateSequencesData[(offset * encodedSequencePitchInInts) + 0] << "\n";
+            }
 
             std::copy_n(
                 h_candidateSequencesLength.get() + offset,
@@ -437,9 +623,243 @@ private:
                 (numCandidates * encodedSequencePitchInInts),
                 task.candidateSequencesFwdData.begin()
             );
+
+            std::copy_n(
+                h_candidateSequencesRevcData.get() + (offset * encodedSequencePitchInInts),
+                (numCandidates * encodedSequencePitchInInts),
+                task.candidateSequencesRevcData.begin()
+            );
         }
 
         nvtx::pop_range();
+    }
+
+    void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
+            return vec.at(index);
+        };
+
+#if 1
+        // std::vector<Task> tasksorig = tasks;
+        // std::vector<Task> taskscopy = tasks;
+        // std::vector<int> indicesOfActiveTaskscopy = indicesOfActiveTasks;
+
+        const int numActiveTasks = indicesOfActiveTasks.size();
+        assert(std::all_of(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 
+            [&](auto i){return i < tasks.size();}));
+
+        h_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
+        d_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
+
+        h_activeTaskIndices.resize(numActiveTasks);
+        d_activeTaskIndices.resize(numActiveTasks);
+
+        h_numCandidatesPerAnchor.resize(numActiveTasks);
+        h_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);                
+
+        h_numCandidatesPerAnchorPrefixSum[0] = 0;
+
+        int numTasksWithMateRemoved = 0;  
+
+        for(int t = 0; t < numActiveTasks; t++){
+            const int indexOfActiveTask = indicesOfActiveTasks[t];
+            auto& task = vecAccess(tasks, indexOfActiveTask);
+
+            const int numCandidates = task.candidateReadIds.size();
+
+            h_numCandidatesPerAnchor[t] = numCandidates;
+            h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
+
+            if(task.mateRemovedFromCandidates){
+                h_activeTaskIndices[numTasksWithMateRemoved] = t;
+
+                std::copy(task.encodedMate.begin(), task.encodedMate.end(), h_anchormatedata.begin() + numTasksWithMateRemoved * encodedSequencePitchInInts);
+
+                numTasksWithMateRemoved++;
+            }
+        }
+
+        if(numTasksWithMateRemoved > 0){
+
+            h_flags.resize(h_numCandidatesPerAnchorPrefixSum[numActiveTasks]);
+            std::fill(h_flags.begin(), h_flags.end(), 0);
+
+            cudaStream_t stream = streams[primary_stream_index];
+
+            cudaMemcpyAsync(
+                d_anchormatedata.data(),
+                h_anchormatedata.data(),
+                sizeof(unsigned int) * numTasksWithMateRemoved * encodedSequencePitchInInts,
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_activeTaskIndices.data(),
+                h_activeTaskIndices.data(),
+                sizeof(int) * numTasksWithMateRemoved,
+                H2D,
+                stream
+            ); CUERR;
+
+            // std::cerr <<"d_candidateSequencesData.size() = " << d_candidateSequencesData.size() << "\n";
+            // std::cerr << "maxcandidates = " << h_numCandidatesPerAnchorPrefixSum[numActiveTasks] << "\n";
+
+            constexpr int groupsize = 32;
+            dim3 block(128,1,1);
+            dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, 128), 1, 1);
+
+            readextendergpukernels::filtermatekernel<128,groupsize><<<grid, block, 0, stream>>>(
+            //readextendergpukernels::filtermatekernel<1,1><<<1, 1, 0, stream>>>(
+                d_anchormatedata.data(),
+                d_candidateSequencesData.data(),
+                encodedSequencePitchInInts,
+                h_numCandidatesPerAnchor.data(),
+                h_numCandidatesPerAnchorPrefixSum.data(),
+                d_activeTaskIndices.data(),
+                numTasksWithMateRemoved,
+                h_flags.data(),
+                false//(tasks.size() > 1 && tasks[1].myReadId == 10243 && tasks[1].iteration == 2)
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            for(int t = 0; t < numActiveTasks; t++){
+                const int indexOfActiveTask = indicesOfActiveTasks[t];
+                auto& task = vecAccess(tasks, indexOfActiveTask);
+
+                if(task.mateRemovedFromCandidates){
+                    const int numCandidates = task.candidateReadIds.size();
+                    const std::size_t offset = h_numCandidatesPerAnchorPrefixSum[t];
+
+                    const bool* const removalflags = h_flags.data() + offset;
+                    int numremaining = 0;
+
+                    for(int c = 0; c < numCandidates; c++){
+                        if(!removalflags[c]){
+
+                            vecAccess(task.candidateReadIds, numremaining) = vecAccess(task.candidateReadIds, c);
+                            vecAccess(task.candidateSequenceLengths, numremaining) = vecAccess(task.candidateSequenceLengths, c);                     
+
+                            std::copy_n(
+                                task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts,
+                                encodedSequencePitchInInts,
+                                task.candidateSequencesFwdData.data() + numremaining * encodedSequencePitchInInts
+                            );
+
+                            std::copy_n(
+                                task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts,
+                                encodedSequencePitchInInts,
+                                task.candidateSequencesRevcData.data() + numremaining * encodedSequencePitchInInts
+                            );
+
+                            numremaining++;
+                        }
+                    }
+
+                    task.candidateReadIds.erase(
+                        task.candidateReadIds.begin() + numremaining, 
+                        task.candidateReadIds.end()
+                    );
+                    task.candidateSequenceLengths.erase(
+                        task.candidateSequenceLengths.begin() + numremaining, 
+                        task.candidateSequenceLengths.end()
+                    );
+                    task.candidateSequencesFwdData.erase(
+                        task.candidateSequencesFwdData.begin() + numremaining * encodedSequencePitchInInts, 
+                        task.candidateSequencesFwdData.end()
+                    );
+                    task.candidateSequencesRevcData.erase(
+                        task.candidateSequencesRevcData.begin() + numremaining * encodedSequencePitchInInts, 
+                        task.candidateSequencesRevcData.end()
+                    );
+
+                    task.mateRemovedFromCandidates = false;
+                }
+            }
+
+        }
+
+#else
+
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = vecAccess(tasks, indexOfActiveTask);
+
+            if(task.mateRemovedFromCandidates){
+                const int numCandidates = task.candidateReadIds.size();
+
+                std::vector<int> positionsOfCandidatesToKeep;
+                positionsOfCandidatesToKeep.reserve(numCandidates);
+
+                for(int c = 0; c < numCandidates; c++){
+                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                    + std::size_t(encodedSequencePitchInInts) * c;
+
+                    auto mismatchIters = std::mismatch(
+                        task.encodedMate.begin(), task.encodedMate.end(),
+                        seqPtr, seqPtr + encodedSequencePitchInInts
+                    );
+
+                    //candidate differs from mate
+                    if(mismatchIters.first != task.encodedMate.end()){                            
+                        positionsOfCandidatesToKeep.emplace_back(c);
+                    }else{
+                        ;//std::cerr << "";
+                    }
+                }
+
+                //compact
+                const int toKeep = positionsOfCandidatesToKeep.size();
+                for(int c = 0; c < toKeep; c++){
+                    const int index = vecAccess(positionsOfCandidatesToKeep, c);
+
+                    vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
+                    vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);                        
+
+                    std::copy_n(
+                        task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
+                    );
+
+                    std::copy_n(
+                        task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
+                    );
+
+                    
+                }
+
+                //erase
+                task.candidateReadIds.erase(
+                    task.candidateReadIds.begin() + toKeep, 
+                    task.candidateReadIds.end()
+                );
+                task.candidateSequenceLengths.erase(
+                    task.candidateSequenceLengths.begin() + toKeep, 
+                    task.candidateSequenceLengths.end()
+                );
+                task.candidateSequencesFwdData.erase(
+                    task.candidateSequencesFwdData.begin() + toKeep * encodedSequencePitchInInts, 
+                    task.candidateSequencesFwdData.end()
+                );
+                task.candidateSequencesRevcData.erase(
+                    task.candidateSequencesRevcData.begin() + toKeep * encodedSequencePitchInInts, 
+                    task.candidateSequencesRevcData.end()
+                );
+
+                task.mateRemovedFromCandidates = false;
+
+                //assert(task == taskscopy[indexOfActiveTask]);
+            }else{
+                //assert(task == taskscopy[indexOfActiveTask]);
+            }
+
+            
+
+        }
+#endif        
     }
 
     void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
@@ -635,6 +1055,9 @@ private:
     PinnedBuffer<read_number> h_candidateReadIds;
     DeviceBuffer<read_number> d_candidateReadIds;
 
+    PinnedBuffer<unsigned int> h_anchormatedata;
+    DeviceBuffer<unsigned int> d_anchormatedata;
+
     PinnedBuffer<int> h_numCandidatesPerAnchor;
     DeviceBuffer<int> d_numCandidatesPerAnchor;
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
@@ -652,13 +1075,22 @@ private:
     PinnedBuffer<int> h_anchorSequencesLength;
     DeviceBuffer<int> d_anchorSequencesLength;
     PinnedBuffer<int> h_candidateSequencesLength;
+    DeviceBuffer<int> d_candidateSequencesLength;
     PinnedBuffer<unsigned int> h_subjectSequencesData;
     PinnedBuffer<unsigned int> h_candidateSequencesData;
+    PinnedBuffer<unsigned int> h_candidateSequencesRevcData;
+    
 
     DeviceBuffer<unsigned int> d_subjectSequencesData;
     DeviceBuffer<unsigned int> d_candidateSequencesData;
+    DeviceBuffer<unsigned int> d_candidateSequencesRevcData;
+
+    DeviceBuffer<int> d_activeTaskIndices;
+    PinnedBuffer<int> h_activeTaskIndices;
 
     DeviceBuffer<char> d_tempstorage;
+    DeviceBuffer<bool> d_flags;
+    PinnedBuffer<bool> h_flags;
 
     std::array<CudaStream, 4> streams{};
 

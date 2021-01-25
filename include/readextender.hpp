@@ -993,6 +993,53 @@ protected:
         std::vector<char> candidateStrings;
         std::vector<int> candidateShifts;
         std::vector<float> candidateOverlapWeights;
+
+        bool operator==(const Task& rhs) const noexcept{
+            if(pairedEnd != rhs.pairedEnd) return false;
+            if(abort != rhs.abort) return false;
+            if(mateHasBeenFound != rhs.mateHasBeenFound) return false;
+            if(mateRemovedFromCandidates != rhs.mateRemovedFromCandidates) return false;
+            if(abortReason != rhs.abortReason) return false;
+            if(myLength != rhs.myLength) return false;
+            if(currentAnchorLength != rhs.currentAnchorLength) return false;
+            if(accumExtensionLengths != rhs.accumExtensionLengths) return false;
+            if(iteration != rhs.iteration) return false;
+            if(mateLength != rhs.mateLength) return false;
+            if(numRemainingCandidates != rhs.numRemainingCandidates) return false;
+            if(splitDepth != rhs.splitDepth) return false;
+            if(direction != rhs.direction) return false;
+            if(myReadId != rhs.myReadId) return false;
+            if(mateReadId != rhs.mateReadId) return false;
+            if(currentAnchorReadId != rhs.currentAnchorReadId) return false;
+            if(decodedMate != rhs.decodedMate) return false;
+            if(decodedMateRevC != rhs.decodedMateRevC) return false;
+            if(resultsequence != rhs.resultsequence) return false;
+            if(candidateReadIds != rhs.candidateReadIds) return false;
+            if(mateIdLocationIter != rhs.mateIdLocationIter) return false;
+            if(currentAnchor != rhs.currentAnchor) return false;
+            if(encodedMate != rhs.encodedMate) return false;
+            if(candidateSequenceLengths != rhs.candidateSequenceLengths) return false;
+            if(candidateSequencesFwdData != rhs.candidateSequencesFwdData) return false;
+            if(candidateSequencesRevcData != rhs.candidateSequencesRevcData) return false;
+            if(candidateSequenceData != rhs.candidateSequenceData) return false;
+            if(alignments != rhs.alignments) return false;
+            if(alignmentFlags != rhs.alignmentFlags) return false;
+            if(totalDecodedAnchors != rhs.totalDecodedAnchors) return false;
+            if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) return false;
+            if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) return false;
+            if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) return false;
+            if(usedAlignmentFlagsPerIteration != rhs.usedAlignmentFlagsPerIteration) return false;
+            if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) return false;
+            if(candidateStrings != rhs.candidateStrings) return false;
+            if(candidateShifts != rhs.candidateShifts) return false;
+            if(candidateOverlapWeights != rhs.candidateOverlapWeights) return false;
+
+            return true;
+        }
+
+        bool operator!=(const Task& rhs) const noexcept{
+            return !operator==(rhs);
+        }
         
 
         bool isActive(int insertSize, int insertSizeStddev) const noexcept{
@@ -1492,6 +1539,7 @@ protected:
 
     virtual void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
     virtual void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
+    virtual void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
     virtual void calculateAlignments(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
 
     int insertSize{};
@@ -1643,6 +1691,7 @@ private:
 
             task.candidateSequenceLengths.resize(numCandidates);
             task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+            task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
             readStorage->gatherSequenceLengths(
                 readStorageHandle,
@@ -1658,6 +1707,97 @@ private:
                 task.candidateReadIds.data(),
                 task.candidateReadIds.size()
             );
+
+            for(int c = 0; c < numCandidates; c++){
+                const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                    + std::size_t(encodedSequencePitchInInts) * c;
+                unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
+                                                    + std::size_t(encodedSequencePitchInInts) * c;
+
+                SequenceHelpers::reverseComplementSequence2Bit(
+                    seqrevcPtr,  
+                    seqPtr,
+                    task.candidateSequenceLengths[c]
+                );
+            }
+        }
+    }
+
+    void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
+            return vec.at(index);
+        };
+        
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = vecAccess(tasks, indexOfActiveTask);
+
+            if(task.mateRemovedFromCandidates){
+                const int numCandidates = task.candidateReadIds.size();
+
+                std::vector<int> positionsOfCandidatesToKeep;
+                positionsOfCandidatesToKeep.reserve(numCandidates);
+
+                for(int c = 0; c < numCandidates; c++){
+                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                    + std::size_t(encodedSequencePitchInInts) * c;
+
+                    auto mismatchIters = std::mismatch(
+                        task.encodedMate.begin(), task.encodedMate.end(),
+                        seqPtr, seqPtr + encodedSequencePitchInInts
+                    );
+
+                    //candidate differs from mate
+                    if(mismatchIters.first != task.encodedMate.end()){                            
+                        positionsOfCandidatesToKeep.emplace_back(c);
+                    }else{
+                        ;//std::cerr << "";
+                    }
+                }
+
+                //compact
+                const int toKeep = positionsOfCandidatesToKeep.size();
+                for(int c = 0; c < toKeep; c++){
+                    const int index = vecAccess(positionsOfCandidatesToKeep, c);
+
+                    vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
+                    vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);                        
+
+                    std::copy_n(
+                        task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
+                    );
+
+                    std::copy_n(
+                        task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
+                        encodedSequencePitchInInts,
+                        task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
+                    );
+
+                    
+                }
+
+                //erase
+                task.candidateReadIds.erase(
+                    task.candidateReadIds.begin() + toKeep, 
+                    task.candidateReadIds.end()
+                );
+                task.candidateSequenceLengths.erase(
+                    task.candidateSequenceLengths.begin() + toKeep, 
+                    task.candidateSequenceLengths.end()
+                );
+                task.candidateSequencesFwdData.erase(
+                    task.candidateSequencesFwdData.begin() + toKeep * encodedSequencePitchInInts, 
+                    task.candidateSequencesFwdData.end()
+                );
+                task.candidateSequencesRevcData.erase(
+                    task.candidateSequencesRevcData.begin() + toKeep * encodedSequencePitchInInts, 
+                    task.candidateSequencesRevcData.end()
+                );
+
+                task.mateRemovedFromCandidates = false;
+            }
+
         }
     }
 

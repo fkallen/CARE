@@ -120,93 +120,62 @@ namespace care{
             loadCandidateSequenceData(tasks, indicesOfActiveTasks);
 
             /*
-                If mate has been removed from candidate list, remove all candidates which are equivalent to mate
-            */
-
-           for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = vecAccess(tasks, indexOfActiveTask);
-
-                if(task.mateRemovedFromCandidates){
-                    const int numCandidates = task.candidateReadIds.size();
-
-                    std::vector<int> positionsOfCandidatesToKeep;
-                    positionsOfCandidatesToKeep.reserve(numCandidates);
-
-                    for(int c = 0; c < numCandidates; c++){
-                        const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
-                                                        + std::size_t(encodedSequencePitchInInts) * c;
-
-                        auto mismatchIters = std::mismatch(
-                            task.encodedMate.begin(), task.encodedMate.end(),
-                            seqPtr, seqPtr + encodedSequencePitchInInts
-                        );
-
-                        //candidate differs from mate
-                        if(mismatchIters.first != task.encodedMate.end()){                            
-                            positionsOfCandidatesToKeep.emplace_back(c);
-                        }else{
-                            ;//std::cerr << "";
-                        }
-                    }
-
-                    //compact
-                    const int toKeep = positionsOfCandidatesToKeep.size();
-                    for(int c = 0; c < toKeep; c++){
-                        const int index = vecAccess(positionsOfCandidatesToKeep, c);
-
-                        vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
-                        vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);                        
-
-                        std::copy_n(
-                            task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
-                            encodedSequencePitchInInts,
-                            task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
-                        );
-                    }
-
-                    //erase
-                    task.candidateReadIds.erase(
-                        task.candidateReadIds.begin() + toKeep, 
-                        task.candidateReadIds.end()
-                    );
-                    task.candidateSequenceLengths.erase(
-                        task.candidateSequenceLengths.begin() + toKeep, 
-                        task.candidateSequenceLengths.end()
-                    );
-                    task.candidateSequencesFwdData.erase(
-                        task.candidateSequencesFwdData.begin() + toKeep * encodedSequencePitchInInts, 
-                        task.candidateSequencesFwdData.end()
-                    );
-
-                    task.mateRemovedFromCandidates = false;
-                }
-
-           }
-
-            /*
                 Compute reverse complement of candidates
             */
 
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = vecAccess(tasks, indexOfActiveTask);               
+            // for(int indexOfActiveTask : indicesOfActiveTasks){
+            //     auto& task = vecAccess(tasks, indexOfActiveTask);               
 
-                const int numCandidates = task.candidateReadIds.size();
+            //     const int numCandidates = task.candidateReadIds.size();
 
-                task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+            //     task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
-                for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
-                                                        + std::size_t(encodedSequencePitchInInts) * c;
-                    unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
-                                                        + std::size_t(encodedSequencePitchInInts) * c;
+            //     for(int c = 0; c < numCandidates; c++){
+            //         const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+            //                                             + std::size_t(encodedSequencePitchInInts) * c;
+            //         unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
+            //                                             + std::size_t(encodedSequencePitchInInts) * c;
 
-                    SequenceHelpers::reverseComplementSequence2Bit(
-                        seqrevcPtr,  
-                        seqPtr,
-                        task.candidateSequenceLengths[c]
-                    );
-                }
-            }
+            //         SequenceHelpers::reverseComplementSequence2Bit(
+            //             seqrevcPtr,  
+            //             seqPtr,
+            //             task.candidateSequenceLengths[c]
+            //         );
+            //     }
+            // }
+
+            /*
+                If mate has been removed from candidate list, remove all candidates which are equivalent to mate
+            */
+
+           eraseDataOfRemovedMates(tasks, indicesOfActiveTasks);
+
+           
+
+            // /*
+            //     Compute reverse complement of candidates
+            // */
+
+            // for(int indexOfActiveTask : indicesOfActiveTasks){
+            //     auto& task = vecAccess(tasks, indexOfActiveTask);               
+
+            //     const int numCandidates = task.candidateReadIds.size();
+
+            //     task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+
+            //     for(int c = 0; c < numCandidates; c++){
+            //         const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+            //                                             + std::size_t(encodedSequencePitchInInts) * c;
+            //         unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
+            //                                             + std::size_t(encodedSequencePitchInInts) * c;
+
+            //         SequenceHelpers::reverseComplementSequence2Bit(
+            //             seqrevcPtr,  
+            //             seqPtr,
+            //             task.candidateSequenceLengths[c]
+            //         );
+            //     }
+            // }
 
             collectTimer.stop();
 
