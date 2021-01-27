@@ -167,7 +167,7 @@ namespace care{
 
         step3timer.print();
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
     }
@@ -260,7 +260,7 @@ namespace care{
 
         std::cout << "Reads with ambiguous bases: " << cpuReadStorage->getNumberOfReadsWithN() << std::endl;
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
 
         std::vector<std::size_t> gpumemorylimits(runtimeOptions.deviceIds.size(), 0);
 
@@ -288,7 +288,7 @@ namespace care{
             gpu::GpuMinhasherType::Single
         );
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
 
         gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
 
@@ -366,9 +366,9 @@ namespace care{
         );
         cpugputimer.print();
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpureadstorage");
 
-        std::cout << "constructed gpu readstorage " << std::endl;
+        //std::cout << "constructed gpu readstorage " << std::endl;
 
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
@@ -403,7 +403,7 @@ namespace care{
             << numTempInMem << " corrections are stored in memory. "
             << numTempInFile << " corrections are stored in temporary file\n";
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
         gpuMinhasher->destroy();
    
@@ -421,9 +421,9 @@ namespace care{
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
@@ -433,7 +433,7 @@ namespace care{
         if(memoryForSorting > 1*(std::size_t(1) << 30)){
             memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
         }
-        std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
+        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n";        
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
@@ -460,7 +460,7 @@ namespace care{
 
         step3timer.print();
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 

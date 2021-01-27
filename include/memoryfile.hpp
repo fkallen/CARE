@@ -236,10 +236,10 @@ struct MemoryFileFixedSize{
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
         //using Key = decltype(extractKey(nullptr));
 
-        std::cerr << "Sorting memory file:";
-        std::cerr << " elements in memory = " << getNumElementsInMemory();
-        std::cerr << " elements in file = " << getNumElementsInFile();
-        std::cerr << '\n';
+        // std::cerr << "Sorting memory file:";
+        // std::cerr << " elements in memory = " << getNumElementsInMemory();
+        // std::cerr << " elements in file = " << getNumElementsInFile();
+        // std::cerr << '\n';
 
         bool success = false;
 

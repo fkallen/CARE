@@ -693,7 +693,7 @@ public:
             deallocVector(sequenceStorage);
 
             hasShrinkedSequences = true;
-            std::cerr << "shrinked sequences\n";
+            //std::cerr << "shrinked sequences\n";
 
             return true;
         }else{
@@ -736,7 +736,7 @@ public:
             deallocVector(qualityStorage);
 
             hasShrinkedQualities = true;
-            std::cerr << "shrinked qualities\n";
+            //std::cerr << "shrinked qualities\n";
 
             return true;
         }else{

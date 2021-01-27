@@ -1289,7 +1289,7 @@ namespace cpuhashtabledetail{
         ){
             assert(keys.size() == vals.size());
 
-            std::cerr << "init valuesOfSameKeyMustBeSorted = " << valuesOfSameKeyMustBeSorted << "\n";
+            //std::cerr << "init valuesOfSameKeyMustBeSorted = " << valuesOfSameKeyMustBeSorted << "\n";
 
             if(isInit) return;
 

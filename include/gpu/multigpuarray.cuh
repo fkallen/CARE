@@ -1248,11 +1248,11 @@ private:
             d_offsetsPrefixSumArrayForGpus.emplace_back(std::move(b));
         }
 
-        std::cerr << "multigpuarray offsets prefixsum: ";
-        for(int i = 0; i < numGpus+1; i++){
-            std::cerr << h_arrayOffsetsPrefixSum[i] << " ";
-        }
-        std::cerr << "\n";
+        // std::cerr << "multigpuarray offsets prefixsum: ";
+        // for(int i = 0; i < numGpus+1; i++){
+        //     std::cerr << h_arrayOffsetsPrefixSum[i] << " ";
+        // }
+        // std::cerr << "\n";
 
     }
 

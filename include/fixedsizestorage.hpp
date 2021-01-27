@@ -266,9 +266,9 @@ namespace care{
             };
 
             try{
-                std::cerr << "getNumStoredElements() = " << getNumStoredElements() << "\n";
+                //std::cerr << "getNumStoredElements() = " << getNumStoredElements() << "\n";
                 if(std::size_t(getNumStoredElements()) <= std::size_t(std::numeric_limits<std::uint32_t>::max())){
-                    std::cerr << "sortValuesByGeneratedKeys<std::uint32_t>\n";
+                    //std::cerr << "sortValuesByGeneratedKeys<std::uint32_t>\n";
                     sortValuesSuccess = sortValuesByGeneratedKeys<std::uint32_t>(
                         memoryForSortingInBytes,
                         offsetsBegin,
@@ -277,7 +277,7 @@ namespace care{
                         keyComparator
                     );
                 }else{
-                    std::cerr << "sortValuesByGeneratedKeys<std::uint64_t>\n";
+                    //std::cerr << "sortValuesByGeneratedKeys<std::uint64_t>\n";
                     sortValuesSuccess = sortValuesByGeneratedKeys<std::uint64_t>(
                         memoryForSortingInBytes,
                         offsetsBegin,

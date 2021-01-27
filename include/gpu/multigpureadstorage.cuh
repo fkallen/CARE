@@ -234,7 +234,7 @@ public:
             )
         );
 
-        std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", sequencesGpu.getNumRows(): " << sequencesGpu.getNumRows() << "\n";
+        //std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", sequencesGpu.getNumRows(): " << sequencesGpu.getNumRows() << "\n";
 
         {
             constexpr std::size_t batchsize = 65000;
@@ -414,7 +414,7 @@ public:
                 }
             }
 
-            std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", qualitiesGpu.getNumRows(): " << qualitiesGpu.getNumRows() << "\n";
+            //std::cerr << "getNumberOfReads(): " << getNumberOfReads() << ", qualitiesGpu.getNumRows(): " << qualitiesGpu.getNumRows() << "\n";
         }
 
         
@@ -477,15 +477,15 @@ public:
 
                 cpuReadStorage->destroyHandle(readStorageHandle);
                 cpuReadStorage = nullptr;
-                std::cerr << "GpuReadstorage is standalone\n";
+                //std::cerr << "GpuReadstorage is standalone\n";
             }else{
-                std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
+                //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
                 cpuReadStorage->destroyHandle(readStorageHandle);
             }
         }else{
             cpuReadStorage->destroyHandle(readStorageHandle);
             cpuReadStorage = nullptr;
-            std::cerr << "GpuReadstorage is standalone\n";
+            //std::cerr << "GpuReadstorage is standalone\n";
         }
     }
 

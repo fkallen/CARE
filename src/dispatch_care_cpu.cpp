@@ -124,7 +124,7 @@ namespace care{
 
         printDataStructureMemoryUsage(*cpuReadStorage, "reads");
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpureadstorage");
 
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
@@ -138,7 +138,7 @@ namespace care{
             CpuMinhasherType::Ordinary
         );
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
 
         CpuMinhasher* const cpuMinhasher = minhasherAndType.first.get();
 
@@ -206,7 +206,7 @@ namespace care{
             << numTempInMem << " corrections are stored in memory. "
             << numTempInFile << " corrections are stored in temporary file\n";
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
         cpuMinhasher->destroy();
         cpuReadStorage->destroy();
@@ -216,9 +216,9 @@ namespace care{
         const std::size_t availableMemoryInBytes = getAvailableMemoryInKB() * 1024;
         const auto partialResultMemUsage = partialResults.getMemoryInfo();
 
-        std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
-        std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
-        std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
+        // std::cerr << "availableMemoryInBytes = " << availableMemoryInBytes << "\n";
+        // std::cerr << "memoryLimitOption = " << memoryOptions.memoryTotalLimit << "\n";
+        // std::cerr << "partialResultMemUsage = " << partialResultMemUsage.host << "\n";
 
         std::size_t memoryForSorting = std::min(
             availableMemoryInBytes,
@@ -228,7 +228,7 @@ namespace care{
         if(memoryForSorting > 1*(std::size_t(1) << 30)){
             memoryForSorting = memoryForSorting - 1*(std::size_t(1) << 30);
         }
-        std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
+        //std::cerr << "memoryForSorting = " << memoryForSorting << "\n"; 
 
         std::cout << "STEP 3: Constructing output file(s)" << std::endl;
 
@@ -255,7 +255,7 @@ namespace care{
 
         step3Timer.print();
 
-        compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
+        //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after output construction");
 
         std::cout << "Construction of output file(s) finished." << std::endl;
 
