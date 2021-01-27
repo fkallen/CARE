@@ -7,6 +7,7 @@
 #include <readlibraryio.hpp>
 #include <threadpool.hpp>
 #include <concurrencyhelpers.hpp>
+#include <util.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -23,7 +24,7 @@
 
 namespace care{
 
-    template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator>
+    template<class ResultType, class MemoryFile_t, class Combiner, class ReadIdComparator, class ProgressFunction>
     void mergeResultsWithOriginalReads_multithreaded(
         const std::string& tempdir,
         const std::vector<std::string>& originalReadFiles,
@@ -33,7 +34,8 @@ namespace care{
         const std::vector<std::string>& outputfiles,
         bool isSorted,
         Combiner combineResultsWithRead, /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
-        ReadIdComparator origIdResultIdLessThan
+        ReadIdComparator origIdResultIdLessThan,
+        ProgressFunction addProgress
     ){
 
         assert(outputfiles.size() == 1 || originalReadFiles.size() == outputfiles.size());
@@ -67,21 +69,31 @@ namespace care{
 
 
         if(!isSorted){
-            auto ptrcomparator = [](const std::uint8_t* ptr1, const std::uint8_t* ptr2){
-                using ValueType = typename MemoryFile_t::ValueType;
-
-                const read_number id1 = ValueType::parseReadId(ptr1);
-                const read_number id2 = ValueType::parseReadId(ptr2);
-                
-                return id1 < id2;
-            };
 
             auto elementcomparator = [](const auto& l, const auto& r){
                 return l.getReadId() < r.getReadId();
             };
 
+            auto extractKey = [](const std::uint8_t* ptr){
+                using ValueType = typename MemoryFile_t::ValueType;
+
+                const read_number id = ValueType::parseReadId(ptr);
+                
+                return id;
+            };
+
+            auto keyComparator = std::less<read_number>{};
+
             helpers::CpuTimer timer("sort_results_by_read_id");
-            partialResults.sort(tempdir, memoryForSorting, ptrcomparator, elementcomparator);
+
+            bool fastSuccess = false; //partialResults.template trySortByKeyFast<read_number>(extractKey, keyComparator, memoryForSorting);
+
+            if(!fastSuccess){            
+                partialResults.sort(tempdir, memoryForSorting, extractKey, keyComparator, elementcomparator);
+            }else{
+                std::cerr << "fast sort worked!\n";
+            }
+
             timer.print();
         }
 
@@ -117,6 +129,9 @@ namespace care{
 
                 // TIMERSTARTCPU(tcsparsing);
 
+                read_number previousId = 0;
+                std::size_t itemnumber = 0;
+
                 while(partialResultsReader.hasNext()){
                     ResultTypeBatch* batch = freeTcsBatches.pop();
 
@@ -127,7 +142,13 @@ namespace care{
                     int batchsize = 0;
                     while(batchsize < decoder_maxbatchsize && partialResultsReader.hasNext()){
                         batch->items[batchsize] = *(partialResultsReader.next());
+                        if(batch->items[batchsize].readId < previousId){
+                            std::cerr << "Error, results not sorted. itemnumber = " << itemnumber << ", previousId = " << previousId << ", currentId = " << batch->items[batchsize].readId << "\n";
+                            assert(false);
+                        }
                         batchsize++;
+                        itemnumber++;
+                        previousId = batch->items[batchsize].readId;
                     }
 
                     // aend = std::chrono::system_clock::now();
@@ -252,6 +273,10 @@ namespace care{
                         processed++;
                     }
 
+                    if(processed == valid){
+                        addProgress(valid);
+                    }
+
                     // aend = std::chrono::system_clock::now();
                     // adelta += aend - abegin;
 
@@ -367,36 +392,39 @@ namespace care{
         decoderFuture.wait();
         inputReaderFuture.wait();
         outputWriterFuture.wait();
+        // progressThread.finished();
+
+        // std::cout << "\n";
 
         mergetimer.print();
     }
 
 
-    template<class ResultType, class MemoryFile_t, class Combiner>
-    void mergeResultsWithOriginalReads_multithreaded(
-        const std::string& tempdir,
-        const std::vector<std::string>& originalReadFiles,
-        MemoryFile_t& partialResults, 
-        std::size_t memoryForSorting,
-        FileFormat outputFormat,
-        const std::vector<std::string>& outputfiles,
-        bool isSorted,
-        Combiner combineResultsWithRead /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
-    ){
-        std::less<read_number> origIdResultIdLessThan{};
+    // template<class ResultType, class MemoryFile_t, class Combiner>
+    // void mergeResultsWithOriginalReads_multithreaded(
+    //     const std::string& tempdir,
+    //     const std::vector<std::string>& originalReadFiles,
+    //     MemoryFile_t& partialResults, 
+    //     std::size_t memoryForSorting,
+    //     FileFormat outputFormat,
+    //     const std::vector<std::string>& outputfiles,
+    //     bool isSorted,
+    //     Combiner combineResultsWithRead /* combineResultsWithRead(std::vector<ResultType>& in, ReadWithId& in_out) */
+    // ){
+    //     std::less<read_number> origIdResultIdLessThan{};
 
-        mergeResultsWithOriginalReads_multithreaded<ResultType>(
-            tempdir,
-            originalReadFiles,
-            partialResults,
-            memoryForSorting,
-            outputFormat,
-            outputfiles,
-            isSorted,
-            combineResultsWithRead,
-            origIdResultIdLessThan
-        );
-    }
+    //     mergeResultsWithOriginalReads_multithreaded<ResultType>(
+    //         tempdir,
+    //         originalReadFiles,
+    //         partialResults,
+    //         memoryForSorting,
+    //         outputFormat,
+    //         outputfiles,
+    //         isSorted,
+    //         combineResultsWithRead,
+    //         origIdResultIdLessThan
+    //     );
+    // }
 
 
 

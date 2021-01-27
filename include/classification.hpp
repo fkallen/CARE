@@ -60,7 +60,7 @@ struct clf_agent
     void print_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
         if (!coinflip_anchor(rng)) return;
 
-        anchor_stream << task.input->anchorReadId << ' ' << i << ' ';
+        anchor_stream << task.input.anchorReadId << ' ' << i << ' ';
         for (float j: extract_anchor(task, i, opt))
             anchor_stream << j << ' ';
         anchor_stream << '\n';

@@ -37,7 +37,7 @@ namespace care{
         std::vector<cpu::SHDResult> revcAlignments{};
         std::vector<BestAlignment_t> alignmentFlags{};
 
-        const CpuErrorCorrectorInput* input{};
+        CpuErrorCorrectorInput input{};
 
         CorrectionResult subjectCorrection;
         std::vector<CorrectedCandidate> candidateCorrections;

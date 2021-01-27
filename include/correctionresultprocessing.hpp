@@ -286,7 +286,8 @@ namespace care{
         std::size_t memoryForSorting,
         FileFormat outputFormat,
         const std::vector<std::string>& outputfiles,
-        bool isSorted
+        bool isSorted,
+        bool showProgress
     );
 
 

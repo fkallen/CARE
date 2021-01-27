@@ -13,6 +13,8 @@
 #include <fstream>
 #include <vector>
 
+#include <cub/cub.cuh>
+
 namespace care{
 
 #ifdef __NVCC__    
@@ -210,6 +212,382 @@ private:
     std::vector<int> deviceIds;
     LengthStore_t lengthStore;    
 };
+
+
+
+template<class Data_t = std::uint32_t>
+struct GPULengthStore2{
+    static_assert(std::is_unsigned<Data_t>::value == true, "");
+
+    using LengthStore_t = LengthStore<Data_t>;
+
+    GPULengthStore2() = default;
+
+    GPULengthStore2(const LengthStore_t& lStore, const std::vector<int>& deviceIds_){
+        init(lStore, deviceIds_);
+    }
+
+    ~GPULengthStore2(){
+        destroyGpuData();
+    }
+
+    void destroyGpuData(){
+        int oldDevice = 0;
+        cudaGetDevice(&oldDevice); CUERR;
+        for(int i = 0; i < int(deviceIds.size()); i++){
+            cudaSetDevice(deviceIds[i]); CUERR;
+            cudaFree(deviceDataPointers[i]); CUERR;
+        }
+        cudaSetDevice(oldDevice); CUERR;
+    }
+
+    void init(const LengthStore_t& lStore, const std::vector<int>& deviceIds_){
+        destroyGpuData();
+
+        deviceIds = deviceIds_;
+        auto lengthStore = &lStore;
+
+        deviceDataPointers.resize(deviceIds.size());
+        int oldDevice = 0;
+        cudaGetDevice(&oldDevice); CUERR;
+        for(int i = 0; i < int(deviceIds.size()); i++){
+            int deviceId = deviceIds[i];
+            cudaSetDevice(deviceId); CUERR;
+            cudaMalloc(&deviceDataPointers[i], lengthStore->getRawSizeInBytes()); CUERR;
+            cudaMemcpy(deviceDataPointers[i], lengthStore->getRaw(), lengthStore->getRawSizeInBytes(), cudaMemcpyHostToDevice); CUERR;
+        }
+        cudaSetDevice(oldDevice); CUERR;
+
+        minLength = lengthStore->getMinLength();
+        maxLength = lengthStore->getMaxLength();
+        numElements = lengthStore->getNumElements();
+        rawBitsPerLength = lengthStore->getRawBitsPerLength();
+        rawSizeInBytes = lengthStore->getRawSizeInBytes();
+        numRawElements = lengthStore->getRawSizeInElements();
+    }
+
+    
+    GPULengthStore2(const GPULengthStore2&) = delete;
+    GPULengthStore2(GPULengthStore2&&) = default;
+    GPULengthStore2& operator=(const GPULengthStore2&) = delete;
+    GPULengthStore2& operator=(GPULengthStore2&&) = default;
+
+    int getMinLength() const noexcept{
+        return minLength;
+    }
+
+    int getMaxLength() const noexcept{
+        return maxLength;
+    }
+
+    std::int64_t getNumElements() const noexcept{
+        return numElements;
+    }
+
+    int getRawBitsPerLength() const noexcept{
+        return rawBitsPerLength;
+    }
+
+    std::size_t getRawSizeInBytes() const noexcept{
+        return rawSizeInBytes;
+    }
+
+    int getRawSizeInElements() const noexcept{
+        return numRawElements;
+    }
+
+    void gatherLengthsOnDeviceAsync(int* d_result, 
+                                    const read_number* d_ids, 
+                                    int numIds,
+                                    cudaStream_t stream) const{
+        int resultDeviceId = 0;
+        cudaGetDevice(&resultDeviceId); CUERR;
+
+        auto it = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
+        assert(it != deviceIds.end());
+
+        int gpuIndex = std::distance(deviceIds.begin(), it);
+
+        const Data_t* gpuData = deviceDataPointers[gpuIndex];
+        int minLen = getMinLength();
+        int maxLen = getMaxLength();
+
+        int databits = DataTBits;
+        int numRawElements = getRawSizeInElements();
+        int bitsPerLength = getRawBitsPerLength();
+
+        if(minLen == maxLen){
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+        }else{
+
+            dim3 block(128,1,1);
+            dim3 grid(SDIV(numIds, block.x));
+
+            helpers::lambda_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+                auto getBits = [=](Data_t l, Data_t r, int begin, int endExcl){
+                    assert(0 <= begin && begin < endExcl && endExcl <= 2 * databits);
+                    
+                    const int lbegin = min(databits, begin);
+                    const int lendExcl = min(databits, endExcl);
+
+                    const int rbegin = max(0, begin - databits);
+                    const int rendExcl = max(0, endExcl - databits);
+
+                    Data_t lmask = 0;
+                    for(int i = lbegin; i < lendExcl; i++){
+                        lmask = (lmask << 1) | 1;
+                    }
+
+                    Data_t rmask = 0;
+                    for(int i = rbegin; i < rendExcl; i++){
+                        rmask = (rmask << 1) | 1;
+                    }
+
+                    const Data_t lpiece = (l >> (databits - lendExcl)) & lmask;
+                    const Data_t rpiece = (r >> (databits - rendExcl)) & rmask;
+                    Data_t result = lpiece << (bitsPerLength - (lendExcl - lbegin)) | rpiece;
+                    return result;
+                };
+
+                for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < numIds; i += blockDim.x * gridDim.x){
+                    read_number index = d_ids[i];
+                    const std::uint64_t firstBit = bitsPerLength * index;
+                    const std::uint64_t lastBitExcl = bitsPerLength * (index+1);
+                    const std::uint64_t firstuintindex = firstBit / databits;
+                    const int begin = firstBit - firstuintindex * databits;
+                    const int endExcl = lastBitExcl - firstuintindex * databits;
+
+                    const auto first = gpuData[firstuintindex];
+                    //prevent oob access
+                    const auto second = firstuintindex == numRawElements - 1 ? gpuData[firstuintindex] : gpuData[firstuintindex + 1];
+                    const Data_t lengthBits = getBits(first, second, begin, endExcl);
+
+                    d_result[i] = int(lengthBits) + minLen;
+                }
+                
+            }); CUERR;
+        }
+    }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage info;
+        info.host = 0;
+
+        for(int deviceId : deviceIds){
+            info.device[deviceId] = getRawSizeInBytes();
+        }
+
+        return info;
+    }
+
+private:
+    int DataTBits = 8 * sizeof(Data_t);
+    int minLength = 0;
+    int maxLength = 0;
+    int rawBitsPerLength = 0;
+    int numRawElements = 0;
+    std::int64_t numElements = 0;
+    std::size_t rawSizeInBytes;
+    std::vector<Data_t*> deviceDataPointers;
+    std::vector<int> deviceIds;
+      
+};
+
+
+
+
+
+
+
+template<class Data_t = std::uint32_t>
+struct GPULengthStore3{
+    template<class T>
+    using HostBuffer = helpers::SimpleAllocationPinnedHost<T,0>;
+
+    template<class T>
+    using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T,0>;
+
+    static_assert(std::is_unsigned<Data_t>::value == true, "");
+
+    GPULengthStore3() = default;
+
+    GPULengthStore3(int minL, int maxL, std::int64_t numElements_, const std::vector<int>& deviceIds_)
+        : deviceIds(deviceIds_)
+    {
+        cpuLengthStore = std::move(LengthStore<Data_t>(minL, maxL, numElements_));
+    }
+
+    ~GPULengthStore3(){
+        destroy();
+    }
+
+    void destroy(){
+        cpuLengthStore.destroy();
+
+        auto deallocVector = [](auto& vec){
+            using T = typename std::remove_reference<decltype(vec)>::type;
+            T tmp{};
+            vec.swap(tmp);
+        };
+
+        deallocVector(deviceIds);
+        deallocVector(deviceData);
+    }
+    
+    GPULengthStore3(const GPULengthStore3&) = delete;
+    GPULengthStore3(GPULengthStore3&&) = default;
+    GPULengthStore3& operator=(const GPULengthStore3&) = delete;
+    GPULengthStore3& operator=(GPULengthStore3&&) = default;
+
+    void setLength(read_number index, int length){
+        cpuLengthStore.setLength(index, length);
+    }
+
+    void finalize(){
+        for(int i = 0; i < int(deviceIds.size()); i++){
+            cub::SwitchDevice sd{deviceIds[i]};
+
+            DeviceBuffer<Data_t> buffer(cpuLengthStore.getRawSizeInBytes() / sizeof(Data_t));
+
+            cudaMemcpy(buffer.data(), cpuLengthStore.getRaw(), cpuLengthStore.getRawSizeInBytes(), H2D); CUERR;
+
+            deviceData.emplace_back(std::move(buffer));
+        }
+
+        minLength = cpuLengthStore.getMinLength();
+        maxLength = cpuLengthStore.getMaxLength();
+        numElements = cpuLengthStore.getNumElements();
+        rawBitsPerLength = cpuLengthStore.getRawBitsPerLength();
+        rawSizeInBytes = cpuLengthStore.getRawSizeInBytes();
+        numRawElements = cpuLengthStore.getRawSizeInElements();
+
+        cpuLengthStore.destroy();
+    }
+
+    int getMinLength() const noexcept{
+        return minLength;
+    }
+
+    int getMaxLength() const noexcept{
+        return maxLength;
+    }
+
+    std::int64_t getNumElements() const noexcept{
+        return numElements;
+    }
+
+    int getRawBitsPerLength() const noexcept{
+        return rawBitsPerLength;
+    }
+
+    std::size_t getRawSizeInBytes() const noexcept{
+        return rawSizeInBytes;
+    }
+
+    int getRawSizeInElements() const noexcept{
+        return numRawElements;
+    }
+
+    void gatherLengthsOnDeviceAsync(int* d_result, 
+                                    const read_number* d_ids, 
+                                    int numIds,
+                                    cudaStream_t stream) const{
+        int resultDeviceId = 0;
+        cudaGetDevice(&resultDeviceId); CUERR;
+
+        auto it = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
+        assert(it != deviceIds.end());
+
+        int gpuIndex = std::distance(deviceIds.begin(), it);
+
+        const Data_t* gpuData = deviceData[gpuIndex].data();
+        int minLen = getMinLength();
+        int maxLen = getMaxLength();
+
+        int databits = DataTBits;
+        int numRawElements = getRawSizeInElements();
+        int bitsPerLength = getRawBitsPerLength();
+
+        if(minLen == maxLen){
+            helpers::call_fill_kernel_async(d_result, numIds, minLen, stream); CUERR;
+        }else{
+
+            dim3 block(128,1,1);
+            dim3 grid(SDIV(numIds, block.x));
+
+            helpers::lambda_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+                auto getBits = [=](Data_t l, Data_t r, int begin, int endExcl){
+                    assert(0 <= begin && begin < endExcl && endExcl <= 2 * databits);
+                    
+                    const int lbegin = min(databits, begin);
+                    const int lendExcl = min(databits, endExcl);
+
+                    const int rbegin = max(0, begin - databits);
+                    const int rendExcl = max(0, endExcl - databits);
+
+                    Data_t lmask = 0;
+                    for(int i = lbegin; i < lendExcl; i++){
+                        lmask = (lmask << 1) | 1;
+                    }
+
+                    Data_t rmask = 0;
+                    for(int i = rbegin; i < rendExcl; i++){
+                        rmask = (rmask << 1) | 1;
+                    }
+
+                    const Data_t lpiece = (l >> (databits - lendExcl)) & lmask;
+                    const Data_t rpiece = (r >> (databits - rendExcl)) & rmask;
+                    Data_t result = lpiece << (bitsPerLength - (lendExcl - lbegin)) | rpiece;
+                    return result;
+                };
+
+                for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < numIds; i += blockDim.x * gridDim.x){
+                    read_number index = d_ids[i];
+                    const std::uint64_t firstBit = bitsPerLength * index;
+                    const std::uint64_t lastBitExcl = bitsPerLength * (index+1);
+                    const std::uint64_t firstuintindex = firstBit / databits;
+                    const int begin = firstBit - firstuintindex * databits;
+                    const int endExcl = lastBitExcl - firstuintindex * databits;
+
+                    const auto first = gpuData[firstuintindex];
+                    //prevent oob access
+                    const auto second = firstuintindex == numRawElements - 1 ? gpuData[firstuintindex] : gpuData[firstuintindex + 1];
+                    const Data_t lengthBits = getBits(first, second, begin, endExcl);
+
+                    d_result[i] = int(lengthBits) + minLen;
+                }
+                
+            }); CUERR;
+        }
+    }
+
+    MemoryUsage getMemoryInfo() const{
+        MemoryUsage info{};
+        info += cpuLengthStore.getMemoryInfo();
+
+        int numGpus = deviceIds.size();
+        for(int i = 0; i < numGpus; i++){
+            info.device[deviceIds[i]] += deviceData[i].capacityInBytes();
+        }
+
+        return info;
+    }
+
+private:
+    int DataTBits = 8 * sizeof(Data_t);
+    int minLength = 0;
+    int maxLength = 0;
+    int rawBitsPerLength = 0;
+    int numRawElements = 0;
+    std::int64_t numElements = 0;
+    std::size_t rawSizeInBytes = 0;
+    std::vector<DeviceBuffer<Data_t>> deviceData{};
+    std::vector<int> deviceIds{};
+    LengthStore<Data_t> cpuLengthStore;
+      
+};
+
+
 
 }
 

@@ -7,8 +7,8 @@
 
 #include "options.hpp"
 
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+
+#include <cpureadstorage.hpp>
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
 #include <msa.hpp>
@@ -22,9 +22,9 @@
 #include <hostdevicefunctions.cuh>
 
 
-#define ENABLE_CPU_CORRECTOR_TIMING
+//#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
-
+#include <cpuminhasher.hpp>
 
 #include <array>
 #include <chrono>
@@ -53,9 +53,8 @@ correct_cpu(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
-    Minhasher& minhasher,
-    cpu::ContiguousReadStorage& readStorage
+    CpuMinhasher& minhasher,
+    CpuReadStorage& readStorage
 ){
 
     omp_set_num_threads(runtimeOptions.threads);
@@ -76,7 +75,7 @@ correct_cpu(
     }
 
 
-    ReadCorrectionFlags correctionFlags(sequenceFileProperties.nReads);
+    ReadCorrectionFlags correctionFlags(readStorage.getNumberOfReads());
 
 
     std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionFlags.sizeInBytes() / 1024. / 1024. << " MB\n";
@@ -98,7 +97,7 @@ correct_cpu(
     MemoryFileFixedSize<EncodedTempCorrectedSequence> partialResults(memoryForPartialResultsInBytes, tmpfilename);
 
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000000); 
     
     auto saveCorrectedSequence = [&](TempCorrectedSequence tmp, EncodedTempCorrectedSequence encoded){
@@ -111,6 +110,7 @@ correct_cpu(
     };
 
     BackgroundThread outputThread(true);
+    outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
 
@@ -118,39 +118,35 @@ correct_cpu(
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
+            std::size_t totalNumReads = readStorage.getNumberOfReads();
 
             printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, totalNumReads,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
-        }
 
-        if(totalCount == sequenceFileProperties.nReads){
-            std::cerr << '\n';
-        }
+            if(totalCount == totalNumReads){
+                std::cerr << '\n';
+            }
+        }        
     };
 
     auto updateShowProgressInterval = [](auto duration){
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
-
-    const int numThreads = runtimeOptions.threads;
+    ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     #pragma omp parallel
     {
         //const int threadId = omp_get_thread_num();
 
         ClfAgent clfAgent = clfAgent_;
-        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-        const std::size_t decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
-        const std::size_t qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
-
-        std::unique_ptr<ReadProvider> readProvider = std::make_unique<CpuReadStorageReadProvider>(readStorage);
-        std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<CpuMinhasherCandidateIdsProvider>(minhasher);
+        const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(readStorage.getSequenceLengthUpperBound());
+        const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
+        const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
 
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
@@ -158,11 +154,13 @@ correct_cpu(
             qualityPitchInBytes,
             correctionOptions,
             goodAlignmentProperties,
-            *candidateIdsProvider,
-            *readProvider,
+            minhasher,
+            readStorage,
             correctionFlags,
             clfAgent
         );
+
+        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
 
         std::vector<read_number> batchReadIds(correctionOptions.batchsize);
         std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
@@ -186,25 +184,28 @@ correct_cpu(
 
             //collect input data of all reads in batch
 
-            readProvider->gatherSequenceLengths(
+            readStorage.gatherSequenceLengths(
+                readStorageHandle,
+                batchReadLengths.data(),
                 batchReadIds.data(),
-                batchReadIds.size(),
-                batchReadLengths.data()
+                batchReadIds.size()
             );
 
-            readProvider->gatherSequenceData(
-                batchReadIds.data(),
-                batchReadIds.size(),
+            readStorage.gatherSequences(
+                readStorageHandle,
                 batchEncodedData.data(),
-                encodedSequencePitchInInts2Bit
+                encodedSequencePitchInInts2Bit,
+                batchReadIds.data(),
+                batchReadIds.size()
             );
 
             if(correctionOptions.useQualityScores){
-                readProvider->gatherSequenceQualities(
-                    batchReadIds.data(),
-                    batchReadIds.size(),
+                readStorage.gatherQualities(
+                    readStorageHandle,
                     batchQualities.data(),
-                    qualityPitchInBytes
+                    qualityPitchInBytes,
+                    batchReadIds.data(),
+                    batchReadIds.size()
                 );
             }
 
@@ -279,6 +280,7 @@ correct_cpu(
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
+    const int numThreads = runtimeOptions.threads;
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# average time per thread ("<< name << "): "

@@ -5,8 +5,9 @@
 
 #include <options.hpp>
 
-#include <minhasher.hpp>
-#include <readstorage.hpp>
+#include <cpuminhasher.hpp>
+
+#include <cpureadstorage.hpp>
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
 #include <msa.hpp>
@@ -36,70 +37,6 @@ namespace care{
     };
 
 
-    class CpuReadStorageReadProvider : public ReadProvider{
-    public:
-        CpuReadStorageReadProvider(const cpu::ContiguousReadStorage& rs_) : rs(&rs_){}
-
-    private:
-        bool readContainsN_impl(read_number readId) const override{
-            return rs->readContainsN(readId);
-        }
-
-        void gatherSequenceLengths_impl(const read_number* readIds, int numIds, int* lengths) const override{
-            rs->gatherSequenceLengths(gatherHandle, readIds, numIds, lengths);
-        }
-
-        void gatherSequenceData_impl(const read_number* readIds, int numIds, unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const override{
-            rs->gatherSequenceData(gatherHandle, readIds, numIds, sequenceData, encodedSequencePitchInInts);
-        }
-
-        void gatherSequenceQualities_impl(const read_number* readIds, int numIds, char* qualities, std::size_t qualityPitchInBytes) const override{
-            rs->gatherSequenceQualities(gatherHandle, readIds, numIds, qualities, qualityPitchInBytes);
-        }
-
-        void setReadIds_impl(const read_number* readIds, int numIds) override{
-            selectedIds = readIds;
-            numSelectedIds = numIds;
-        }
-
-        void gatherSequenceLengths_impl(int* lengths) const override{
-            rs->gatherSequenceLengths(gatherHandle, selectedIds, numSelectedIds, lengths);
-        }
-
-        void gatherSequenceData_impl(unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const override{
-            rs->gatherSequenceData(gatherHandle, selectedIds, numSelectedIds, sequenceData, encodedSequencePitchInInts);
-        }
-
-        void gatherSequenceQualities_impl(char* qualities, std::size_t qualityPitchInBytes) const override{
-            rs->gatherSequenceQualities(gatherHandle, selectedIds, numSelectedIds, qualities, qualityPitchInBytes);
-        }
-
-        const read_number* selectedIds{};
-        int numSelectedIds{};
-        const cpu::ContiguousReadStorage* rs{};
-        mutable cpu::ContiguousReadStorage::GatherHandle gatherHandle{};
-    };
-
-    class CpuMinhasherCandidateIdsProvider : public CandidateIdsProvider{
-    public: 
-        CpuMinhasherCandidateIdsProvider(const Minhasher& minhasher_) : minhasher{&minhasher_} {
-
-        }
-    private:
-        void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const override{
-            minhasher->getCandidates_any_map(
-                minhashHandle,
-                anchor,
-                size,
-                0
-            );
-
-            std::swap(ids, minhashHandle.allUniqueResults);
-        }
-
-        const Minhasher* minhasher;
-        mutable Minhasher::Handle minhashHandle;
-    };
 
 class CpuErrorCorrector{
 public:
@@ -201,8 +138,8 @@ public:
         std::size_t qualityPitchInBytes_,
         const CorrectionOptions& correctionOptions_,
         const GoodAlignmentProperties& goodAlignmentProperties_,
-        const CandidateIdsProvider& candidateIdsProvider_,
-        ReadProvider& readProvider_,
+        const CpuMinhasher& minhasher_,
+        const CpuReadStorage& readStorage_,
         ReadCorrectionFlags& correctionFlags_,
         ClfAgent& clfAgent_
    ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
@@ -210,8 +147,10 @@ public:
         qualityPitchInBytes(qualityPitchInBytes_),
         correctionOptions(&correctionOptions_),
         goodAlignmentProperties(&goodAlignmentProperties_),
-        candidateIdsProvider(&candidateIdsProvider_),
-        readProvider(&readProvider_),
+        minhasher{&minhasher_},
+        minhashHandle{minhasher->makeQueryHandle()},
+        readStorage{&readStorage_},
+        readStorageHandle{readStorage->makeHandle()},
         correctionFlags(&correctionFlags_),
         clfAgent(&clfAgent_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
@@ -219,9 +158,13 @@ public:
 
     }
 
+    ~CpuErrorCorrector(){
+        readStorage->destroyHandle(readStorageHandle);
+    }
+
     CpuErrorCorrectorOutput process(const CpuErrorCorrectorInput input){
         CpuErrorCorrectorTask task = makeTask(input);
-
+    
         TimeMeasurements timings;
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -358,10 +301,10 @@ public:
 
         if(task.subjectCorrection.isCorrected){
             if(task.msaProperties.isHQ){
-                correctionFlags->setCorrectedAsHqAnchor(task.input->anchorReadId);
+                correctionFlags->setCorrectedAsHqAnchor(task.input.anchorReadId);
             }
         }else{
-            correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input->anchorReadId);
+            correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input.anchorReadId);
         }
 
 
@@ -547,10 +490,10 @@ public:
 
             if(task.subjectCorrection.isCorrected){
                 if(task.msaProperties.isHQ){
-                    correctionFlags->setCorrectedAsHqAnchor(task.input->anchorReadId);
+                    correctionFlags->setCorrectedAsHqAnchor(task.input.anchorReadId);
                 }
             }else{
-                correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input->anchorReadId);
+                correctionFlags->setCouldNotBeCorrectedAsAnchor(task.input.anchorReadId);
             }
 
 
@@ -582,7 +525,7 @@ private:
     CpuErrorCorrectorTask makeTask(const CpuErrorCorrectorInput& input){
         CpuErrorCorrectorTask task;
         task.active = true;
-        task.input = &input;
+        task.input = input;
         task.multipleSequenceAlignment.setQualityConversion(qualityCoversion.get());
 
         const int length = input.anchorLength;
@@ -630,20 +573,49 @@ private:
 
         task.candidateReadIds.clear();
 
-        const read_number readId = task.input->anchorReadId;
+        const read_number readId = task.input.anchorReadId;
 
-        const bool containsN = readProvider->readContainsN(readId);
+        //const bool containsN = readProvider->readContainsN(readId);
+        bool containsN = false;
+        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
-            assert(task.input->anchorLength == int(task.decodedAnchor.size()));
+            assert(task.input.anchorLength == int(task.decodedAnchor.size()));
 
-            candidateIdsProvider->getCandidates(
-                task.candidateReadIds,
-                task.decodedAnchor.data(),
-                task.decodedAnchor.size()
+            // candidateIdsProvider->getCandidates(
+            //     task.candidateReadIds,
+            //     task.decodedAnchor.data(),
+            //     task.decodedAnchor.size()
+            // );
+            int numPerSequence = 0;
+            int maxnumcandidates = 0;
+            std::array<int, 2> offsets;
+
+            minhasher->determineNumValues(
+                minhashHandle,
+                task.input.encodedAnchor,
+                encodedSequencePitchInInts,
+                &task.input.anchorLength,
+                1,
+                &numPerSequence,
+                maxnumcandidates
             );
+
+            task.candidateReadIds.resize(maxnumcandidates);
+
+            minhasher->retrieveValues(
+                minhashHandle,
+                nullptr,
+                1,
+                maxnumcandidates,
+                task.candidateReadIds.data(),
+                &numPerSequence,
+                offsets.data()
+            );
+
+            task.candidateReadIds.erase(task.candidateReadIds.begin() + numPerSequence, task.candidateReadIds.end());
 
             //remove self
             auto readIdPos = std::lower_bound(task.candidateReadIds.begin(),
@@ -662,7 +634,9 @@ private:
                     task.candidateReadIds.begin(),
                     task.candidateReadIds.end(),
                     [&](read_number readId){
-                        return readProvider->readContainsN(readId);
+                        bool isAmbig = false;
+                        readStorage->areSequencesAmbiguous(readStorageHandle, &isAmbig, &readId, 1);
+                        return isAmbig;
                     }
                 );
             }
@@ -687,18 +661,47 @@ private:
             std::vector<char> decodedAnchor(readlength);
             SequenceHelpers::decode2BitSequence(decodedAnchor.data(), multiInput.encodedAnchors[i], readlength);
 
-            const bool containsN = readProvider->readContainsN(readId);
+            bool containsN = false;
+            readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
 
             std::vector<read_number> candidateIds;
 
             //exclude anchors with ambiguous bases
             if(!(correctionOptions->excludeAmbiguousReads && containsN)){
 
-                candidateIdsProvider->getCandidates(
-                    candidateIds,
-                    decodedAnchor.data(),
-                    decodedAnchor.size()
+                // candidateIdsProvider->getCandidates(
+                //     candidateIds,
+                //     decodedAnchor.data(),
+                //     decodedAnchor.size()
+                // );
+
+                int numPerSequence = 0;
+                int maxnumcandidates = 0;
+                std::array<int, 2> offsets;
+
+                minhasher->determineNumValues(
+                    minhashHandle,
+                    multiInput.encodedAnchors[i],
+                    encodedSequencePitchInInts,
+                    &readlength,
+                    1,
+                    &numPerSequence,
+                    maxnumcandidates
                 );
+
+                candidateIds.resize(maxnumcandidates);
+
+                minhasher->retrieveValues(
+                    minhashHandle,
+                    nullptr,
+                    1,
+                    maxnumcandidates,
+                    candidateIds.data(),
+                    &numPerSequence,
+                    offsets.data()
+                );
+
+                candidateIds.erase(candidateIds.begin() + numPerSequence, candidateIds.end());
 
                 //remove self
                 auto readIdPos = std::lower_bound(candidateIds.begin(),
@@ -717,7 +720,9 @@ private:
                         candidateIds.begin(),
                         candidateIds.end(),
                         [&](read_number readId){
-                            return readProvider->readContainsN(readId);
+                            bool isAmbig = false;
+                            readStorage->areSequencesAmbiguous(readStorageHandle, &isAmbig, &readId, 1);
+                            return isAmbig;
                         }
                     );
                 }
@@ -742,34 +747,35 @@ private:
             return MultiCandidateData{};
         }
 
-        readProvider->setReadIds(multiIds.candidateReadIds.data(), numIds);
-
         MultiCandidateData multiData;
         multiData.candidateLengths.resize(numIds);
         multiData.encodedCandidates.resize(numIds * encodedSequencePitchInInts);
         multiData.candidateQualities.resize(numIds * qualityPitchInBytes);
 
-        readProvider->gatherSequenceLengths(
-            // multiIds.candidateReadIds.data(),
-            // numIds,
-            multiData.candidateLengths.data()
+        readStorage->gatherSequenceLengths(
+            readStorageHandle,
+            multiData.candidateLengths.data(),
+            multiIds.candidateReadIds.data(),
+            numIds
         );
 
-        readProvider->gatherSequenceData(
-            // multiIds.candidateReadIds.data(),
-            // numIds,
+        readStorage->gatherSequences(
+            readStorageHandle,
             multiData.encodedCandidates.data(),
-            encodedSequencePitchInInts
-        );
+            encodedSequencePitchInInts,
+            multiIds.candidateReadIds.data(),
+            numIds
+        ); 
 
         if(correctionOptions->useQualityScores){
 
-            readProvider->gatherSequenceQualities(
-                // multiIds.candidateReadIds.data(),
-                // numIds,
+            readStorage->gatherQualities(
+                readStorageHandle,
                 multiData.candidateQualities.data(),
-                qualityPitchInBytes
-            );
+                qualityPitchInBytes,
+                multiIds.candidateReadIds.data(),
+                numIds
+            ); 
         }
 
         return multiData;
@@ -819,17 +825,19 @@ private:
         task.candidateSequencesRevcData.clear();
         task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
-        readProvider->gatherSequenceLengths(
+        readStorage->gatherSequenceLengths(
+            readStorageHandle,
+            task.candidateSequencesLengths.data(),
             task.candidateReadIds.data(),
-            numCandidates,
-            task.candidateSequencesLengths.data()
+            numCandidates
         );
 
-        readProvider->gatherSequenceData(
-            task.candidateReadIds.data(),
-            numCandidates,
+        readStorage->gatherSequences(
+            readStorageHandle,
             task.candidateSequencesData.data(),
-            encodedSequencePitchInInts
+            encodedSequencePitchInInts,
+            task.candidateReadIds.data(),
+            numCandidates
         );        
     }
 
@@ -862,8 +870,8 @@ private:
         cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
             alignmentHandle,
             task.alignments.begin(),
-            task.input->encodedAnchor,
-            task.input->anchorLength,
+            task.input.encodedAnchor,
+            task.input.anchorLength,
             task.candidateSequencesData.data(),
             encodedSequencePitchInInts,
             task.candidateSequencesLengths.data(),
@@ -876,8 +884,8 @@ private:
         cpu::shd::cpuShiftedHammingDistancePopcount2Bit(
             alignmentHandle,
             task.revcAlignments.begin(),
-            task.input->encodedAnchor,
-            task.input->anchorLength,
+            task.input.encodedAnchor,
+            task.input.anchorLength,
             task.candidateSequencesRevcData.data(),
             encodedSequencePitchInInts,
             task.candidateSequencesLengths.data(),
@@ -897,7 +905,7 @@ private:
             BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(
                 forwardAlignment,
                 revcAlignment,
-                task.input->anchorLength,
+                task.input.anchorLength,
                 candidateLength,
                 goodAlignmentProperties->min_overlap_ratio,
                 goodAlignmentProperties->min_overlap,
@@ -1068,12 +1076,13 @@ private:
 
         task.candidateQualities.resize(qualityPitchInBytes * numCandidates);
 
-        readProvider->gatherSequenceQualities(
-            task.candidateReadIds.data(),
-            task.candidateReadIds.size(),
+        readStorage->gatherQualities(
+            readStorageHandle,
             task.candidateQualities.data(),
-            qualityPitchInBytes
-        );          
+            qualityPitchInBytes,
+            task.candidateReadIds.data(),
+            numCandidates
+        );         
     }
 
     void reverseQualitiesOfRCAlignments(CpuErrorCorrectorTask& task){
@@ -1123,7 +1132,7 @@ private:
             task.alignmentOverlaps[i] = task.alignments[i].overlap;
 
             task.alignmentWeights[i] = calculateOverlapWeight(
-                task.input->anchorLength,
+                task.input.anchorLength,
                 task.alignments[i].nOps, 
                 task.alignments[i].overlap,
                 goodAlignmentProperties->maxErrorRate
@@ -1141,13 +1150,13 @@ private:
 
         MultipleSequenceAlignment::InputData buildArgs;
         buildArgs.useQualityScores = correctionOptions->useQualityScores;
-        buildArgs.subjectLength = task.input->anchorLength;
+        buildArgs.subjectLength = task.input.anchorLength;
         buildArgs.nCandidates = numCandidates;
         buildArgs.candidatesPitch = decodedSequencePitchInBytes;
         buildArgs.candidateQualitiesPitch = qualityPitchInBytes;
         buildArgs.subject = task.decodedAnchor.data();
         buildArgs.candidates = task.decodedCandidateSequences.data();
-        buildArgs.subjectQualities = task.input->anchorQualityscores;
+        buildArgs.subjectQualities = task.input.anchorQualityscores;
         buildArgs.candidateQualities = candidateQualityPtr;
         buildArgs.candidateLengths = task.candidateSequencesLengths.data();
         buildArgs.candidateShifts = task.alignmentShifts.data();
@@ -1293,7 +1302,7 @@ private:
             correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage,
             correctionOptions->kmerlength,
-            task.input->anchorReadId
+            task.input.anchorReadId
         );        
     }       
 
@@ -1310,9 +1319,9 @@ private:
             subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
             correctionOptions->m_coverage);
 
-        corr.insert(0, cons.data()+subject_b, task.input->anchorLength);
+        corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
         if (!task.msaProperties.isHQ) {
-            for (int i = 0; i < task.input->anchorLength; ++i) {
+            for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i] && !clfAgent->decide_anchor(task, i, *correctionOptions))
                 {
                     corr[i] = orig[i];
@@ -1335,7 +1344,7 @@ private:
             correctionOptions->m_coverage);
 
         if (!task.msaProperties.isHQ) {
-            for (int i = 0; i < task.input->anchorLength; ++i) {
+            for (int i = 0; i < task.input.anchorLength; ++i) {
                 if (orig[i] != cons[subject_b+i]) {
                     clfAgent->print_anchor(task, i, *correctionOptions);
                 }
@@ -1442,7 +1451,8 @@ private:
         if(result.hasAnchorCorrection){
             auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
             const int correctedlength = correctedSequenceString.length();
-            const bool originalReadContainsN = readProvider->readContainsN(task.input->anchorReadId);
+            bool originalReadContainsN = false;
+            readStorage->areSequencesAmbiguous(readStorageHandle, &originalReadContainsN, &task.input.anchorReadId, 1);
             
             TempCorrectedSequence tmp;
             
@@ -1462,7 +1472,7 @@ private:
             
             tmp.hq = task.msaProperties.isHQ;
             tmp.type = TempCorrectedSequence::Type::Anchor;
-            tmp.readId = task.input->anchorReadId;
+            tmp.readId = task.input.anchorReadId;
             tmp.sequence = std::move(correctedSequenceString); 
             
             result.anchorCorrection = std::move(tmp);
@@ -1501,7 +1511,8 @@ private:
                     tmp.sequence = std::move(fwd);
                 }
                 
-                const bool originalCandidateReadContainsN = readProvider->readContainsN(candidateId);
+                bool originalCandidateReadContainsN = false;
+                readStorage->areSequencesAmbiguous(readStorageHandle, &originalCandidateReadContainsN, &candidateId, 1);
                 
                 if(!originalCandidateReadContainsN){
                     const std::size_t offset = correctedCandidate.index * decodedSequencePitchInBytes;
@@ -1560,8 +1571,10 @@ private:
 
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
-    const CandidateIdsProvider* candidateIdsProvider{};
-    ReadProvider* readProvider{};
+    const CpuMinhasher* minhasher{};
+    mutable CpuMinhasher::QueryHandle minhashHandle;
+    const CpuReadStorage* readStorage{};
+    mutable ReadStorageHandle readStorageHandle;
 
     ReadCorrectionFlags* correctionFlags{};
     ClfAgent* clfAgent{};

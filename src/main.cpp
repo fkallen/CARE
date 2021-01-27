@@ -167,6 +167,9 @@ int main(int argc, char** argv){
 			cxxopts::value<std::string>())
 		("threshold", "Classification threshold for classifier-based (\"Forest\") mode",
 			cxxopts::value<float>())
+		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
+			"Default: " + tostring(RuntimeOptions{}.warpcore),
+		cxxopts::value<int>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -273,12 +276,13 @@ int main(int argc, char** argv){
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
 	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";
 	if(runtimeOptions.canUseGpu){
-		std::cout << "GPU device ids: ";
+		std::cout << "GPU device ids: [";
 		for(int id : runtimeOptions.deviceIds){
-			std::cout << id << " ";
+			std::cout << " " << id;
 		}
-		std::cout << "\n";
+		std::cout << " ]\n";
 	}
+	std::cout << "Warpcore: " << runtimeOptions.warpcore << "\n";
 
 	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";

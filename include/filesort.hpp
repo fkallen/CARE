@@ -495,12 +495,13 @@ void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2,
 //each line in infile must begin with a number of type Index_t which was written in binary mode.
 //infile is sorted by this number using comparator Comp
 //sorted chunks will be named tempdir/temp_i where i is the chunk number
-template<class T, class Ptrcomparator>
+template<class T, class ExtractKey, class KeyComparator>
 std::vector<std::string>
 binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames, 
                             const std::string& tempdir, 
                             std::size_t memoryLimit, 
-                            Ptrcomparator&& ptrcomparator){
+                            ExtractKey extractKey, KeyComparator keyComparator){
+    //using Key = decltype(extractKey(nullptr));
 
     FixedSizeStorage<T> memoryStorage(memoryLimit);
 
@@ -558,7 +559,7 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
             std::cerr << "sort " << memoryStorage.getNumStoredElements() << " elements in memory \n";
 
             try{
-                memoryStorage.sort(ptrcomparator);
+                memoryStorage.sort(0, extractKey, keyComparator);
             }catch(std::bad_alloc& e){
                 filehelpers::removeFile(tempfilename);
                 throw e;
@@ -593,12 +594,12 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
 }
 
 
-template<class T, class Ptrcomparator>
+template<class T, class ExtractKey, class KeyComparator>
 std::vector<std::string>
 binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, 
                             const std::string& tempdir, 
                             std::size_t memoryLimit,
-                            Ptrcomparator&& ptrcomparator){
+                            ExtractKey extractKey, KeyComparator keyComparator){
 
     constexpr int maxIters = 4;
     for(int i = 0; i < maxIters; i++){
@@ -606,7 +607,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             return binKeySplitIntoSortedChunksImpl<T>(infilenames, 
                             tempdir, 
                             memoryLimit, 
-                            std::move(ptrcomparator));
+                            extractKey, keyComparator);
         }catch(...){
             memoryLimit /= 2;
         }
@@ -640,16 +641,16 @@ binKeyMergeSortedChunks(const std::string& tempdir,
 
 //sort infile to outfile
 //infile is sorted by this number using comparator Comp
-template<class T, class Ptrcomparator, class Tcomparator>
+template<class T, class ExtractKey, class KeyComparator, class Tcomparator>
 void binKeySort(const std::string& tempdir,
                 const std::vector<std::string>& infilenames, 
                 const std::string& outfilename,
                 std::size_t memoryLimit,
-                Ptrcomparator&& ptrcomparator,
+                ExtractKey extractKey, KeyComparator keyComparator,
                 Tcomparator&& comparator){
 
     //TIMERSTARTCPU(split);
-    auto tempfilenames = binKeySplitIntoSortedChunks<T>(infilenames, tempdir, memoryLimit, ptrcomparator);
+    auto tempfilenames = binKeySplitIntoSortedChunks<T>(infilenames, tempdir, memoryLimit, extractKey, keyComparator);
     //TIMERSTOPCPU(split);
     //TIMERSTARTCPU(merge);
     binKeyMergeSortedChunksAndDeleteChunks<T>(tempdir, tempfilenames, outfilename, comparator);
