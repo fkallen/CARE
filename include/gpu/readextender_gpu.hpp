@@ -93,25 +93,36 @@ namespace readextendergpukernels{
         const int* __restrict__ numCandidatesPerAnchorPrefixSum,
         const int* __restrict__ activeTaskIndices,
         int numTasksWithRemovedMate,
-        bool* __restrict__ outputflags,
-        bool printme
+        bool* __restrict__ outputflags
     ){
 
         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
         const int groupindex = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
         const int numgroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupindexinblock = threadIdx.x / groupsize;
+
+        static_assert(blocksize % groupsize == 0);
+        constexpr int groupsperblock = blocksize / groupsize;
+
+        extern __shared__ unsigned int smem[]; //sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts
+
+        unsigned int* sharedMate = smem + groupindexinblock * encodedSequencePitchInInts;
 
         for(int task = groupindex; task < numTasksWithRemovedMate; task += numgroups){
 
             const int globalTaskIndex = activeTaskIndices[task];
             const int numCandidates = numCandidatesPerAnchor[globalTaskIndex];
             const int candidatesOffset = numCandidatesPerAnchorPrefixSum[globalTaskIndex];
-            const unsigned int* const mateptr = anchormatedata + encodedSequencePitchInInts * task;
 
-            if(printme && threadIdx.x == 0){
-            //if(threadIdx.x == 0){
-                printf("task %d, globalTaskIndex %d, numCandidates %d, candidatesOffset %d\n", task, globalTaskIndex, numCandidates, candidatesOffset);
+            for(int p = group.thread_rank(); p < encodedSequencePitchInInts; p++){
+                sharedMate[p] = anchormatedata[encodedSequencePitchInInts * task + p];
             }
+            group.sync();
+
+            // if(printme && threadIdx.x == 0){
+            // //if(threadIdx.x == 0){
+            //     printf("task %d, globalTaskIndex %d, numCandidates %d, candidatesOffset %d\n", task, globalTaskIndex, numCandidates, candidatesOffset);
+            // }
 
             //compare mate to candidates. 1 thread per candidate
             for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
@@ -142,13 +153,13 @@ namespace readextendergpukernels{
                 // }
                 //__syncthreads();
                 for(int p = 0; p < encodedSequencePitchInInts; p++){
-                    const unsigned int aaa = mateptr[p];
+                    const unsigned int aaa = sharedMate[p];
                     const unsigned int bbb = candidateptr[p];
 
                     if(aaa != bbb){
-                        if(printme){
-                            printf("t %d c %d p %d, aaa %u, bbb %u\n", task, c, p, aaa, bbb);
-                        }
+                        // if(printme){
+                        //     printf("t %d c %d p %d, aaa %u, bbb %u\n", task, c, p, aaa, bbb);
+                        // }
                         doRemove = false;
                         break;
                     }
@@ -706,11 +717,14 @@ private:
             // std::cerr << "maxcandidates = " << h_numCandidatesPerAnchorPrefixSum[numActiveTasks] << "\n";
 
             constexpr int groupsize = 32;
-            dim3 block(128,1,1);
-            dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, 128), 1, 1);
+            constexpr int blocksize = 128;
+            constexpr int groupsperblock = blocksize / groupsize;
+            dim3 block(blocksize,1,1);
+            dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, blocksize), 1, 1);
+            const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
 
-            readextendergpukernels::filtermatekernel<128,groupsize><<<grid, block, 0, stream>>>(
-            //readextendergpukernels::filtermatekernel<1,1><<<1, 1, 0, stream>>>(
+            readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
+            //readextendergpukernels::filtermatekernel<1,1><<<1, 1, smembytes, stream>>>(
                 d_anchormatedata.data(),
                 d_candidateSequencesData.data(),
                 encodedSequencePitchInInts,
@@ -718,8 +732,8 @@ private:
                 h_numCandidatesPerAnchorPrefixSum.data(),
                 d_activeTaskIndices.data(),
                 numTasksWithMateRemoved,
-                h_flags.data(),
-                false//(tasks.size() > 1 && tasks[1].myReadId == 10243 && tasks[1].iteration == 2)
+                h_flags.data()
+                //false//(tasks.size() > 1 && tasks[1].myReadId == 10243 && tasks[1].iteration == 2)
             ); CUERR;
 
             cudaStreamSynchronize(stream); CUERR;
