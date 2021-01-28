@@ -15,7 +15,7 @@
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
-
+#include <cpucorrectortask.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -31,12 +31,6 @@ namespace care{
 
 class CpuErrorCorrector{
 public:
-    struct CorrectionInput{
-        int anchorLength{};
-        read_number anchorReadId{};
-        const unsigned int* encodedAnchor{};
-        const char* anchorQualityscores{};
-    };
 
     struct MultiCorrectionInput{
         std::vector<int> anchorLengths;
@@ -151,8 +145,8 @@ public:
         readStorage->destroyHandle(readStorageHandle);
     }
 
-    CorrectionOutput process(const CorrectionInput input){
-        Task task = makeTask(input);
+    CorrectionOutput process(const CpuErrorCorrectorInput input){
+        CpuErrorCorrectorTask task = makeTask(input);
 
         TimeMeasurements timings;
 
@@ -350,7 +344,7 @@ public:
 
         for(int anchorIndex = 0; anchorIndex < numAnchors; anchorIndex++){
 
-            Task task = makeTask(input, multiIds, multiCandidates, anchorIndex);
+            CpuErrorCorrectorTask task = makeTask(input, multiIds, multiCandidates, anchorIndex);
 
             if(task.candidateReadIds.size() == 0){
                 //return uncorrected anchor
@@ -504,35 +498,9 @@ public:
 
 private:
 
-    struct Task{
-        bool active{};
 
-        std::vector<read_number> candidateReadIds{};
-        std::vector<read_number> filteredReadIds{};
-        std::vector<unsigned int> candidateSequencesData{};
-        std::vector<unsigned int> candidateSequencesRevcData{};
-        std::vector<int> candidateSequencesLengths{};
-        std::vector<int> alignmentShifts{};
-        std::vector<int> alignmentOps{};
-        std::vector<int> alignmentOverlaps{};
-        std::vector<float> alignmentWeights{};
-        std::vector<char> candidateQualities{};
-        std::vector<char> decodedAnchor{};
-        std::vector<char> decodedCandidateSequences{};
-        std::vector<cpu::SHDResult> alignments{};
-        std::vector<cpu::SHDResult> revcAlignments{};
-        std::vector<BestAlignment_t> alignmentFlags{};
-
-        CorrectionInput input{};
-
-        CorrectionResult subjectCorrection;
-        std::vector<CorrectedCandidate> candidateCorrections;
-        MSAProperties msaProperties;
-        MultipleSequenceAlignment multipleSequenceAlignment;
-    };
-
-    Task makeTask(const CorrectionInput& input){
-        Task task;
+    CpuErrorCorrectorTask makeTask(const CpuErrorCorrectorInput& input){
+        CpuErrorCorrectorTask task;
         task.active = true;
         task.input = input;
         task.multipleSequenceAlignment.setQualityConversion(qualityCoversion.get());
@@ -546,14 +514,14 @@ private:
         return task;
     }
 
-    Task makeTask(const MultiCorrectionInput& multiinput, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index){
-        CorrectionInput input;
+    CpuErrorCorrectorTask makeTask(const MultiCorrectionInput& multiinput, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index){
+        CpuErrorCorrectorInput input;
         input.anchorLength = multiinput.anchorLengths[index];
         input.anchorReadId = multiinput.anchorReadIds[index];
         input.encodedAnchor = multiinput.encodedAnchors[index];
         input.anchorQualityscores = multiinput.anchorQualityscores[index];
 
-        Task task = makeTask(input);
+        CpuErrorCorrectorTask task = makeTask(input);
 
         const int offsetBegin = multiids.numCandidatesPerAnchorPS[index];
         const int offsetEnd = multiids.numCandidatesPerAnchorPS[index + 1];
@@ -578,7 +546,7 @@ private:
     }
 
 
-    void determineCandidateReadIds(Task& task) const{
+    void determineCandidateReadIds(CpuErrorCorrectorTask& task) const{
 
         task.candidateReadIds.clear();
 
@@ -791,7 +759,7 @@ private:
     }
 
 
-    void getQualitiesFromMultiCandidates(Task& task, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index) const{
+    void getQualitiesFromMultiCandidates(CpuErrorCorrectorTask& task, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index) const{
         const int offsetBegin = multiids.numCandidatesPerAnchorPS[index];
         const int offsetEnd = multiids.numCandidatesPerAnchorPS[index + 1];
 
@@ -822,7 +790,7 @@ private:
 
 
     //Gets forward sequence and reverse complement sequence of each candidate
-    void getCandidateSequenceData(Task& task) const{
+    void getCandidateSequenceData(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
         
@@ -850,7 +818,7 @@ private:
         );        
     }
 
-    void computeReverseComplementCandidates(Task& task){
+    void computeReverseComplementCandidates(CpuErrorCorrectorTask& task){
         const int numCandidates = task.candidateReadIds.size();
         task.candidateSequencesRevcData.resize(task.candidateSequencesData.size());
 
@@ -869,7 +837,7 @@ private:
     } 
 
     //compute alignments between anchor sequence and candidate sequences
-    void getCandidateAlignments(Task& task) const{
+    void getCandidateAlignments(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.alignments.resize(numCandidates);
@@ -926,7 +894,7 @@ private:
     }
 
     //remove candidates with alignment flag None
-    void filterCandidatesByAlignmentFlag(Task& task) const{
+    void filterCandidatesByAlignmentFlag(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
 
@@ -991,7 +959,7 @@ private:
     }
 
     //remove candidates with bad alignment mismatch ratio
-    void filterCandidatesByAlignmentMismatchRatio(Task& task) const{
+    void filterCandidatesByAlignmentMismatchRatio(CpuErrorCorrectorTask& task) const{
         
         auto lastResortFunc = [](){
             return false;
@@ -1080,7 +1048,7 @@ private:
     }
 
     //get quality scores of candidates with respect to alignment direction
-    void getCandidateQualities(Task& task) const{
+    void getCandidateQualities(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.candidateQualities.resize(qualityPitchInBytes * numCandidates);
@@ -1094,7 +1062,7 @@ private:
         );         
     }
 
-    void reverseQualitiesOfRCAlignments(Task& task){
+    void reverseQualitiesOfRCAlignments(CpuErrorCorrectorTask& task){
         const int numCandidates = task.candidateReadIds.size();
 
         //reverse quality scores of candidates with reverse complement alignment
@@ -1109,7 +1077,7 @@ private:
     }
 
     //compute decoded candidate strings with respect to alignment direction
-    void makeCandidateStrings(Task& task) const{
+    void makeCandidateStrings(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.decodedCandidateSequences.resize(decodedSequencePitchInBytes * numCandidates);
@@ -1127,7 +1095,7 @@ private:
         }
     }
 
-    void alignmentsComputeWeightsAndAoStoSoA(Task& task) const{
+    void alignmentsComputeWeightsAndAoStoSoA(CpuErrorCorrectorTask& task) const{
         const int numCandidates = task.candidateReadIds.size();
 
         task.alignmentShifts.resize(numCandidates);
@@ -1149,7 +1117,7 @@ private:
         }
     }
 
-    void buildMultipleSequenceAlignment(Task& task) const{
+    void buildMultipleSequenceAlignment(CpuErrorCorrectorTask& task) const{
 
         const int numCandidates = task.candidateReadIds.size();
 
@@ -1174,7 +1142,7 @@ private:
         task.multipleSequenceAlignment.build(buildArgs);
     }
 
-    void refineMSA(Task& task) const{
+    void refineMSA(CpuErrorCorrectorTask& task) const{
 
         constexpr int max_num_minimizations = 5;
 
@@ -1290,7 +1258,7 @@ private:
         }      
     }
 
-    void correctAnchorClassic(Task& task) const{
+    void correctAnchorClassic(CpuErrorCorrectorTask& task) const{
 
         const int subjectColumnsBegin_incl = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
@@ -1313,11 +1281,11 @@ private:
         );        
     }       
 
-    void correctAnchor(Task& task) const{
+    void correctAnchor(CpuErrorCorrectorTask& task) const{
         correctAnchorClassic(task);
     }
 
-    void correctCandidatesClassic(Task& task) const{
+    void correctCandidatesClassic(CpuErrorCorrectorTask& task) const{
 
         task.candidateCorrections = task.multipleSequenceAlignment.getCorrectedCandidates(
             correctionOptions->estimatedErrorrate,
@@ -1327,11 +1295,11 @@ private:
         );
     }
 
-    void correctCandidates(Task& task) const{
+    void correctCandidates(CpuErrorCorrectorTask& task) const{
         correctCandidatesClassic(task);
     }
 
-    CorrectionOutput makeOutputOfTask(Task& task) const{
+    CorrectionOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
         CorrectionOutput result;
 
         result.hasAnchorCorrection = task.subjectCorrection.isCorrected;
