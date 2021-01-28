@@ -285,7 +285,7 @@ namespace care{
             memoryOptions,
             correctionOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Single
+            gpu::GpuMinhasherType::Multi
         );
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
