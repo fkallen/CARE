@@ -22,7 +22,7 @@
 #include <hostdevicefunctions.cuh>
 
 
-#define ENABLE_CPU_CORRECTOR_TIMING
+//#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
 #include <cpuminhasher.hpp>
 
@@ -137,8 +137,6 @@ correct_cpu(
 
     ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
-    const int numThreads = runtimeOptions.threads;
-
     #pragma omp parallel
     {
         //const int threadId = omp_get_thread_num();
@@ -212,7 +210,7 @@ correct_cpu(
             for(size_t i = 0; i < batchReadIds.size(); i++){
                 const read_number readId = batchReadIds[i];
 
-                CpuErrorCorrector::CorrectionInput input;
+                CpuErrorCorrectorInput input;
                 input.anchorReadId = readId;
                 input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
                 input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
@@ -276,6 +274,7 @@ correct_cpu(
     #ifdef ENABLE_CPU_CORRECTOR_TIMING
 
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
+    const int numThreads = runtimeOptions.threads;
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# average time per thread ("<< name << "): "

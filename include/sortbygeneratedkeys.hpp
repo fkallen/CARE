@@ -30,7 +30,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
-    std::cerr << " sortValuesByGeneratedKeysViaIndicesHost \n";
+    std::cerr << "sortValuesByGeneratedKeysViaIndicesHost \n";
 
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfIndices = SDIV(sizeof(IndexType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
@@ -55,7 +55,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     }
 
     timer1.stop();
-    timer1.print();
+    //timer1.print();
 
     helpers::CpuTimer timer2("sort indices");
 
@@ -69,7 +69,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     );
 
     timer2.stop();
-    timer2.print();
+    //timer2.print();
 
     //keys are no longer used. their memory is reused by newValues
 
@@ -81,7 +81,7 @@ bool sortValuesByGeneratedKeysViaIndicesHost(
     //permute(offsetsBegin, indices.data(), indices.size());
 
     timer3.stop();
-    timer3.print();
+    //timer3.print();
 
     return true;
 }
@@ -104,7 +104,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
-    std::cerr << " sortValuesByGeneratedKeysViaSortByKeyHost \n";
+    std::cerr << "sortValuesByGeneratedKeysViaSortByKeyHost \n";
 
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfValues = SDIV(sizeof(ValueType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
@@ -128,14 +128,14 @@ bool sortValuesByGeneratedKeysViaSortByKeyHost(
     }
 
     timer1.stop();
-    timer1.print();
+    //timer1.print();
 
     helpers::CpuTimer timer2("sort by key");
 
     thrust::sort_by_key(keys, keys + numValues, values);
 
     timer2.stop();
-    timer2.print();
+    //timer2.print();
 
     return true;
 }
@@ -158,7 +158,12 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
 ){
     using KeyType = decltype(keyGenerator(IndexType{0}));
 
-    std::cerr << " sortValuesByGeneratedKeysViaSortByKeyDevice \n";
+    std::cerr << "sortValuesByGeneratedKeysViaSortByKeyDevice \n";
+
+    if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
+        std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
+        return false;
+    }
 
     if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
         std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
@@ -235,7 +240,7 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     std::size_t freeMem,totalMem;
     cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
-    std::cerr << "free gpu mem: " << freeMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
+    //std::cerr << "free gpu mem: " << freeMem << ", memoryLimitBytes: " << memoryLimitBytes << ", sizeOfKeys: " << sizeOfKeys << ", temp_storage_bytes: " << temp_storage_bytes << "\n";
 
     void* temp_storage = nullptr;
     if(freeMem > temp_storage_bytes){
@@ -262,7 +267,12 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         temp_allocations,
         temp_allocation_sizes
     );
-    if(cubstatus != cudaSuccess) return false;
+    if(cubstatus != cudaSuccess){
+        if(temp_storage != nullptr){
+            cudaFree(temp_storage);
+        }
+        return false;
+    }
 
     auto keys = std::make_unique<KeyType[]>(numValues);
 
@@ -272,8 +282,13 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         keys[i] = keyGenerator(i);
     }
 
+    // {
+    //     std::ofstream os("keys_2");
+    //     os.write((char*)keys.get(), sizeof(KeyType) * numValues);
+    // }
+
     timer1.stop();
-    timer1.print();
+    //timer1.print();
 
     d_keys_dbl = cub::DoubleBuffer<KeyType>{(KeyType*)temp_allocations[0], (KeyType*)temp_allocations[1]};
     d_values_dbl = cub::DoubleBuffer<ValueType>{(ValueType*)temp_allocations[2], (ValueType*)temp_allocations[3]};
@@ -284,8 +299,13 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     keys = nullptr;
     cudaMemcpy(d_values_dbl.Current(), values, sizeof(ValueType) * numValues, H2D); CUERR;
 
+    // {
+    //     std::ofstream os("offsets_2");
+    //     os.write((char*)keys.get(), sizeof(ValueType) * numValues);
+    // }
+
     timer2.stop();
-    timer2.print();
+    //timer2.print();
 
     helpers::CpuTimer timer3("cub sort");
 
@@ -307,20 +327,25 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
     }
 
     timer3.stop();
-    timer3.print();
+    //timer3.print();
 
     helpers::CpuTimer timer4("copy to host");
     cudaMemcpy(values, d_values_dbl.Current(), sizeof(ValueType) * numValues, D2H); CUERR;
 
     cudaDeviceSynchronize();
     timer4.stop();
-    timer4.print();
+    //timer4.print();
 
     cudaFree(temp_storage); CUERR;
 
     cudaError_t cudastatus = cudaDeviceSynchronize();
 
     if(cubstatus != cudaSuccess && cudastatus != cudaSuccess) return false;
+
+    // {
+    //     std::ofstream os("sortedoffsets_2");
+    //     os.write((char*)values, sizeof(ValueType) * numValues);
+    // }
 
     return true;
 }

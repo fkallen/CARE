@@ -236,10 +236,10 @@ struct MemoryFileFixedSize{
     void sort(const std::string& tempdir, std::size_t memoryForSortingInBytes, ExtractKey extractKey, KeyComparator keyComparator, TComparator elementcomparator){
         //using Key = decltype(extractKey(nullptr));
 
-        std::cerr << "Sorting memory file:";
-        std::cerr << " elements in memory = " << getNumElementsInMemory();
-        std::cerr << " elements in file = " << getNumElementsInFile();
-        std::cerr << '\n';
+        // std::cerr << "Sorting memory file:";
+        // std::cerr << " elements in memory = " << getNumElementsInMemory();
+        // std::cerr << " elements in file = " << getNumElementsInFile();
+        // std::cerr << '\n';
 
         bool success = false;
 
@@ -364,6 +364,47 @@ struct MemoryFileFixedSize{
         filehelpers::renameFileSameMount(filename+"2", filename);
 
         outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);      
+    }
+
+
+    void saveToStream(std::ostream& stream){
+        memoryStorage.saveToStream(stream);
+
+        outputstream.flush();
+        std::size_t filesize = filehelpers::getSizeOfFileBytes(filename);
+        stream.write(reinterpret_cast<const char*>(&isUsingFile), sizeof(bool));
+        stream.write(reinterpret_cast<const char*>(&numStoredElementsInFile), sizeof(std::int64_t));
+        stream.write(reinterpret_cast<const char*>(&filesize), sizeof(std::size_t));
+
+        std::ifstream is(filename);
+
+        stream << is.rdbuf();
+
+        stream.flush();
+    }
+
+    void loadFromStream(std::istream& stream){
+        memoryStorage.loadFromStream(stream);
+
+        std::size_t filesizetoload = 0;
+        stream.read(reinterpret_cast<char*>(&isUsingFile), sizeof(bool));
+        stream.read(reinterpret_cast<char*>(&numStoredElementsInFile), sizeof(std::int64_t));
+        stream.read(reinterpret_cast<char*>(&filesizetoload), sizeof(std::size_t));
+
+        std::ofstream os(filename);
+        constexpr std::size_t mb = 1 << 20;
+
+        std::vector<char> temp(mb);
+
+        for(std::size_t i = 0; i < filesizetoload; i += mb){
+            std::size_t current = std::min(mb, filesizetoload - i);
+
+            stream.read(temp.data(), current);
+            os.write(temp.data(), current);
+        }
+        os.flush();
+
+        outputstream = std::ofstream(filename, std::ios::binary | std::ios::app);
     }
 
 private:

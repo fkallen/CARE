@@ -1354,7 +1354,7 @@ correct_gpu_impl(
     assert(runtimeOptions.canUseGpu);
     //assert(runtimeOptions.max_candidates > 0);
     assert(runtimeOptions.deviceIds.size() > 0);
-    std::cerr << "PANIC MODE\n";
+
     const auto& deviceIds = runtimeOptions.deviceIds;
 
     const auto rsMemInfo = readStorage.getMemoryInfo();
@@ -1576,102 +1576,7 @@ correct_gpu_impl(
         }
     }else{
 
-#if 0
-        {
-            SimpleGpuCorrectionPipeline pipeline(
-                readStorage,
-                minhasher,
-                nullptr //&threadPool         
-            );
-
-            constexpr int numBatches = 2;
-
-            pipeline.runSomeBatches(
-                deviceIds[0],
-                readIdGenerator,
-                correctionOptions,
-                goodAlignmentProperties,
-                correctionFlags,
-                processResults,
-                batchCompleted,
-                numBatches
-            );   
-                
-        }
-
-        // auto runSimpleCpuPipeline = [&](int deviceId){
-        //     cudaSetDevice(deviceId); CUERR;
-
-        //     SimpleCpuCorrectionPipeline pipeline;
-
-        //     std::unique_ptr<ReadProvider> readProvider = std::make_unique<GpuReadStorageReadProvider>(readStorage);
-        //     std::unique_ptr<CandidateIdsProvider> candidateIdsProvider = std::make_unique<GpuMinhasherCandidateIdsProvider>(minhasher);
-
-        //     pipeline.runToCompletion(
-        //         readIdGenerator,
-        //         correctionOptions,
-        //         goodAlignmentProperties,
-        //         correctionFlags,
-        //         readProvider.get(),
-        //         candidateIdsProvider.get(),
-        //         processResults,
-        //         batchCompleted
-        //     ); 
-        // };
-
-        // std::vector<std::future<void>> futures;
-
-        // for(int i = 0; i < runtimeOptions.threads; i++){
-        //     futures.emplace_back(
-        //         std::async(
-        //             std::launch::async,
-        //             runSimpleCpuPipeline,
-        //             deviceIds[i % deviceIds.size()]
-        //         )
-        //     );                
-        // }
-
-        // for(auto& f : futures){
-        //     f.wait();
-        // }
-
-
-        // auto runPipeline = [&](int deviceId, ComplexGpuCorrectionPipeline::Config config){
-        
-        //     ComplexGpuCorrectionPipeline pipeline(readStorage, minhasher, nullptr); //&threadPool);
-    
-        //     pipeline.run(
-        //         deviceId,
-        //         config,
-        //         readIdGenerator,
-        //         correctionOptions,
-        //         goodAlignmentProperties,
-        //         correctionFlags,
-        //         processResults,
-        //         batchCompleted
-        //     );
-        // };
-    
-        // ComplexGpuCorrectionPipeline::Config pipelineConfig;
-    
-        // pipelineConfig.numHashers = 6;
-        // pipelineConfig.numCorrectors = 2;
-        // pipelineConfig.numOutputConstructors = 1;
-    
-        // std::vector<std::future<void>> futures;
-    
-        // for(int deviceId : deviceIds){
-        //     futures.emplace_back(std::async(
-        //         std::launch::async,
-        //         runPipeline,
-        //         deviceId, pipelineConfig
-        //     ));
-        // }
-    
-        // for(auto& f : futures){
-        //     f.wait();
-        // }
-#else         
+     
 
         //Process a few batches on the first gpu to estimate runtime per step
         //These estimates will be used to spawn an appropriate number of threads for each gpu (assuming all gpus are similar)
@@ -1702,7 +1607,7 @@ correct_gpu_impl(
         }
 
         const int numHashersPerCorrectorByTime = std::ceil(runStatistics.hasherTimeAverage / runStatistics.correctorTimeAverage);
-        std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
+        //std::cerr << runStatistics.hasherTimeAverage << " " << runStatistics.correctorTimeAverage << "\n";
 
         // auto runSimpleCpuPipeline = [&](int deviceId){
         //     // cudaSetDevice(deviceId); CUERR;
@@ -1761,76 +1666,67 @@ correct_gpu_impl(
         std::vector<std::future<void>> futures;
 
         const int numDevices = deviceIds.size();
-        const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + 1 + (2 + 1);
+        const int requiredNumThreadsForComplex = numHashersPerCorrectorByTime + (2 + 1 + 1);
         int availableThreads = runtimeOptions.threads;
 
         //std::cerr << "numDevice " << numDevices << ", requiredNumThreadsForComplex " << requiredNumThreadsForComplex << ", availableThreads " << availableThreads << "\n";
 
-        auto launchSimplePipelines = [&](int firstIdIndex, int lastIdIndex){
-            constexpr int maxNumThreadsPerDevice = 3;
-            assert(lastIdIndex <= numDevices);
+        // auto launchSimplePipelines = [&](int firstIdIndex, int lastIdIndex){
+        //     constexpr int maxNumThreadsPerDevice = 3;
+        //     assert(lastIdIndex <= numDevices);
 
-            std::vector<int> numThreadsPerDevice(numDevices, 0);
+        //     std::vector<int> numThreadsPerDevice(numDevices, 0);
 
-            for(int i = 0; i < maxNumThreadsPerDevice; i++){
-                for(int d = firstIdIndex; d < lastIdIndex; d++){
-                    if(availableThreads > 0){
-                        futures.emplace_back(std::async(
-                            std::launch::async,
-                            runSimpleGpuPipeline,
-                            deviceIds[d]
-                        ));
+        //     for(int i = 0; i < maxNumThreadsPerDevice; i++){
+        //         for(int d = firstIdIndex; d < lastIdIndex; d++){
+        //             if(availableThreads > 0){
+        //                 futures.emplace_back(std::async(
+        //                     std::launch::async,
+        //                     runSimpleGpuPipeline,
+        //                     deviceIds[d]
+        //                 ));
 
-                        availableThreads--;
+        //                 availableThreads--;
 
-                        numThreadsPerDevice[d]++;
-                    }
-                }
-            }
+        //                 numThreadsPerDevice[d]++;
+        //             }
+        //         }
+        //     }
 
-            for(int d = firstIdIndex; d < lastIdIndex; d++){
-                if(numThreadsPerDevice[d] > 0){
-                    std::cerr << "Use " << numThreadsPerDevice[d] << " simple threads on device " << deviceIds[d] << "\n";
-                }else{
-                    std::cerr << "Device " << deviceIds[d] << " will be unused. (Not enough threads available.)\n";
-                }
-            }
-        };
+        //     for(int d = firstIdIndex; d < lastIdIndex; d++){
+        //         if(numThreadsPerDevice[d] > 0){
+        //             std::cerr << "Use " << numThreadsPerDevice[d] << " simple threads on device " << deviceIds[d] << "\n";
+        //         }else{
+        //             std::cerr << "Device " << deviceIds[d] << " will be unused. (Not enough threads available.)\n";
+        //         }
+        //     }
+        // };
 
-        //if there are not enough threads to run one complex pipeline on any device, only use simple pipelines
-        if(requiredNumThreadsForComplex > availableThreads){
-            launchSimplePipelines(0, numDevices);
-        }else{
+        for(int i = 0; i < numDevices; i++){ 
+            const int deviceId = deviceIds[i];
 
-            std::vector<bool> useComplexPipeline(numDevices, false);
-            int numSimple = 0;
-            int firstSimpleDevice = numDevices;
+            int threadsForDevice = std::min(availableThreads, requiredNumThreadsForComplex);
 
-            for(int i = 0; i < numDevices; i++){            
-
-                if(availableThreads >= requiredNumThreadsForComplex){
-                    useComplexPipeline[i] = true;    
-                    availableThreads -= requiredNumThreadsForComplex;
-                }else{
-                    numSimple++;
-
-                    if(firstSimpleDevice == numDevices){
-                        firstSimpleDevice = i;
-                    }
-                }
-            }
-
-            for(int i = 0; i < firstSimpleDevice; i++){
-                const int deviceId = deviceIds[i];
+            if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-                pipelineConfig.numHashers = numHashersPerCorrectorByTime + 2;
-                pipelineConfig.numCorrectors = 1 + 1;
-                pipelineConfig.numOutputConstructors = 0;
+                pipelineConfig.numOutputConstructors = 0; //always 0
+
+                pipelineConfig.numCorrectors = 1;
+                threadsForDevice -= pipelineConfig.numCorrectors;
+                
+                pipelineConfig.numHashers = std::min(threadsForDevice, numHashersPerCorrectorByTime);
+                threadsForDevice -= pipelineConfig.numHashers;
+
+                if(threadsForDevice > 0){
+                    pipelineConfig.numCorrectors++;
+                    threadsForDevice--;
+                }
+
+                pipelineConfig.numHashers += threadsForDevice;
 
                 std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
-                << pipelineConfig.numCorrectors << " corrector(s), " 
-                << pipelineConfig.numOutputConstructors << " output constructor(s) "
+                << pipelineConfig.numCorrectors << " corrector(s) "
                 << "on device " << deviceId << "\n";                
 
                 futures.emplace_back(
@@ -1840,10 +1736,71 @@ correct_gpu_impl(
                         deviceId, pipelineConfig
                     )
                 );
-            }
 
-            launchSimplePipelines(firstSimpleDevice, numDevices);
+                availableThreads -= pipelineConfig.numOutputConstructors;
+                availableThreads -= pipelineConfig.numCorrectors;
+                availableThreads -= pipelineConfig.numHashers;
+            }else{
+                std::cerr << "\nWill use " << threadsForDevice << " simple pipelines on device " << deviceId << "\n";
+
+                while(threadsForDevice > 0){
+                    futures.emplace_back(std::async(
+                        std::launch::async,
+                        runSimpleGpuPipeline,
+                        deviceId
+                    ));
+
+                    threadsForDevice--;
+                }
+            }
         }
+
+        //if there are not enough threads to run one complex pipeline on any device, only use simple pipelines
+        // if(requiredNumThreadsForComplex > availableThreads){
+        //     launchSimplePipelines(0, numDevices);
+        // }else{
+
+            // std::vector<bool> useComplexPipeline(numDevices, false);
+            // int numSimple = 0;
+            // int firstSimpleDevice = numDevices;
+
+            // for(int i = 0; i < numDevices; i++){            
+
+            //     if(availableThreads >= requiredNumThreadsForComplex){  
+            //         availableThreads -= requiredNumThreadsForComplex;
+            //     }else{
+            //         numSimple++;
+
+            //         if(firstSimpleDevice == numDevices){
+            //             firstSimpleDevice = i;
+            //         }
+            //     }
+            // }
+
+            // for(int i = 0; i < firstSimpleDevice; i++){
+            //     const int deviceId = deviceIds[i];
+
+            //     typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
+            //     pipelineConfig.numHashers = numHashersPerCorrectorByTime + 2;
+            //     pipelineConfig.numCorrectors = 1 + 1;
+            //     pipelineConfig.numOutputConstructors = 0;
+
+            //     // std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+            //     // << pipelineConfig.numCorrectors << " corrector(s), " 
+            //     // << pipelineConfig.numOutputConstructors << " output constructor(s) "
+            //     // << "on device " << deviceId << "\n";                
+
+            //     futures.emplace_back(
+            //         std::async(
+            //             std::launch::async,
+            //             runComplexGpuPipeline,
+            //             deviceId, pipelineConfig
+            //         )
+            //     );
+            // }
+
+            // launchSimplePipelines(firstSimpleDevice, numDevices);
+        //}
 
         //std::cerr << "Remaing threads after launching gpu pipelines: " << availableThreads << "\n";
 
@@ -1862,7 +1819,6 @@ correct_gpu_impl(
             f.wait();
         }
 
-#endif
 
         
     }

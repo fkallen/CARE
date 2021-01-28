@@ -959,12 +959,12 @@ namespace gpu{
         void resizeBuffers(int numReads, int numCandidates){  
             assert(numReads <= maxAnchors);
 
-            bool maxCandidatesDidChange = false;
+            //bool maxCandidatesDidChange = false;
             constexpr int stepsizeForMaxCandidates = 10000;
             if(numCandidates > maxCandidates){
                 //round up numCandidates to next multiple of stepsize
                 maxCandidates = SDIV(numCandidates, stepsizeForMaxCandidates) * stepsizeForMaxCandidates;
-                maxCandidatesDidChange = true;
+                //maxCandidatesDidChange = true;
 
                 if(useGraph()){
                     //reallocation will occure. invalidate all graphs and recapture them.
@@ -1081,9 +1081,9 @@ namespace gpu{
             tmpsize = std::max(tmpsize, popcountShdTempBytes);
             d_tempstorage.resize(tmpsize);
 
-            if(maxCandidatesDidChange){
-                std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
-            }
+            // if(maxCandidatesDidChange){
+            //     std::cerr << "maxCandidates changed to " << maxCandidates << "\n";
+            // }
 
             if(useGraph()){
                 if(!graphMap[currentOutput].valid){

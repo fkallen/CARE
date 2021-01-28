@@ -29,7 +29,7 @@ CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 CFLAGS_CPU_DEBUG = $(CFLAGS_DEBUG_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP
 
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
-NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
+NVCCFLAGS_DEBUG = -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) -I$(CUB_INCDIR) $(WARPCORE_INCLUDE_FLAGS) $(WARPCORE_CFLAGS)
 
 # This could be modified to compile only for a single architecture to reduce compilation time
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61 \
