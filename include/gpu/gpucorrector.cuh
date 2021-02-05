@@ -1668,7 +1668,7 @@ namespace gpu{
             assert(d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
             
             bool* d_shouldBeKept = (bool*)d_tempstorage.get();
-            bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * (*h_numCandidates.get()), 128) * 128);
+            bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * maxCandidates, 128) * 128);
 
             cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * maxAnchors, stream);
 
