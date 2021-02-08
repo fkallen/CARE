@@ -366,6 +366,7 @@ namespace care{
                 task.candidateShifts.resize(task.numRemainingCandidates);
                 task.candidateOverlapWeights.resize(task.numRemainingCandidates);
 
+                //gather data required for msa
                 for(int c = 0; c < task.numRemainingCandidates; c++){
                     vecAccess(task.candidateShifts, c) = vecAccess(task.alignments, c).shift;
 
@@ -378,6 +379,7 @@ namespace care{
 
                 task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
 
+                //decode the candidates for msa
                 for(int c = 0; c < task.numRemainingCandidates; c++){
                     SequenceHelpers::decode2BitSequence(
                         task.candidateStrings.data() + c * decodedSequencePitchInBytes,
@@ -468,28 +470,39 @@ namespace care{
 
                 if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + task.mateLength >= insertSize - insertSizeStddev){
                     //check if mate can be overlapped with consensus 
-                    std::map<int, std::vector<int>> hamMap; //map hamming distance to list start positions
+
+                    //hamMap[i] stores possible starting positions of overlaps which would have hamming distance i
+                    std::map<int, std::vector<int>> hamMap;
+
+                    //hamMap[i] stores possible starting positions of overlaps which would have a longest match of length i between mate and msa consensus
                     std::map<int, std::vector<int>> longmatchMap; //map length of longest match to list start positions
-                    for(int startpos = 0; startpos < consensusLength - requiredOverlapMate; startpos++){
-                        if(task.accumExtensionLengths + startpos + task.mateLength >= insertSize - insertSizeStddev 
-                                && task.accumExtensionLengths + startpos + task.mateLength <= insertSize + insertSizeStddev){
+
+                    //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+
+                    const int firstStartpos = std::max(0, insertSize - insertSizeStddev - task.accumExtensionLengths - task.mateLength);
+                    const int lastStartposExcl = std::min(
+                        std::max(0, insertSize + insertSizeStddev - task.accumExtensionLengths - task.mateLength) + 1,
+                        consensusLength - requiredOverlapMate
+                    );
+
+                    for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
+                        //compute metrics of overlap
                             
-                            const int ham = cpu::hammingDistanceOverlap(
-                                msa.consensus.begin() + startpos, msa.consensus.end(), 
-                                task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                            );
+                        const int ham = cpu::hammingDistanceOverlap(
+                            msa.consensus.begin() + startpos, msa.consensus.end(), 
+                            task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                        );
 
-                            hamMap[ham].emplace_back(startpos);
+                        hamMap[ham].emplace_back(startpos);
 
-                            const int longest = cpu::longestMatch(
-                                msa.consensus.begin() + startpos, msa.consensus.end(), 
-                                task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                            );
+                        const int longest = cpu::longestMatch(
+                            msa.consensus.begin() + startpos, msa.consensus.end(), 
+                            task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                        );
 
-                            longmatchMap[longest].emplace_back(startpos);
-                        }
+                        longmatchMap[longest].emplace_back(startpos);
                     }
-
+                    
                     std::vector<std::pair<int, std::vector<int>>> flatMap(hamMap.begin(), hamMap.end());
                     //sort by hamming distance, ascending
                     std::sort(flatMap.begin(), flatMap.end(), [](const auto& p1, const auto& p2){return p1.first < p2.first;});
@@ -498,7 +511,7 @@ namespace care{
                     //sort by length of longest match, descending
                     std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
 
-
+                    //if there exists an overlap between msa consensus and mate which would end the merge, use the best one
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
                     //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
                         const int mateStartposInConsensus = flatMap[0].second.front();

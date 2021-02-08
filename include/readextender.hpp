@@ -1611,15 +1611,6 @@ private:
         //exclude anchors with ambiguous bases
         if(!(correctionOptions.excludeAmbiguousReads && containsN)){
 
-            const int length = readLength;
-            std::string sequence(length, '0');
-
-            SequenceHelpers::decode2BitSequence(
-                &sequence[0],
-                encodedRead,
-                length
-            );
-
             int numValuesPerSequence = 0;
             int totalNumValues = 0;
 
