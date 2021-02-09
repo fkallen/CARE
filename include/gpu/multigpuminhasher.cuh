@@ -335,7 +335,7 @@ namespace gpu{
                         nReads, 
                         gpuReadStorage, 
                         upperBoundSequenceLength, 
-                        std::min(remainingNumHashfunctions, 4), //debugging. allow only 4 tables per gpu
+                        remainingNumHashfunctions, //std::min(remainingNumHashfunctions, 4), //debugging. allow only 4 tables per gpu
                         currentHashFunctionOffset
                     );
 

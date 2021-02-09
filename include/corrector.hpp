@@ -19,7 +19,7 @@
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
-
+#include <cpucorrectortask.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -40,12 +40,6 @@ namespace care{
 
 class CpuErrorCorrector{
 public:
-    struct CorrectionInput{
-        int anchorLength{};
-        read_number anchorReadId{};
-        const unsigned int* encodedAnchor{};
-        const char* anchorQualityscores{};
-    };
 
     struct MultiCorrectionInput{
         std::vector<int> anchorLengths;
