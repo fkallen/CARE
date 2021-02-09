@@ -134,15 +134,65 @@ namespace distarraykernels{
             size_t resultPitchValueTs,
             size_t numCols
     ){
+        auto standardGather = [&](){
 
-        for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-            const Index_t outputrow = i / numCols;
-            const Index_t inputrow = indices[outputrow] + indexOffset;
-            const Index_t col = i % numCols;
-            result[size_t(outputrow) * resultPitchValueTs + col] 
-                    = sourceData[size_t(inputrow) * numCols + col];
-        }
+            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+                const Index_t outputrow = i / numCols;
+                const Index_t inputrow = indices[outputrow] + indexOffset;
+                const Index_t col = i % numCols;
+                result[size_t(outputrow) * resultPitchValueTs + col] 
+                        = sourceData[size_t(inputrow) * numCols + col];
+            }
+        };
+
+        // auto specialGather = [&](){
+        //     constexpr int groupsize = 8;
+        //     auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        //     const int numGroupsInGrid = (blockDim.x * gridDim.x) / groupsize;
+        //     const int groupIdInGrid = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+        //     for(int outputrow = groupIdInGrid; outputrow < nIndices; outputrow += numGroupsInGrid){
+        //         const Index_t inputrow = indices[outputrow] + indexOffset;
+
+        //         for(int k = group.thread_rank(); k < numCols; k += group.size()){
+        //             result[size_t(outputrow) * resultPitchValueTs + k] 
+        //                 = sourceData[size_t(inputrow) * numCols + k];
+        //         }
+        //     }
+        // };
+
+        // auto specialGather2 = [&](){
+        //     constexpr int groupsize = 8;
+        //     auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        //     const int numGroupsInGrid = (blockDim.x * gridDim.x) / groupsize;
+        //     const int groupIdInGrid = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+
+        //     const int numIntsToCopy = (numCols * sizeof(Value_t)) / sizeof(int);
+        //     const int remainingBytes = (numCols * sizeof(Value_t)) - numIntsToCopy * sizeof(int);
+
+        //     for(int outputrow = groupIdInGrid; outputrow < nIndices; outputrow += numGroupsInGrid){
+        //         const Index_t inputrow = indices[outputrow] + indexOffset;
+
+        //         for(int k = group.thread_rank(); k < numIntsToCopy; k += group.size()){
+        //             ((int*)&result[size_t(outputrow) * resultPitchValueTs])[k] 
+        //                 = ((const int*)&sourceData[size_t(inputrow) * numCols])[k];
+        //         }
+
+        //         for(int k = group.thread_rank(); k < remainingBytes; k += group.size()){
+        //             ((char*)(((int*)&result[size_t(outputrow) * resultPitchValueTs]) + numIntsToCopy))[k] 
+        //                 = ((const char*)(((const int*)&sourceData[size_t(inputrow) * numCols]) + numIntsToCopy))[k];
+        //         }
+        //     }
+        // };
+
+        standardGather();
+        //specialGather();
+        // assert((numCols * sizeof(Value_t)) % sizeof(int) == 0);
+        // assert((resultPitchValueTs * sizeof(Value_t)) % sizeof(int) == 0);
+
+        // specialGather2();
     }
+
 
     template<class Index_t, class Value_t>
     __global__
@@ -1214,7 +1264,11 @@ public:
 
             Value_t* const myResult = handle->pinnedGatheredElementsOfHostLocation.get();
 
+            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+            wrapperCudaSetDevice(resultDeviceId); CUERR;
+
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
+                #if 0
                 for(Index_t k = begin; k < end; k++){
                     const Index_t localId = indices[k];
 
@@ -1223,6 +1277,36 @@ public:
 
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
+                #else
+                const Index_t myChunksize = end - begin;
+
+                //batches to overlap gathering with cudamemcpyAsync
+                constexpr Index_t batchsize = 5000;
+                const Index_t numBatches = SDIV(myChunksize, batchsize);
+
+                for(Index_t b = 0; b < numBatches; b++){
+                    const Index_t batchbegin = begin + b * batchsize;
+                    const Index_t batchend = begin + std::min((b+1) * batchsize, myChunksize);
+                    const Index_t currentBatchsize = batchend - batchbegin;
+
+                    for(Index_t k = batchbegin; k < batchend; k++){
+                        const Index_t localId = indices[k];
+
+                        const Value_t* const srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                        Value_t* const destPtr = (Value_t*)(((char*)(myResult)) + resultPitch * k);
+
+                        std::copy_n(srcPtr, numColumns, destPtr);
+                    }
+
+                    cudaMemcpyAsync(
+                        (((char*)(d_result)) + resultPitch * size_t(batchbegin)),
+                        (((const char*)(myResult)) + resultPitch * size_t(batchbegin)),
+                        currentBatchsize * resultPitch,
+                        H2D,
+                        syncstream
+                    ); CUERR;
+                }
+                #endif
             };
 
             forLoop( 
@@ -1231,13 +1315,15 @@ public:
                 gather
             );
 
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-            wrapperCudaSetDevice(resultDeviceId); CUERR;
-
-            cudaMemcpyAsync(d_result, myResult, numIds * resultPitch, H2D, syncstream); CUERR;
-
             wrapperCudaSetDevice(oldDevice); CUERR;
+
+            // int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+            // wrapperCudaSetDevice(resultDeviceId); CUERR;
+
+            // cudaMemcpyAsync(d_result, myResult, numIds * resultPitch, H2D, syncstream); CUERR;
+
+            // wrapperCudaSetDevice(oldDevice); CUERR;
         }else{
             //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
 
@@ -2132,15 +2218,43 @@ public:
 
             auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
                 nvtx::ScopedRange r("generalgather_host", 7);
+                const Index_t myChunksize = end - begin;
 
-                for(Index_t k = begin; k < end; k++){
-                    const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
+                //batches to overlap gather with cudaMemcpyAsync
+                constexpr Index_t batchsize = 5000;
+                const Index_t numBatches = SDIV(myChunksize, batchsize);
 
-                    const Value_t* const srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                    Value_t* const destPtr = myResult + size_t(k) * numColumns;
+                for(Index_t b = 0; b < numBatches; b++){
+                    const Index_t batchbegin = begin + b * batchsize;
+                    const Index_t batchend = begin + std::min((b+1) * batchsize, myChunksize);
+                    const Index_t currentBatchsize = batchend - batchbegin;
 
-                    std::copy_n(srcPtr, numColumns, destPtr);
+                    for(Index_t k = batchbegin; k < batchend; k++){
+                        const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
+
+                        const Value_t* const srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                        Value_t* const destPtr = myResult + size_t(k) * numColumns;
+
+                        std::copy_n(srcPtr, numColumns, destPtr);
+                    }
+
+                    cudaMemcpyAsync(
+                        handle->map_d_tmpResults[resultDeviceId].get() + size_t(batchbegin) * numColumns,
+                        myResult + size_t(batchbegin) * numColumns,
+                        sizeof(Value_t) * currentBatchsize * numColumns,
+                        H2D,
+                        syncstream
+                    ); CUERR;
                 }
+
+                // for(Index_t k = begin; k < end; k++){
+                //     const Index_t localId = myIndices[k] - elementsPerLocationPS[hostLocation];
+
+                //     const Value_t* const srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                //     Value_t* const destPtr = myResult + size_t(k) * numColumns;
+
+                //     std::copy_n(srcPtr, numColumns, destPtr);
+                // }
 
             };
 
@@ -2150,13 +2264,13 @@ public:
                 gather
             );
 
-            cudaMemcpyAsync(
-                handle->map_d_tmpResults[resultDeviceId].get(),
-                myResult,
-                sizeof(Value_t) * numIndicesForHost * numColumns,
-                H2D,
-                syncstream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     handle->map_d_tmpResults[resultDeviceId].get(),
+            //     myResult,
+            //     sizeof(Value_t) * numIndicesForHost * numColumns,
+            //     H2D,
+            //     syncstream
+            // ); CUERR;
 
             distarraykernels::scatterKernel<Index_t, Value_t><<<1000, 256, 0, syncstream>>>(
                 d_result, 

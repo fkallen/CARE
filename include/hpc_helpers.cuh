@@ -4,6 +4,8 @@
 #define CUDA_HELPERS_DONT_INCLUDE_V11_GROUP_HEADERS
 
 #include "hpc_helpers/include/cuda_helpers.cuh"
+#include "hpc_helpers/include/coop_group_helpers.cuh"
+#include "hpc_helpers/include/cuda_raiiwrappers.cuh"
 #include "hpc_helpers/include/custom_thrust_allocators.cuh"
 #include "hpc_helpers/include/hashers.cuh"
 #include "hpc_helpers/include/hpc_helpers.h"

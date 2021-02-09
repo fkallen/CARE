@@ -2,7 +2,7 @@
 
 #include <hpc_helpers.cuh>
 #include <config.hpp>
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <cassert>
 #include <cooperative_groups.h>
@@ -28,19 +28,8 @@ void checkSequenceConversionKernel(const unsigned int* const __restrict__ normal
         Trafo2Bit trafo2Bit,
         Trafo2BitHilo trafo2BitHilo){
 
-    constexpr char A_enc = 0x00;
-    constexpr char C_enc = 0x01;
-    constexpr char G_enc = 0x02;
-    constexpr char T_enc = 0x03;
-
-    auto to_nuc = [](char c){
-        switch(c){
-        case A_enc: return 'A';
-        case C_enc: return 'C';
-        case G_enc: return 'G';
-        case T_enc: return 'T';
-        default: assert(false); return 'F';
-        }
+    auto to_nuc = [](std::uint8_t enc){
+        return SequenceHelpers::decodeBase(enc);
     };
 
     //use one block per sequence
@@ -50,9 +39,9 @@ void checkSequenceConversionKernel(const unsigned int* const __restrict__ normal
         const unsigned int* const hiloSeq = hiloData + first2BitHilo(index);    
         
         for(int p = threadIdx.x; p < sequenceLength; p += blockDim.x){
-            char encnormal = getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
+            std::uint8_t encnormal = SequenceHelpers::getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
             char basenormal = to_nuc(encnormal);
-            char enchilo = getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
+            std::uint8_t enchilo = SequenceHelpers::getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
             char basehilo = to_nuc(enchilo);
             if(basenormal != basehilo){
                 printf("error seq %d position %d, normal %c hilo %c\n", index, p, basenormal, basehilo);
@@ -170,15 +159,6 @@ void convert2BitTo2BitHiloKernelNN(
     auto inputTrafo = [&](auto i){return i;};
     auto outputTrafo = [&](auto i){return i;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -186,8 +166,8 @@ void convert2BitTo2BitHiloKernelNN(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -197,8 +177,8 @@ void convert2BitTo2BitHiloKernelNN(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -207,8 +187,8 @@ void convert2BitTo2BitHiloKernelNN(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;
@@ -255,15 +235,6 @@ void convert2BitTo2BitHiloKernelNT(
     auto inputTrafo = [&](auto i){return i;};
     auto outputTrafo = [&](auto i){return i * numSequences;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -271,8 +242,8 @@ void convert2BitTo2BitHiloKernelNT(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -282,8 +253,8 @@ void convert2BitTo2BitHiloKernelNT(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -292,8 +263,8 @@ void convert2BitTo2BitHiloKernelNT(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;
@@ -342,15 +313,6 @@ void convert2BitTo2BitHiloKernelTT(
     auto inputTrafo = [&](auto i){return i * numSequences;};
     auto outputTrafo = [&](auto i){return i * numSequences;};
 
-    auto extractEvenBits = [](unsigned int x){
-        x = x & 0x55555555;
-        x = (x | (x >> 1)) & 0x33333333;
-        x = (x | (x >> 2)) & 0x0F0F0F0F;
-        x = (x | (x >> 4)) & 0x00FF00FF;
-        x = (x | (x >> 8)) & 0x0000FFFF;
-        return x;
-    };
-
     auto convert = [&](auto group,
                         unsigned int* out,
                         const unsigned int* in,
@@ -358,8 +320,8 @@ void convert2BitTo2BitHiloKernelTT(
                         auto inindextrafo,
                         auto outindextrafo){
 
-        const int inInts = getEncodedNumInts2Bit(length);
-        const int outInts = getEncodedNumInts2BitHiLo(length);
+        const int inInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+        const int outInts = SequenceHelpers::getEncodedNumInts2BitHiLo(length);
 
         unsigned int* const outHi = out;
         unsigned int* const outLo = out + outindextrafo(outInts/2);
@@ -369,8 +331,8 @@ void convert2BitTo2BitHiloKernelTT(
             const int inindex1 = inindextrafo(i*2);
 
             const unsigned int data1 = in[inindex1];
-            const unsigned int even161 = extractEvenBits(data1);
-            const unsigned int odd161 = extractEvenBits(data1 >> 1);
+            const unsigned int even161 = SequenceHelpers::extractEvenBits(data1);
+            const unsigned int odd161 = SequenceHelpers::extractEvenBits(data1 >> 1);
 
             unsigned int resultHi = odd161 << 16;
             unsigned int resultLo = even161 << 16;
@@ -379,8 +341,8 @@ void convert2BitTo2BitHiloKernelTT(
                 const int inindex2 = inindextrafo(i*2 + 1);
 
                 const unsigned int data2 = in[inindex2];
-                const unsigned int even162 = extractEvenBits(data2);
-                const unsigned int odd162 = extractEvenBits(data2 >> 1);
+                const unsigned int even162 = SequenceHelpers::extractEvenBits(data2);
+                const unsigned int odd162 = SequenceHelpers::extractEvenBits(data2 >> 1);
 
                 resultHi = resultHi | odd162;
                 resultLo = resultLo | even162;

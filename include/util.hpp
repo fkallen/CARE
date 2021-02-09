@@ -155,19 +155,36 @@ std::vector<std::string> split(const std::string& str, char c){
 	return result;
 }
 
+// https://devblogs.microsoft.com/oldnewthing/20170102-00/?p=95095
+// permutes data according to indices. indices is left in unspecified state
+template<class T, class Index>
+void permute(T* data, Index* indices, std::size_t N){
+    using std::swap;
+
+    for (size_t i = 0; i < N; i++) {
+        auto current = i;
+        while (i != indices[current]) {
+            auto next = indices[current];
+            swap(data[current], data[next]);
+            indices[current] = current;
+            current = next;
+        }
+        indices[current] = current;
+    }
+}
 
 
 /*
     Performs a set union of multiple ranges into a single output range
 */
-template<class T>
+
 struct SetUnionHandle{
-    std::vector<T> buffer;
+    std::vector<char> buffer{};
 };
 
-template<class T, class OutputIt, class Iter>
+template<class OutputIt, class Iter>
 OutputIt k_way_set_union(
-        SetUnionHandle<T>& handle,
+        SetUnionHandle& handle,
         OutputIt outputbegin, 
         std::pair<Iter, Iter>* ranges,
         int numRanges){
@@ -176,9 +193,8 @@ OutputIt k_way_set_union(
     using InputType = typename std::iterator_traits<Iter>::value_type;
 
     static_assert(std::is_same<OutputType, InputType>::value, "");
-    static_assert(std::is_same<T, InputType>::value, "");
 
-    //using T = InputType;
+    using T = InputType;
 
     //handle simple cases
 
@@ -212,10 +228,10 @@ OutputIt k_way_set_union(
     }
 
     auto& temp = handle.buffer;
-    temp.resize(totalElements);
+    temp.resize(sizeof(T) * totalElements);
 
-    auto tempbegin = temp.begin();
-    auto tempend = tempbegin;
+    T* tempbegin = reinterpret_cast<T*>(temp.data());
+    T* tempend = tempbegin;
     auto outputend = outputbegin;
 
     //to avoid a final copy from temp to outputrange, both ranges are swapped in the beginning if number of ranges is odd.
@@ -237,29 +253,6 @@ OutputIt k_way_set_union(
 
     return outputend;
 }
-
-// template<class T, class OutputIt, class Iter>
-// OutputIt k_way_set_union(
-//         SetUnionHandle<T>& handle,
-//         OutputIt outputbegin, 
-//         std::vector<std::pair<const Iter, const Iter>>& ranges){
-
-//     return k_way_set_union(handle, outputbegin, ranges.data(), ranges.size());
-// }
-
-// template<class T, class OutputIt, class Iter>
-// OutputIt k_way_set_union(
-//         OutputIt outputbegin, 
-//         std::vector<std::pair<Iter,Iter>>& ranges){
-
-//     SetUnionHandle<T> handle;
-
-//     return k_way_set_union(
-//         handle,
-//         outputbegin, 
-//         ranges
-//     );
-//}
 
 
 
@@ -969,80 +962,6 @@ OutputIt set_intersection_n_or_empty(InputIt1 first1, InputIt1 last1,
 }
 
 
-template<class F>
-void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
-    std::vector<int> indices(nrows);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    std::sort(indices.begin(), indices.end(),
-            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    //for(auto i : indices)
-    //    out << get_shift_of_row(i) << ' ';
-    //out << '\n';
-    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
-    for(int row = 0; row < nrows; row++) {
-        int sortedrow = indices[row];
-        if(sortedrow == 0)
-            out << ">> ";
-        else
-            out << "   ";
-        for(int col = 0; col < ncolumns; col++) {
-            const char c = data[sortedrow * rowpitch + col];
-            out << (c == '\0' ? '0' : c);
-        }
-        if(sortedrow == 0)
-            out << " <<";
-        else
-            out << "   ";
-        out << '\n';
-    }
-}
-
-template<class F>
-void print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::ostream& out, const char* data, const char* consensus,
-                                                                        int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
-    std::vector<int> indices(nrows);
-    std::iota(indices.begin(), indices.end(), 0);
-
-    std::sort(indices.begin(), indices.end(),
-            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    //for(auto i : indices)
-    //    out << get_shift_of_row(i) << ' ';
-    //out << '\n';
-    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
-    for(int row = 0; row < nrows; row++) {
-        int sortedrow = indices[row];
-        if(sortedrow == 0)
-            out << ">> ";
-        else
-            out << "   ";
-        for(int col = 0; col < ncolumns; col++) {
-            const char c = data[sortedrow * rowpitch + col];
-            const char c2 = c == consensus[col] ? '=' : c;
-            out << (c2 == '\0' ? '0' : c2);
-        }
-        if(sortedrow == 0)
-            out << " <<";
-        else
-            out << "   ";
-        out << '\n';
-    }
-}
-
-std::array<int, 5> onehotbase(char base);
-void print_multiple_sequence_alignment(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch);
-
-/*
-    Bit shifts of bit array
-*/
-
-void shiftBitsLeftBy(unsigned char* array, int bytes, int shiftamount);
-
-void shiftBitsRightBy(unsigned char* array, int bytes, int shiftamount);
-
-void shiftBitsBy(unsigned char* array, int bytes, int shiftamount);
-
-int hammingdistanceHiLo(const std::uint8_t* l, const std::uint8_t* r, int length_l, int length_r, int bytes);
 
 
 #endif

@@ -5,6 +5,8 @@
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpumsa.cuh>
 
+#include <gpu/minhashingkernels.cuh>
+
 #include <bestalignment.hpp>
 #include <correctionresultprocessing.hpp>
 
@@ -19,6 +21,8 @@ namespace gpu {
 
 #ifdef __NVCC__
 
+
+
 struct AnchorHighQualityFlag{
     char data;
 
@@ -30,6 +34,13 @@ struct AnchorHighQualityFlag{
     __host__ __device__
     void hq(bool isHq){
         data = isHq ? 1 : 0;
+    }
+};
+
+struct IsHqAnchor{
+    DEVICEQUALIFIER
+    bool operator() (const AnchorHighQualityFlag& flag) const{
+        return flag.hq();
     }
 };
 
@@ -444,6 +455,9 @@ void callConversionKernel2BitTo2BitHiLoTT(
             int maxNumSequences,
             cudaStream_t stream,
             KernelLaunchHandle& handle);            
+
+
+
 
 
 

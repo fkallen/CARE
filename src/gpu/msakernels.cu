@@ -5,7 +5,7 @@
 
 #include <bestalignment.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 
 #include <gpu/gpumsa.cuh>
 
@@ -512,7 +512,7 @@ namespace gpu{
 
 
     template<int BLOCKSIZE, MemoryType memoryType>
-    __launch_bounds__(BLOCKSIZE, msaCandidateRefinement_multiiter_MIN_BLOCKS)
+    //__launch_bounds__(BLOCKSIZE, msaCandidateRefinement_multiiter_MIN_BLOCKS)
     __global__
     void msaCandidateRefinement_multiiter_kernel(
         int* __restrict__ d_newIndices,
@@ -687,6 +687,7 @@ namespace gpu{
                         return b;
                     };
                     
+                    long long int t1 = clock64();
 
                     msa.flagCandidatesOfDifferentRegion(
                         tbGroup,
@@ -713,6 +714,12 @@ namespace gpu{
 
                     tbGroup.sync();
 
+                    long long int t2 = clock64();
+
+                    if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                        //printf("duration flag: %lu\n", t2-t1);
+                    }
+
                     const int myNewNumIndices = *destNumIndices;
                     
                     assert(myNewNumIndices <= myNumIndices);
@@ -721,7 +728,10 @@ namespace gpu{
                             return !myShouldBeKept[i];
                         };
 
+                        long long int t3 = clock64();
+
                         msa.removeCandidates(
+                        //msa.removeCandidates_verticalthreads(
                             tbGroup,
                             selector,
                             myShifts,
@@ -741,6 +751,12 @@ namespace gpu{
 
                         tbGroup.sync();
 
+                        long long int t4 = clock64();
+
+                        if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                            //printf("duration removal: %lu. candidates before %d, after %d\n", t4-t3, myNumIndices, myNewNumIndices);
+                        }
+
                         msa.updateColumnProperties(tbGroup);
 
                         tbGroup.sync();
@@ -749,6 +765,8 @@ namespace gpu{
 
                         assert(shared_columnProperties.firstColumn_incl != -1);
                         assert(shared_columnProperties.lastColumn_excl != -1);
+
+                        long long int t5 = clock64();
 
                         msa.findConsensus(
                             tbGroup,
@@ -762,6 +780,12 @@ namespace gpu{
                         }
 
                         tbGroup.sync();
+
+                        long long int t6 = clock64();
+
+                        if(subjectIndex == 0 && tbGroup.thread_rank() == 0){
+                            //printf("duration consensus: %lu\n", t6-t5);
+                        }
 
                         myNumIndices = myNewNumIndices;
 

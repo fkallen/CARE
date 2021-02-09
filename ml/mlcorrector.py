@@ -12,7 +12,10 @@ from sklearn import tree
 import numpy as np
 import struct
 import json
-from itertools import accumulate 
+from itertools import accumulate
+from tqdm import tqdm
+import os
+from time import sleep
 
 
 def onehot(base):
@@ -31,26 +34,27 @@ def onehot(base):
 def onehot_(enc):
     return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
 
-def read_data(size, paths):
+def read_data(size, paths, hide_pbar=False):
     row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(size))+',)f4'), ('class', bool)])
     
     ### get X
-    linecounts = [sum(1 for line in open(path["X"], "r")) if len(path)>1 else np.load(path["np"]).shape[0] for path in paths]
-    print("File lenghts:", linecounts)
+
+    # linecounts = [sum(1 for line in open(path["X"], "r")) if not "np" in path else np.load(path["np"]).shape[0] for path in paths]
+    linecounts = [np.load(path["np"]).shape[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for line in open(path["X"], "r")) for path in paths]
+    tqdm.write("# files: "+str(len(linecounts)))
+    tqdm.write("lenghts: "+str(linecounts))
+    tqdm.write("total: "+str(sum(linecounts)))
     offsets = list(accumulate(linecounts, initial=0))
     samples = np.zeros(sum(linecounts), row_t)
-    for file_id, path in enumerate(paths):
-        if len(path)==1:
+    tqdm.write("reading files:")
+    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="blue", miniters=1, mininterval=0, leave=(not hide_pbar)):
+        if "np" in path and os.path.isfile(path["np"]):
+            tqdm.write("load: "+path["np"])
             samples[offsets[file_id]:offsets[file_id+1]] = np.load(path["np"])
         else:
-            print(path["X"])
-            print("offset:", offsets[file_id])
-            for i, line in enumerate(open(path["X"], "r")):
+            tqdm.write("parse: "+path["X"])
+            for i, line in tqdm(enumerate(open(path["X"], "r")), total=linecounts[file_id], colour="cyan", leave=False):
                 s = samples[i+offsets[file_id]]
-                # print("s: ", s, s.shape, s.dtype)
-                # print("i:", i)
-                if (i%100000==0):
-                    print(i, "/", linecounts[file_id])
                 splt = line.split()
                 s['fileId'] = file_id
                 s['readId'] = splt[0]
@@ -58,46 +62,47 @@ def read_data(size, paths):
                 s['atts'] = tuple(splt[2:])
 
     # print(samples[0:10])
-    print(samples.shape)
+    # print(samples.shape)
 
-    print("sorting...")
+    tqdm.write("sorting...")
     samples.sort(axis=0, order=['fileId', 'readId'])
-    print(samples.shape)
-    print("done.")
+    # print(samples.shape)
     # print(samples[0:10])
 
     ### get y
-    print("reading classes...")
-    for file_id, path in enumerate(paths):
-        print(path["y"])
-        print("offset: ", offsets[file_id])
-        if len(path)==1:
-            continue
-        with open(path["y"], "r") as truthfile:
-            filepos = 0
-            for i in range(linecounts[file_id]):
-                s = samples[i+offsets[file_id]]
-                if (i%100000==0):
-                    print(i, "/", linecounts[file_id])
-                if filepos != int(s['readId'])*4+2:
-                    while filepos<int(s['readId'])*4+1:
-                        truthfile.readline()
+    tqdm.write("reading classes...")
+    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="red", miniters=1, mininterval=0):
+        if "np" in path and os.path.isfile(path["np"]):
+            tqdm.write("skip: "+path["np"])
+        else:
+            with open(path["y"], "r") as truthfile:
+                tqdm.write("parse: "+path["y"])
+                filepos = 0
+                for i in tqdm(range(linecounts[file_id]), total=linecounts[file_id], colour="magenta", leave=False):
+                    s = samples[i+offsets[file_id]]
+                    if filepos != int(s['readId'])*4+2:
+                        while filepos<int(s['readId'])*4+1:
+                            truthfile.readline()
+                            filepos += 1
+                        trueseq = truthfile.readline()
                         filepos += 1
-                    trueseq = truthfile.readline()
-                    filepos += 1
-                try:
-                    if s['col']>=0:
-                        s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
-                    else:
-                        s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
-                except:
-                    print("!!!!##!#!#!#!#!#!#!")
-                    print(s, s.dtype)
-                    print(len(trueseq), trueseq)
-                    print()
-                    return
+                    try:
+                        if s['col']>=0:
+                            s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
+                        else:
+                            s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
+                    except:
+                        print("!!!!##!#!#!#!#!#!#!")
+                        print(s, s.dtype)
+                        print(len(trueseq), trueseq)
+                        print()
+                        return
+
+            if "np" in path:
+                tqdm.write("save: "+path["np"])
+                np.save(path["np"], samples[offsets[file_id]:offsets[file_id]+linecounts[file_id]])
+
     # print(samples[0:10])
-    print("done.")
     return samples
 
 def train(train_data, clf="rf"):

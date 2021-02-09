@@ -3,7 +3,7 @@
 #include <util.hpp>
 #include <config.hpp>
 #include <readlibraryio.hpp>
-#include <minhasher.hpp>
+
 #include <filehelpers.hpp>
 
 #include <iostream>
@@ -144,6 +144,10 @@ namespace args{
         }
 
         result.canUseGpu = result.deviceIds.size() > 0;
+
+        if(pr.count("warpcore")){
+            result.warpcore = pr["warpcore"].as<int>();
+        }
 
         return result;
 	}

@@ -1,7 +1,7 @@
 #include <cpu_alignment.hpp>
 #include <config.hpp>
 
-#include <sequence.hpp>
+#include <sequencehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 
 #include <vector>
@@ -54,8 +54,8 @@ namespace shd{
 
         auto& shiftbuffer = handle.shiftbuffer;
 
-        const int subjectInts = getEncodedNumInts2BitHiLo(subjectLength);
-        const int candidateInts = getEncodedNumInts2BitHiLo(candidateLength);
+        const int subjectInts = SequenceHelpers::getEncodedNumInts2BitHiLo(subjectLength);
+        const int candidateInts = SequenceHelpers::getEncodedNumInts2BitHiLo(candidateLength);
         const int maxInts = std::max(subjectInts, candidateInts);
 
 

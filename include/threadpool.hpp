@@ -20,6 +20,7 @@ namespace care{
 struct BackgroundThread{
     enum class StopType{FinishAndStop, Stop};
 
+    std::size_t maxtasks = 16;
     std::vector<std::function<void()>> tasks{};
     std::mutex m{};
     std::condition_variable consumer_cv{};
@@ -35,6 +36,13 @@ struct BackgroundThread{
         if(doStart){
             start();
         }
+    }
+
+    void setMaximumQueueSize(std::size_t newsize){
+        assert(newsize > 0);
+
+        std::unique_lock<std::mutex> mylock(m);
+        maxtasks = newsize;
     }
 
     void start(){
@@ -55,7 +63,7 @@ struct BackgroundThread{
 
         {
             std::unique_lock<std::mutex> mylock(m);
-            producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
+            producer_cv.wait(mylock, [&](){return tasks.size() < maxtasks;});
             tasks.emplace_back(std::move(wrapper));
             consumer_cv.notify_one();
         }        
@@ -342,6 +350,8 @@ private:
 
 // mainly exists because of cuda device lambda limitations
 struct ParallelForLoopExecutor{
+    ParallelForLoopExecutor() = default;
+
     ParallelForLoopExecutor(ThreadPool* tp, ThreadPool::ParallelForHandle* handle)
         : threadPool(tp), pforHandle(handle){}
 
@@ -359,8 +369,8 @@ struct ParallelForLoopExecutor{
         return threadPool->getConcurrency()+1; // the calling thread of operator() is used for processing, too.
     }
 
-    ThreadPool* threadPool;
-    ThreadPool::ParallelForHandle* pforHandle;
+    ThreadPool* threadPool{};
+    ThreadPool::ParallelForHandle* pforHandle{};
 };
 
 struct SequentialForLoopExecutor{
@@ -374,6 +384,40 @@ struct SequentialForLoopExecutor{
     int getNumThreads() const{
         return 1; // the calling thread of operator() is used for processing, too.
     }
+};
+
+struct ForLoopExecutor{
+    ForLoopExecutor()
+        : doUsePool{false}{
+
+    }
+
+    ForLoopExecutor(ThreadPool* tp, ThreadPool::ParallelForHandle* handle)
+        : doUsePool{tp != nullptr && handle != nullptr},
+        parLoop{tp, handle}{
+
+    }       
+
+    template<class Index_t, class Func>
+    int operator()(Index_t begin, Index_t end, Func&& loopbody){
+        if(doUsePool){
+            return parLoop(begin, end, std::move(loopbody));
+        }else{
+            return seqLoop(begin, end, std::move(loopbody));
+        }
+    }
+
+    int getNumThreads() const{
+        if(doUsePool){
+            return parLoop.getNumThreads();
+        }else{
+            return seqLoop.getNumThreads();
+        }
+    }
+
+    bool doUsePool;
+    SequentialForLoopExecutor seqLoop;
+    ParallelForLoopExecutor parLoop;
 };
 
 
