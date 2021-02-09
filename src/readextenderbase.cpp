@@ -1,4 +1,4 @@
-#include <readextender.hpp>
+#include <readextenderbase.hpp>
 #include <cpu_alignment.hpp>
 
 #include <stringglueing.hpp>
@@ -42,7 +42,7 @@ namespace care{
         }
 
 
-#if 0
+#if 1
         //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
             return vec[index];
@@ -474,8 +474,8 @@ namespace care{
                     //hamMap[i] stores possible starting positions of overlaps which would have hamming distance i
                     std::map<int, std::vector<int>> hamMap;
 
-                    //hamMap[i] stores possible starting positions of overlaps which would have a longest match of length i between mate and msa consensus
-                    std::map<int, std::vector<int>> longmatchMap; //map length of longest match to list start positions
+                    //longmatchMap[i] stores possible starting positions of overlaps which would have a longest match of length i between mate and msa consensus
+                    //std::map<int, std::vector<int>> longmatchMap; //map length of longest match to list start positions
 
                     //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
 
@@ -495,21 +495,21 @@ namespace care{
 
                         hamMap[ham].emplace_back(startpos);
 
-                        const int longest = cpu::longestMatch(
-                            msa.consensus.begin() + startpos, msa.consensus.end(), 
-                            task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                        );
+                        // const int longest = cpu::longestMatch(
+                        //     msa.consensus.begin() + startpos, msa.consensus.end(), 
+                        //     task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                        // );
 
-                        longmatchMap[longest].emplace_back(startpos);
+                        // longmatchMap[longest].emplace_back(startpos);
                     }
                     
                     std::vector<std::pair<int, std::vector<int>>> flatMap(hamMap.begin(), hamMap.end());
                     //sort by hamming distance, ascending
                     std::sort(flatMap.begin(), flatMap.end(), [](const auto& p1, const auto& p2){return p1.first < p2.first;});
 
-                    std::vector<std::pair<int, std::vector<int>>> flatMap2(longmatchMap.begin(), longmatchMap.end());
+                    //std::vector<std::pair<int, std::vector<int>>> flatMap2(longmatchMap.begin(), longmatchMap.end());
                     //sort by length of longest match, descending
-                    std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
+                    //std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
 
                     //if there exists an overlap between msa consensus and mate which would end the merge, use the best one
                     if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
@@ -983,7 +983,8 @@ namespace care{
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
-            std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+            //std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+            std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
 
@@ -999,9 +1000,11 @@ namespace care{
 
                             //put direction LR first
                             if(x->direction == ExtensionDirection::LR){
-                                pairsToCheck.emplace_back(*x, *y);
+                                //pairsToCheck.emplace_back(*x, *y);
+                                pairPositionsToCheck.emplace_back(std::distance(begin, x), std::distance(begin,y));
                             }else{
-                                pairsToCheck.emplace_back(*y, *x);
+                                //pairsToCheck.emplace_back(*y, *x);
+                                pairPositionsToCheck.emplace_back(std::distance(begin, y), std::distance(begin,x));
                             }
                         }
                     }
@@ -1010,9 +1013,16 @@ namespace care{
 
             std::vector<std::string> possibleResults;
 
-            for(const auto& pair : pairsToCheck){
-                const auto& lr = pair.first;
-                const auto& rl = pair.second;
+            //for(const auto& pair : pairsToCheck){
+            for(const auto& pair : pairPositionsToCheck){
+                auto iteratorLR = std::next(begin, pair.first);
+                auto iteratorRL = std::next(begin, pair.second);
+
+                //const auto& lr = pair.first;
+                //const auto& rl = pair.second;
+
+                const auto& lr = *iteratorLR;
+                const auto& rl = *iteratorRL;
                 assert(lr.direction == ExtensionDirection::LR);
                 assert(rl.direction == ExtensionDirection::RL);
 
@@ -1062,9 +1072,13 @@ namespace care{
 
                 er.direction = ExtensionDirection::LR;
                 er.abortReason = AbortReason::None;
+
+                auto iteratorLR = std::next(begin, pairPositionsToCheck[0].first);
                 
-                er.readId1 = pairsToCheck[0].first.readId1;
-                er.readId2 = pairsToCheck[0].first.readId2;
+                //er.readId1 = pairsToCheck[0].first.readId1;
+                //er.readId2 = pairsToCheck[0].first.readId2;
+                er.readId1 = iteratorLR->readId1;
+                er.readId2 = iteratorLR->readId2;
                 er.extendedRead = std::move(maxIter->first);
 
                 return er;

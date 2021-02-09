@@ -21,7 +21,7 @@
 #include <numeric>
 
 
-#include <readextender.hpp>
+#include <readextender_cpu.hpp>
 #include <extensionresultprocessing.hpp>
 #include <correctionresultprocessing.hpp>
 #include <rangegenerator.hpp>
