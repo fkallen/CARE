@@ -1053,7 +1053,7 @@ namespace gpu{
                             }
                         }
 
-                        //initialize threadlocal smem array with query
+                        //to compute negative shifts, shift query instead of subject
                         #pragma unroll 
                         for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
                             mySequenceHi[i] = queryBackupHi[i];
@@ -2523,6 +2523,7 @@ namespace gpu{
             };
             
             auto run = [&](){
+                #if 1
                 if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
                     
                     constexpr int maxValidIntsPerSequence = 2;
@@ -2564,7 +2565,6 @@ namespace gpu{
                     regKernel(maxValidIntsPerSequence);
                     
                 }else{
-                    
                     call_popcount_shifted_hamming_distance_smem_kernel_async(
                         d_tempstorage,
                         tempstoragebytes,
@@ -2598,6 +2598,42 @@ namespace gpu{
                         handle
                     );
                 }
+
+                #else 
+
+                    call_popcount_shifted_hamming_distance_smem_kernel_async(
+                        d_tempstorage,
+                        tempstoragebytes,
+                        d_alignment_overlaps,
+                        d_alignment_shifts,
+                        d_alignment_nOps,
+                        d_alignment_isValid,
+                        d_alignment_best_alignment_flags,
+                        d_subjectSequencesData,
+                        d_candidateSequencesData,
+                        d_subjectSequencesLength,
+                        d_candidateSequencesLength,
+                        d_candidates_per_subject_prefixsum,
+                        d_candidates_per_subject,
+                        d_anchorIndicesOfCandidates,
+                        d_numAnchors,
+                        d_numCandidates,
+                        d_anchorContainsN,
+                        removeAmbiguousAnchors,
+                        d_candidateContainsN,
+                        removeAmbiguousCandidates,
+                        maxNumAnchors,
+                        maxNumCandidates,
+                        maximumSequenceLength,
+                        encodedSequencePitchInInts2Bit,
+                        min_overlap,
+                        maxErrorRate,
+                        min_overlap_ratio,
+                        estimatedNucleotideErrorRate,
+                        stream,
+                        handle
+                    );
+                #endif
             };
             
             if(d_tempstorage == nullptr){

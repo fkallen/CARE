@@ -19,7 +19,7 @@
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
-
+#include <cpucorrectortask.hpp>
 
 #include <cstddef>
 #include <memory>
@@ -34,18 +34,11 @@ namespace care{
         bool hasAnchorCorrection{};
         TempCorrectedSequence anchorCorrection{};
         std::vector<TempCorrectedSequence> candidateCorrections{};
-    };
-
+    };    
 
 
 class CpuErrorCorrector{
 public:
-    struct CorrectionInput{
-        int anchorLength{};
-        read_number anchorReadId{};
-        const unsigned int* encodedAnchor{};
-        const char* anchorQualityscores{};
-    };
 
     struct MultiCorrectionInput{
         std::vector<int> anchorLengths;
@@ -64,12 +57,6 @@ public:
         std::vector<int> candidateLengths;
         std::vector<unsigned int> encodedCandidates;
         std::vector<char> candidateQualities;
-    };
-
-    struct CorrectionOutput{
-        bool hasAnchorCorrection{};
-        TempCorrectedSequence anchorCorrection{};
-        std::vector<TempCorrectedSequence> candidateCorrections{};
     };
 
     struct TimeMeasurements{
