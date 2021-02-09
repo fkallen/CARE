@@ -41,8 +41,6 @@ public:
         const CorrectionOptions& correctionOptions,
         const GoodAlignmentProperties& goodAlignmentProperties,
         ReadCorrectionFlags& correctionFlags,
-        ReadProvider* readProvider,
-        const CandidateIdsProvider* candidateIdsProvider,
         ResultProcessor processResults,
         BatchCompletion batchCompleted
     ) const {

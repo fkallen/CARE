@@ -26,7 +26,11 @@
 
 namespace care{
 
-    
+    struct CpuErrorCorrectorOutput {
+        bool hasAnchorCorrection{};
+        TempCorrectedSequence anchorCorrection{};
+        std::vector<TempCorrectedSequence> candidateCorrections{};
+    };    
 
 
 class CpuErrorCorrector{
@@ -49,12 +53,6 @@ public:
         std::vector<int> candidateLengths;
         std::vector<unsigned int> encodedCandidates;
         std::vector<char> candidateQualities;
-    };
-
-    struct CorrectionOutput{
-        bool hasAnchorCorrection{};
-        TempCorrectedSequence anchorCorrection{};
-        std::vector<TempCorrectedSequence> candidateCorrections{};
     };
 
     struct TimeMeasurements{
@@ -145,7 +143,7 @@ public:
         readStorage->destroyHandle(readStorageHandle);
     }
 
-    CorrectionOutput process(const CpuErrorCorrectorInput input){
+    CpuErrorCorrectorOutput process(const CpuErrorCorrectorInput input){
         CpuErrorCorrectorTask task = makeTask(input);
 
         TimeMeasurements timings;
@@ -163,7 +161,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -203,7 +201,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -219,7 +217,7 @@ public:
 
         if(task.candidateReadIds.size() == 0){
             //return uncorrected anchor
-            return CorrectionOutput{};
+            return CpuErrorCorrectorOutput{};
         }
 
         if(correctionOptions->useQualityScores){
@@ -305,20 +303,20 @@ public:
 
         }
 
-        CorrectionOutput correctionOutput = makeOutputOfTask(task);
+        CpuErrorCorrectorOutput correctionOutput = makeOutputOfTask(task);
 
         totalTime += timings;
 
         return correctionOutput;
     }
 
-    std::vector<CorrectionOutput> processMulti(const MultiCorrectionInput input){
+    std::vector<CpuErrorCorrectorOutput> processMulti(const MultiCorrectionInput input){
         const int numAnchors = input.anchorReadIds.size();
         if(numAnchors == 0){
             return {};
         }
 
-        std::vector<CorrectionOutput> resultVector;
+        std::vector<CpuErrorCorrectorOutput> resultVector;
         resultVector.reserve(numAnchors);
 
         TimeMeasurements timings;
@@ -1299,8 +1297,8 @@ private:
         correctCandidatesClassic(task);
     }
 
-    CorrectionOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
-        CorrectionOutput result;
+    CpuErrorCorrectorOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
+        CpuErrorCorrectorOutput result;
 
         result.hasAnchorCorrection = task.subjectCorrection.isCorrected;
 

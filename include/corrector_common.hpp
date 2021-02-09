@@ -70,67 +70,6 @@ namespace care{
     };
 
 
-    class ReadProvider{
-    public:
-        bool readContainsN(read_number readId) const{
-            return readContainsN_impl(readId);
-        }
-
-        void gatherSequenceLengths(const read_number* readIds, int numIds, int* lengths) const{
-            gatherSequenceLengths_impl(readIds, numIds, lengths);
-        }
-
-        void gatherSequenceData(const read_number* readIds, int numIds, unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const{
-            gatherSequenceData_impl(readIds, numIds, sequenceData, encodedSequencePitchInInts);
-        }
-
-        void gatherSequenceQualities(const read_number* readIds, int numIds, char* qualities, std::size_t qualityPitchInBytes) const{
-            gatherSequenceQualities_impl(readIds, numIds, qualities, qualityPitchInBytes);
-        }
-
-        void gatherSequenceLengths(int* lengths) const{
-            gatherSequenceLengths_impl(lengths);
-        }
-
-        void gatherSequenceData(unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const{
-            gatherSequenceData_impl(sequenceData, encodedSequencePitchInInts);
-        }
-
-        void gatherSequenceQualities(char* qualities, std::size_t qualityPitchInBytes) const{
-            gatherSequenceQualities_impl(qualities, qualityPitchInBytes);
-        }
-
-        void setReadIds(const read_number* readIds, int numIds){
-            setReadIds_impl(readIds, numIds);
-        }
-
-    private:
-        virtual bool readContainsN_impl(read_number readId) const = 0;
-
-        virtual void gatherSequenceLengths_impl(const read_number* readIds, int numIds, int* lengths) const = 0;
-
-        virtual void gatherSequenceData_impl(const read_number* readIds, int numIds, unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const = 0;
-
-        virtual void gatherSequenceQualities_impl(const read_number* readIds, int numIds, char* qualities, std::size_t qualityPitchInBytes) const = 0;
-
-        virtual void setReadIds_impl(const read_number* readIds, int numIds) = 0;
-
-        virtual void gatherSequenceLengths_impl(int* lengths) const = 0;
-
-        virtual void gatherSequenceData_impl(unsigned int* sequenceData, std::size_t encodedSequencePitchInInts) const = 0;
-
-        virtual void gatherSequenceQualities_impl(char* qualities, std::size_t qualityPitchInBytes) const = 0;
-    };
-
-    class CandidateIdsProvider{
-    public: 
-        void getCandidates(std::vector<read_number>& ids, const char* anchor, const int size) const{
-            getCandidates_impl(ids, anchor, size);
-        }
-    private:
-        virtual void getCandidates_impl(std::vector<read_number>& ids, const char* anchor, const int size) const = 0;
-    };
-
 }
 
 
