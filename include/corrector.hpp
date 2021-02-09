@@ -34,8 +34,7 @@ namespace care{
         bool hasAnchorCorrection{};
         TempCorrectedSequence anchorCorrection{};
         std::vector<TempCorrectedSequence> candidateCorrections{};
-    };
-
+    };    
 
 
 class CpuErrorCorrector{
@@ -58,12 +57,6 @@ public:
         std::vector<int> candidateLengths;
         std::vector<unsigned int> encodedCandidates;
         std::vector<char> candidateQualities;
-    };
-
-    struct CorrectionOutput{
-        bool hasAnchorCorrection{};
-        TempCorrectedSequence anchorCorrection{};
-        std::vector<TempCorrectedSequence> candidateCorrections{};
     };
 
     struct TimeMeasurements{
