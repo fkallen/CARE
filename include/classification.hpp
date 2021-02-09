@@ -17,6 +17,8 @@
 
 // The current features were designed with the possibility of using logistic regression in mind
 // but are highly redundant for any decision tree.
+// However, since sklearn only supports float-type features, we might aswell do the one-hot-vector-encoding here for now.
+
 
 namespace care {
 
@@ -43,8 +45,8 @@ struct clf_agent
         anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
         cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
         rng(44),
-        coinflip_anchor(1.0/3.0),
-        coinflip_cands(0.01/3.0)
+        coinflip_anchor(0.2),
+        coinflip_cands(0.002)
     {}
 
     clf_agent(const clf_agent& other) :
