@@ -128,7 +128,7 @@ public:
 
     }
 
-    virtual ~ReadExtenderBase() = default;
+    virtual ~ReadExtenderBase() {}
 
 #if 0
     /*
@@ -1325,17 +1325,9 @@ protected:
     }
 #endif
 
-    std::vector<ExtendResult> processPairedEndTasks(
-        std::vector<Task>& tasks
-    );
-
     std::vector<ExtendResult> combinePairedEndDirectionResults(
         std::vector<ExtendResult>& lr,
         std::vector<ExtendResult>& rl
-    );
-
-    std::vector<ExtendResult> processSingleEndTasks(
-        std::vector<Task>& tasks
     );
 
     std::vector<ExtendResult> combineSingleEndDirectionResults(
@@ -1537,10 +1529,15 @@ protected:
         return returnValue;
     }
 
-    virtual void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
-    virtual void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
-    virtual void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
-    virtual void calculateAlignments(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) = 0;
+
+    virtual std::vector<ExtendResult> processPairedEndTasks(
+        std::vector<Task>& tasks
+    ) = 0;
+
+    virtual std::vector<ExtendResult> processSingleEndTasks(
+        std::vector<Task>& tasks
+    ) = 0;
+
 
     int insertSize{};
     int insertSizeStddev{};

@@ -218,6 +218,10 @@ public:
      
 private:
 
+    std::vector<ExtendResult> processPairedEndTasks(std::vector<Task>& tasks) override;
+
+    std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
+
     void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
         const unsigned int* encodedRead, 
@@ -273,7 +277,7 @@ private:
         // }
     }
 
-    void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+    void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) {
         // for(int indexOfActiveTask : indicesOfActiveTasks){
         //     auto& task = tasks[indexOfActiveTask];
 
@@ -502,7 +506,7 @@ private:
     }
 #endif
 
-    void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+    void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
 
         nvtx::push_range("gpu_loadCandidates", 2);
 
@@ -645,7 +649,7 @@ private:
         nvtx::pop_range();
     }
 
-    void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+    void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
             return vec.at(index);
         };
@@ -876,7 +880,7 @@ private:
 #endif        
     }
 
-    void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) override{
+    void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         nvtx::push_range("gpu_alignment", 2);
 
         const int numIndices = indicesOfActiveTasks.size();
