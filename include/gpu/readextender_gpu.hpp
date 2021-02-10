@@ -14,11 +14,32 @@
 #include <vector>
 #include <numeric>
 
+#include <cub/cub.cuh>
+
 
 namespace care{
 
 
 namespace readextendergpukernels{
+
+    template<int dummy=0>
+    __global__
+    void setAnchorIndicesOfCandidateskernel(
+        int* __restrict__ d_anchorIndicesOfCandidates,
+        const int* __restrict__ numAnchorsPtr,
+        const int* __restrict__ d_candidates_per_anchor,
+        const int* __restrict__ d_candidates_per_anchor_prefixsum
+    ){
+        for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += gridDim.x){
+            const int offset = d_candidates_per_anchor_prefixsum[anchorIndex];
+            const int numCandidatesOfAnchor = d_candidates_per_anchor[anchorIndex];
+            int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+
+            for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += blockDim.x){
+                beginptr[localindex] = anchorIndex;
+            }
+        }
+    }
 
     template<int blocksize>
     __global__
@@ -166,6 +187,7 @@ namespace readextendergpukernels{
                 }
 
                 outputflags[(candidatesOffset + c)] = doRemove;
+                //printf("write %d to %d\n", doRemove, (candidatesOffset + c));
             }
         }
     }
@@ -215,12 +237,86 @@ public:
         gpuReadStorage->destroyHandle(readStorageHandle);
         gpuMinhasher->destroyHandle(minhashHandle);
     }
+
+    struct BatchData{
+        int numTasks = 0;
+        int numTasksWithMateRemoved = 0;
+
+        PinnedBuffer<read_number> h_readIds{};
+        DeviceBuffer<read_number> d_readIds{};
+        PinnedBuffer<read_number> h_candidateReadIds{};
+        DeviceBuffer<read_number> d_candidateReadIds{};
+
+        PinnedBuffer<unsigned int> h_anchormatedata{};
+        DeviceBuffer<unsigned int> d_anchormatedata{};
+
+        PinnedBuffer<int> h_indexlist1{};
+        DeviceBuffer<int> d_indexlist1{};
+
+        PinnedBuffer<int> h_numCandidatesPerAnchor{};
+        DeviceBuffer<int> d_numCandidatesPerAnchor{};
+        PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
+        DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum{};
+        PinnedBuffer<int> h_alignment_overlaps{};
+        PinnedBuffer<int> h_alignment_shifts{};
+        PinnedBuffer<int> h_alignment_nOps{};
+        PinnedBuffer<bool> h_alignment_isValid{};
+        PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags{};
+
+        DeviceBuffer<int> d_alignment_overlaps{};
+        DeviceBuffer<int> d_alignment_shifts{};
+        DeviceBuffer<int> d_alignment_nOps{};
+        DeviceBuffer<bool> d_alignment_isValid{};
+        DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags{};
+
+        PinnedBuffer<int> h_numAnchors{};
+        PinnedBuffer<int> h_numCandidates{};
+        DeviceBuffer<int> d_numAnchors{};
+        DeviceBuffer<int> d_numCandidates{};
+
+        PinnedBuffer<int> h_anchorIndicesOfCandidates{};
+        DeviceBuffer<int> d_anchorIndicesOfCandidates{};
+        PinnedBuffer<int> h_anchorSequencesLength{};
+        DeviceBuffer<int> d_anchorSequencesLength{};
+        PinnedBuffer<int> h_candidateSequencesLength{};
+        DeviceBuffer<int> d_candidateSequencesLength{};
+        PinnedBuffer<unsigned int> h_subjectSequencesData{};
+        PinnedBuffer<unsigned int> h_candidateSequencesData{};
+        PinnedBuffer<unsigned int> h_candidateSequencesRevcData{};
+
+        DeviceBuffer<int> d_candidateSequencesLength2{};
+        DeviceBuffer<unsigned int> d_candidateSequencesData2{};
+        DeviceBuffer<unsigned int> d_candidateSequencesRevcData2{};
+        DeviceBuffer<read_number> d_candidateReadIds2{};
+        
+
+        DeviceBuffer<unsigned int> d_subjectSequencesData{};
+        DeviceBuffer<unsigned int> d_candidateSequencesData{};
+        DeviceBuffer<unsigned int> d_candidateSequencesRevcData{};
+
+        DeviceBuffer<int> d_activeTaskIndices{};
+        PinnedBuffer<int> h_activeTaskIndices{};
+
+        DeviceBuffer<int> d_intbuffercandidates{};
+
+        DeviceBuffer<char> d_tempstorage{};
+
+        DeviceBuffer<bool> d_flags{};
+        PinnedBuffer<bool> h_flags{};
+
+        DeviceBuffer<bool> d_flagscandidates{};
+        PinnedBuffer<bool> h_flagscandidates{};
+
+        
+    };
      
 private:
 
     std::vector<ExtendResult> processPairedEndTasks(std::vector<Task>& tasks) override;
 
     std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
+
+    
 
     void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
@@ -506,6 +602,9 @@ private:
     }
 #endif
 
+
+    
+
     void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
 
         nvtx::push_range("gpu_loadCandidates", 2);
@@ -649,6 +748,9 @@ private:
         nvtx::pop_range();
     }
 
+
+    
+
     void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
             return vec.at(index);
@@ -661,7 +763,7 @@ private:
 
         const int numActiveTasks = indicesOfActiveTasks.size();
         assert(std::all_of(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 
-            [&](auto i){return i < tasks.size();}));
+            [&](auto i){return i < int(tasks.size());}));
 
         h_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
         d_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
@@ -880,6 +982,7 @@ private:
 #endif        
     }
 
+    
     void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         nvtx::push_range("gpu_alignment", 2);
 
@@ -1065,6 +1168,13 @@ private:
         nvtx::pop_range();
     }
 
+public:
+    void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const;
+    void loadCandidateSequenceData(BatchData& batchData, cudaStream_t stream) const;
+    void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const;
+    void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
+
+private:
     int deviceId;
     int kmerLength;
 
@@ -1112,13 +1222,16 @@ private:
 
     std::array<CudaStream, 4> streams{};
 
-    gpu::KernelLaunchHandle kernelLaunchHandle;
+    mutable gpu::KernelLaunchHandle kernelLaunchHandle;
 
     const gpu::GpuReadStorage* gpuReadStorage;
     const gpu::GpuMinhasher* gpuMinhasher;
 
-    ReadStorageHandle readStorageHandle;
-    gpu::GpuMinhasher::QueryHandle minhashHandle;
+    mutable ReadStorageHandle readStorageHandle;
+    mutable gpu::GpuMinhasher::QueryHandle minhashHandle;
+
+
+    BatchData batchData{};
 
 };
 
