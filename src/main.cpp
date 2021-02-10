@@ -167,6 +167,10 @@ int main(int argc, char** argv){
 			cxxopts::value<std::string>())
 		("threshold", "Classification threshold for classifier-based (\"Forest\") mode",
 			cxxopts::value<float>())
+		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
+			cxxopts::value<float>())
+		("samplingRateCands", "sampling rate for candidates features (print mode)",
+			cxxopts::value<float>())
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
@@ -308,7 +312,9 @@ int main(int argc, char** argv){
 	std::cout << "\n";
 	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
 	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
-	std::cout << "Threshold: " << correctionOptions.threshold << "\n";
+	std::cout << "anchor sampling rate: " << correctionOptions.sampleRate_anchor << "\n";
+	std::cout << "cands sampling rate: " << correctionOptions.sampleRate_cands << "\n";
+	std::cout << "classification threshold: " << correctionOptions.threshold << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

@@ -45,8 +45,8 @@ struct clf_agent
         anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
         cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
         rng(44),
-        coinflip_anchor(0.2),
-        coinflip_cands(0.002)
+        coinflip_anchor(c_opts.sampleRate_anchor),
+        coinflip_cands(c_opts.sampleRate_cands)
     {}
 
     clf_agent(const clf_agent& other) :

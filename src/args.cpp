@@ -123,6 +123,16 @@ namespace args{
             result.threshold = t>1.0?t/100:t;
         }
 
+        if(pr.count("samplingRateAnchor")){
+            float t = pr["samplingRateAnchor"].as<float>();
+            result.sampleRate_anchor = t>1.0?t/100:t;
+        }
+
+        if(pr.count("samplingRateCands")){
+            float t = pr["samplingRateCands"].as<float>();
+            result.sampleRate_cands = t>1.0?t/100:t;
+        }
+
         return result;
 	}
 

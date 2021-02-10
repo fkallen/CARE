@@ -46,6 +46,8 @@ namespace care{
         CorrectionType correctionType = CorrectionType::Classic;
         CorrectionType correctionTypeCands = CorrectionType::Classic;
         float threshold = .5f; // threshold for classifier
+        float sampleRate_anchor = 1.f;
+        float sampleRate_cands = 0.01f;
     };
 
 
