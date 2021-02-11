@@ -57,9 +57,72 @@ namespace care{
         batchData.h_numCandidates.resize(1);
         batchData.d_numAnchors.resize(1);
         batchData.d_numCandidates.resize(1);
+
+        auto processTasksOldStyle = [this, vecAccess, &indicesOfActiveTasks](auto& tasks){
+
+            getCandidateReadIds(tasks, indicesOfActiveTasks);
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = vecAccess(tasks, indexOfActiveTask);
+
+                // remove self from candidate list
+                auto readIdPos = std::lower_bound(
+                    task.candidateReadIds.begin(),                                            
+                    task.candidateReadIds.end(),
+                    task.myReadId
+                );
+
+                if(readIdPos != task.candidateReadIds.end() && *readIdPos == task.myReadId){
+                    task.candidateReadIds.erase(readIdPos);
+                }
+
+                if(task.pairedEnd){
+
+                    //remove mate of input from candidate list
+                    auto mateReadIdPos = std::lower_bound(
+                        task.candidateReadIds.begin(),                                            
+                        task.candidateReadIds.end(),
+                        task.mateReadId
+                    );
+
+                    if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
+                        task.candidateReadIds.erase(mateReadIdPos);
+                        task.mateRemovedFromCandidates = true;
+                    }
+                }
+            }
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = vecAccess(tasks, indexOfActiveTask);
+
+                std::vector<read_number> tmp(task.candidateReadIds.size());
+
+                auto end = std::set_difference(
+                    task.candidateReadIds.begin(),
+                    task.candidateReadIds.end(),
+                    task.allUsedCandidateReadIdPairs.begin(),
+                    task.allUsedCandidateReadIdPairs.end(),
+                    tmp.begin()
+                );
+
+                tmp.erase(end, tmp.end());
+
+                std::swap(task.candidateReadIds, tmp);
+            }
+
+            loadCandidateSequenceData(tasks, indicesOfActiveTasks);
+
+            eraseDataOfRemovedMates(tasks, indicesOfActiveTasks);
+
+            calculateAlignments(tasks, indicesOfActiveTasks);
+        };
         
 
         while(indicesOfActiveTasks.size() > 0){
+
+            auto debugtasks = tasks;
+            processTasksOldStyle(debugtasks);
+
             //perform one extension iteration for active tasks
 
             //setup batchdata for active tasks
@@ -166,6 +229,8 @@ namespace care{
 
             batchData.numTasksWithMateRemoved = 0;
 
+            read_number* outputiter = batchData.h_candidateReadIds.data();
+
             for(int i = 0; i < batchData.numTasks; i++){
                 auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
 
@@ -209,6 +274,8 @@ namespace care{
                         batchData.h_indexlist1[batchData.numTasksWithMateRemoved] = i;
 
                         batchData.numTasksWithMateRemoved++;
+
+                        task.mateRemovedFromCandidates = true; //debug. not required
                     }
                 }
 
@@ -228,7 +295,8 @@ namespace care{
 
                 numCandidates = std::distance(tmp.begin(), end);
 
-                std::copy(tmp.begin(), end, candidates);
+                //std::copy(tmp.begin(), end, candidates);
+                outputiter = std::copy(tmp.begin(), end, outputiter);
             }
 
             hashTimer.stop();
@@ -465,7 +533,40 @@ namespace care{
                     task.alignmentFlags[c] = batchData.h_alignment_best_alignment_flags[offset + c];
                 }
 
+                task.mateRemovedFromCandidates = false; //debug. not required
             }
+
+            for(int i = 0; i < numActiveTasks; i++){
+                auto& newtask = tasks[indicesOfActiveTasks[i]];
+                auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
+
+                if(newtask != oldtask){
+                    std::cerr << "old task and new task differ. i=" 
+                        << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
+                }
+                //TODO
+                /*
+                    (gdb) p oldtask.myReadId
+                    $53 = 39
+                    (gdb) p oldtask.candidateReadIds.size() 46
+                    (gdb) p newtask.candidateReadIds.size()
+                    (gdb) p i
+                    $58 = 3
+                    (gdb) p numActiveTasks 
+                    $59 = 4
+                    (gdb) p oldtask.candidateReadIds.data()[0]@46
+                    $63 = {83448, 370927, 1283290, 1557163, 1620604, 1650910, 1674955, 1896213, 1908889, 2077080, 2609358, 2981749, 3086827, 3539212, 3735774, 3902939, 4397875, 5007076, 5627577, 5691
+                    087, 5781965, 6043224, 6263392, 6981138, 7104380, 7221662, 7282521, 7992388, 8143845, 8190919, 8317158, 8564549, 8643571, 8678888, 9650168, 9924793, 10488961, 10937863, 11530394,
+                    11587300, 11716261, 12495573, 12660145, 12872897, 13084472, 13094648}
+                    (gdb) p newtask.candidateReadIds.data()[0]@46
+                    $64 = {83448, 370927, 1283290, 1557163, 1620604, 1650910, 1674955, 1896213, 1908889, 2077080, 2609358, 2981749, 3086827, 3539212, 3735774, 3902939, 4397875, 5007076, 5627577, 5691
+                    087, 5781965, 6043224, 6263392, 6981138, 7104380, 7221662, 7282521, 7992388, 8143845, 8190919, 8317158, 8564549, 8643571, 8678888, 9352336, 9650168, 9924793, 10488961, 10937863, 1
+                    1530394, 11587300, 11716261, 12495573, 12660145, 12872897, 13084472}
+
+                */
+            }
+
+            
 
 
             alignmentFilterTimer.start();

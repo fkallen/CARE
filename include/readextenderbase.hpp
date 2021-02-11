@@ -995,6 +995,46 @@ protected:
         std::vector<float> candidateOverlapWeights;
 
         bool operator==(const Task& rhs) const noexcept{
+            #if 1
+                if(pairedEnd != rhs.pairedEnd) std::cerr << "pairedEnd differs\n";
+                if(abort != rhs.abort) std::cerr << "abort differs\n";
+                if(mateHasBeenFound != rhs.mateHasBeenFound) std::cerr << "mateHasBeenFound differs\n";
+                if(mateRemovedFromCandidates != rhs.mateRemovedFromCandidates) std::cerr << "mateRemovedFromCandidates differs\n";
+                if(abortReason != rhs.abortReason) std::cerr << "abortReason differs\n";
+                if(myLength != rhs.myLength) std::cerr << "myLength differs\n";
+                if(currentAnchorLength != rhs.currentAnchorLength) std::cerr << "currentAnchorLength differs\n";
+                if(accumExtensionLengths != rhs.accumExtensionLengths) std::cerr << "accumExtensionLengths differs\n";
+                if(iteration != rhs.iteration) std::cerr << "iteration differs\n";
+                if(mateLength != rhs.mateLength) std::cerr << "mateLength differs\n";
+                if(numRemainingCandidates != rhs.numRemainingCandidates) std::cerr << "numRemainingCandidates differs\n";
+                if(splitDepth != rhs.splitDepth) std::cerr << "splitDepth differs\n";
+                if(direction != rhs.direction) std::cerr << "direction differs\n";
+                if(myReadId != rhs.myReadId) std::cerr << "myReadId differs\n";
+                if(mateReadId != rhs.mateReadId) std::cerr << "mateReadId differs\n";
+                if(currentAnchorReadId != rhs.currentAnchorReadId) std::cerr << "currentAnchorReadId differs\n";
+                if(decodedMate != rhs.decodedMate) std::cerr << "decodedMate differs\n";
+                if(decodedMateRevC != rhs.decodedMateRevC) std::cerr << "decodedMateRevC differs\n";
+                if(resultsequence != rhs.resultsequence) std::cerr << "resultsequence differs\n";
+                if(candidateReadIds != rhs.candidateReadIds) std::cerr << "candidateReadIds differs\n";
+                if(mateIdLocationIter != rhs.mateIdLocationIter) std::cerr << "mateIdLocationIter differs\n";
+                if(currentAnchor != rhs.currentAnchor) std::cerr << "currentAnchor differs\n";
+                if(encodedMate != rhs.encodedMate) std::cerr << "encodedMate differs\n";
+                if(candidateSequenceLengths != rhs.candidateSequenceLengths) std::cerr << "candidateSequenceLengths differs\n";
+                if(candidateSequencesFwdData != rhs.candidateSequencesFwdData) std::cerr << "candidateSequencesFwdData differs\n";
+                if(candidateSequencesRevcData != rhs.candidateSequencesRevcData) std::cerr << "candidateSequencesRevcData differs\n";
+                if(candidateSequenceData != rhs.candidateSequenceData) std::cerr << "candidateSequenceData differs\n";
+                if(alignments != rhs.alignments) std::cerr << "alignments differs\n";
+                if(alignmentFlags != rhs.alignmentFlags) std::cerr << "alignmentFlags differs\n";
+                if(totalDecodedAnchors != rhs.totalDecodedAnchors) std::cerr << "totalDecodedAnchors differs\n";
+                if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) std::cerr << "totalAnchorBeginInExtendedRead differs\n";
+                if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) std::cerr << "usedCandidateReadIdsPerIteration differs\n";
+                if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) std::cerr << "usedAlignmentsPerIteration differs\n";
+                if(usedAlignmentFlagsPerIteration != rhs.usedAlignmentFlagsPerIteration) std::cerr << "usedAlignmentFlagsPerIteration differs\n";
+                if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) std::cerr << "allUsedCandidateReadIdPairs differs\n";
+                if(candidateStrings != rhs.candidateStrings) std::cerr << "candidateStrings differs\n";
+                if(candidateShifts != rhs.candidateShifts) std::cerr << "candidateShifts differs\n";
+                if(candidateOverlapWeights != rhs.candidateOverlapWeights) std::cerr << "candidateOverlapWeights differs\n";
+            #endif
             if(pairedEnd != rhs.pairedEnd) return false;
             if(abort != rhs.abort) return false;
             if(mateHasBeenFound != rhs.mateHasBeenFound) return false;
