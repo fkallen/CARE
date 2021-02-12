@@ -3,15 +3,12 @@
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-import sys
-from collections import defaultdict
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn import metrics
 from sklearn import tree
 import numpy as np
 import struct
-import json
 from itertools import accumulate
 from tqdm import tqdm
 import os
@@ -34,20 +31,24 @@ def onehot(base):
 def onehot_(enc):
     return np.array(["A","C","G","T"])[[bool(x) for x in enc]][0]
 
-def read_data(size, paths, hide_pbar=False):
-    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(size))+',)f4'), ('class', bool)])
-    
+def read_data(paths):    
     ### get X
+    if "np" in paths[0] and os.path.isfile(paths[0]["np"]):
+        num_features = np.load(paths[0]["np"]).dtype['atts'].shape[0]
+    else:
+        num_features = len(open(paths[0]["X"], "r").readline().split()) - 2
+    
+    row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(num_features))+',)f4'), ('class', bool)])
 
-    # linecounts = [sum(1 for line in open(path["X"], "r")) if not "np" in path else np.load(path["np"]).shape[0] for path in paths]
     linecounts = [np.load(path["np"]).shape[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for line in open(path["X"], "r")) for path in paths]
     tqdm.write("# files: "+str(len(linecounts)))
-    tqdm.write("lenghts: "+str(linecounts))
+    tqdm.write("lengths: "+str(linecounts))
     tqdm.write("total: "+str(sum(linecounts)))
+    tqdm.write("# features: "+str(num_features))
     offsets = list(accumulate(linecounts, initial=0))
     samples = np.zeros(sum(linecounts), row_t)
     tqdm.write("reading files:")
-    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="blue", miniters=1, mininterval=0, leave=(not hide_pbar)):
+    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="blue", miniters=1, mininterval=0, leave=False):
         if "np" in path and os.path.isfile(path["np"]):
             tqdm.write("load: "+path["np"])
             samples[offsets[file_id]:offsets[file_id+1]] = np.load(path["np"])
@@ -71,7 +72,7 @@ def read_data(size, paths, hide_pbar=False):
 
     ### get y
     tqdm.write("reading classes...")
-    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="red", miniters=1, mininterval=0):
+    for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="red", miniters=1, mininterval=0, leave=False):
         if "np" in path and os.path.isfile(path["np"]):
             tqdm.write("skip: "+path["np"])
         else:
