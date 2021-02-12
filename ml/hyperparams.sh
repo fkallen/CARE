@@ -16,11 +16,11 @@ auto_preprocess() {
 SCRIPTDIR=$(readlink -nf $0)
 
 MLCDIR=/home/jcascitt/errorcorrector/ml
-EVALDIR=/home/jcascitt/ec/hyperparams
+EVALDIR=/home/jcascitt/ec/hyperparams_new
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
 CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0"
-FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 100G -p -t 88"
+FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 100G -p -t 88 --samplingRateAnchor 0.2 --samplingRateCands 0.008"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
 
@@ -91,15 +91,15 @@ cp $SCRIPTDIR $SCRIPTNAME.log.${num}
 # 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX4}_cands.samples \
 # 	$(auto_preprocess $PREFIX4)
 
-$CARE -i $FILE5 -c $COV5 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${PREFIX5}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX5}_cands.samples \
-	$(auto_preprocess $PREFIX5)
+# $CARE -i $FILE5 -c $COV5 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${PREFIX5}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX5}_cands.samples \
+# 	$(auto_preprocess $PREFIX5)
 
-$CARE -i $FILE6 -c $COV6 -o null $FLAGS \
-	--correctionType 2 --ml-forestfile ${PREFIX6}_anchor.samples \
-	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX6}_cands.samples \
-	$(auto_preprocess $PREFIX6)
+# $CARE -i $FILE6 -c $COV6 -o null $FLAGS \
+# 	--correctionType 2 --ml-forestfile ${PREFIX6}_anchor.samples \
+# 	--candidateCorrection --correctionTypeCands 2 --ml-cands-forestfile ${PREFIX6}_cands.samples \
+# 	$(auto_preprocess $PREFIX6)
 
 python3 - <<EOF
 
@@ -111,7 +111,7 @@ prefixes = ["${PREFIX1}", "${PREFIX2}", "${PREFIX3}", "${PREFIX4}", "${PREFIX5}"
 effiles = ["${FILE1EF}", "${FILE2EF}", "${FILE3EF}", "${FILE4EF}", "${FILE5EF}", "${FILE6EF}"]
 
 ### anchors only for now
-data_map = [{"X":prefix+"_anchor.samples", "y":effile, "np":prefix+"_anchor.npy"} for prefix, effile in zip(prefixes, effiles)]
+data_map = [{"X":prefix+"_cands.samples", "y":effile, "np":prefix+"_cands.npy"} for prefix, effile in zip(prefixes, effiles)]
 main(data_map)
 
 EOF

@@ -3,12 +3,12 @@ import pickle
 from matplotlib import pyplot as plt
 import numpy as np
 
-test, train = np.zeros((6, 50)), np.zeros((6, 50))
+test, train = np.zeros((6, 21)), np.zeros((6, 21))
 indices = set()
 
 for i in range(6):
-    test_dict = pickle.load(open("aurocs_depth_"+str(i)+".p", "rb"))
-    train_dict = pickle.load(open("aurocs_depth_"+str(i)+"_train.p", "rb"))
+    test_dict = pickle.load(open("aurocs_depth_"+str(i)+"_cands.p", "rb"))
+    train_dict = pickle.load(open("aurocs_depth_"+str(i)+"_train_cands.p", "rb"))
 
     for k, j in enumerate(train_dict):
         indices.add(j)
@@ -23,8 +23,10 @@ print(train)
 print(test)
 
 for i in range(6):
-    plt.plot(indices, test[i], label="test"+str(i), color="blue")
-    plt.plot(indices, train[i], label="train"+str(i), color="green")
+   plt.plot(indices, test[i], label="test"+str(i), color="blue")
+   plt.plot(indices, train[i], label="train"+str(i), color="green")
+# plt.plot(indices, test_avg, label="test"+str(i), color="blue")
+# plt.plot(indices, train_avg, label="train"+str(i), color="green")
 
 plt.legend()
 plt.show()
