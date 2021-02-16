@@ -255,8 +255,10 @@ public:
 
         PinnedBuffer<int> h_numCandidatesPerAnchor{};
         DeviceBuffer<int> d_numCandidatesPerAnchor{};
+        DeviceBuffer<int> d_numCandidatesPerAnchor2{};
         PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
         DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum{};
+        DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum2{};
         PinnedBuffer<int> h_alignment_overlaps{};
         PinnedBuffer<int> h_alignment_shifts{};
         PinnedBuffer<int> h_alignment_nOps{};
@@ -268,6 +270,12 @@ public:
         DeviceBuffer<int> d_alignment_nOps{};
         DeviceBuffer<bool> d_alignment_isValid{};
         DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags{};
+
+        DeviceBuffer<int> d_alignment_overlaps2{};
+        DeviceBuffer<int> d_alignment_shifts2{};
+        DeviceBuffer<int> d_alignment_nOps2{};
+        DeviceBuffer<bool> d_alignment_isValid2{};
+        DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags2{};
 
         PinnedBuffer<int> h_numAnchors{};
         PinnedBuffer<int> h_numCandidates{};
@@ -1174,6 +1182,7 @@ public:
     void loadCandidateSequenceData(BatchData& batchData, cudaStream_t stream) const;
     void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const;
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
+    void filterAlignments(BatchData& batchData, cudaStream_t stream) const;
 
 private:
     int deviceId;
