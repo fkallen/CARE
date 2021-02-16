@@ -298,6 +298,7 @@ public:
         PinnedBuffer<int> h_activeTaskIndices{};
 
         DeviceBuffer<int> d_intbuffercandidates{};
+        PinnedBuffer<int> h_intbuffercandidates{};
 
         DeviceBuffer<char> d_tempstorage{};
 
@@ -722,9 +723,9 @@ private:
 
             const int offset = h_numCandidatesPerAnchorPrefixSum[t];
 
-            if(task.myReadId == 2720 && task.iteration == 4){
-                std::cerr << h_candidateSequencesData[(offset * encodedSequencePitchInInts) + 0] << "\n";
-            }
+            // if(task.myReadId == 2720 && task.iteration == 4){
+            //     std::cerr << h_candidateSequencesData[(offset * encodedSequencePitchInInts) + 0] << "\n";
+            // }
 
             std::copy_n(
                 h_candidateSequencesLength.get() + offset,

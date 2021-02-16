@@ -50,6 +50,7 @@ namespace care{
 #endif 
 
         cudaStream_t firstStream = streams[0];
+        cudaStream_t secondStream = streams[1];
 
         const int numTasks = tasks.size();
 
@@ -120,8 +121,8 @@ namespace care{
 
         while(indicesOfActiveTasks.size() > 0){
 
-            auto debugtasks = tasks;
-            processTasksOldStyle(debugtasks);
+            // auto debugtasks = tasks;
+            // processTasksOldStyle(debugtasks);
 
             //perform one extension iteration for active tasks
 
@@ -321,19 +322,19 @@ namespace care{
 
             //compact candidate ids and update offsets accordingly
 
-            {
-                read_number* outputposition = batchData.h_candidateReadIds.data();
+            // {
+            //     read_number* outputposition = batchData.h_candidateReadIds.data();
 
-                for(int i = 0; i < batchData.numTasks; i++){
+                 for(int i = 0; i < batchData.numTasks; i++){
     
-                    const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
-                    const int candidatesOffset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
-                    const read_number* candidates = batchData.h_candidateReadIds + candidatesOffset;
+                     const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
+            //         const int candidatesOffset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
+            //         const read_number* candidates = batchData.h_candidateReadIds + candidatesOffset;
                     
-                    outputposition = std::copy_n(candidates, numCandidates, outputposition);
-                    batchData.h_numCandidatesPerAnchorPrefixSum[i+1] = batchData.h_numCandidatesPerAnchorPrefixSum[i] + numCandidates;                 
-                }
-            }
+            //         outputposition = std::copy_n(candidates, numCandidates, outputposition);
+                     batchData.h_numCandidatesPerAnchorPrefixSum[i+1] = batchData.h_numCandidatesPerAnchorPrefixSum[i] + numCandidates;                 
+                 }
+            // }
 
             int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
 
@@ -376,6 +377,7 @@ namespace care{
             batchData.d_candidateSequencesRevcData2.resize(encodedSequencePitchInInts * totalNumCandidates);
             batchData.d_candidateReadIds2.resize(totalNumCandidates);
 
+            batchData.h_intbuffercandidates.resize(totalNumCandidates);
             batchData.d_intbuffercandidates.resize(totalNumCandidates);
             batchData.h_flagscandidates.resize(totalNumCandidates);
             batchData.d_flagscandidates.resize(totalNumCandidates);
@@ -394,33 +396,7 @@ namespace care{
 
             collectTimer.start();
 
-            
-
-            loadCandidateSequenceData(batchData, firstStream);
-
-            cudaMemcpyAsync(
-                batchData.h_candidateSequencesLength.get(),
-                batchData.d_candidateSequencesLength.get(),
-                sizeof(int) * totalNumCandidates,
-                H2D,
-                firstStream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                batchData.h_candidateSequencesData.get(),
-                batchData.d_candidateSequencesData.get(),
-                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
-                H2D,
-                firstStream
-            ); CUERR;
-    
-            cudaMemcpyAsync(
-                batchData.h_candidateSequencesRevcData.get(),
-                batchData.d_candidateSequencesRevcData.get(),
-                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
-                H2D,
-                firstStream
-            ); CUERR;           
+            loadCandidateSequenceData(batchData, firstStream);      
 
             eraseDataOfRemovedMates(batchData, firstStream);
 
@@ -438,11 +414,44 @@ namespace care{
                 sizeof(int) * batchData.numTasks,
                 D2H,
                 firstStream
-            ); CUERR;            
+            ); CUERR;
     
             cudaStreamSynchronize(firstStream); CUERR;
 
             totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+
+            cudaMemcpyAsync(
+                batchData.h_candidateReadIds.data(),
+                batchData.d_candidateReadIds.data(),
+                sizeof(read_number) * totalNumCandidates,
+                H2D,
+                secondStream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                batchData.h_candidateSequencesLength.get(),
+                batchData.d_candidateSequencesLength.get(),
+                sizeof(int) * totalNumCandidates,
+                H2D,
+                secondStream
+            ); CUERR;
+    
+            cudaMemcpyAsync(
+                batchData.h_candidateSequencesData.get(),
+                batchData.d_candidateSequencesData.get(),
+                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                H2D,
+                secondStream
+            ); CUERR;
+    
+            cudaMemcpyAsync(
+                batchData.h_candidateSequencesRevcData.get(),
+                batchData.d_candidateSequencesRevcData.get(),
+                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                H2D,
+                secondStream
+            ); CUERR;    
+            
 
 
             collectTimer.stop();
@@ -500,7 +509,8 @@ namespace care{
                 firstStream
             ); CUERR;
 
-            cudaStreamSynchronize(firstStream);
+            cudaStreamSynchronize(firstStream); CUERR;
+            cudaStreamSynchronize(secondStream); CUERR;
 
             // unpack batchData into tasks
 
@@ -536,35 +546,15 @@ namespace care{
                 task.mateRemovedFromCandidates = false; //debug. not required
             }
 
-            for(int i = 0; i < numActiveTasks; i++){
-                auto& newtask = tasks[indicesOfActiveTasks[i]];
-                auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
+            // for(int i = 0; i < numActiveTasks; i++){
+            //     auto& newtask = tasks[indicesOfActiveTasks[i]];
+            //     auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
 
-                if(newtask != oldtask){
-                    std::cerr << "old task and new task differ. i=" 
-                        << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
-                }
-                //TODO
-                /*
-                    (gdb) p oldtask.myReadId
-                    $53 = 39
-                    (gdb) p oldtask.candidateReadIds.size() 46
-                    (gdb) p newtask.candidateReadIds.size()
-                    (gdb) p i
-                    $58 = 3
-                    (gdb) p numActiveTasks 
-                    $59 = 4
-                    (gdb) p oldtask.candidateReadIds.data()[0]@46
-                    $63 = {83448, 370927, 1283290, 1557163, 1620604, 1650910, 1674955, 1896213, 1908889, 2077080, 2609358, 2981749, 3086827, 3539212, 3735774, 3902939, 4397875, 5007076, 5627577, 5691
-                    087, 5781965, 6043224, 6263392, 6981138, 7104380, 7221662, 7282521, 7992388, 8143845, 8190919, 8317158, 8564549, 8643571, 8678888, 9650168, 9924793, 10488961, 10937863, 11530394,
-                    11587300, 11716261, 12495573, 12660145, 12872897, 13084472, 13094648}
-                    (gdb) p newtask.candidateReadIds.data()[0]@46
-                    $64 = {83448, 370927, 1283290, 1557163, 1620604, 1650910, 1674955, 1896213, 1908889, 2077080, 2609358, 2981749, 3086827, 3539212, 3735774, 3902939, 4397875, 5007076, 5627577, 5691
-                    087, 5781965, 6043224, 6263392, 6981138, 7104380, 7221662, 7282521, 7992388, 8143845, 8190919, 8317158, 8564549, 8643571, 8678888, 9352336, 9650168, 9924793, 10488961, 10937863, 1
-                    1530394, 11587300, 11716261, 12495573, 12660145, 12872897, 13084472}
-
-                */
-            }
+            //     if(newtask != oldtask){
+            //         std::cerr << "old task and new task differ. i=" 
+            //             << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
+            //     }
+            // }
 
             
 
@@ -1417,7 +1407,6 @@ namespace care{
             helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), false, stream);
 
             readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-            //readextendergpukernels::filtermatekernel<1,1><<<1, 1, smembytes, stream>>>(
                 batchData.d_anchormatedata.data(),
                 batchData.d_candidateSequencesData.data(),
                 encodedSequencePitchInInts,
@@ -1426,7 +1415,6 @@ namespace care{
                 batchData.d_indexlist1.data(),
                 batchData.numTasksWithMateRemoved,
                 batchData.d_flagscandidates.data()
-                //false//(tasks.size() > 1 && tasks[1].myReadId == 10243 && tasks[1].iteration == 2)
             ); CUERR;
 
             auto negate = [] __device__ (bool b){
@@ -1436,15 +1424,29 @@ namespace care{
             cub::TransformInputIterator<bool, decltype(negate), bool*> d_keepflags(batchData.d_flagscandidates.data(), negate);
 
             std::size_t requiredCubSize = 0;
+            std::size_t requiredCubSize1 = 0;
+            std::size_t requiredCubSize2 = 0;
             cudaError_t cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr,
-                requiredCubSize,
+                requiredCubSize1,
                 d_keepflags, 
                 batchData.d_intbuffercandidates.data(), 
                 totalNumCandidates, 
                 stream
             );
             assert(cudaSuccess == cubstatus);
+
+            cubstatus = cub::DeviceScan::InclusiveSum(
+                nullptr,
+                requiredCubSize2,
+                batchData.d_numCandidatesPerAnchor.data(), 
+                batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1, 
+                batchData.numTasks, 
+                stream
+            );
+            assert(cudaSuccess == cubstatus);
+
+            requiredCubSize = std::max(requiredCubSize1, requiredCubSize2);
 
             batchData.d_tempstorage.resize(requiredCubSize);
 
@@ -1658,6 +1660,25 @@ namespace care{
                 batchData.numTasks, 
                 stream
             );
+            if(cubstatus != cudaSuccess){
+                CUERR;
+                assert(batchData.d_tempstorage.data() != nullptr);
+
+                std::cerr << "cub error: " << cudaGetErrorString(cubstatus) << ", batchData.numTasks: " << batchData.numTasks << ", requiredCubSize: " << requiredCubSize << "\n";
+                //std::cerr << batchData.h_readIds[0] << "\n";
+                std::size_t foo = 0;
+
+                cub::DeviceScan::InclusiveSum(
+                    nullptr,
+                    foo,
+                    batchData.d_numCandidatesPerAnchor.data(), 
+                    batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1, 
+                    batchData.numTasks, 
+                    stream
+                );
+
+                std::cerr << "required cub size for inclusive sum: " << foo << "\n";
+            }
             assert(cudaSuccess == cubstatus);
 
             std::swap(batchData.d_candidateReadIds2, batchData.d_candidateReadIds);
