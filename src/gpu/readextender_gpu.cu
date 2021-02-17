@@ -1154,24 +1154,16 @@ namespace care{
                             task.candidateReadIds[insertpos] = task.candidateReadIds[i];
 
                             std::copy_n(
-                                task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
+                                task.candidateSequenceData.data() + i * size_t(encodedSequencePitchInInts),
                                 encodedSequencePitchInInts,
-                                task.candidateSequencesData.data() + insertpos * size_t(encodedSequencePitchInInts)
+                                task.candidateSequenceData.data() + insertpos * size_t(encodedSequencePitchInInts)
                             );
 
-                            task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
+                            task.candidateSequenceLengths[insertpos] = task.candidateSequenceLengths[i];
                             task.alignmentFlags[insertpos] = task.alignmentFlags[i];
                             task.alignments[insertpos] = task.alignments[i];
                             task.candidateOverlapWeights[insertpos] = task.candidateOverlapWeights[i];
                             task.candidateShifts[insertpos] = task.candidateShifts[i];
-
-                            if(correctionOptions->useQualityScores){
-                                std::copy_n(
-                                    task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
-                                    qualityPitchInBytes,
-                                    task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
-                                );
-                            }
 
                             std::copy_n(
                                 task.candidateStrings.data() + i * size_t(decodedSequencePitchInBytes),
@@ -1187,13 +1179,13 @@ namespace care{
                         task.candidateReadIds.begin() + insertpos, 
                         task.candidateReadIds.end()
                     );
-                    task.candidateSequencesData.erase(
-                        task.candidateSequencesData.begin() + encodedSequencePitchInInts * insertpos, 
-                        task.candidateSequencesData.end()
+                    task.candidateSequenceData.erase(
+                        task.candidateSequenceData.begin() + encodedSequencePitchInInts * insertpos, 
+                        task.candidateSequenceData.end()
                     );
-                    task.candidateSequencesLengths.erase(
-                        task.candidateSequencesLengths.begin() + insertpos, 
-                        task.candidateSequencesLengths.end()
+                    task.candidateSequenceLengths.erase(
+                        task.candidateSequenceLengths.begin() + insertpos, 
+                        task.candidateSequenceLengths.end()
                     );
                     task.alignmentFlags.erase(
                         task.alignmentFlags.begin() + insertpos, 
@@ -1204,13 +1196,6 @@ namespace care{
                         task.alignments.end()
                     );
 
-                    if(correctionOptions->useQualityScores){
-                        task.candidateQualities.erase(
-                            task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
-                            task.candidateQualities.end()
-                        );
-                    }
-                    
                     task.candidateStrings.erase(
                         task.candidateStrings.begin() + decodedSequencePitchInBytes * insertpos, 
                         task.candidateStrings.end()
@@ -1229,8 +1214,8 @@ namespace care{
                 if(max_num_minimizations > 0){                
 
                     for(int numIterations = 0; numIterations < max_num_minimizations; numIterations++){
-                        const auto minimizationResult = task.multipleSequenceAlignment.findCandidatesOfDifferentRegion(
-                            correctionOptions->estimatedCoverage
+                        const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
+                            correctionOptions.estimatedCoverage
                         );
 
                         if(minimizationResult.performedMinimization){
