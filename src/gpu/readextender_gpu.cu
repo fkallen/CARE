@@ -306,8 +306,8 @@ namespace care{
 
         while(indicesOfActiveTasks.size() > 0){
 
-            auto debugtasks = tasks;
-            processTasksOldStyle(debugtasks);
+            // auto debugtasks = tasks;
+            // processTasksOldStyle(debugtasks);
 
             //perform one extension iteration for active tasks
 
@@ -618,21 +618,21 @@ namespace care{
 
             totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
 
-            cudaMemcpyAsync(
-                batchData.h_candidateReadIds.data(),
-                batchData.d_candidateReadIds.data(),
-                sizeof(read_number) * totalNumCandidates,
-                H2D,
-                secondStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_candidateReadIds.data(),
+            //     batchData.d_candidateReadIds.data(),
+            //     sizeof(read_number) * totalNumCandidates,
+            //     H2D,
+            //     secondStream
+            // ); CUERR;
 
-            cudaMemcpyAsync(
-                batchData.h_candidateSequencesLength.get(),
-                batchData.d_candidateSequencesLength.get(),
-                sizeof(int) * totalNumCandidates,
-                H2D,
-                secondStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_candidateSequencesLength.get(),
+            //     batchData.d_candidateSequencesLength.get(),
+            //     sizeof(int) * totalNumCandidates,
+            //     H2D,
+            //     secondStream
+            // ); CUERR;
     
             cudaMemcpyAsync(
                 batchData.h_candidateSequencesData.get(),
@@ -667,47 +667,47 @@ namespace care{
             alignmentTimer.stop();
 
 
-            cudaMemcpyAsync(
-                batchData.h_alignment_overlaps.get(),
-                batchData.d_alignment_overlaps.get(),
-                sizeof(int) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_alignment_overlaps.get(),
+            //     batchData.d_alignment_overlaps.get(),
+            //     sizeof(int) * totalNumCandidates,
+            //     D2H,
+            //     firstStream
+            // ); CUERR;
 
-            cudaMemcpyAsync(
-                batchData.h_alignment_isValid.get(),
-                batchData.d_alignment_isValid.get(),
-                sizeof(bool) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_alignment_isValid.get(),
+            //     batchData.d_alignment_isValid.get(),
+            //     sizeof(bool) * totalNumCandidates,
+            //     D2H,
+            //     firstStream
+            // ); CUERR;
 
-            cudaMemcpyAsync(
-                batchData.h_alignment_shifts.get(),
-                batchData.d_alignment_shifts.get(),
-                sizeof(int) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_alignment_shifts.get(),
+            //     batchData.d_alignment_shifts.get(),
+            //     sizeof(int) * totalNumCandidates,
+            //     D2H,
+            //     firstStream
+            // ); CUERR;
 
-            cudaMemcpyAsync(
-                batchData.h_alignment_nOps.get(),
-                batchData.d_alignment_nOps.get(),
-                sizeof(int) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_alignment_nOps.get(),
+            //     batchData.d_alignment_nOps.get(),
+            //     sizeof(int) * totalNumCandidates,
+            //     D2H,
+            //     firstStream
+            // ); CUERR;
 
-            cudaMemcpyAsync(
-                batchData.h_alignment_best_alignment_flags.get(),
-                batchData.d_alignment_best_alignment_flags.get(),
-                sizeof(BestAlignment_t) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_alignment_best_alignment_flags.get(),
+            //     batchData.d_alignment_best_alignment_flags.get(),
+            //     sizeof(BestAlignment_t) * totalNumCandidates,
+            //     D2H,
+            //     firstStream
+            // ); CUERR;
 
-            cudaStreamSynchronize(firstStream); CUERR;
+            // cudaStreamSynchronize(firstStream); CUERR;
             cudaStreamSynchronize(secondStream); CUERR;
 
             // unpack batchData into tasks
@@ -719,11 +719,11 @@ namespace care{
                 const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
                 const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
 
-                task.candidateReadIds.resize(numCandidates);
-                std::copy_n(batchData.h_candidateReadIds.data() + offset, numCandidates, task.candidateReadIds.begin());
+                // task.candidateReadIds.resize(numCandidates);
+                // std::copy_n(batchData.h_candidateReadIds.data() + offset, numCandidates, task.candidateReadIds.begin());
 
-                task.candidateSequenceLengths.resize(numCandidates);
-                std::copy_n(batchData.h_candidateSequencesLength.data() + offset, numCandidates, task.candidateSequenceLengths.begin());
+                // task.candidateSequenceLengths.resize(numCandidates);
+                // std::copy_n(batchData.h_candidateSequencesLength.data() + offset, numCandidates, task.candidateSequenceLengths.begin());
 
                 task.candidateSequencesFwdData.resize(numCandidates * encodedSequencePitchInInts);
                 std::copy_n(batchData.h_candidateSequencesData.data() + offset * encodedSequencePitchInInts, numCandidates * encodedSequencePitchInInts, task.candidateSequencesFwdData.begin());
@@ -731,16 +731,16 @@ namespace care{
                 task.candidateSequencesRevcData.resize(numCandidates * encodedSequencePitchInInts);
                 std::copy_n(batchData.h_candidateSequencesRevcData.data() + offset * encodedSequencePitchInInts, numCandidates * encodedSequencePitchInInts, task.candidateSequencesRevcData.begin());
 
-                task.alignmentFlags.resize(numCandidates);
-                task.alignments.resize(numCandidates);
+                // task.alignmentFlags.resize(numCandidates);
+                // task.alignments.resize(numCandidates);
 
-                for(int c = 0; c < numCandidates; c++){
-                    task.alignments[c].shift = batchData.h_alignment_shifts[offset + c];
-                    task.alignments[c].overlap = batchData.h_alignment_overlaps[offset + c];
-                    task.alignments[c].nOps = batchData.h_alignment_nOps[offset + c];
-                    task.alignments[c].isValid = batchData.h_alignment_isValid[offset + c];
-                    task.alignmentFlags[c] = batchData.h_alignment_best_alignment_flags[offset + c];
-                }
+                // for(int c = 0; c < numCandidates; c++){
+                //     task.alignments[c].shift = batchData.h_alignment_shifts[offset + c];
+                //     task.alignments[c].overlap = batchData.h_alignment_overlaps[offset + c];
+                //     task.alignments[c].nOps = batchData.h_alignment_nOps[offset + c];
+                //     task.alignments[c].isValid = batchData.h_alignment_isValid[offset + c];
+                //     task.alignmentFlags[c] = batchData.h_alignment_best_alignment_flags[offset + c];
+                // }
 
                 task.mateRemovedFromCandidates = false; //debug. not required
             }
@@ -1067,22 +1067,22 @@ namespace care{
                 }
             }
 
-            for(int i = 0; i < numActiveTasks; i++){
-                auto& newtask = tasks[indicesOfActiveTasks[i]];
-                auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
+            // for(int i = 0; i < numActiveTasks; i++){
+            //     auto& newtask = tasks[indicesOfActiveTasks[i]];
+            //     auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
 
-                if(newtask != oldtask){
-                    std::cerr << "old task and new task differ. i=" 
-                        << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
-                }
-            }
+            //     if(newtask != oldtask){
+            //         std::cerr << "old task and new task differ. i=" 
+            //             << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
+            //     }
+            // }
     
 #endif        
             std::vector<Task> newTasksFromSplit;
             std::vector<int> newTaskIndices;
 
 
-            auto constructMsa = [&](auto& task){
+            auto constructMsa = [&](auto& task, int taskIndex){
                 const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
                 auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
@@ -1091,53 +1091,166 @@ namespace care{
                     return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
                 };
 
-                task.candidateShifts.resize(task.numRemainingCandidates);
-                task.candidateOverlapWeights.resize(task.numRemainingCandidates);
-
-                //gather data required for msa
-                for(int c = 0; c < task.numRemainingCandidates; c++){
-                    vecAccess(task.candidateShifts, c) = vecAccess(task.alignments, c).shift;
-
-                    vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
-                        task.currentAnchorLength, 
-                        vecAccess(task.alignments, c).nOps,
-                        vecAccess(task.alignments, c).overlap
-                    );
-                }
-
-                task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
-
-                //decode the candidates for msa
-                for(int c = 0; c < task.numRemainingCandidates; c++){
-                    SequenceHelpers::decode2BitSequence(
-                        task.candidateStrings.data() + c * decodedSequencePitchInBytes,
-                        task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
-                        vecAccess(task.candidateSequenceLengths, c)
-                    );
-                }
-
-                MultipleSequenceAlignment::InputData msaInput;
-                msaInput.useQualityScores = false;
-                msaInput.subjectLength = task.currentAnchorLength;
-                msaInput.nCandidates = task.numRemainingCandidates;
-                msaInput.candidatesPitch = decodedSequencePitchInBytes;
-                msaInput.candidateQualitiesPitch = 0;
-                msaInput.subject = decodedAnchor.c_str();
-                msaInput.candidates = task.candidateStrings.data();
-                msaInput.subjectQualities = nullptr;
-                msaInput.candidateQualities = nullptr;
-                msaInput.candidateLengths = task.candidateSequenceLengths.data();
-                msaInput.candidateShifts = task.candidateShifts.data();
-                msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();
-
                 MultipleSequenceAlignment msa;
 
-                msa.build(msaInput);
+                auto build = [&](){
+
+                    task.candidateShifts.resize(task.numRemainingCandidates);
+                    task.candidateOverlapWeights.resize(task.numRemainingCandidates);
+
+                    //gather data required for msa
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
+                        vecAccess(task.candidateShifts, c) = vecAccess(task.alignments, c).shift;
+
+                        vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
+                            task.currentAnchorLength, 
+                            vecAccess(task.alignments, c).nOps,
+                            vecAccess(task.alignments, c).overlap
+                        );
+                    }
+
+                    task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
+
+                    //decode the candidates for msa
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
+                        SequenceHelpers::decode2BitSequence(
+                            task.candidateStrings.data() + c * decodedSequencePitchInBytes,
+                            task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
+                            vecAccess(task.candidateSequenceLengths, c)
+                        );
+                    }
+
+                    MultipleSequenceAlignment::InputData msaInput;
+                    msaInput.useQualityScores = false;
+                    msaInput.subjectLength = task.currentAnchorLength;
+                    msaInput.nCandidates = task.numRemainingCandidates;
+                    msaInput.candidatesPitch = decodedSequencePitchInBytes;
+                    msaInput.candidateQualitiesPitch = 0;
+                    msaInput.subject = decodedAnchor.c_str();
+                    msaInput.candidates = task.candidateStrings.data();
+                    msaInput.subjectQualities = nullptr;
+                    msaInput.candidateQualities = nullptr;
+                    msaInput.candidateLengths = task.candidateSequenceLengths.data();
+                    msaInput.candidateShifts = task.candidateShifts.data();
+                    msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();                    
+
+                    msa.build(msaInput);
+                };
+
+                build();
+
+                #if 1
+
+                constexpr int max_num_minimizations = 5;
+
+                auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
+                    const int numCandidates = task.candidateReadIds.size();
+
+                    int insertpos = 0;
+                    for(int i = 0; i < numCandidates; i++){
+                        if(!minimizationResult.differentRegionCandidate[i]){                        
+                            //keep candidate
+
+                            task.candidateReadIds[insertpos] = task.candidateReadIds[i];
+
+                            std::copy_n(
+                                task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
+                                encodedSequencePitchInInts,
+                                task.candidateSequencesData.data() + insertpos * size_t(encodedSequencePitchInInts)
+                            );
+
+                            task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
+                            task.alignmentFlags[insertpos] = task.alignmentFlags[i];
+                            task.alignments[insertpos] = task.alignments[i];
+                            task.candidateOverlapWeights[insertpos] = task.candidateOverlapWeights[i];
+                            task.candidateShifts[insertpos] = task.candidateShifts[i];
+
+                            if(correctionOptions->useQualityScores){
+                                std::copy_n(
+                                    task.candidateQualities.data() + i * size_t(qualityPitchInBytes),
+                                    qualityPitchInBytes,
+                                    task.candidateQualities.data() + insertpos * size_t(qualityPitchInBytes)
+                                );
+                            }
+
+                            std::copy_n(
+                                task.candidateStrings.data() + i * size_t(decodedSequencePitchInBytes),
+                                decodedSequencePitchInBytes,
+                                task.candidateStrings.data() + insertpos * size_t(decodedSequencePitchInBytes)
+                            );
+
+                            insertpos++;
+                        }
+                    }
+
+                    task.candidateReadIds.erase(
+                        task.candidateReadIds.begin() + insertpos, 
+                        task.candidateReadIds.end()
+                    );
+                    task.candidateSequencesData.erase(
+                        task.candidateSequencesData.begin() + encodedSequencePitchInInts * insertpos, 
+                        task.candidateSequencesData.end()
+                    );
+                    task.candidateSequencesLengths.erase(
+                        task.candidateSequencesLengths.begin() + insertpos, 
+                        task.candidateSequencesLengths.end()
+                    );
+                    task.alignmentFlags.erase(
+                        task.alignmentFlags.begin() + insertpos, 
+                        task.alignmentFlags.end()
+                    );
+                    task.alignments.erase(
+                        task.alignments.begin() + insertpos, 
+                        task.alignments.end()
+                    );
+
+                    if(correctionOptions->useQualityScores){
+                        task.candidateQualities.erase(
+                            task.candidateQualities.begin() + qualityPitchInBytes * insertpos, 
+                            task.candidateQualities.end()
+                        );
+                    }
+                    
+                    task.candidateStrings.erase(
+                        task.candidateStrings.begin() + decodedSequencePitchInBytes * insertpos, 
+                        task.candidateStrings.end()
+                    );
+                    task.candidateOverlapWeights.erase(
+                        task.candidateOverlapWeights.begin() + insertpos, 
+                        task.candidateOverlapWeights.end()
+                    );
+                    task.candidateShifts.erase(
+                        task.candidateShifts.begin() + insertpos, 
+                        task.candidateShifts.end()
+                    );
+                    
+                };
+
+                if(max_num_minimizations > 0){                
+
+                    for(int numIterations = 0; numIterations < max_num_minimizations; numIterations++){
+                        const auto minimizationResult = task.multipleSequenceAlignment.findCandidatesOfDifferentRegion(
+                            correctionOptions->estimatedCoverage
+                        );
+
+                        if(minimizationResult.performedMinimization){
+                            removeCandidatesOfDifferentRegion(minimizationResult);
+
+                            //build minimized multiple sequence alignment
+                            build();
+                        }else{
+                            break;
+                        }               
+                        
+                    }
+                }   
+
+                #endif
 
                 return msa;
             };
 
-            auto extendWithMsa = [&](auto& task, const auto& msa){
+            auto extendWithMsa = [&](auto& task, const auto& msa, int taskIndex){
 
                 int consensusLength = msa.consensus.size();
                 //can extend by at most maxextensionPerStep bps
@@ -1283,7 +1396,7 @@ namespace care{
                 }
             };
 
-            auto keepSelectedCandidates = [&](auto& task, const auto& selectedCandidateIndices){
+            auto keepSelectedCandidates = [&](auto& task, const auto& selectedCandidateIndices, int taskIndex){
                 const int numCandidateIndices = selectedCandidateIndices.size();
                 assert(numCandidateIndices <= task.numRemainingCandidates);
 
@@ -1380,7 +1493,7 @@ namespace care{
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
-                const MultipleSequenceAlignment msa = constructMsa(task);
+                const MultipleSequenceAlignment msa = constructMsa(task, indexOfActiveTask);
 
                 // std::cerr << "original msa\n";
                 // msa.print(std::cerr);
@@ -1429,22 +1542,22 @@ namespace care{
                         // msa.print(std::cerr); 
                         // std::cerr << "\n into \n";
 
-                        keepSelectedCandidates(taskCopy, possibleSplits.splits[0].listOfCandidates);
-                        const MultipleSequenceAlignment msaOfCopy = constructMsa(taskCopy);
+                        keepSelectedCandidates(taskCopy, possibleSplits.splits[0].listOfCandidates, indexOfActiveTask);
+                        const MultipleSequenceAlignment msaOfCopy = constructMsa(taskCopy, indexOfActiveTask);
 
                         // msaOfCopy.print(std::cerr); 
                         // std::cerr << "\n and \n";
 
-                        extendWithMsa(taskCopy, msaOfCopy);
+                        extendWithMsa(taskCopy, msaOfCopy, indexOfActiveTask);
 
                         //only keep canddiates of second split
-                        keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates);
-                        const MultipleSequenceAlignment newMsa = constructMsa(task);
+                        keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates, indexOfActiveTask);
+                        const MultipleSequenceAlignment newMsa = constructMsa(task, indexOfActiveTask);
 
                         // newMsa.print(std::cerr); 
                         // std::cerr << "\n";
 
-                        extendWithMsa(task, newMsa);
+                        extendWithMsa(task, newMsa, indexOfActiveTask);
 
                         //if extension was not possible in task, replace task by task copy
                         if(task.abort && task.abortReason == AbortReason::MsaNotExtended){
@@ -1460,13 +1573,13 @@ namespace care{
 
                         }                        
                     }else{
-                        extendWithMsa(task, msa);
+                        extendWithMsa(task, msa, indexOfActiveTask);
                     }
                 }else{
-                    extendWithMsa(task, msa);
+                    extendWithMsa(task, msa, indexOfActiveTask);
                 }
 #else 
-                extendWithMsa(task, msa);
+                extendWithMsa(task, msa, indexOfActiveTask);
 #endif
 
             }
@@ -2403,7 +2516,7 @@ namespace care{
             }
         ); CUERR;
 
-        cudaDeviceSynchronize(); CUERR;
+        //cudaDeviceSynchronize(); CUERR;
 
         //update prefix sum
         cubstatus = cub::DeviceScan::InclusiveSum(
