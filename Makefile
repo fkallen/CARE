@@ -4,7 +4,7 @@ CUDA_DIR=$(shell cat .CUDA_DIR)
 CUB_INCDIR=$(shell cat .CUB_INCDIR)
 THRUST_INCDIR=$(shell cat .THRUST_INCDIR)
 
-BUILD_WITH_WARPCORE = 1
+BUILD_WITH_WARPCORE = 0
 
 ifeq ($(BUILD_WITH_WARPCORE), 1)
 	WARPCORE_INCDIR = $(shell cat .WARPCORE_INCDIR)
@@ -22,7 +22,7 @@ HOSTLINKER=g++
 
 CXXFLAGS = -std=c++17
 
-CFLAGS_BASIC = -Wall -fopenmp -g -Iinclude -O3 -march=native -I$(THRUST_INCDIR)
+CFLAGS_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 CFLAGS_DEBUG_BASIC = -Wall -fopenmp -g -Iinclude -O0 -march=native -I$(THRUST_INCDIR)
 
 CFLAGS_CPU = $(CFLAGS_BASIC) -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_OMP

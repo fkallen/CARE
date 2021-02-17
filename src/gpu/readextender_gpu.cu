@@ -7,6 +7,7 @@
 #include <string>
 
 #include <thrust/iterator/zip_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 
 namespace care{
 
@@ -119,7 +120,7 @@ namespace care{
 
             calculateAlignments(tasks, indicesOfActiveTasks);
 
-            #if 0
+            #if 1
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
@@ -156,6 +157,12 @@ namespace care{
                     task.abort = true;
                     task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
 
+                    task.candidateReadIds.erase(task.candidateReadIds.begin(), task.candidateReadIds.end());
+                    task.candidateSequenceLengths.erase(task.candidateSequenceLengths.begin(), task.candidateSequenceLengths.end());
+                    task.candidateSequenceData.erase(task.candidateSequenceData.begin(), task.candidateSequenceData.end());
+                    task.alignments.erase(task.alignments.begin(), task.alignments.end());
+                    task.alignmentFlags.erase(task.alignmentFlags.begin(), task.alignmentFlags.end());
+
                     continue; //stop processing task
                 }
 
@@ -179,9 +186,9 @@ namespace care{
                     }
                 }
 
-                std::cerr << "task " << indexOfActiveTask
-                     << ", goodAlignmentExists " << goodAlignmentExists
-                     <<", relativeOverlapThreshold " << relativeOverlapThreshold;
+                // std::cerr << "task " << indexOfActiveTask
+                //      << ", goodAlignmentExists " << goodAlignmentExists
+                //      <<", relativeOverlapThreshold " << relativeOverlapThreshold;
                 
 
                 if(goodAlignmentExists){
@@ -200,14 +207,14 @@ namespace care{
                     task.numRemainingCandidates = positionsOfCandidatesToKeep.size();
                 }
 
-                std::cerr << ", numRemainingCandidates = " << task.numRemainingCandidates << "\n";
+                // std::cerr << ", numRemainingCandidates = " << task.numRemainingCandidates << "\n";
 
-                std::cerr << "positionsOfCandidatesToKeep: ";
+                // std::cerr << "positionsOfCandidatesToKeep: ";
 
-                for(int x : positionsOfCandidatesToKeep){
-                    std::cerr << x << " ";
-                }
-                std::cerr << "\n";
+                // for(int x : positionsOfCandidatesToKeep){
+                //     std::cerr << x << " ";
+                // }
+                // std::cerr << "\n";
 
                 //std::cerr << ", remaining candidates " << task.numRemainingCandidates << "\n";
 
@@ -229,8 +236,8 @@ namespace care{
                         
                         assert(vecAccess(task.alignmentFlags, index) != BestAlignment_t::None);
 
-                        std::cerr << "cand " << index << " dir " 
-                            << ((vecAccess(task.alignmentFlags, index) == BestAlignment_t::Forward) ? 'f' : 'r') << "\n";
+                        // std::cerr << "cand " << index << " dir " 
+                        //     << ((vecAccess(task.alignmentFlags, index) == BestAlignment_t::Forward) ? 'f' : 'r') << "\n";
 
                         if(vecAccess(task.alignmentFlags, index) == BestAlignment_t::Forward){
                             std::copy_n(
@@ -751,7 +758,7 @@ namespace care{
 
             
 
-#if 1
+#if 0
             alignmentFilterTimer.start();
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -832,10 +839,13 @@ namespace care{
                             maxRel = std::max(maxRel, tmp);
                         }
                     }
-                    assert(hasmax == goodAlignmentExists);
-                    if(hasmax){
-                        assert(feq(maxRel, relativeOverlapThreshold));
-                    }
+                    // assert(hasmax == goodAlignmentExists);
+                    // if(hasmax){
+                    //     assert(feq(maxRel, relativeOverlapThreshold));
+                    // }
+
+                    relativeOverlapThreshold = maxRel;
+                    goodAlignmentExists = hasmax;
 
                 }
 
@@ -943,11 +953,11 @@ namespace care{
     
             cudaStreamSynchronize(firstStream); CUERR;
 
-            auto old = totalNumCandidates;
+            //auto old = totalNumCandidates;
 
             totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
 
-            std::cerr << old << " -> " << totalNumCandidates << "\n";
+            //std::cerr << old << " -> " << totalNumCandidates << "\n";
 
             cudaMemcpyAsync(
                 batchData.h_candidateReadIds.data(),
@@ -2165,7 +2175,7 @@ namespace care{
                     int removed = 0;
 
                     int threadReducedGoodAlignmentExists = 0;
-                    float threadReducedRelativeOverlapThreshold = 0.9f;
+                    float threadReducedRelativeOverlapThreshold = 0.0f;
 
                     //loop over candidates to compute relative overlap threshold
 
@@ -2174,30 +2184,36 @@ namespace care{
                         const int shift = d_alignment_shifts[offset + c];
 
                         if(alignmentflag != BestAlignment_t::None && shift >= 0){
-                            float relativeOverlapThreshold = 0.9f;
                             bool goodAlignmentExists = false;
                             const float overlap = d_alignment_overlaps[offset + c];                            
-                            const float relativeOverlap = overlap / anchorLength;                 
-
-                            while(!goodAlignmentExists && fgeq(relativeOverlapThreshold, min_overlap_ratio)){
-
-                                goodAlignmentExists = fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f;
-
-                                if(!goodAlignmentExists){
-                                    relativeOverlapThreshold -= 0.1f;
-                                }
-                            }
-
-                            if(goodAlignmentExists){
+                            const float relativeOverlap = overlap / anchorLength;
+                            
+                            if(relativeOverlap < 1.0f && fgeq(relativeOverlap, min_overlap_ratio)){
                                 threadReducedGoodAlignmentExists = 1;
-                                threadReducedRelativeOverlapThreshold = max(threadReducedRelativeOverlapThreshold, relativeOverlapThreshold);
+                                const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
+                                threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
                             }
 
-                            if(a == 1){
-                                printf("a %d c %d relativeOverlap %f, thread good %d, thresh %f\n", 
-                                    a, c, relativeOverlap, goodAlignmentExists, relativeOverlapThreshold);
-                            }
+                            // while(!goodAlignmentExists && fgeq(relativeOverlapThreshold, min_overlap_ratio)){
+
+                            //     goodAlignmentExists = fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f;
+
+                            //     if(!goodAlignmentExists){
+                            //         relativeOverlapThreshold -= 0.1f;
+                            //     }
+                            // }
+
+                            // if(goodAlignmentExists){
+                            //     threadReducedGoodAlignmentExists = 1;
+                            //     threadReducedRelativeOverlapThreshold = max(threadReducedRelativeOverlapThreshold, relativeOverlapThreshold);
+                            // }
+
+                            // if(a == 1){
+                            //     printf("a %d c %d relativeOverlap %f, thread good %d, thresh %f\n", 
+                            //         a, c, relativeOverlap, goodAlignmentExists, threadReducedRelativeOverlapThreshold);
+                            // }
                         }else{
+                            //remove alignment with negative shift
                             d_keepflags[offset + c] = false;
                             removed++;
                         }
@@ -2214,7 +2230,7 @@ namespace care{
                         .Sum(threadReducedGoodAlignmentExists);
                     if(threadIdx.x == 0){
                         intbroadcast = blockreducedGoodAlignmentExists;
-                        printf("task %d good: %d\n", a, blockreducedGoodAlignmentExists);
+                        //printf("task %d good: %d\n", a, blockreducedGoodAlignmentExists);
                     }
                     __syncthreads();
 
@@ -2225,7 +2241,7 @@ namespace care{
                             .Reduce(threadReducedRelativeOverlapThreshold, cub::Max());
                         if(threadIdx.x == 0){
                             floatbroadcast = blockreducedRelativeOverlapThreshold;
-                            printf("task %d thresh: %f\n", a, blockreducedRelativeOverlapThreshold);
+                            //printf("task %d thresh: %f\n", a, blockreducedRelativeOverlapThreshold);
                         }
                         __syncthreads();
 
@@ -2253,7 +2269,7 @@ namespace care{
 
                     if(threadIdx.x == 0){
                         d_numCandidatesPerAnchor2[a] = num - removed;
-                        printf("task %d remaining: %d - %d = %d\n", a, num, removed, num - removed);
+                        //printf("task %d remaining: %d - %d = %d\n", a, num, removed, num - removed);
                     }
                     __syncthreads();
                 }
@@ -2350,13 +2366,11 @@ namespace care{
 
         //compact sequence data. if alignmentflag is forward, forward sequence data will be copied, 
         //else reverse complement will be copied
-        helpers::lambda_kernel<<<1, 1, 0, stream>>>(
+        helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
             [
-                numTasks = batchData.numTasks,
                 encodedSequencePitchInInts = encodedSequencePitchInInts,
-                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
                 d_keepflags,
+                totalNumCandidates,
                 d_outputpositions = batchData.d_intbuffercandidates.data(),
                 d_alignment_best_alignment_flags = batchData.d_alignment_best_alignment_flags.data(),
                 d_candidateSequencesData = batchData.d_candidateSequencesData.data(),
@@ -2364,33 +2378,25 @@ namespace care{
                 d_candidateSequencesDataOut = batchData.d_candidateSequencesData2.data()
             ] __device__ (){
 
-                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-                    const int numCandidates = d_numCandidatesPerAnchor[t];
-                    const int inputOffset = d_numCandidatesPerAnchorPrefixSum[t];
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
+                const int elements = totalNumCandidates * encodedSequencePitchInInts;
 
-                    for(int i = threadIdx.x; i < numCandidates * encodedSequencePitchInInts; i += blockDim.x){
-                        const int which = i / encodedSequencePitchInInts;
-                        const int what = i % encodedSequencePitchInInts;
+                for(int i = tid; i < elements; i += stride){
+                    const int which = i / encodedSequencePitchInInts;
+                    const int what = i % encodedSequencePitchInInts;
 
-                        if(d_keepflags[inputOffset + which]){
-                            const int outputindex = d_outputpositions[inputOffset + which] * encodedSequencePitchInInts + what;
-                            const int inputindex = (inputOffset + which) * encodedSequencePitchInInts + what;
+                    if(d_keepflags[which]){
 
-                            const auto alignmentflag = d_alignment_best_alignment_flags[inputOffset + which];
-                            
-                            if(alignmentflag == BestAlignment_t::Forward){       
-                                // printf("xa %d, which %d what %d outindex %d inputindex %d dir %c val %u\n", 
-                                //     t, which, what, outputindex, inputindex,
-                                //     (alignmentflag == BestAlignment_t::Forward) ? 'f' : 'r',
-                                //     d_candidateSequencesData[inputindex]);                         
-                                d_candidateSequencesDataOut[outputindex] = d_candidateSequencesData[inputindex];
-                            }else{
-                                // printf("ya %d, which %d what %d outindex %d inputindex %d dir %c val %u\n", 
-                                //     t, which, what, outputindex, inputindex,
-                                //     (alignmentflag == BestAlignment_t::Forward) ? 'f' : 'r',
-                                //     d_candidateSequencesRevcData[inputindex]);  
-                                d_candidateSequencesDataOut[outputindex] = d_candidateSequencesRevcData[inputindex];
-                            }
+                        const int outputindex = d_outputpositions[which] * encodedSequencePitchInInts + what;
+                        const int inputindex = which * encodedSequencePitchInInts + what;
+
+                        const auto alignmentflag = d_alignment_best_alignment_flags[which];
+                        
+                        if(alignmentflag == BestAlignment_t::Forward){                             
+                            d_candidateSequencesDataOut[outputindex] = d_candidateSequencesData[inputindex];
+                        }else{
+                            d_candidateSequencesDataOut[outputindex] = d_candidateSequencesRevcData[inputindex];
                         }
                     }
                 }
