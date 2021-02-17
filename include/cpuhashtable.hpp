@@ -1308,13 +1308,13 @@ namespace cpuhashtabledetail{
             #ifdef __NVCC__
             }else{
 
-                using GroupByKeyCpu = cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
-                using GroupByKeyGpu = cpuhashtabledetail::GroupByKeyGpu<Key, Value, read_number>;
-                using GroupByKeyGpuWarpcore = cpuhashtabledetail::GroupByKeyGpuWarpcore<Key, Value, read_number>;
-
                 bool success = false;
 
-                
+                using GroupByKeyCpu = cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
+                using GroupByKeyGpu = cpuhashtabledetail::GroupByKeyGpu<Key, Value, read_number>;
+
+                #ifdef CARE_HAS_WARPCORE
+                using GroupByKeyGpuWarpcore = cpuhashtabledetail::GroupByKeyGpuWarpcore<Key, Value, read_number>;
 
                 if(true || valuesOfSameKeyMustBeSorted){
 
@@ -1331,7 +1331,11 @@ namespace cpuhashtabledetail{
                         success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
                     }
 
-                }                
+                }
+                #else 
+                    GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
+                #endif           
 
                 if(!success){
                     GroupByKeyCpu groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
