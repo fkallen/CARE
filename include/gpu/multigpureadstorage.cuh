@@ -539,20 +539,27 @@ public: //inherited GPUReadStorage interface
         cudaStream_t stream
     ) const override{
 
-        if(numSequences > 0 && getNumberOfReadsWithN() > 0){
+        if(numSequences > 0){
+            if(getNumberOfReadsWithN() > 0){
 
-            int deviceId = 0;
-            cudaGetDevice(&deviceId); CUERR;
+                int deviceId = 0;
+                cudaGetDevice(&deviceId); CUERR;
 
-            dim3 block = 256;
-            dim3 grid = SDIV(numSequences, block.x);
+                dim3 block = 256;
+                dim3 grid = SDIV(numSequences, block.x);
 
-            readBitarray<<<grid, block, 0, stream>>>(
-                d_result, 
-                bitArraysUndeterminedBase.at(deviceId), 
-                d_readIds, 
-                numSequences
-            ); CUERR;
+                readBitarray<<<grid, block, 0, stream>>>(
+                    d_result, 
+                    bitArraysUndeterminedBase.at(deviceId), 
+                    d_readIds, 
+                    numSequences
+                ); CUERR;
+            }else{
+                // if there are no stored reads with ambiguous bases, simply fill output with false
+                helpers::call_fill_kernel_async(d_result, numSequences, false, stream);
+            }
+        }else{
+            //output buffer is empty
         }
     }
 
