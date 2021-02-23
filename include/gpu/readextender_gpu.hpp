@@ -16,6 +16,8 @@
 
 #include <cub/cub.cuh>
 
+#include <thrust/device_new_allocator.h>
+
 
 namespace care{
 
@@ -242,10 +244,18 @@ public:
         int numTasks = 0;
         int numTasksWithMateRemoved = 0;
 
-        PinnedBuffer<read_number> h_readIds{};
-        DeviceBuffer<read_number> d_readIds{};
+
+        PinnedBuffer<read_number> h_anchorReadIds{};
+        DeviceBuffer<read_number> d_anchorReadIds{};
+        PinnedBuffer<read_number> h_mateReadIds{};
+        DeviceBuffer<read_number> d_mateReadIds{};
         PinnedBuffer<read_number> h_candidateReadIds{};
         DeviceBuffer<read_number> d_candidateReadIds{};
+
+        PinnedBuffer<int> h_segmentIds1{};
+        PinnedBuffer<int> h_segmentIds2{};
+        PinnedBuffer<int> h_segmentIds3{};
+        PinnedBuffer<int> h_segmentIds4{};
 
         PinnedBuffer<unsigned int> h_anchormatedata{};
         DeviceBuffer<unsigned int> d_anchormatedata{};
@@ -253,12 +263,21 @@ public:
         PinnedBuffer<int> h_indexlist1{};
         DeviceBuffer<int> d_indexlist1{};
 
+        PinnedBuffer<int> h_indexlist2{};
+        DeviceBuffer<int> d_indexlist2{};
+
         PinnedBuffer<int> h_numCandidatesPerAnchor{};
+        PinnedBuffer<int> h_numCandidatesPerAnchor2{};
+        PinnedBuffer<int> h_numCandidatesPerAnchor3{};
         DeviceBuffer<int> d_numCandidatesPerAnchor{};
         DeviceBuffer<int> d_numCandidatesPerAnchor2{};
+        DeviceBuffer<int> d_numCandidatesPerAnchor3{};
         PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
+        PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum2{};
+        PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum3{};
         DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum{};
         DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum2{};
+        DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum3{};
         PinnedBuffer<int> h_alignment_overlaps{};
         PinnedBuffer<int> h_alignment_shifts{};
         PinnedBuffer<int> h_alignment_nOps{};
@@ -296,6 +315,8 @@ public:
         DeviceBuffer<unsigned int> d_candidateSequencesData2{};
         DeviceBuffer<unsigned int> d_candidateSequencesRevcData2{};
         DeviceBuffer<read_number> d_candidateReadIds2{};
+        PinnedBuffer<read_number> h_candidateReadIds2{};
+        PinnedBuffer<read_number> h_candidateReadIds3{};
         
 
         DeviceBuffer<unsigned int> d_subjectSequencesData{};
@@ -310,22 +331,30 @@ public:
 
         DeviceBuffer<char> d_tempstorage{};
 
-        DeviceBuffer<bool> d_flags{};
-        PinnedBuffer<bool> h_flags{};
+        DeviceBuffer<bool> d_flagsanchors{};
+        PinnedBuffer<bool> h_flagsanchors{};
 
         DeviceBuffer<bool> d_flagscandidates{};
         PinnedBuffer<bool> h_flagscandidates{};
 
+        PinnedBuffer<read_number> h_usedReadIds{};
+        PinnedBuffer<int> h_numUsedReadIdsPerAnchor{};
+        PinnedBuffer<int> h_numUsedReadIdsPerAnchorPrefixSum{};
+
+        DeviceBuffer<read_number> d_usedReadIds{};
+        DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
+        DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
+
         
     };
      
-private:
+public: //private:
 
     std::vector<ExtendResult> processPairedEndTasks(std::vector<Task>& tasks) override;
 
     std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
 
-    
+private:
 
     void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
@@ -1187,6 +1216,8 @@ public:
 private:
     int deviceId;
     int kmerLength;
+
+    thrust::device_new_allocator<char> thrustallocator{};
 
     PinnedBuffer<read_number> h_readIds;
     DeviceBuffer<read_number> d_readIds;

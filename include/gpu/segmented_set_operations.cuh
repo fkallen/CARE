@@ -53,18 +53,18 @@ void callFillSegmentIdsKernel(
 struct GpuSegmentedSetOperation{
 
     //result = input1 - input2, per segment
-    template<class ThrustAllocator, class T>
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
     T* difference(
         ThrustAllocator& allocator,
         const T* d_input1,
         const int* d_segmentSizes1,
         const int* d_segmentBeginOffsets1,
-        const int* d_segmentIds1,
+        SegmentIdIter1 d_segmentIds1,
         int numElements1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
-        const int* d_segmentIds2,
+        SegmentIdIter2 d_segmentIds2,
         int numElements2,
         int numSegments,        
         T* d_output,
