@@ -1148,7 +1148,7 @@ namespace care{
 
                     int insertpos = 0;
                     for(int i = 0; i < numCandidates; i++){
-                        if(!minimizationResult.differentRegionCandidate[i]){                        
+                        if(!minimizationResult.differentRegionCandidate[i]){               
                             //keep candidate
 
                             task.candidateReadIds[insertpos] = task.candidateReadIds[i];
@@ -1174,6 +1174,8 @@ namespace care{
                             insertpos++;
                         }
                     }
+
+                    task.numRemainingCandidates = insertpos;
 
                     task.candidateReadIds.erase(
                         task.candidateReadIds.begin() + insertpos, 
@@ -1473,6 +1475,7 @@ namespace care{
                 task.numRemainingCandidates = numCandidateIndices;
             };
 
+            nvtx::push_range("MSA", 6);
             msaTimer.start();
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -1570,6 +1573,8 @@ namespace care{
             }
 
             msaTimer.stop();
+
+            nvtx::pop_range();
 
             if(newTasksFromSplit.size() > 0){
                 //std::cerr << "Added " << newTasksFromSplit.size() << " tasks\n";
@@ -1846,6 +1851,8 @@ namespace care{
 
 
     void ReadExtenderGpu::eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const{
+        nvtx::push_range("gpu_eraseDataOfRemovedMates", 3);
+
         auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
             return vec.at(index);
         };
@@ -2143,12 +2150,14 @@ namespace care{
             std::swap(batchData.d_candidateSequencesRevcData2, batchData.d_candidateSequencesRevcData);
 
         }
+
+        nvtx::pop_range();
        
     }
 
 
     void ReadExtenderGpu::calculateAlignments(BatchData& batchData, cudaStream_t stream) const{
-        nvtx::push_range("gpu_alignment", 2);
+        nvtx::push_range("gpu_alignment", 4);
 
         
         batchData.h_numAnchors[0] = batchData.numTasks;
@@ -2229,6 +2238,8 @@ namespace care{
 
 
     void ReadExtenderGpu::filterAlignments(BatchData& batchData, cudaStream_t stream) const{
+        nvtx::push_range("gpu_filterAlignments", 5);
+
         const int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
         const int numAnchors = batchData.numTasks;
 
@@ -2523,6 +2534,8 @@ namespace care{
         std::swap(batchData.d_candidateSequencesLength2, batchData.d_candidateSequencesLength);
         std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
+
+        nvtx::pop_range();
     }
 
 
