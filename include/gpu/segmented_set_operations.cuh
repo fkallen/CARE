@@ -72,6 +72,8 @@ struct GpuSegmentedSetOperation{
         int* d_outputSegmentIds,
         cudaStream_t stream
     ){
+        static_assert(sizeof(typename ThrustAllocator::value_type) == 1, "Allocator for GpuSegmentedSetOperation difference must allocate bytes.");
+
         auto policy = thrust::cuda::par(allocator).on(stream);
 
         auto comp = [] __device__ (const auto& t1, const auto& t2){

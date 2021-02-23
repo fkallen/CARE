@@ -10,6 +10,7 @@
 #include <thrust/iterator/transform_iterator.h>
 
 #include <gpu/segmented_set_operations.cuh>
+#include <gpu/cachingallocator.cuh>
 
 namespace care{
 
@@ -143,8 +144,16 @@ namespace care{
         };
 #endif 
 
+        int deviceId = 0;
+        cudaGetDevice(&deviceId); CUERR;
+
+        
+
         cudaStream_t firstStream = streams[0];
         cudaStream_t secondStream = streams[1];
+
+        ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
+        auto thrustPolicy1 = thrust::cuda::par(thrustCachingAllocator1).on(firstStream);
 
         const int numTasks = tasks.size();
 
@@ -542,17 +551,6 @@ namespace care{
             batchData.d_candidateReadIds2.resize(totalNumCandidates);
             batchData.h_candidateReadIds3.resize(totalNumCandidates);
 
-            //compare (segmentid, value) tuples
-            // auto comp = [] __device__ (const auto& t1, const auto& t2){
-            //     const int idl = thrust::get<0>(t1);
-            //     const int idr = thrust::get<0>(t2);
-    
-            //     if(idl < idr) return true;
-            //     if(idl > idr) return false;
-    
-            //     return thrust::get<1>(t1) < thrust::get<1>(t2);
-            // };
-
             helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), false, firstStream);
 
             //flag candidates to remove because they are equal to anchor id or equal to mate id
@@ -573,7 +571,7 @@ namespace care{
             int newNumCandidates = thrust::distance(
                 batchData.d_candidateReadIds2.data(),
                 thrust::copy_if(
-                    thrust::cuda::par(thrustallocator).on(firstStream),
+                    thrustPolicy1,
                     batchData.d_candidateReadIds.data(),
                     batchData.d_candidateReadIds.data() + totalNumCandidates,
                     batchData.d_flagscandidates.data(),
@@ -585,7 +583,7 @@ namespace care{
             helpers::call_set_kernel_async(batchData.d_numCandidatesPerAnchorPrefixSum2.data(), 0, 0, firstStream);
 
             thrust::inclusive_scan(
-                thrust::cuda::par(thrustallocator).on(firstStream),
+                thrustPolicy1,
                 batchData.d_numCandidatesPerAnchor2.begin(),
                 batchData.d_numCandidatesPerAnchor2.end(),
                 batchData.d_numCandidatesPerAnchorPrefixSum2.begin() + 1
@@ -594,7 +592,7 @@ namespace care{
             helpers::call_fill_kernel_async(batchData.d_segmentIds1.data(), newNumCandidates, 0, firstStream);
 
             thrust::scatter_if(
-                thrust::cuda::par(thrustallocator).on(firstStream),
+                thrustPolicy1,
                 thrust::counting_iterator<int>(0),
                 thrust::counting_iterator<int>(batchData.numTasks),
                 batchData.d_numCandidatesPerAnchorPrefixSum2.begin(),
@@ -603,7 +601,7 @@ namespace care{
             );
 
             thrust::inclusive_scan(
-                thrust::cuda::par(thrustallocator).on(firstStream),
+                thrustPolicy1,
                 batchData.d_segmentIds1.begin(),
                 batchData.d_segmentIds1.end(),
                 batchData.d_segmentIds1.begin(),
@@ -641,7 +639,7 @@ namespace care{
             helpers::call_fill_kernel_async(batchData.d_segmentIds2.data(), totalNumberOfUsedIds, 0, firstStream);
 
             thrust::scatter_if(
-                thrust::cuda::par(thrustallocator).on(firstStream),
+                thrustPolicy1,
                 thrust::counting_iterator<int>(0),
                 thrust::counting_iterator<int>(batchData.numTasks),
                 batchData.h_numUsedReadIdsPerAnchorPrefixSum.begin(),
@@ -650,7 +648,7 @@ namespace care{
             );
 
             thrust::inclusive_scan(
-                thrust::cuda::par(thrustallocator).on(firstStream),
+                thrustPolicy1,
                 batchData.d_segmentIds2.begin(),
                 batchData.d_segmentIds2.end(),
                 batchData.d_segmentIds2.begin(),
@@ -674,7 +672,7 @@ namespace care{
             // << "\n " << batchData.h_segmentIds3.data() << "\n";
 
             auto h_candidateReadIds3_end = GpuSegmentedSetOperation{}.difference(
-                thrustallocator,
+                thrustCachingAllocator1,
                 batchData.d_candidateReadIds2.data(),
                 batchData.d_numCandidatesPerAnchor2.data(),
                 batchData.d_numCandidatesPerAnchorPrefixSum2.data(),
@@ -698,7 +696,7 @@ namespace care{
             int numTasksWithMateRemovedaaaaa = thrust::distance(
                 batchData.h_indexlist2.data(),
                 thrust::copy_if(
-                    thrust::cuda::par(thrustallocator).on(firstStream),
+                    thrustPolicy1,
                     thrust::make_counting_iterator(0),
                     thrust::make_counting_iterator(batchData.numTasks),
                     batchData.d_flagsanchors.data(),

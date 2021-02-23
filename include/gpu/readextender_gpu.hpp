@@ -217,14 +217,16 @@ public:
         const gpu::GpuReadStorage& rs, 
         const gpu::GpuMinhasher& gmh,
         const CorrectionOptions& coropts,
-        const GoodAlignmentProperties& gap        
+        const GoodAlignmentProperties& gap,
+        cub::CachingDeviceAllocator* cubAllocator_
     ) 
     : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
         kmerLength(kmerLength_),
         gpuReadStorage(&rs),
         gpuMinhasher(&gmh),
         readStorageHandle(gpuReadStorage->makeHandle()),
-        minhashHandle(gpuMinhasher->makeQueryHandle()){
+        minhashHandle(gpuMinhasher->makeQueryHandle()),
+        cubAllocator(cubAllocator_){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -1223,6 +1225,7 @@ private:
     int kmerLength;
 
     thrust::device_new_allocator<char> thrustallocator{};
+    cub::CachingDeviceAllocator* cubAllocator{};
 
     PinnedBuffer<read_number> h_readIds;
     DeviceBuffer<read_number> d_readIds;

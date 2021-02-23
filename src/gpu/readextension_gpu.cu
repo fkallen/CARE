@@ -31,6 +31,7 @@
 #include <filehelpers.hpp>
 
 #include <omp.h>
+#include <cub/cub.cuh>
 
 
 namespace care{
@@ -149,6 +150,8 @@ extend_gpu_pairedend(
     {
         const int numDeviceIds = runtimeOptions.deviceIds.size();
 
+        cub::CachingDeviceAllocator cubAllocator{};
+
         assert(numDeviceIds > 0);
 
         const int ompThreadId = omp_get_thread_num();
@@ -169,7 +172,8 @@ extend_gpu_pairedend(
             gpuReadStorage, 
             minhasher,
             correctionOptions,
-            goodAlignmentProperties2
+            goodAlignmentProperties2,
+            &cubAllocator
         };
 
         std::int64_t numSuccess0 = 0;
@@ -468,6 +472,8 @@ extend_gpu_singleend(
 
         assert(numDeviceIds > 0);
 
+        cub::CachingDeviceAllocator cubAllocator{};
+
         const int ompThreadId = omp_get_thread_num();
         const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
         cudaSetDevice(deviceId); CUERR;
@@ -486,7 +492,8 @@ extend_gpu_singleend(
             gpuReadStorage, 
             minhasher,
             correctionOptions,
-            goodAlignmentProperties2
+            goodAlignmentProperties2,
+            &cubAllocator
         };
 
         std::int64_t numSuccess0 = 0;
