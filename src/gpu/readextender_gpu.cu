@@ -532,6 +532,8 @@ namespace care{
 
             batchData.h_segmentIds1.resize(totalNumCandidates);
             batchData.h_segmentIds3.resize(totalNumCandidates);
+            batchData.d_segmentIds1.resize(totalNumCandidates);
+            batchData.d_segmentIds3.resize(totalNumCandidates);
             batchData.h_flagscandidates.resize(totalNumCandidates);
             batchData.d_flagscandidates.resize(totalNumCandidates);
             batchData.h_flagsanchors.resize(batchData.numTasks);
@@ -560,51 +562,51 @@ namespace care{
                 batchData.h_mateReadIds.data(),
                 batchData.h_numCandidatesPerAnchorPrefixSum.data(),
                 batchData.h_numCandidatesPerAnchor.data(),
-                batchData.h_flagscandidates.data(),
-                batchData.h_flagsanchors.data(),
-                batchData.h_numCandidatesPerAnchor2.data(),
+                batchData.d_flagscandidates.data(),
+                batchData.d_flagsanchors.data(),
+                batchData.d_numCandidatesPerAnchor2.data(),
                 batchData.numTasks,
                 tasks[0].pairedEnd
             );
             CUERR;
 
             int newNumCandidates = thrust::distance(
-                batchData.h_candidateReadIds2.data(),
+                batchData.d_candidateReadIds2.data(),
                 thrust::copy_if(
                     thrust::cuda::par(thrustallocator).on(firstStream),
-                    batchData.h_candidateReadIds.data(),
-                    batchData.h_candidateReadIds.data() + totalNumCandidates,
-                    batchData.h_flagscandidates.data(),
-                    batchData.h_candidateReadIds2.data(),
+                    batchData.d_candidateReadIds.data(),
+                    batchData.d_candidateReadIds.data() + totalNumCandidates,
+                    batchData.d_flagscandidates.data(),
+                    batchData.d_candidateReadIds2.data(),
                     thrust::identity<int>()
                 )
             );
 
-            batchData.h_numCandidatesPerAnchorPrefixSum2[0] = 0;
+            helpers::call_set_kernel_async(batchData.d_numCandidatesPerAnchorPrefixSum2.data(), 0, 0, firstStream);
 
             thrust::inclusive_scan(
                 thrust::cuda::par(thrustallocator).on(firstStream),
-                batchData.h_numCandidatesPerAnchor2.begin(),
-                batchData.h_numCandidatesPerAnchor2.end(),
-                batchData.h_numCandidatesPerAnchorPrefixSum2.begin() + 1
+                batchData.d_numCandidatesPerAnchor2.begin(),
+                batchData.d_numCandidatesPerAnchor2.end(),
+                batchData.d_numCandidatesPerAnchorPrefixSum2.begin() + 1
             );
 
-            helpers::call_fill_kernel_async(batchData.h_segmentIds1.data(), newNumCandidates, 0, firstStream);
+            helpers::call_fill_kernel_async(batchData.d_segmentIds1.data(), newNumCandidates, 0, firstStream);
 
             thrust::scatter_if(
                 thrust::cuda::par(thrustallocator).on(firstStream),
                 thrust::counting_iterator<int>(0),
                 thrust::counting_iterator<int>(batchData.numTasks),
-                batchData.h_numCandidatesPerAnchorPrefixSum2.begin(),
-                batchData.h_numCandidatesPerAnchor2.begin(),
-                batchData.h_segmentIds1.begin()
+                batchData.d_numCandidatesPerAnchorPrefixSum2.begin(),
+                batchData.d_numCandidatesPerAnchor2.begin(),
+                batchData.d_segmentIds1.begin()
             );
 
             thrust::inclusive_scan(
                 thrust::cuda::par(thrustallocator).on(firstStream),
-                batchData.h_segmentIds1.begin(),
-                batchData.h_segmentIds1.end(),
-                batchData.h_segmentIds1.begin(),
+                batchData.d_segmentIds1.begin(),
+                batchData.d_segmentIds1.end(),
+                batchData.d_segmentIds1.begin(),
                 thrust::maximum<int>()
             );
 
@@ -634,9 +636,9 @@ namespace care{
                 }
             }
 
-            batchData.h_segmentIds2.resize(totalNumberOfUsedIds);
+            batchData.d_segmentIds2.resize(totalNumberOfUsedIds);
 
-            helpers::call_fill_kernel_async(batchData.h_segmentIds2.data(), totalNumberOfUsedIds, 0, firstStream);
+            helpers::call_fill_kernel_async(batchData.d_segmentIds2.data(), totalNumberOfUsedIds, 0, firstStream);
 
             thrust::scatter_if(
                 thrust::cuda::par(thrustallocator).on(firstStream),
@@ -644,33 +646,49 @@ namespace care{
                 thrust::counting_iterator<int>(batchData.numTasks),
                 batchData.h_numUsedReadIdsPerAnchorPrefixSum.begin(),
                 batchData.h_numUsedReadIdsPerAnchor.begin(),
-                batchData.h_segmentIds2.begin()
+                batchData.d_segmentIds2.begin()
             );
 
             thrust::inclusive_scan(
                 thrust::cuda::par(thrustallocator).on(firstStream),
-                batchData.h_segmentIds2.begin(),
-                batchData.h_segmentIds2.end(),
-                batchData.h_segmentIds2.begin(),
+                batchData.d_segmentIds2.begin(),
+                batchData.d_segmentIds2.end(),
+                batchData.d_segmentIds2.begin(),
                 thrust::maximum<int>()
             );
 
+            // std::cerr
+            // << "\n" << batchData.d_candidateReadIds2.data() 
+            // << "\n " << batchData.d_numCandidatesPerAnchor2.data()
+            // << "\n " << batchData.d_numCandidatesPerAnchorPrefixSum2.data()
+            // << "\n " << batchData.d_segmentIds1.data()
+            // << "\n " << newNumCandidates
+            // << "\n " << batchData.h_usedReadIds.data()
+            // << "\n " << batchData.h_numUsedReadIdsPerAnchor.data()
+            // << "\n " << batchData.h_numUsedReadIdsPerAnchorPrefixSum.data()
+            // << "\n " << batchData.d_segmentIds2.data()
+            // << "\n " << totalNumberOfUsedIds
+            // << "\n " << batchData.numTasks
+            // << "\n " << batchData.h_candidateReadIds3.data()
+            // << "\n " << batchData.h_numCandidatesPerAnchor3.data()
+            // << "\n " << batchData.h_segmentIds3.data() << "\n";
+
             auto h_candidateReadIds3_end = GpuSegmentedSetOperation{}.difference(
                 thrustallocator,
-                batchData.h_candidateReadIds2.data(),
-                batchData.h_numCandidatesPerAnchor2.data(),
-                batchData.h_numCandidatesPerAnchorPrefixSum2.data(),
-                batchData.h_segmentIds1.data(),
+                batchData.d_candidateReadIds2.data(),
+                batchData.d_numCandidatesPerAnchor2.data(),
+                batchData.d_numCandidatesPerAnchorPrefixSum2.data(),
+                batchData.d_segmentIds1.data(),
                 newNumCandidates,
                 batchData.h_usedReadIds.data(),
                 batchData.h_numUsedReadIdsPerAnchor.data(),
                 batchData.h_numUsedReadIdsPerAnchorPrefixSum.data(),
-                batchData.h_segmentIds2.data(),
+                batchData.d_segmentIds2.data(),
                 totalNumberOfUsedIds,
                 batchData.numTasks,        
                 batchData.h_candidateReadIds3.data(),
                 batchData.h_numCandidatesPerAnchor3.data(),
-                batchData.h_segmentIds3.data(),
+                batchData.d_segmentIds3.data(),
                 firstStream
             );
 
@@ -683,7 +701,7 @@ namespace care{
                     thrust::cuda::par(thrustallocator).on(firstStream),
                     thrust::make_counting_iterator(0),
                     thrust::make_counting_iterator(batchData.numTasks),
-                    batchData.h_flagsanchors.data(),
+                    batchData.d_flagsanchors.data(),
                     batchData.h_indexlist2.data(),
                     thrust::identity<int>()
                 )

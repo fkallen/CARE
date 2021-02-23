@@ -96,16 +96,44 @@ struct GpuSegmentedSetOperation{
 
         int outputsize = thrust::distance(outputZip, outputZipEnd);
 
-        thrust::reduce_by_key(
-            policy, 
-            d_outputSegmentIds, 
-            d_outputSegmentIds + outputsize, 
-            thrust::make_constant_iterator(1), 
-            thrust::make_discard_iterator(), 
-            d_outputSegmentSizes
+        auto uniqueIdsPtr = allocator.allocate(sizeof(int) * numSegments);
+        auto reducedCountsPtr = allocator.allocate(sizeof(int) * numSegments);
+
+        int* uniqueIds = (int*)thrust::raw_pointer_cast(uniqueIdsPtr);
+        int* reducedCounts = (int*)thrust::raw_pointer_cast(reducedCountsPtr);
+
+        int numUnique = thrust::distance(
+            uniqueIds,
+            thrust::reduce_by_key(
+                policy, 
+                d_outputSegmentIds, 
+                d_outputSegmentIds + outputsize, 
+                thrust::make_constant_iterator(1), 
+                uniqueIds, 
+                reducedCounts
+            ).first
+        );
+
+        cudaMemsetAsync(
+            d_outputSegmentSizes,
+            0,
+            sizeof(int) * numSegments,
+            stream
+        );
+
+        thrust::for_each_n(
+            policy,
+            thrust::make_zip_iterator(thrust::make_tuple(uniqueIds, reducedCounts)),
+            numUnique,
+            [d_outputSegmentSizes] __device__ (auto tup){
+                d_outputSegmentSizes[thrust::get<0>(tup)] = thrust::get<1>(tup);
+            }
         );
 
         cudaStreamSynchronize(stream); CUERR;
+
+        allocator.deallocate(uniqueIdsPtr, sizeof(int) * numSegments);
+        allocator.deallocate(reducedCountsPtr, sizeof(int) * numSegments);
 
         return d_output + outputsize;
     }

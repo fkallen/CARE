@@ -257,6 +257,11 @@ public:
         PinnedBuffer<int> h_segmentIds3{};
         PinnedBuffer<int> h_segmentIds4{};
 
+        DeviceBuffer<int> d_segmentIds1{};
+        DeviceBuffer<int> d_segmentIds2{};
+        DeviceBuffer<int> d_segmentIds3{};
+        DeviceBuffer<int> d_segmentIds4{};
+
         PinnedBuffer<unsigned int> h_anchormatedata{};
         DeviceBuffer<unsigned int> d_anchormatedata{};
 
