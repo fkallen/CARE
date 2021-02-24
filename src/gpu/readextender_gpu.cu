@@ -1415,7 +1415,9 @@ namespace care{
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
+                nvtx::push_range("constructMsa", 7);
                 const MultipleSequenceAlignment msa = constructMsa(task, indexOfActiveTask);
+                nvtx::pop_range();
 
                 // std::cerr << "original msa\n";
                 // msa.print(std::cerr);
@@ -1428,8 +1430,9 @@ namespace care{
                     auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
 
                     if(possibleSplits.splits.size() > 1){
+                        nvtx::push_range("split msa", 8);
                         //auto& task = tasks[indexOfActiveTask];
-                        
+                        #if 1
                         std::sort(
                             possibleSplits.splits.begin(), 
                             possibleSplits.splits.end(),
@@ -1438,6 +1441,17 @@ namespace care{
                                 return split2.listOfCandidates.size() < split1.listOfCandidates.size();
                             }
                         );
+                        #else
+                        std::nth_element(
+                            possibleSplits.splits.begin(), 
+                            possibleSplits.splits.begin() + 1, 
+                            possibleSplits.splits.end(),
+                            [](const auto& split1, const auto& split2){
+                                //sort by size, descending
+                                return split2.listOfCandidates.size() < split1.listOfCandidates.size();
+                            }
+                        );
+                        #endif
 
                         // std::cerr << "split[0] = ";
                         // for(auto x : possibleSplits.splits[0].listOfCandidates) std::cerr << x << " ";
@@ -1493,7 +1507,8 @@ namespace care{
                             splitTracker[task.myReadId]++;
 
 
-                        }                        
+                        }
+                        nvtx::pop_range();                     
                     }else{
                         extendWithMsa(task, msa, indexOfActiveTask);
                     }

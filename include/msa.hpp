@@ -82,6 +82,16 @@ public:
         char letter = 'F';
         int column = -1;
         float ratio = 0.0f;
+
+        bool operator==(const PossibleSplitColumn& rhs) const{
+            return letter == rhs.letter
+                && column == rhs.column
+                && ratio == rhs.ratio;
+        }
+
+        bool operator!=(const PossibleSplitColumn& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct MsaSplit{
@@ -91,10 +101,27 @@ public:
             
         std::vector<PossibleSplitColumn> columnInfo;
         std::vector<int> listOfCandidates;
+
+        bool operator==(const MsaSplit& rhs) const{
+            return columnInfo == rhs.columnInfo
+                && listOfCandidates == rhs.listOfCandidates;
+        }
+
+        bool operator!=(const MsaSplit& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct PossibleMsaSplits{
         std::vector<MsaSplit> splits;
+
+        bool operator==(const PossibleMsaSplits& rhs) const{
+            return splits == rhs.splits;
+        }
+
+        bool operator!=(const PossibleMsaSplits& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     std::vector<char> consensus;

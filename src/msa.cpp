@@ -3,7 +3,7 @@
 #include <bestalignment.hpp>
 
 #include <map>
-
+#include <bitset>
 namespace care{
 
 void MultipleSequenceAlignment::build(const InputData& args){
@@ -732,15 +732,13 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     return inspectColumnsRegionSplit(firstColumn, nColumns);
 }
 
-
-
-
 MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const{
     assert(lastColumnExcl >= 0);
     assert(lastColumnExcl <= nColumns);
 
     std::vector<PossibleSplitColumn> possibleColumns;
 
+    //find columns in which two different nucleotides each make up approx 50% (40% - 60%) of the column
     for(int col = firstColumn; col < lastColumnExcl; col++){
         std::array<PossibleSplitColumn, 4> array{};
         int numPossibleNucs = 0;
@@ -773,9 +771,17 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
 
         //calculate proper results
         {
-            //std::map<unsigned int, std::pair<std::vector<PossibleSplitColumn>, std::vector<int>>> map;
-            std::map<unsigned int, std::vector<int>> map;
+            
 
+            //for each candidate check if it appears in the selected columns
+            //there can be at most 16 selected columns.the result is bit-encoded in 32 bits, 2 bits per column
+            //0b10 - candidate base matches first selected nuc in column
+            //0b11 - candidate base matches second selected nuc in column
+            //0b00 - candidate base does not match, or candidate does not occupy column
+
+            //map groups candidates with the same bit pattern
+            std::map<unsigned int, std::vector<int>> map;
+            
             for(int l = 0; l < nCandidates; l++){
                 const int candidateRow = l;
 
@@ -1063,11 +1069,8 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     //         os << "\n";
     //     }
     // }
+
 }
-
-
-
-
 
 
 }
