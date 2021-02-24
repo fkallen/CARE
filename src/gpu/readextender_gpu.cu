@@ -14,6 +14,21 @@
 
 namespace care{
 
+    struct SequenceFlagMultiplier{
+        int pitch{};
+        const bool* flags{};
+
+        __host__ __device__
+        SequenceFlagMultiplier(const bool* flags_, int pitch_)
+            :pitch(pitch_), flags(flags_){
+
+        }
+
+        __host__ __device__
+        bool operator()(int i) const{
+            return flags[i / pitch];
+        }
+    };
 
     //flag candidates to remove because they are equal to anchor id or equal to mate id
     __global__
@@ -433,6 +448,9 @@ namespace care{
             batchData.h_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
             batchData.d_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
 
+            batchData.h_inputanchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
+            batchData.d_inputanchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
+
             batchData.h_numCandidatesPerAnchor.resize(numActiveTasks);
             batchData.d_numCandidatesPerAnchor.resize(numActiveTasks);
             batchData.h_numCandidatesPerAnchor2.resize(numActiveTasks);
@@ -452,12 +470,20 @@ namespace care{
             batchData.h_indexlist2.resize(numActiveTasks);
             batchData.d_indexlist2.resize(numActiveTasks);
 
+            batchData.totalNumberOfUsedIds = 0;
 
             for(int t = 0; t < numActiveTasks; t++){
                 const auto& task = tasks[indicesOfActiveTasks[t]];
 
                 batchData.h_anchorReadIds[t] = task.myReadId;
                 batchData.h_mateReadIds[t] = task.mateReadId;
+                batchData.totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
+
+                std::copy(
+                    task.encodedMate.begin(),
+                    task.encodedMate.end(),
+                    batchData.h_inputanchormatedata.begin() + t * encodedSequencePitchInInts
+                );
     
                 if(task.iteration >= 0){
     
@@ -466,7 +492,7 @@ namespace care{
                     std::copy(
                         task.currentAnchor.begin(),
                         task.currentAnchor.end(),
-                        batchData.h_subjectSequencesData.get() + t * encodedSequencePitchInInts
+                        batchData.h_subjectSequencesData.begin() + t * encodedSequencePitchInInts
                     );
                 }else{
                     //only hash kmers which include extended positions
@@ -489,6 +515,19 @@ namespace care{
                 }
             }
 
+            batchData.h_usedReadIds.resize(batchData.totalNumberOfUsedIds);
+            batchData.h_numUsedReadIdsPerAnchor.resize(batchData.numTasks);
+            batchData.h_numUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
+            batchData.d_segmentIds2.resize(batchData.totalNumberOfUsedIds);
+
+            cudaMemcpyAsync(
+                batchData.d_inputanchormatedata.get(),
+                batchData.h_inputanchormatedata.get(),
+                sizeof(unsigned int) * numActiveTasks * encodedSequencePitchInInts,
+                H2D,
+                firstStream
+            ); CUERR;            
+
             cudaMemcpyAsync(
                 batchData.d_subjectSequencesData.get(),
                 batchData.h_subjectSequencesData.get(),
@@ -505,61 +544,79 @@ namespace care{
                 firstStream
             ); CUERR;
 
+            cudaMemcpyAsync(
+                batchData.d_anchorReadIds.get(),
+                batchData.h_anchorReadIds.get(),
+                sizeof(read_number) * batchData.numTasks,
+                H2D,
+                secondStream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                batchData.d_mateReadIds.get(),
+                batchData.h_mateReadIds.get(),
+                sizeof(read_number) * batchData.numTasks,
+                H2D,
+                secondStream
+            ); CUERR;
+
+            batchData.h_numUsedReadIdsPerAnchorPrefixSum[0] = 0;
+            {
+                auto h_usedReadIdsIter = batchData.h_usedReadIds.begin();
+                for(int i = 0; i < batchData.numTasks; i++){
+                    auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+                    h_usedReadIdsIter = std::copy(
+                        task.allUsedCandidateReadIdPairs.begin(),
+                        task.allUsedCandidateReadIdPairs.end(),
+                        h_usedReadIdsIter
+                    );
+                    batchData.h_numUsedReadIdsPerAnchor[i] = task.allUsedCandidateReadIdPairs.size();
+
+                    if(i < batchData.numTasks - 1){
+                        batchData.h_numUsedReadIdsPerAnchorPrefixSum[i+1] 
+                            = batchData.h_numUsedReadIdsPerAnchorPrefixSum[i] + batchData.h_numUsedReadIdsPerAnchor[i];
+                    }
+                }
+            }
+
             hashTimer.start();
 
             getCandidateReadIds(batchData, firstStream);
 
             cudaMemcpyAsync(
-                batchData.h_numCandidatesPerAnchorPrefixSum.get(),
-                batchData.d_numCandidatesPerAnchorPrefixSum.get(),
-                sizeof(int) * (batchData.numTasks+1),
+                &batchData.totalNumCandidates,
+                batchData.d_numCandidatesPerAnchorPrefixSum.get() + batchData.numTasks,
+                sizeof(int),
                 D2H,
                 firstStream
             ); CUERR;
     
             cudaStreamSynchronize(firstStream); CUERR;
+            cudaStreamSynchronize(secondStream); CUERR;
 
-            int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
-    
-            cudaMemcpyAsync(
-                batchData.h_candidateReadIds.get(),
-                batchData.d_candidateReadIds.get(),
-                sizeof(read_number) * totalNumCandidates,
-                D2H,
-                firstStream
-            ); CUERR;
+            batchData.h_candidateReadIds.resize(batchData.totalNumCandidates);
 
-            cudaMemcpyAsync(
-                batchData.h_numCandidatesPerAnchor.get(),
-                batchData.d_numCandidatesPerAnchor.get(),
-                sizeof(int) * batchData.numTasks,
-                D2H,
-                firstStream
-            ); CUERR;
-    
-            cudaStreamSynchronize(firstStream); CUERR;
-
-            batchData.h_segmentIds1.resize(totalNumCandidates);
-            batchData.h_segmentIds3.resize(totalNumCandidates);
-            batchData.d_segmentIds1.resize(totalNumCandidates);
-            batchData.d_segmentIds3.resize(totalNumCandidates);
-            batchData.h_flagscandidates.resize(totalNumCandidates);
-            batchData.d_flagscandidates.resize(totalNumCandidates);
+            batchData.h_segmentIds1.resize(batchData.totalNumCandidates);
+            batchData.h_segmentIds3.resize(batchData.totalNumCandidates);
+            batchData.d_segmentIds1.resize(batchData.totalNumCandidates);
+            batchData.d_segmentIds3.resize(batchData.totalNumCandidates);
+            batchData.h_flagscandidates.resize(batchData.totalNumCandidates);
+            batchData.d_flagscandidates.resize(batchData.totalNumCandidates);
             batchData.h_flagsanchors.resize(batchData.numTasks);
             batchData.d_flagsanchors.resize(batchData.numTasks);
-            batchData.h_candidateReadIds2.resize(totalNumCandidates);
-            batchData.d_candidateReadIds2.resize(totalNumCandidates);
-            batchData.h_candidateReadIds3.resize(totalNumCandidates);
+            batchData.h_candidateReadIds2.resize(batchData.totalNumCandidates);
+            batchData.d_candidateReadIds2.resize(batchData.totalNumCandidates);
+            batchData.h_candidateReadIds3.resize(batchData.totalNumCandidates);
 
             helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), false, firstStream);
 
             //flag candidates to remove because they are equal to anchor id or equal to mate id
             flagCandidateIdsWhichAreEqualToAnchorOrMateKernel<<<4096, 128, 0, firstStream>>>(
-                batchData.h_candidateReadIds.data(),
-                batchData.h_anchorReadIds.data(),
-                batchData.h_mateReadIds.data(),
-                batchData.h_numCandidatesPerAnchorPrefixSum.data(),
-                batchData.h_numCandidatesPerAnchor.data(),
+                batchData.d_candidateReadIds.data(),
+                batchData.d_anchorReadIds.data(),
+                batchData.d_mateReadIds.data(),
+                batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                batchData.d_numCandidatesPerAnchor.data(),
                 batchData.d_flagscandidates.data(),
                 batchData.d_flagsanchors.data(),
                 batchData.d_numCandidatesPerAnchor2.data(),
@@ -568,12 +625,12 @@ namespace care{
             );
             CUERR;
 
-            int newNumCandidates = thrust::distance(
+            batchData.totalNumCandidates = thrust::distance(
                 batchData.d_candidateReadIds2.data(),
                 thrust::copy_if(
                     thrustPolicy1,
                     batchData.d_candidateReadIds.data(),
-                    batchData.d_candidateReadIds.data() + totalNumCandidates,
+                    batchData.d_candidateReadIds.data() + batchData.totalNumCandidates,
                     batchData.d_flagscandidates.data(),
                     batchData.d_candidateReadIds2.data(),
                     thrust::identity<int>()
@@ -589,7 +646,7 @@ namespace care{
                 batchData.d_numCandidatesPerAnchorPrefixSum2.begin() + 1
             );
 
-            helpers::call_fill_kernel_async(batchData.d_segmentIds1.data(), newNumCandidates, 0, firstStream);
+            helpers::call_fill_kernel_async(batchData.d_segmentIds1.data(), batchData.totalNumCandidates, 0, firstStream);
 
             thrust::scatter_if(
                 thrustPolicy1,
@@ -608,35 +665,7 @@ namespace care{
                 thrust::maximum<int>()
             );
 
-            std::size_t totalNumberOfUsedIds = 0;
-            for(int i = 0; i < batchData.numTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
-                totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
-            }
-            batchData.h_usedReadIds.resize(totalNumberOfUsedIds);
-            batchData.h_numUsedReadIdsPerAnchor.resize(batchData.numTasks);
-            batchData.h_numUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
-
-            batchData.h_numUsedReadIdsPerAnchorPrefixSum[0] = 0;
-            auto h_usedReadIdsIter = batchData.h_usedReadIds.begin();
-            for(int i = 0; i < batchData.numTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
-                h_usedReadIdsIter = std::copy(
-                    task.allUsedCandidateReadIdPairs.begin(),
-                    task.allUsedCandidateReadIdPairs.end(),
-                    h_usedReadIdsIter
-                );
-                batchData.h_numUsedReadIdsPerAnchor[i] = task.allUsedCandidateReadIdPairs.size();
-
-                if(i < batchData.numTasks - 1){
-                    batchData.h_numUsedReadIdsPerAnchorPrefixSum[i+1] 
-                        = batchData.h_numUsedReadIdsPerAnchorPrefixSum[i] + batchData.h_numUsedReadIdsPerAnchor[i];
-                }
-            }
-
-            batchData.d_segmentIds2.resize(totalNumberOfUsedIds);
-
-            helpers::call_fill_kernel_async(batchData.d_segmentIds2.data(), totalNumberOfUsedIds, 0, firstStream);
+            helpers::call_fill_kernel_async(batchData.d_segmentIds2.data(), batchData.totalNumberOfUsedIds, 0, firstStream);
 
             thrust::scatter_if(
                 thrustPolicy1,
@@ -665,273 +694,107 @@ namespace care{
             // << "\n " << batchData.h_numUsedReadIdsPerAnchor.data()
             // << "\n " << batchData.h_numUsedReadIdsPerAnchorPrefixSum.data()
             // << "\n " << batchData.d_segmentIds2.data()
-            // << "\n " << totalNumberOfUsedIds
+            // << "\n " << batchData.totalNumberOfUsedIds
             // << "\n " << batchData.numTasks
             // << "\n " << batchData.h_candidateReadIds3.data()
             // << "\n " << batchData.h_numCandidatesPerAnchor3.data()
             // << "\n " << batchData.h_segmentIds3.data() << "\n";
 
-            auto h_candidateReadIds3_end = GpuSegmentedSetOperation{}.difference(
+            auto d_candidateReadIds_end = GpuSegmentedSetOperation{}.difference(
                 thrustCachingAllocator1,
                 batchData.d_candidateReadIds2.data(),
                 batchData.d_numCandidatesPerAnchor2.data(),
                 batchData.d_numCandidatesPerAnchorPrefixSum2.data(),
                 batchData.d_segmentIds1.data(),
-                newNumCandidates,
+                batchData.totalNumCandidates,
                 batchData.h_usedReadIds.data(),
                 batchData.h_numUsedReadIdsPerAnchor.data(),
                 batchData.h_numUsedReadIdsPerAnchorPrefixSum.data(),
                 batchData.d_segmentIds2.data(),
-                totalNumberOfUsedIds,
+                batchData.totalNumberOfUsedIds,
                 batchData.numTasks,        
-                batchData.h_candidateReadIds3.data(),
-                batchData.h_numCandidatesPerAnchor3.data(),
+                batchData.d_candidateReadIds.data(),
+                batchData.d_numCandidatesPerAnchor.data(),
                 batchData.d_segmentIds3.data(),
                 firstStream
             );
 
-            newNumCandidates = std::distance(batchData.h_candidateReadIds3.data(), h_candidateReadIds3_end);
+            batchData.totalNumCandidates = std::distance(batchData.d_candidateReadIds.data(), d_candidateReadIds_end);
+
+            thrust::inclusive_scan(
+                thrustPolicy1,
+                batchData.d_numCandidatesPerAnchor.begin(),
+                batchData.d_numCandidatesPerAnchor.end(),
+                batchData.d_numCandidatesPerAnchorPrefixSum.begin() + 1
+            );
 
             //determine task ids with removed mates
-            int numTasksWithMateRemovedaaaaa = thrust::distance(
-                batchData.h_indexlist2.data(),
+            batchData.numTasksWithMateRemoved = thrust::distance(
+                batchData.d_indexlist1.data(),
                 thrust::copy_if(
                     thrustPolicy1,
                     thrust::make_counting_iterator(0),
                     thrust::make_counting_iterator(batchData.numTasks),
                     batchData.d_flagsanchors.data(),
-                    batchData.h_indexlist2.data(),
+                    batchData.d_indexlist1.data(),
                     thrust::identity<int>()
                 )
             );
 
+            if(batchData.numTasksWithMateRemoved > 0){
+                thrust::copy_if(
+                    thrustPolicy1,
+                    batchData.d_inputanchormatedata.begin(),
+                    batchData.d_inputanchormatedata.end(),
+                    thrust::make_transform_iterator(
+                        thrust::make_counting_iterator(0),
+                        SequenceFlagMultiplier{batchData.d_flagsanchors.data(), int(encodedSequencePitchInInts)}
+                    ),
+                    batchData.d_anchormatedata.begin(),
+                    thrust::identity<bool>()
+                );
+            }
+
             cudaStreamSynchronize(firstStream); CUERR;
-
-            std::vector<unsigned int> anchormatedataaaa(encodedSequencePitchInInts * numTasksWithMateRemovedaaaaa);
-
-            for(int i = 0; i < numTasksWithMateRemovedaaaaa; i++){
-                const int indexForActiveTasks = batchData.h_indexlist2[i];
-                const int indexForTasks = indicesOfActiveTasks[indexForActiveTasks];
-                const auto& task = vecAccess(tasks, indexForTasks);
-
-                std::copy(
-                    task.encodedMate.begin(), 
-                    task.encodedMate.end(), 
-                    anchormatedataaaa.begin() + i * encodedSequencePitchInInts
-                );
-            }
-
-            // cudaDeviceSynchronize(); CUERR;
-            // for(int i = 0; i < batchData.h_numCandidatesPerAnchor[0]; i++){
-            //     std::cerr << batchData.h_candidateReadIds[i] << " " << int(batchData.h_flagscandidates[i]) << "\n";
-            // }
-            // std::cerr << "\n";
-            
-
-            batchData.numTasksWithMateRemoved = 0;
-
-            read_number* outputiter = batchData.h_candidateReadIds.data();
-
-            for(int i = 0; i < batchData.numTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
-
-                int& numCandidates = batchData.h_numCandidatesPerAnchor[i];
-                const int candidatesOffset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
-                read_number* candidates = batchData.h_candidateReadIds + candidatesOffset;
-                read_number* candidatesEnd = candidates + numCandidates;
-
-                auto readIdPos = std::lower_bound(
-                    candidates,
-                    candidatesEnd,
-                    task.myReadId
-                );
-
-                if(readIdPos != candidatesEnd && *readIdPos == task.myReadId){
-                    std::copy(readIdPos+1, candidatesEnd, readIdPos);
-                    --numCandidates;
-                    --candidatesEnd;
-                }
-
-                if(task.pairedEnd){
-
-                    //remove mate of input from candidate list
-                    auto mateReadIdPos = std::lower_bound(
-                        candidates,
-                        candidates + numCandidates,
-                        task.mateReadId
-                    );
-
-                    if(mateReadIdPos != candidatesEnd && *mateReadIdPos == task.mateReadId){
-                        std::copy(mateReadIdPos+1, candidatesEnd, mateReadIdPos);
-                        --numCandidates;
-                        --candidatesEnd;
-
-                        std::copy(
-                            task.encodedMate.begin(), 
-                            task.encodedMate.end(), 
-                            batchData.h_anchormatedata.begin() + batchData.numTasksWithMateRemoved * encodedSequencePitchInInts
-                        );
-
-                        batchData.h_indexlist1[batchData.numTasksWithMateRemoved] = i;
-
-                        batchData.numTasksWithMateRemoved++;
-
-                        task.mateRemovedFromCandidates = true; //debug. not required
-                    }
-                }
-
-                /*
-                    Remove candidate pairs which have already been used for extension
-                */
-
-                std::vector<read_number> tmp(numCandidates);
-
-                auto end = std::set_difference(
-                    candidates,
-                    candidatesEnd,
-                    task.allUsedCandidateReadIdPairs.begin(),
-                    task.allUsedCandidateReadIdPairs.end(),
-                    tmp.begin()
-                );
-
-                numCandidates = std::distance(tmp.begin(), end);
-
-                //std::copy(tmp.begin(), end, candidates);
-                outputiter = std::copy(tmp.begin(), end, outputiter);
-            }
 
             hashTimer.stop();
-
-            cudaStreamSynchronize(firstStream); CUERR;
-            if(numTasksWithMateRemovedaaaaa != batchData.numTasksWithMateRemoved){
-                std::cerr << "numTasksWithMateRemovedaaaaa = " << numTasksWithMateRemovedaaaaa << ", batchData.numTasksWithMateRemoved = " << batchData.numTasksWithMateRemoved << "\n";
-            }else{
-                for(int i = 0; i < batchData.numTasksWithMateRemoved * encodedSequencePitchInInts; i++){
-                    const int l = batchData.h_anchormatedata[i];
-                    const int r = anchormatedataaaa[i];
-    
-                    if(l != r){
-                        std::cerr << "anchormatedataaaa " << i << " " << l << " " << r << "\n";
-                    }
-                }
-                
-            }
-
-            for(int i = 0; i < batchData.numTasks; i++){
-                const int l = batchData.h_numCandidatesPerAnchor[i];
-                const int r = batchData.h_numCandidatesPerAnchor3[i];
-
-                if(l != r){
-                    std::cerr << "numPerAnchor " << i << " " << l << " " << r << "\n";
-                }
-            }
-
-            for(int i = 0; i < newNumCandidates; i++){
-                const read_number l = batchData.h_candidateReadIds[i];
-                const read_number r = batchData.h_candidateReadIds3[i];
-
-                if(l != r){
-                    std::cerr << "candidateids " << i << " " << l << " " << r << "\n";
-                }
-            }
-
-            if(batchData.numTasksWithMateRemoved > 0){
-                cudaMemcpyAsync(
-                    batchData.d_anchormatedata.data(),
-                    batchData.h_anchormatedata.data(),
-                    sizeof(unsigned int) * batchData.numTasksWithMateRemoved * encodedSequencePitchInInts,
-                    H2D,
-                    firstStream
-                ); CUERR;
-    
-                cudaMemcpyAsync(
-                    batchData.d_indexlist1.data(),
-                    batchData.h_indexlist1.data(),
-                    sizeof(int) * batchData.numTasksWithMateRemoved,
-                    H2D,
-                    firstStream
-                ); CUERR;
-            }
-
-            //compact candidate ids and update offsets accordingly
-
-            // {
-            //     read_number* outputposition = batchData.h_candidateReadIds.data();
-
-                 for(int i = 0; i < batchData.numTasks; i++){
-    
-                     const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
-            //         const int candidatesOffset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
-            //         const read_number* candidates = batchData.h_candidateReadIds + candidatesOffset;
-                    
-            //         outputposition = std::copy_n(candidates, numCandidates, outputposition);
-                     batchData.h_numCandidatesPerAnchorPrefixSum[i+1] = batchData.h_numCandidatesPerAnchorPrefixSum[i] + numCandidates;                 
-                 }
-            // }
-
-            totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
-
-            cudaMemcpyAsync(
-                batchData.d_numCandidatesPerAnchor.data(),
-                batchData.h_numCandidatesPerAnchor.data(),
-                sizeof(int) * batchData.numTasks,
-                H2D,
-                firstStream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                batchData.d_numCandidatesPerAnchorPrefixSum.data(),
-                batchData.h_numCandidatesPerAnchorPrefixSum.data(),
-                sizeof(int) * (batchData.numTasks + 1),
-                H2D,
-                firstStream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                batchData.d_candidateReadIds.data(),
-                batchData.h_candidateReadIds.data(),
-                sizeof(read_number) * totalNumCandidates,
-                H2D,
-                firstStream
-            ); CUERR;
-
    
             //allocate data for candidate sequences 
-            batchData.h_candidateSequencesLength.resize(totalNumCandidates);
-            batchData.h_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
-            batchData.h_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
+            batchData.h_candidateSequencesLength.resize(batchData.totalNumCandidates);
+            batchData.h_candidateSequencesData.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
+            batchData.h_candidateSequencesRevcData.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
 
-            batchData.d_candidateSequencesLength.resize(totalNumCandidates);
-            batchData.d_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
-            batchData.d_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
+            batchData.d_candidateSequencesLength.resize(batchData.totalNumCandidates);
+            batchData.d_candidateSequencesData.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
+            batchData.d_candidateSequencesRevcData.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
 
-            batchData.d_candidateSequencesLength2.resize(totalNumCandidates);
-            batchData.d_candidateSequencesData2.resize(encodedSequencePitchInInts * totalNumCandidates);
-            batchData.d_candidateSequencesRevcData2.resize(encodedSequencePitchInInts * totalNumCandidates);
-            batchData.d_candidateReadIds2.resize(totalNumCandidates);
+            batchData.d_candidateSequencesLength2.resize(batchData.totalNumCandidates);
+            batchData.d_candidateSequencesData2.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
+            batchData.d_candidateSequencesRevcData2.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
+            batchData.d_candidateReadIds2.resize(batchData.totalNumCandidates);
 
-            batchData.h_intbuffercandidates.resize(totalNumCandidates);
-            batchData.d_intbuffercandidates.resize(totalNumCandidates);
-            batchData.h_flagscandidates.resize(totalNumCandidates);
-            batchData.d_flagscandidates.resize(totalNumCandidates);
+            batchData.h_intbuffercandidates.resize(batchData.totalNumCandidates);
+            batchData.d_intbuffercandidates.resize(batchData.totalNumCandidates);
+            batchData.h_flagscandidates.resize(batchData.totalNumCandidates);
+            batchData.d_flagscandidates.resize(batchData.totalNumCandidates);
 
-            batchData.h_alignment_overlaps.resize(totalNumCandidates);
-            batchData.h_alignment_shifts.resize(totalNumCandidates);
-            batchData.h_alignment_nOps.resize(totalNumCandidates);
-            batchData.h_alignment_isValid.resize(totalNumCandidates);
-            batchData.h_alignment_best_alignment_flags.resize(totalNumCandidates);
+            batchData.h_alignment_overlaps.resize(batchData.totalNumCandidates);
+            batchData.h_alignment_shifts.resize(batchData.totalNumCandidates);
+            batchData.h_alignment_nOps.resize(batchData.totalNumCandidates);
+            batchData.h_alignment_isValid.resize(batchData.totalNumCandidates);
+            batchData.h_alignment_best_alignment_flags.resize(batchData.totalNumCandidates);
 
-            batchData.d_alignment_overlaps.resize(totalNumCandidates);
-            batchData.d_alignment_shifts.resize(totalNumCandidates);
-            batchData.d_alignment_nOps.resize(totalNumCandidates);
-            batchData.d_alignment_isValid.resize(totalNumCandidates);
-            batchData.d_alignment_best_alignment_flags.resize(totalNumCandidates);
+            batchData.d_alignment_overlaps.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_shifts.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_nOps.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_isValid.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_best_alignment_flags.resize(batchData.totalNumCandidates);
 
-            batchData.d_alignment_overlaps2.resize(totalNumCandidates);
-            batchData.d_alignment_shifts2.resize(totalNumCandidates);
-            batchData.d_alignment_nOps2.resize(totalNumCandidates);
-            batchData.d_alignment_isValid2.resize(totalNumCandidates);
-            batchData.d_alignment_best_alignment_flags2.resize(totalNumCandidates);
+            batchData.d_alignment_overlaps2.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_shifts2.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_nOps2.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_isValid2.resize(batchData.totalNumCandidates);
+            batchData.d_alignment_best_alignment_flags2.resize(batchData.totalNumCandidates);
 
             collectTimer.start();
 
@@ -957,28 +820,12 @@ namespace care{
     
             cudaStreamSynchronize(firstStream); CUERR;
 
-            totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
-
-            // cudaMemcpyAsync(
-            //     batchData.h_candidateReadIds.data(),
-            //     batchData.d_candidateReadIds.data(),
-            //     sizeof(read_number) * totalNumCandidates,
-            //     H2D,
-            //     secondStream
-            // ); CUERR;
-
-            // cudaMemcpyAsync(
-            //     batchData.h_candidateSequencesLength.get(),
-            //     batchData.d_candidateSequencesLength.get(),
-            //     sizeof(int) * totalNumCandidates,
-            //     H2D,
-            //     secondStream
-            // ); CUERR;
+            batchData.totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
     
             cudaMemcpyAsync(
                 batchData.h_candidateSequencesData.get(),
                 batchData.d_candidateSequencesData.get(),
-                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
                 H2D,
                 secondStream
             ); CUERR;
@@ -986,7 +833,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_candidateSequencesRevcData.get(),
                 batchData.d_candidateSequencesRevcData.get(),
-                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
                 H2D,
                 secondStream
             ); CUERR;    
@@ -1007,273 +854,23 @@ namespace care{
 
             alignmentTimer.stop();
 
-
-            // cudaMemcpyAsync(
-            //     batchData.h_alignment_overlaps.get(),
-            //     batchData.d_alignment_overlaps.get(),
-            //     sizeof(int) * totalNumCandidates,
-            //     D2H,
-            //     firstStream
-            // ); CUERR;
-
-            // cudaMemcpyAsync(
-            //     batchData.h_alignment_isValid.get(),
-            //     batchData.d_alignment_isValid.get(),
-            //     sizeof(bool) * totalNumCandidates,
-            //     D2H,
-            //     firstStream
-            // ); CUERR;
-
-            // cudaMemcpyAsync(
-            //     batchData.h_alignment_shifts.get(),
-            //     batchData.d_alignment_shifts.get(),
-            //     sizeof(int) * totalNumCandidates,
-            //     D2H,
-            //     firstStream
-            // ); CUERR;
-
-            // cudaMemcpyAsync(
-            //     batchData.h_alignment_nOps.get(),
-            //     batchData.d_alignment_nOps.get(),
-            //     sizeof(int) * totalNumCandidates,
-            //     D2H,
-            //     firstStream
-            // ); CUERR;
-
-            // cudaMemcpyAsync(
-            //     batchData.h_alignment_best_alignment_flags.get(),
-            //     batchData.d_alignment_best_alignment_flags.get(),
-            //     sizeof(BestAlignment_t) * totalNumCandidates,
-            //     D2H,
-            //     firstStream
-            // ); CUERR;
-
-            // cudaStreamSynchronize(firstStream); CUERR;
             cudaStreamSynchronize(secondStream); CUERR;
 
-            // unpack batchData into tasks
-
-
+            // unpack batchData sequences into tasks
             for(int i = 0; i < numActiveTasks; i++){
                 auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
 
                 const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
                 const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
 
-                // task.candidateReadIds.resize(numCandidates);
-                // std::copy_n(batchData.h_candidateReadIds.data() + offset, numCandidates, task.candidateReadIds.begin());
-
-                // task.candidateSequenceLengths.resize(numCandidates);
-                // std::copy_n(batchData.h_candidateSequencesLength.data() + offset, numCandidates, task.candidateSequenceLengths.begin());
-
                 task.candidateSequencesFwdData.resize(numCandidates * encodedSequencePitchInInts);
                 std::copy_n(batchData.h_candidateSequencesData.data() + offset * encodedSequencePitchInInts, numCandidates * encodedSequencePitchInInts, task.candidateSequencesFwdData.begin());
 
                 task.candidateSequencesRevcData.resize(numCandidates * encodedSequencePitchInInts);
                 std::copy_n(batchData.h_candidateSequencesRevcData.data() + offset * encodedSequencePitchInInts, numCandidates * encodedSequencePitchInInts, task.candidateSequencesRevcData.begin());
-
-                // task.alignmentFlags.resize(numCandidates);
-                // task.alignments.resize(numCandidates);
-
-                // for(int c = 0; c < numCandidates; c++){
-                //     task.alignments[c].shift = batchData.h_alignment_shifts[offset + c];
-                //     task.alignments[c].overlap = batchData.h_alignment_overlaps[offset + c];
-                //     task.alignments[c].nOps = batchData.h_alignment_nOps[offset + c];
-                //     task.alignments[c].isValid = batchData.h_alignment_isValid[offset + c];
-                //     task.alignmentFlags[c] = batchData.h_alignment_best_alignment_flags[offset + c];
-                // }
-
-                task.mateRemovedFromCandidates = false; //debug. not required
             }
-
-
-            // for(int i = 0; i < numActiveTasks; i++){
-            //     auto& newtask = tasks[indicesOfActiveTasks[i]];
-            //     auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
-
-            //     if(newtask != oldtask){
-            //         std::cerr << "old task and new task differ. i=" 
-            //             << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
-            //     }
-            // }
-
-            
-
-#if 0
-            alignmentFilterTimer.start();
-
-            for(int indexOfActiveTask : indicesOfActiveTasks){
-                auto& task = vecAccess(tasks, indexOfActiveTask);
-
-                /*
-                    Remove bad alignments
-                */        
-
-                const int size = task.alignments.size();
-
-                std::vector<int> positionsOfCandidatesToKeep(size);
-                std::vector<int> tmpPositionsOfCandidatesToKeep(size);
-
-                task.numRemainingCandidates = 0;
-
-                //select candidates with good alignment and positive shift
-                for(int c = 0; c < size; c++){
-                    const BestAlignment_t alignmentFlag0 = vecAccess(task.alignmentFlags, c);
-                    
-                    if(alignmentFlag0 != BestAlignment_t::None && vecAccess(task.alignments, c).shift >= 0){
-                        vecAccess(positionsOfCandidatesToKeep, task.numRemainingCandidates) = c;
-                        task.numRemainingCandidates++;
-                    }else{
-                        ; // remove alignment
-                    }
-                }
-
-                positionsOfCandidatesToKeep.erase(
-                    positionsOfCandidatesToKeep.begin() + task.numRemainingCandidates, 
-                    positionsOfCandidatesToKeep.end()
-                );
-
-                if(task.numRemainingCandidates == 0){
-                    task.abort = true;
-                    task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
-
-                    continue; //stop processing task
-                }
-
-                float relativeOverlapThreshold = 0.9f;
-                bool goodAlignmentExists = false;
-
-                #if 0
-
-                while(!goodAlignmentExists && fgeq(relativeOverlapThreshold, goodAlignmentProperties.min_overlap_ratio)){                    
-
-                    goodAlignmentExists = std::any_of(
-                        positionsOfCandidatesToKeep.begin(), 
-                        positionsOfCandidatesToKeep.end(),
-                        [&](const auto& position){
-                            const auto& alignment = vecAccess(task.alignments, position);
-                            const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                            // if(fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f){
-                            //     std::cerr << position << " " << relativeOverlap << " " << relativeOverlapThreshold << "\n";
-                            // }
-                            return fgeq(relativeOverlap, relativeOverlapThreshold) && relativeOverlap < 1.0f;
-                        }
-                    );
-
-                    if(!goodAlignmentExists){
-                        relativeOverlapThreshold -= 0.1f;
-                    }
-                }
-
-                #else 
-                {
-
-                    bool hasmax = false;
-                    float maxRel = 0.0f;
-
-                    for(auto p : positionsOfCandidatesToKeep){
-                        const auto& alignment = vecAccess(task.alignments, p);
-                        const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                        if(relativeOverlap < 1.0f && fgeq(relativeOverlap, goodAlignmentProperties.min_overlap_ratio)){
-                            hasmax = true;
-                            const float tmp = std::floor(relativeOverlap * 10.0f) / 10.0f;
-                            maxRel = std::max(maxRel, tmp);
-                        }
-                    }
-                    // assert(hasmax == goodAlignmentExists);
-                    // if(hasmax){
-                    //     assert(feq(maxRel, relativeOverlapThreshold));
-                    // }
-
-                    relativeOverlapThreshold = maxRel;
-                    goodAlignmentExists = hasmax;
-
-                }
-
-                #endif
-
-                
-
-
-                
-
-                if(goodAlignmentExists){
-                    positionsOfCandidatesToKeep.erase(
-                        std::remove_if(
-                            positionsOfCandidatesToKeep.begin(), 
-                            positionsOfCandidatesToKeep.end(),
-                            [&](const auto& position){
-                                const auto& alignment = vecAccess(task.alignments, position);
-                                const float relativeOverlap = float(alignment.overlap) / float(task.currentAnchorLength);
-                                return !fgeq(relativeOverlap, relativeOverlapThreshold);
-                            }
-                        ),
-                        positionsOfCandidatesToKeep.end()
-                    );
-                    task.numRemainingCandidates = positionsOfCandidatesToKeep.size();
-                }
-
-                //std::cerr << ", remaining candidates " << task.numRemainingCandidates << "\n";
-
-
-                //compact selected candidates inplace
-
-                
-
-                {
-                    task.candidateSequenceData.resize(task.numRemainingCandidates * encodedSequencePitchInInts);
-
-                    for(int c = 0; c < task.numRemainingCandidates; c++){
-                        const int index = vecAccess(positionsOfCandidatesToKeep, c);
-
-                        vecAccess(task.alignments, c) = vecAccess(task.alignments, index);
-                        vecAccess(task.alignmentFlags, c) = vecAccess(task.alignmentFlags, index);
-                        vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
-                        vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);
-                        
-                        assert(vecAccess(task.alignmentFlags, index) != BestAlignment_t::None);
-
-                        if(vecAccess(task.alignmentFlags, index) == BestAlignment_t::Forward){
-                            std::copy_n(
-                                task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
-                                encodedSequencePitchInInts,
-                                task.candidateSequenceData.data() + c * encodedSequencePitchInInts
-                            );
-                        }else{
-                            //BestAlignment_t::ReverseComplement
-
-                            std::copy_n(
-                                task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
-                                encodedSequencePitchInInts,
-                                task.candidateSequenceData.data() + c * encodedSequencePitchInInts
-                            );
-                        }
-
-                    }
-
-                    //erase past-end elements
-                    task.alignments.erase(
-                        task.alignments.begin() + task.numRemainingCandidates, 
-                        task.alignments.end()
-                    );
-                    task.alignmentFlags.erase(
-                        task.alignmentFlags.begin() + task.numRemainingCandidates, 
-                        task.alignmentFlags.end()
-                    );
-                    task.candidateReadIds.erase(
-                        task.candidateReadIds.begin() + task.numRemainingCandidates, 
-                        task.candidateReadIds.end()
-                    );
-                    task.candidateSequenceLengths.erase(
-                        task.candidateSequenceLengths.begin() + task.numRemainingCandidates, 
-                        task.candidateSequenceLengths.end()
-                    );                    
-                }
-
-            }
-
-            alignmentFilterTimer.stop();
-#else       
+           
+       
             filterAlignments(batchData, firstStream);
 
             cudaMemcpyAsync(
@@ -1294,16 +891,12 @@ namespace care{
     
             cudaStreamSynchronize(firstStream); CUERR;
 
-            //auto old = totalNumCandidates;
-
-            totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
-
-            //std::cerr << old << " -> " << totalNumCandidates << "\n";
+            batchData.totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
 
             cudaMemcpyAsync(
                 batchData.h_candidateReadIds.data(),
                 batchData.d_candidateReadIds.data(),
-                sizeof(read_number) * totalNumCandidates,
+                sizeof(read_number) * batchData.totalNumCandidates,
                 H2D,
                 firstStream
             ); CUERR;
@@ -1311,7 +904,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_candidateSequencesLength.get(),
                 batchData.d_candidateSequencesLength.get(),
-                sizeof(int) * totalNumCandidates,
+                sizeof(int) * batchData.totalNumCandidates,
                 H2D,
                 firstStream
             ); CUERR;
@@ -1319,7 +912,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_candidateSequencesData.get(),
                 batchData.d_candidateSequencesData.get(),
-                sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
+                sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
                 H2D,
                 firstStream
             ); CUERR;
@@ -1327,7 +920,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_alignment_overlaps.get(),
                 batchData.d_alignment_overlaps.get(),
-                sizeof(int) * totalNumCandidates,
+                sizeof(int) * batchData.totalNumCandidates,
                 D2H,
                 firstStream
             ); CUERR;
@@ -1335,7 +928,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_alignment_isValid.get(),
                 batchData.d_alignment_isValid.get(),
-                sizeof(bool) * totalNumCandidates,
+                sizeof(bool) * batchData.totalNumCandidates,
                 D2H,
                 firstStream
             ); CUERR;
@@ -1343,7 +936,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_alignment_shifts.get(),
                 batchData.d_alignment_shifts.get(),
-                sizeof(int) * totalNumCandidates,
+                sizeof(int) * batchData.totalNumCandidates,
                 D2H,
                 firstStream
             ); CUERR;
@@ -1351,7 +944,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_alignment_nOps.get(),
                 batchData.d_alignment_nOps.get(),
-                sizeof(int) * totalNumCandidates,
+                sizeof(int) * batchData.totalNumCandidates,
                 D2H,
                 firstStream
             ); CUERR;
@@ -1359,7 +952,7 @@ namespace care{
             cudaMemcpyAsync(
                 batchData.h_alignment_best_alignment_flags.get(),
                 batchData.d_alignment_best_alignment_flags.get(),
-                sizeof(BestAlignment_t) * totalNumCandidates,
+                sizeof(BestAlignment_t) * batchData.totalNumCandidates,
                 D2H,
                 firstStream
             ); CUERR;
@@ -1418,7 +1011,7 @@ namespace care{
             //     }
             // }
     
-#endif        
+
             std::vector<Task> newTasksFromSplit;
             std::vector<int> newTaskIndices;
 
@@ -2131,8 +1724,7 @@ namespace care{
 
         cudaStreamSynchronize(stream); CUERR;
 
-        batchData.d_candidateReadIds.resize(totalNumValues);
-        batchData.h_candidateReadIds.resize(totalNumValues);
+        batchData.d_candidateReadIds.resize(totalNumValues);        
 
         if(totalNumValues == 0){
             cudaMemsetAsync(batchData.d_numCandidatesPerAnchor.get(), 0, sizeof(int) * batchData.numTasks , stream); CUERR;
@@ -2159,7 +1751,7 @@ namespace care{
 
         nvtx::push_range("gpu_loadCandidates", 2);
 
-        const int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+        const int totalNumCandidates = batchData.totalNumCandidates;
 
         gpuReadStorage->gatherSequences(
             readStorageHandle,
@@ -2199,7 +1791,7 @@ namespace care{
         };
 
         if(batchData.numTasksWithMateRemoved > 0){
-            const int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+            const int totalNumCandidates = batchData.totalNumCandidates;
 
             constexpr int groupsize = 32;
             constexpr int blocksize = 128;
@@ -2508,7 +2100,7 @@ namespace care{
         const bool removeAmbiguousAnchors = false;
         const bool removeAmbiguousCandidates = false;
         const int maxNumAnchors = batchData.numTasks;
-        const int maxNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+        const int maxNumCandidates = batchData.totalNumCandidates;
         const int maximumSequenceLength = 100; //encodedSequencePitchInInts * 16;
         const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
         const int min_overlap = goodAlignmentProperties.min_overlap;
@@ -2552,7 +2144,7 @@ namespace care{
             );
         };
 
-        const int num = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+        const int num = batchData.totalNumCandidates;
 
         assert(batchData.d_intbuffercandidates.size() >= num);
         assert(batchData.h_numAnchors[0] == batchData.numTasks);
@@ -2581,7 +2173,7 @@ namespace care{
     void ReadExtenderGpu::filterAlignments(BatchData& batchData, cudaStream_t stream) const{
         nvtx::push_range("gpu_filterAlignments", 5);
 
-        const int totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+        const int totalNumCandidates = batchData.totalNumCandidates;
         const int numAnchors = batchData.numTasks;
 
         helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), true, stream);

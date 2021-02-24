@@ -246,6 +246,8 @@ public:
         int numTasks = 0;
         int numTasksWithMateRemoved = 0;
 
+        int totalNumCandidates = 0;
+        int totalNumberOfUsedIds = 0;
 
         PinnedBuffer<read_number> h_anchorReadIds{};
         DeviceBuffer<read_number> d_anchorReadIds{};
@@ -266,6 +268,10 @@ public:
 
         PinnedBuffer<unsigned int> h_anchormatedata{};
         DeviceBuffer<unsigned int> d_anchormatedata{};
+
+
+        PinnedBuffer<unsigned int> h_inputanchormatedata{};
+        DeviceBuffer<unsigned int> d_inputanchormatedata{};
 
         PinnedBuffer<int> h_indexlist1{};
         DeviceBuffer<int> d_indexlist1{};
