@@ -1720,7 +1720,33 @@ namespace care{
 #if 1
                 //if(task.splitDepth == 0){
                 if(splitTracker[task.myReadId] <= 4){
-                    auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
+                    std::vector<MultipleSequenceAlignment::PossibleSplitColumn> possibleSplitColumns = computePossibleSplitColumns(
+                        task.currentAnchorLength, 
+                        msa.nColumns,
+                        msa.countsA.data(),
+                        msa.countsC.data(),
+                        msa.countsG.data(),
+                        msa.countsT.data(),
+                        msa.coverage.data()
+                    );
+
+                    auto possibleSplitsNew = inspectColumnsRegionSplit(
+                        possibleSplitColumns.data(),
+                        possibleSplitColumns.size(),
+                        task.currentAnchorLength, 
+                        msa.nColumns,
+                        msa.subjectColumnsBegin_incl,
+                        msa.nCandidates,
+                        task.candidateStrings.data(),
+                        decodedSequencePitchInBytes,
+                        msa.inputData.candidateShifts,
+                        msa.inputData.candidateLengths
+                    );
+
+                    //auto possibleSplitsOld = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
+                    //assert(possibleSplitsOld == possibleSplitsNew);
+
+                    auto& possibleSplits = possibleSplitsNew;
 
                     if(possibleSplits.splits.size() > 1){
                         //nvtx::push_range("split msa", 8);
