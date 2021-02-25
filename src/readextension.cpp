@@ -48,7 +48,6 @@ extend_cpu_pairedend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -67,20 +66,6 @@ extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
@@ -94,13 +79,13 @@ extend_cpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
     
-    const std::uint64_t totalNumReadPairs = sequenceFileProperties.nReads / 2;
+    const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -127,7 +112,7 @@ extend_cpu_pairedend(
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -344,7 +329,6 @@ extend_cpu_singleend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -365,21 +349,6 @@ extend_cpu_singleend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
@@ -392,23 +361,25 @@ extend_cpu_singleend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
     BackgroundThread outputThread(true);
+
+    const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
 
             printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, totalNumReadPairs,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
         }
 
-        if(totalCount == sequenceFileProperties.nReads){
+        if(totalCount == totalNumReadPairs){
             std::cerr << '\n';
         }
     };
@@ -417,12 +388,12 @@ extend_cpu_singleend(
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -632,7 +603,6 @@ extend_cpu(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -644,7 +614,6 @@ extend_cpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             minhasher,
             readStorage
         );
@@ -656,7 +625,6 @@ extend_cpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             minhasher,
             readStorage
         );
