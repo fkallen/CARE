@@ -173,7 +173,7 @@ extend_gpu_pairedend(
             minhasher,
             correctionOptions,
             goodAlignmentProperties2,
-            &cubAllocator
+            cubAllocator
         };
 
         std::int64_t numSuccess0 = 0;
@@ -493,7 +493,7 @@ extend_gpu_singleend(
             minhasher,
             correctionOptions,
             goodAlignmentProperties2,
-            &cubAllocator
+            cubAllocator
         };
 
         std::int64_t numSuccess0 = 0;

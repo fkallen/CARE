@@ -218,7 +218,7 @@ public:
         const gpu::GpuMinhasher& gmh,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap,
-        cub::CachingDeviceAllocator* cubAllocator_
+        cub::CachingDeviceAllocator& cubAllocator_
     ) 
     : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
         kmerLength(kmerLength_),
@@ -226,7 +226,7 @@ public:
         gpuMinhasher(&gmh),
         readStorageHandle(gpuReadStorage->makeHandle()),
         minhashHandle(gpuMinhasher->makeQueryHandle()),
-        cubAllocator(cubAllocator_){
+        cubAllocator(&cubAllocator_){
 
 
         cudaGetDevice(&deviceId); CUERR;
@@ -256,14 +256,15 @@ public:
         PinnedBuffer<read_number> h_candidateReadIds{};
         DeviceBuffer<read_number> d_candidateReadIds{};
 
-        PinnedBuffer<int> h_segmentIds1{};
+        PinnedBuffer<int> h_anchorIndicesOfCandidates{};
+        PinnedBuffer<int> h_anchorIndicesOfCandidates2{};
+
         PinnedBuffer<int> h_segmentIds2{};
-        PinnedBuffer<int> h_segmentIds3{};
         PinnedBuffer<int> h_segmentIds4{};
 
-        DeviceBuffer<int> d_segmentIds1{};
+        DeviceBuffer<int> d_anchorIndicesOfCandidates{};
+        DeviceBuffer<int> d_anchorIndicesOfCandidates2{};
         DeviceBuffer<int> d_segmentIds2{};
-        DeviceBuffer<int> d_segmentIds3{};
         DeviceBuffer<int> d_segmentIds4{};
 
         PinnedBuffer<unsigned int> h_anchormatedata{};
@@ -314,8 +315,6 @@ public:
         DeviceBuffer<int> d_numAnchors{};
         DeviceBuffer<int> d_numCandidates{};
 
-        PinnedBuffer<int> h_anchorIndicesOfCandidates{};
-        DeviceBuffer<int> d_anchorIndicesOfCandidates{};
         PinnedBuffer<int> h_anchorSequencesLength{};
         DeviceBuffer<int> d_anchorSequencesLength{};
         PinnedBuffer<int> h_candidateSequencesLength{};
@@ -1276,6 +1275,7 @@ private:
     PinnedBuffer<bool> h_flags;
 
     std::array<CudaStream, 4> streams{};
+    std::array<CudaEvent, 1> events{};
 
     mutable gpu::KernelLaunchHandle kernelLaunchHandle;
 
