@@ -11,15 +11,17 @@
 #include <thrust/iterator/discard_iterator.h>
 #include <thrust/device_new_allocator.h>
 
+#include <cub/cub.cuh>
+
 #include <iostream>
 
 
 template<class T>
 __global__ void fillSegmentIdsKernel(
-    const int* segmentSizes,
-    const int* segmentBeginOffsets,
+    const int* __restrict__ segmentSizes,
+    const int* __restrict__ segmentBeginOffsets,
     int numSegments,
-    T* output
+    T* __restrict__ output
 ){
     for(int seg = blockIdx.x; seg < numSegments; seg += gridDim.x){
         const int offset = segmentBeginOffsets[seg];
@@ -48,6 +50,45 @@ void callFillSegmentIdsKernel(
         numSegments,
         d_output
     ); CUERR;
+}
+
+__global__
+void setOutputSegmentSizesKernel(
+    const int* __restrict__ uniqueIds,
+    const int* __restrict__ reducedCounts,
+    const int* __restrict__ numUnique,
+    int* __restrict__ outputSizes
+){
+    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    const int stride = blockDim.x * gridDim.x;
+    const int n = *numUnique;
+
+    for(int i = tid; i < n; i += stride){
+        outputSizes[uniqueIds[i]] = reducedCounts[i];
+    }
+}
+
+__global__
+void initAndSetOutputSegmentSizesSingleBlockKernel(
+    const int* __restrict__ uniqueIds,
+    const int* __restrict__ reducedCounts,
+    const int* __restrict__ numUnique,
+    int* __restrict__ outputSizes,
+    int numSegments
+){
+    const int tid = threadIdx.x;
+    const int stride = blockDim.x;
+    const int n = *numUnique;
+
+    for(int i = tid; i < numSegments; i += stride){
+        outputSizes[i] = 0;
+    }
+
+    __syncthreads();
+
+    for(int i = tid; i < n; i += stride){
+        outputSizes[uniqueIds[i]] = reducedCounts[i];
+    }
 }
 
 struct GpuSegmentedSetOperation{
@@ -98,23 +139,75 @@ struct GpuSegmentedSetOperation{
 
         int outputsize = thrust::distance(outputZip, outputZipEnd);
 
-        auto uniqueIdsPtr = allocator.allocate(sizeof(int) * numSegments);
-        auto reducedCountsPtr = allocator.allocate(sizeof(int) * numSegments);
+        std::size_t cubbytes = 0;
 
-        int* uniqueIds = (int*)thrust::raw_pointer_cast(uniqueIdsPtr);
-        int* reducedCounts = (int*)thrust::raw_pointer_cast(reducedCountsPtr);
-
-        int numUnique = thrust::distance(
-            uniqueIds,
-            thrust::reduce_by_key(
-                policy, 
-                d_outputSegmentIds, 
-                d_outputSegmentIds + outputsize, 
-                thrust::make_constant_iterator(1), 
-                uniqueIds, 
-                reducedCounts
-            ).first
+        cudaError_t cubstatus = cub::DeviceRunLengthEncode::Encode(
+            nullptr,
+            cubbytes,
+            (int*) nullptr,
+            (int*) nullptr,
+            (int*) nullptr,
+            (int*) nullptr,
+            outputsize,
+            stream
         );
+        assert(cubstatus == cudaSuccess);
+
+        void* temp_allocations[4];
+        std::size_t temp_allocation_sizes[4];
+        
+        temp_allocation_sizes[0] = sizeof(int) * numSegments;
+        temp_allocation_sizes[1] = sizeof(int) * numSegments;
+        temp_allocation_sizes[2] = sizeof(int);
+        temp_allocation_sizes[3] = cubbytes;
+        
+        std::size_t temp_storage_bytes = 0;
+        cubstatus = cub::AliasTemporaries(
+            nullptr,
+            temp_storage_bytes,
+            temp_allocations,
+            temp_allocation_sizes
+        );
+        assert(cubstatus == cudaSuccess);
+
+        auto tempPtr = allocator.allocate(sizeof(char) * temp_storage_bytes);
+        cubstatus = cub::AliasTemporaries(
+            (void*)thrust::raw_pointer_cast(tempPtr),
+            temp_storage_bytes,
+            temp_allocations,
+            temp_allocation_sizes
+        );
+        assert(cubstatus == cudaSuccess);
+
+
+        int* const uniqueIds = (int*)temp_allocations[0];
+        int* const reducedCounts = (int*)temp_allocations[1];        
+        int* const numRuns = (int*)temp_allocations[2];
+        void* const cubtemp = (void*)temp_allocations[3];
+        
+        cubstatus = cub::DeviceRunLengthEncode::Encode(
+            cubtemp,
+            cubbytes,
+            d_outputSegmentIds,
+            uniqueIds,
+            reducedCounts,
+            numRuns,
+            outputsize,
+            stream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        #if 1
+
+        initAndSetOutputSegmentSizesSingleBlockKernel<<<1, 1024, 0, stream>>>(
+            uniqueIds,
+            reducedCounts,
+            numRuns,
+            d_outputSegmentSizes,
+            numSegments
+        );
+
+        #else
 
         cudaMemsetAsync(
             d_outputSegmentSizes,
@@ -123,92 +216,22 @@ struct GpuSegmentedSetOperation{
             stream
         );
 
-        thrust::for_each_n(
-            policy,
-            thrust::make_zip_iterator(thrust::make_tuple(uniqueIds, reducedCounts)),
-            numUnique,
-            [d_outputSegmentSizes] __device__ (auto tup){
-                d_outputSegmentSizes[thrust::get<0>(tup)] = thrust::get<1>(tup);
-            }
+        setOutputSegmentSizesKernel<<<SDIV(numSegments, 256), 256, 0, stream>>>(
+            uniqueIds,
+            reducedCounts,
+            numRuns,
+            d_outputSegmentSizes
         );
+
+        #endif
 
         cudaStreamSynchronize(stream); CUERR;
 
-        allocator.deallocate(uniqueIdsPtr, sizeof(int) * numSegments);
-        allocator.deallocate(reducedCountsPtr, sizeof(int) * numSegments);
+        allocator.deallocate(tempPtr, sizeof(char) * temp_storage_bytes);        
 
         return d_output + outputsize;
     }
 
-    //result = input1 - input2, per segment
-    template<class T>
-    T* difference(
-        const T* d_input1,
-        const int* d_segmentSizes1,
-        const int* d_segmentBeginOffsets1,
-        int numElements1,
-        const T* d_input2,
-        const int* d_segmentSizes2,
-        const int* d_segmentBeginOffsets2,
-        int numElements2,
-        int numSegments,        
-        T* d_output,
-        int* d_outputSegmentSizes,
-        cudaStream_t stream
-    ){
-        const int maxOutputSize = numElements1 + numElements2;
-
-        size_t paddedsize1 = SDIV(numElements1, 64) * 64;
-        size_t paddedsize2 = SDIV(numElements2, 64) * 64;
-        int* segmentIds = nullptr;
-        cudaMalloc(&segmentIds, sizeof(int) * paddedsize1 + sizeof(int) * paddedsize2 + sizeof(int) * maxOutputSize); CUERR;
-
-        int* const d_segmentIds1 = segmentIds;
-        int* const d_segmentIds2 = d_segmentIds1 + paddedsize1;
-        int* const d_outputSegmentIds = d_segmentIds2 + paddedsize2;
-
-        dim3 block = 128;
-        dim3 grid = numSegments;
-
-        fillSegmentIdsKernel<<<grid, block, 0, stream>>>(
-            d_segmentSizes1,
-            d_segmentBeginOffsets1,
-            numSegments,
-            d_segmentIds1
-        ); CUERR;
-
-        fillSegmentIdsKernel<<<grid, block, 0, stream>>>(
-            d_segmentSizes2,
-            d_segmentBeginOffsets2,
-            numSegments,
-            d_segmentIds2
-        ); CUERR;
-
-        thrust::device_new_allocator<char> allocator{};
-
-        T* retVal = difference(
-            allocator,
-            d_input1,
-            d_segmentSizes1,
-            d_segmentBeginOffsets1,
-            d_segmentIds1,
-            numElements1,
-            d_input2,
-            d_segmentSizes2,
-            d_segmentBeginOffsets2,
-            d_segmentIds2,
-            numElements2,
-            numSegments,        
-            d_output,
-            d_outputSegmentSizes,
-            d_outputSegmentIds,
-            stream
-        );
-
-        cudaFree(segmentIds); CUERR;
-
-        return retVal;
-    }
 };
 
 
