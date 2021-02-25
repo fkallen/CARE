@@ -955,6 +955,7 @@ public:
 protected:
 
     struct Task{
+        bool dataIsAvailable = false;
         bool pairedEnd = false;
         bool abort = false;
         bool mateHasBeenFound = false;
@@ -1092,6 +1093,7 @@ protected:
         void reset(){
             auto clear = [](auto& vec){vec.clear();};
 
+            dataIsAvailable = false;
             pairedEnd = false;
             abort = false;
             mateHasBeenFound = false;
