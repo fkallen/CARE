@@ -1607,9 +1607,9 @@ namespace care{
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
-                nvtx::push_range("constructMsa", 7);
+                //nvtx::push_range("constructMsa", 7);
                 const MultipleSequenceAlignment msa = constructMsa(task, indexOfActiveTask);
-                nvtx::pop_range();
+                //nvtx::pop_range();
 
                 // std::cerr << "original msa\n";
                 // msa.print(std::cerr);
@@ -1622,7 +1622,7 @@ namespace care{
                     auto possibleSplits = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
 
                     if(possibleSplits.splits.size() > 1){
-                        nvtx::push_range("split msa", 8);
+                        //nvtx::push_range("split msa", 8);
                         //auto& task = tasks[indexOfActiveTask];
                         #if 1
                         std::sort(
@@ -1700,7 +1700,7 @@ namespace care{
 
 
                         }
-                        nvtx::pop_range();                     
+                        //nvtx::pop_range();                     
                     }else{
                         extendWithMsa(task, msa, indexOfActiveTask);
                     }
