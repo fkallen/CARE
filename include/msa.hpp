@@ -178,6 +178,33 @@ public:
     PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn) const;
     PossibleMsaSplits inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const;
 
+    static std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(
+        int firstColumn, 
+        int lastColumnExcl,
+        const int* countsA,
+        const int* countsC,
+        const int* countsG,
+        const int* countsT,
+        const int* coverages
+    );
+
+    static MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
+        const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
+        int numPossibleColumns,
+        int firstColumn, int lastColumnExcl,
+        int subjectColumnsBegin_incl,
+        const int* countsA,
+        const int* countsC,
+        const int* countsG,
+        const int* countsT,
+        const int* coverages,
+        int numCandidates,
+        const char* candidates,
+        int decodedSequencePitchBytes,
+        const int* candidateShifts,
+        const int* candidateLengths
+    );
+
     void setQualityConversion(const cpu::QualityScoreConversion* conversion){
         qualityConversion = conversion;
     }
