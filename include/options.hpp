@@ -45,9 +45,10 @@ namespace care{
         int numHashFunctions = 48;
         CorrectionType correctionType = CorrectionType::Classic;
         CorrectionType correctionTypeCands = CorrectionType::Classic;
-        float threshold = .5f; // threshold for classifier
-        float sampleRate_anchor = 1.f;
-        float sampleRate_cands = 0.01f;
+        float thresholdAnchor = .5f; // threshold for anchor classifier
+        float thresholdCands = .5f; // threshold for cands classifier
+        float sampleRateAnchor = 1.f;
+        float sampleRateCands = 0.01f;
     };
 
 

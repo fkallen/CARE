@@ -118,19 +118,24 @@ namespace args{
                 default: result.correctionType = CorrectionType::Classic; break;
             }
         }
-        if(pr.count("threshold")){
-            float t = pr["threshold"].as<float>();
-            result.threshold = t>1.0?t/100:t;
+        if(pr.count("thresholdAnchor")){
+            float t = pr["thresholdAnchor"].as<float>();
+            result.thresholdAnchor = t>1.0?t/100:t;
+        }
+
+        if(pr.count("thresholdCands")){
+            float t = pr["thresholdCands"].as<float>();
+            result.thresholdCands = t>1.0?t/100:t;
         }
 
         if(pr.count("samplingRateAnchor")){
             float t = pr["samplingRateAnchor"].as<float>();
-            result.sampleRate_anchor = t>1.0?t/100:t;
+            result.sampleRateAnchor = t>1.0?t/100:t;
         }
 
         if(pr.count("samplingRateCands")){
             float t = pr["samplingRateCands"].as<float>();
-            result.sampleRate_cands = t>1.0?t/100:t;
+            result.sampleRateCands = t>1.0?t/100:t;
         }
 
         return result;

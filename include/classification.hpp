@@ -40,13 +40,13 @@ struct clf_agent
     CandsExtractor extract_cands;
 
     clf_agent(const CorrectionOptions& c_opts, const FileOptions& f_opts) :
-        classifier_anchor(c_opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor, c_opts.threshold) : nullptr),
-        classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands, c_opts.threshold) : nullptr),
+        classifier_anchor(c_opts.correctionType == CorrectionType::Forest ? std::make_shared<AnchorClf>(f_opts.mlForestfileAnchor, c_opts.thresholdAnchor) : nullptr),
+        classifier_cands(c_opts.correctionTypeCands == CorrectionType::Forest ? std::make_shared<CandClf>(f_opts.mlForestfileCands, c_opts.thresholdCands) : nullptr),
         anchor_file(c_opts.correctionType == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileAnchor) : nullptr),
         cands_file(c_opts.correctionTypeCands == CorrectionType::Print ? std::make_shared<std::ofstream>(f_opts.mlForestfileCands) : nullptr),
         rng(44),
-        coinflip_anchor(c_opts.sampleRate_anchor),
-        coinflip_cands(c_opts.sampleRate_cands)
+        coinflip_anchor(c_opts.sampleRateAnchor),
+        coinflip_cands(c_opts.sampleRateCands)
     {}
 
     clf_agent(const clf_agent& other) :
@@ -100,7 +100,7 @@ struct clf_agent
 
 namespace detail {
 
-struct extract_anchor_linear_37 {
+struct extract_anchor_transformed {
     using features_t = std::array<float, 37>;
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
@@ -151,7 +151,7 @@ struct extract_anchor_linear_37 {
     }
 };
 
-struct extract_cands_linear_42 {
+struct extract_cands_transformed {
     using features_t = std::array<float, 42>;
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
@@ -245,7 +245,7 @@ struct extract_anchor_21 {
     }
 };
 
-struct extract_cands_linear_26 {
+struct extract_cands_26 {
     using features_t = std::array<float, 26>;
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
@@ -294,7 +294,7 @@ struct extract_cands_linear_26 {
 //--------------------------------------------------------------------------------
 
 using anchor_extractor = detail::extract_anchor_21;
-using cands_extractor = detail::extract_cands_linear_26;
+using cands_extractor = detail::extract_cands_26;
 
 using anchor_clf_t = ForestClf;
 using cands_clf_t = ForestClf;

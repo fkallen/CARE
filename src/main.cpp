@@ -165,7 +165,9 @@ int main(int argc, char** argv){
 			cxxopts::value<std::string>())
 		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
 			cxxopts::value<std::string>())
-		("threshold", "Classification threshold for classifier-based (\"Forest\") mode",
+		("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
+			cxxopts::value<float>())
+		("thresholdCands", "Classification threshold for candidates classifier (\"Forest\") mode",
 			cxxopts::value<float>())
 		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
 			cxxopts::value<float>())
@@ -312,9 +314,9 @@ int main(int argc, char** argv){
 	std::cout << "\n";
 	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
 	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
-	std::cout << "anchor sampling rate: " << correctionOptions.sampleRate_anchor << "\n";
-	std::cout << "cands sampling rate: " << correctionOptions.sampleRate_cands << "\n";
-	std::cout << "classification threshold: " << correctionOptions.threshold << "\n";
+	std::cout << "anchor sampling rate: " << correctionOptions.sampleRateAnchor << "\n";
+	std::cout << "cands sampling rate: " << correctionOptions.sampleRateCands << "\n";
+	std::cout << "classification thresholds: " << correctionOptions.thresholdAnchor << " | " << correctionOptions.thresholdCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 
