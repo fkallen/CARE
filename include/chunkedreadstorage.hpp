@@ -410,12 +410,18 @@ public: //inherited interface
         const read_number* readIds, 
         int numSequences
     ) const override{
-        if(numSequences > 0 && getNumberOfReadsWithN() > 0){
-
-            for(int i = 0; i < numSequences; i++){
-                auto it = ambigReadIds.find(readIds[i]);
-                result[i] = (it != ambigReadIds.end());
+        if(numSequences > 0){
+            if(getNumberOfReadsWithN() > 0){
+                for(int i = 0; i < numSequences; i++){
+                    auto it = ambigReadIds.find(readIds[i]);
+                    result[i] = (it != ambigReadIds.end());
+                }
+            }else{
+                // if there are no stored reads with ambiguous bases, simply fill output with false
+                std::fill(result, result + numSequences, false);
             }
+        }else{
+            //output buffer is empty
         }
     }
 
