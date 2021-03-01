@@ -455,6 +455,7 @@ namespace care{
             batchData.d_numAnchors.resize(1);
             batchData.h_numCandidates.resize(1);
             batchData.d_numCandidates.resize(1);
+            batchData.d_numCandidates2.resize(1);
 
             batchData.h_anchorReadIds.resize(numActiveTasks);
             batchData.d_anchorReadIds.resize(numActiveTasks);
@@ -1151,6 +1152,393 @@ namespace care{
                 }
             }
             #endif
+
+            {
+                //construct gpu msa
+
+                const std::size_t min_overlap = std::max(
+                    1, 
+                    std::max(
+                        goodAlignmentProperties.min_overlap, 
+                        int(gpuReadStorage->getSequenceLengthUpperBound() * goodAlignmentProperties.min_overlap_ratio)
+                    )
+                );
+                const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
+                //round up to 32 elements
+                const std::size_t msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
+
+                
+
+                batchData.d_consensus.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.d_support.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.d_coverage.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.d_origWeights.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.d_origCoverages.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.d_msa_column_properties.resize(numActiveTasks);
+                batchData.d_counts.resize(numActiveTasks * 4 * msaColumnPitchInElements);
+                batchData.d_weights.resize(numActiveTasks * 4 * msaColumnPitchInElements);
+
+                batchData.d_intbuffercandidates.resize(batchData.totalNumCandidates);
+                batchData.d_indexlist1.resize(batchData.totalNumCandidates);
+                batchData.d_numCandidatesPerAnchor2.resize(batchData.numTasks);
+                batchData.d_flagscandidates.resize(batchData.totalNumCandidates);
+
+                int* const indices1 = batchData.d_intbuffercandidates.data();
+                int* const indices2 = batchData.d_indexlist1.data();
+
+                helpers::lambda_kernel<<<batchData.numTasks, 128, 0, firstStream>>>(
+                    [
+                        indices1,
+                        d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.get(),
+                        d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.get()
+                    ] __device__ (){
+                        const int num = d_numCandidatesPerAnchor[blockIdx.x];
+                        const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
+                        
+                        for(int i = threadIdx.x; i < num; i += blockDim.x){
+                            indices1[offset + i] = i;
+                        }
+                    }
+                );
+
+                cudaDeviceSynchronize(); CUERR; // DEBUG
+
+                gpu::GPUMultiMSA multiMSA;
+
+                *batchData.h_numAnchors = numActiveTasks;
+
+                multiMSA.numMSAs = numActiveTasks;
+                multiMSA.columnPitchInElements = msaColumnPitchInElements;
+                multiMSA.counts = batchData.d_counts.get();
+                multiMSA.weights = batchData.d_weights.get();
+                multiMSA.coverages = batchData.d_coverage.get();
+                multiMSA.consensus = batchData.d_consensus.get();
+                multiMSA.support = batchData.d_support.get();
+                multiMSA.origWeights = batchData.d_origWeights.get();
+                multiMSA.origCoverages = batchData.d_origCoverages.get();
+                multiMSA.columnProperties = batchData.d_msa_column_properties.get();
+
+                callConstructMultipleSequenceAlignmentsKernel_async(
+                    multiMSA,
+                    batchData.d_alignment_overlaps.get(),
+                    batchData.d_alignment_shifts.get(),
+                    batchData.d_alignment_nOps.get(),
+                    batchData.d_alignment_best_alignment_flags.get(),
+                    batchData.d_anchorSequencesLength.get(),
+                    batchData.d_candidateSequencesLength.get(),
+                    indices1, //d_indices,
+                    batchData.d_numCandidatesPerAnchor.get(),
+                    batchData.d_numCandidatesPerAnchorPrefixSum.get(),
+                    batchData.d_subjectSequencesData.get(),
+                    batchData.d_candidateSequencesData.get(),
+                    nullptr, //d_anchor_qualities.get(),
+                    nullptr, //d_candidate_qualities.get(),
+                    batchData.h_numAnchors.get(), //d_numAnchors
+                    goodAlignmentProperties.maxErrorRate,
+                    batchData.numTasks,
+                    batchData.totalNumCandidates,
+                    false, //correctionOptions->useQualityScores,
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    firstStream,
+                    kernelLaunchHandle
+                );
+
+                cudaDeviceSynchronize(); CUERR; // DEBUG
+                //refine msa
+                bool* d_shouldBeKept = (bool*)batchData.d_flagscandidates.get();
+                helpers::call_fill_kernel_async(indices2, batchData.totalNumCandidates, -42, firstStream); CUERR;
+                helpers::call_fill_kernel_async(batchData.d_numCandidatesPerAnchor2.data(), batchData.numTasks, -13, firstStream); CUERR;
+                helpers::call_fill_kernel_async(batchData.d_numCandidates2.data(), 1, -9, firstStream); CUERR;
+                callMsaCandidateRefinementKernel_multiiter_async(
+                    indices2,
+                    batchData.d_numCandidatesPerAnchor2.data(),
+                    batchData.d_numCandidates2.get(),
+                    multiMSA,
+                    batchData.d_alignment_best_alignment_flags.get(),
+                    batchData.d_alignment_shifts.get(),
+                    batchData.d_alignment_nOps.get(),
+                    batchData.d_alignment_overlaps.get(),
+                    batchData.d_subjectSequencesData.get(),
+                    batchData.d_candidateSequencesData.get(),
+                    batchData.d_anchorSequencesLength.get(),
+                    batchData.d_candidateSequencesLength.get(),
+                    nullptr, //d_anchor_qualities.get(),
+                    nullptr, //d_candidate_qualities.get(),
+                    d_shouldBeKept,
+                    batchData.d_numCandidatesPerAnchorPrefixSum.get(),
+                    batchData.h_numAnchors.get(),
+                    goodAlignmentProperties.maxErrorRate,
+                    batchData.numTasks,
+                    batchData.totalNumCandidates,
+                    false, //correctionOptions->useQualityScores,
+                    encodedSequencePitchInInts,
+                    qualityPitchInBytes,
+                    indices1, //d_indices,
+                    batchData.d_numCandidatesPerAnchor.get(),
+                    correctionOptions.estimatedCoverage,
+                    getNumRefinementIterations(),
+                    firstStream,
+                    kernelLaunchHandle
+                );
+
+                cudaDeviceSynchronize(); CUERR; // DEBUG
+
+                cudaEventRecord(events[0], firstStream); CUERR;
+                cudaStreamWaitEvent(secondStream, events[0], 0); CUERR;
+
+                cudaMemcpyAsync(
+                    batchData.h_numCandidates.data(),
+                    batchData.d_numCandidates.data(),
+                    sizeof(int),
+                    D2H,
+                    secondStream
+                ); CUERR;
+
+                bool cubdebugsync = false;
+
+                //allocate cub storage
+                std::size_t cubBytes = 0;
+                std::size_t cubBytes2 = 0;
+                cudaError_t cubstatus = cub::DeviceScan::InclusiveSum(
+                    nullptr,
+                    cubBytes,
+                    batchData.d_numCandidatesPerAnchor2.get(), 
+                    batchData.d_numCandidatesPerAnchorPrefixSum2.get() + 1, 
+                    batchData.numTasks, 
+                    firstStream,
+                    cubdebugsync
+                );
+                assert(cubstatus == cudaSuccess);
+
+                auto in_zipped_begin = thrust::make_zip_iterator(
+                    thrust::make_tuple(
+                        batchData.d_candidateReadIds.data(),
+                        batchData.d_candidateSequencesLength.data(),
+                        batchData.d_alignment_overlaps.data(),
+                        batchData.d_alignment_isValid.data(),
+                        batchData.d_alignment_shifts.data(),
+                        batchData.d_alignment_nOps.data(),
+                        batchData.d_alignment_best_alignment_flags.data()
+                    )
+                );
+    
+                auto out_zipped_begin = thrust::make_zip_iterator(
+                    thrust::make_tuple(
+                        batchData.d_candidateReadIds2.data(),
+                        batchData.d_candidateSequencesLength2.data(),
+                        batchData.d_alignment_overlaps2.data(),
+                        batchData.d_alignment_isValid2.data(),
+                        batchData.d_alignment_shifts2.data(),
+                        batchData.d_alignment_nOps2.data(),
+                        batchData.d_alignment_best_alignment_flags2.data()
+                    )
+                );
+
+                cubstatus = cub::DeviceSelect::Flagged(
+                    nullptr,
+                    cubBytes2,
+                    in_zipped_begin,
+                    batchData.d_flagscandidates.data(),
+                    out_zipped_begin,
+                    thrust::make_discard_iterator(),
+                    batchData.totalNumCandidates,
+                    firstStream,
+                    cubdebugsync
+                );
+
+                assert(cubstatus == cudaSuccess);
+                cubBytes = std::max(cubBytes, cubBytes2);
+
+                cubstatus = cub::DeviceSelect::Flagged(
+                    nullptr,
+                    cubBytes2,
+                    batchData.d_candidateSequencesData.data(),
+                    thrust::make_transform_iterator(
+                        thrust::make_counting_iterator(0),
+                        SequenceFlagMultiplier{batchData.d_flagscandidates.data(), int(encodedSequencePitchInInts)}
+                    ),
+                    batchData.d_candidateSequencesData2.data(),
+                    thrust::make_discard_iterator(),
+                    batchData.totalNumCandidates * encodedSequencePitchInInts,
+                    firstStream,
+                    cubdebugsync
+                );
+
+                assert(cubstatus == cudaSuccess);
+                cubBytes = std::max(cubBytes, cubBytes2);
+
+                void* cubtemp; cubAllocator->DeviceAllocate((void**)&cubtemp, cubBytes, firstStream);
+
+                cubstatus = cub::DeviceScan::InclusiveSum(
+                    cubtemp,
+                    cubBytes,
+                    batchData.d_numCandidatesPerAnchor2.get(), 
+                    batchData.d_numCandidatesPerAnchorPrefixSum2.get() + 1, 
+                    batchData.numTasks, 
+                    firstStream,
+                    cubdebugsync
+                );
+                assert(cubstatus == cudaSuccess);
+
+                helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.totalNumCandidates, false, firstStream); CUERR;
+
+                //convert output indices from task-local indices to global indices
+                helpers::lambda_kernel<<<batchData.numTasks, 128, 0, firstStream>>>(
+                    [
+                        d_flagscandidates = batchData.d_flagscandidates.data(),
+                        indices2,
+                        d_numCandidatesPerAnchor2 = batchData.d_numCandidatesPerAnchor2.get(),
+                        d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.get()
+                    ] __device__ (){
+                        /*
+                            Input:
+                            indices2: 0,1,2,0,0,0,0,3,5,0
+                            d_numCandidatesPerAnchorPrefixSum: 0,6,10
+
+                            Output:
+                            d_flagscandidates: 1,1,1,0,0,0,1,0,0,1,0,1
+                        */
+                        const int num = d_numCandidatesPerAnchor2[blockIdx.x];
+                        const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
+                        
+                        for(int i = threadIdx.x; i < num; i += blockDim.x){
+                            const int globalIndex = indices2[offset + i] + offset;
+                            d_flagscandidates[globalIndex] = true;
+                        }
+                    }
+                ); CUERR;
+
+                cudaDeviceSynchronize(); CUERR; // DEBUG
+
+                //compact candidate sequences according to flags                
+
+                cubstatus = cub::DeviceSelect::Flagged(
+                    cubtemp,
+                    cubBytes,
+                    batchData.d_candidateSequencesData.data(),
+                    thrust::make_transform_iterator(
+                        thrust::make_counting_iterator(0),
+                        SequenceFlagMultiplier{batchData.d_flagscandidates.data(), int(encodedSequencePitchInInts)}
+                    ),
+                    batchData.d_candidateSequencesData2.data(),
+                    thrust::make_discard_iterator(),
+                    batchData.totalNumCandidates * encodedSequencePitchInInts,
+                    firstStream,
+                    cubdebugsync
+                );
+
+                assert(cubstatus == cudaSuccess);
+
+                //compact other candidate buffers according to flags
+
+                cubstatus = cub::DeviceSelect::Flagged(
+                    cubtemp,
+                    cubBytes,
+                    in_zipped_begin,
+                    batchData.d_flagscandidates.data(),
+                    out_zipped_begin,
+                    thrust::make_discard_iterator(),
+                    batchData.totalNumCandidates,
+                    firstStream,
+                    cubdebugsync
+                );
+
+                assert(cubstatus == cudaSuccess);
+
+                std::swap(batchData.d_numCandidatesPerAnchor, batchData.d_numCandidatesPerAnchor2);
+                std::swap(batchData.d_numCandidatesPerAnchorPrefixSum, batchData.d_numCandidatesPerAnchorPrefixSum2);                
+                std::swap(batchData.d_candidateSequencesData, batchData.d_candidateSequencesData2);
+                std::swap(batchData.d_candidateReadIds, batchData.d_candidateReadIds2);
+                std::swap(batchData.d_candidateSequencesLength, batchData.d_candidateSequencesLength2);
+                std::swap(batchData.d_alignment_overlaps, batchData.d_alignment_overlaps2);
+                std::swap(batchData.d_alignment_isValid, batchData.d_alignment_isValid2);
+                std::swap(batchData.d_alignment_shifts, batchData.d_alignment_shifts2);
+                std::swap(batchData.d_alignment_nOps, batchData.d_alignment_nOps2);
+                std::swap(batchData.d_alignment_best_alignment_flags, batchData.d_alignment_best_alignment_flags2);
+
+                cudaStreamSynchronize(secondStream); CUERR; //wait for h_numCandidates
+
+                #if 1
+
+                batchData.totalNumCandidates = *batchData.h_numCandidates;
+
+                thrust::copy_n(
+                    thrustPolicy1,
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
+                        batchData.d_numCandidatesPerAnchor.data()
+                    )),
+                    batchData.numTasks,
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        batchData.h_numCandidatesPerAnchorPrefixSum.data() + 1,
+                        batchData.h_numCandidatesPerAnchor.data()
+                    ))
+                );
+
+                //copy data to host
+                cudaMemcpyAsync(
+                    batchData.h_candidateSequencesData.get(),
+                    batchData.d_candidateSequencesData.get(),
+                    sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
+                    D2H,
+                    firstStream
+                ); CUERR;
+    
+                auto d_zipped_begin = thrust::make_zip_iterator(
+                    thrust::make_tuple(
+                        batchData.d_candidateReadIds.data(),
+                        batchData.d_candidateSequencesLength.data(),
+                        batchData.d_alignment_overlaps.data(),
+                        batchData.d_alignment_isValid.data(),
+                        batchData.d_alignment_shifts.data(),
+                        batchData.d_alignment_nOps.data(),
+                        batchData.d_alignment_best_alignment_flags.data()
+                    )
+                );
+    
+                auto h_zipped_begin = thrust::make_zip_iterator(
+                    thrust::make_tuple(
+                        batchData.h_candidateReadIds.data(),
+                        batchData.h_candidateSequencesLength.data(),
+                        batchData.h_alignment_overlaps.data(),
+                        batchData.h_alignment_isValid.data(),
+                        batchData.h_alignment_shifts.data(),
+                        batchData.h_alignment_nOps.data(),
+                        batchData.h_alignment_best_alignment_flags.data()
+                    )
+                );
+    
+                thrust::copy_n(
+                    thrustPolicy1,
+                    d_zipped_begin,
+                    batchData.totalNumCandidates,
+                    h_zipped_begin
+                );
+                #endif
+    
+                cudaStreamSynchronize(firstStream); CUERR;
+
+                cubAllocator->DeviceFree(cubtemp);
+
+                for(int i = 0; i < numActiveTasks; i++){
+                    auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+    
+                    #ifdef checkdebugtasks
+                    copyBatchDataIntoTask(task, i);
+                    task.dataIsAvailable = true;
+                    #else
+                    task.mateRemovedFromCandidates = false; //debug. not required
+                    task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
+    
+                    if(task.numRemainingCandidates == 0){
+                        task.abort = true;
+                        task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+                    }
+                    #endif
+                }
+
+            }
     
 
             std::vector<Task> newTasksFromSplit;

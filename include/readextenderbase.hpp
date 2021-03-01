@@ -952,7 +952,6 @@ public:
         msaTimer.print();
     }
 
-protected:
 
     struct Task{
         bool dataIsAvailable = false;

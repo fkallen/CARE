@@ -5,6 +5,7 @@
 #include <config.hpp>
 #include <hpc_helpers.cuh>
 
+#include <gpu/gpumsa.cuh>
 #include <gpu/kernels.hpp>
 #include <gpu/kernellaunch.hpp>
 #include <gpu/gpuminhasher.cuh>
@@ -202,7 +203,8 @@ public:
     static constexpr int primary_stream_index = 0;
 
     template<class T>
-    using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+    //using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+    using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
@@ -314,6 +316,7 @@ public:
         PinnedBuffer<int> h_numCandidates{};
         DeviceBuffer<int> d_numAnchors{};
         DeviceBuffer<int> d_numCandidates{};
+        DeviceBuffer<int> d_numCandidates2{};
 
         PinnedBuffer<int> h_anchorSequencesLength{};
         DeviceBuffer<int> d_anchorSequencesLength{};
@@ -357,8 +360,22 @@ public:
         DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
         DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
 
+
+        DeviceBuffer<std::uint8_t> d_consensus;
+        DeviceBuffer<float> d_support;
+        DeviceBuffer<int> d_coverage;
+        DeviceBuffer<float> d_origWeights;
+        DeviceBuffer<int> d_origCoverages;
+        DeviceBuffer<gpu::MSAColumnProperties> d_msa_column_properties;
+        DeviceBuffer<int> d_counts;
+        DeviceBuffer<float> d_weights;
+
         
     };
+
+    static constexpr int getNumRefinementIterations() noexcept{
+        return 5;
+    }
      
 public: //private:
 
