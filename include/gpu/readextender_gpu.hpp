@@ -203,8 +203,8 @@ public:
     static constexpr int primary_stream_index = 0;
 
     template<class T>
-    //using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
-    using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
+    using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+    //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
@@ -237,6 +237,17 @@ public:
         h_numCandidates.resize(1);
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
+
+        const std::size_t min_overlap = std::max(
+            1, 
+            std::max(
+                goodAlignmentProperties.min_overlap, 
+                int(gpuReadStorage->getSequenceLengthUpperBound() * goodAlignmentProperties.min_overlap_ratio)
+            )
+        );
+        const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
+        //round up to 32 elements
+        msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
     }
 
     ~ReadExtenderGpu(){
@@ -360,8 +371,10 @@ public:
         DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
         DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
 
+        PinnedBuffer<char> h_consensus;
+        PinnedBuffer<gpu::MSAColumnProperties> h_msa_column_properties;
 
-        DeviceBuffer<std::uint8_t> d_consensus;
+        DeviceBuffer<std::uint8_t> d_consensus; //encoded , 0-4
         DeviceBuffer<float> d_support;
         DeviceBuffer<int> d_coverage;
         DeviceBuffer<float> d_origWeights;
@@ -369,6 +382,11 @@ public:
         DeviceBuffer<gpu::MSAColumnProperties> d_msa_column_properties;
         DeviceBuffer<int> d_counts;
         DeviceBuffer<float> d_weights;
+
+        PinnedBuffer<MultipleSequenceAlignment::PossibleSplitColumn> h_possibleSplitColumns;
+        PinnedBuffer<int> h_numPossibleSplitColumnsPerAnchor;
+        DeviceBuffer<MultipleSequenceAlignment::PossibleSplitColumn> d_possibleSplitColumns;
+        DeviceBuffer<int> d_numPossibleSplitColumnsPerAnchor;
 
         
     };
@@ -1245,6 +1263,7 @@ public:
 private:
     int deviceId;
     int kmerLength;
+    std::size_t msaColumnPitchInElements = 0;
 
     thrust::device_new_allocator<char> thrustallocator{};
     cub::CachingDeviceAllocator* cubAllocator{};

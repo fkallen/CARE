@@ -11,6 +11,7 @@
 
 #include <gpu/segmented_set_operations.cuh>
 #include <gpu/cachingallocator.cuh>
+#include <hostdevicefunctions.cuh>
 
 //#define checkdebugtasks
 
@@ -539,6 +540,15 @@ namespace care{
                         buf.data() + task.currentAnchorLength - lengthToHash, 
                         lengthToHash
                     );    
+
+                    if(task.myReadId == 33){
+                        std::cerr << "Anchor for iteration " << task.iteration << "\n";
+                        assert(lengthToHash == task.currentAnchorLength);
+                        for(auto c : buf){
+                            std::cerr << c;
+                        }
+                        std::cerr << "\n";
+                    }
                 }
             }
 
@@ -1153,21 +1163,11 @@ namespace care{
             }
             #endif
 
-            {
+            if(true){
                 //construct gpu msa
-
-                const std::size_t min_overlap = std::max(
-                    1, 
-                    std::max(
-                        goodAlignmentProperties.min_overlap, 
-                        int(gpuReadStorage->getSequenceLengthUpperBound() * goodAlignmentProperties.min_overlap_ratio)
-                    )
-                );
-                const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
-                //round up to 32 elements
-                const std::size_t msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
-
                 
+                batchData.h_consensus.resize(numActiveTasks * msaColumnPitchInElements);
+                batchData.h_msa_column_properties.resize(numActiveTasks);
 
                 batchData.d_consensus.resize(numActiveTasks * msaColumnPitchInElements);
                 batchData.d_support.resize(numActiveTasks * msaColumnPitchInElements);
@@ -1182,6 +1182,8 @@ namespace care{
                 batchData.d_indexlist1.resize(batchData.totalNumCandidates);
                 batchData.d_numCandidatesPerAnchor2.resize(batchData.numTasks);
                 batchData.d_flagscandidates.resize(batchData.totalNumCandidates);
+
+                helpers::call_fill_kernel_async(batchData.d_msa_column_properties.data(), numActiveTasks, gpu::MSAColumnProperties{-1,-1,-1,-1}, firstStream); CUERR;                
 
                 int* const indices1 = batchData.d_intbuffercandidates.data();
                 int* const indices2 = batchData.d_indexlist1.data();
@@ -1201,8 +1203,6 @@ namespace care{
                     }
                 );
 
-                cudaDeviceSynchronize(); CUERR; // DEBUG
-
                 gpu::GPUMultiMSA multiMSA;
 
                 *batchData.h_numAnchors = numActiveTasks;
@@ -1218,12 +1218,17 @@ namespace care{
                 multiMSA.origCoverages = batchData.d_origCoverages.get();
                 multiMSA.columnProperties = batchData.d_msa_column_properties.get();
 
+                //sequences which have alignment flag BestAlignment_t::ReverseComplement are already present as reverse complement in d_candidateSequencesData.
+                //To not reverse complement them again during msa construction, treat all stored sequences are forward
+                helpers::call_fill_kernel_async(batchData.d_alignment_best_alignment_flags2.data(), batchData.totalNumCandidates, BestAlignment_t::Forward, firstStream); CUERR;
+
                 callConstructMultipleSequenceAlignmentsKernel_async(
                     multiMSA,
                     batchData.d_alignment_overlaps.get(),
                     batchData.d_alignment_shifts.get(),
                     batchData.d_alignment_nOps.get(),
-                    batchData.d_alignment_best_alignment_flags.get(),
+                    //batchData.d_alignment_best_alignment_flags.get(),
+                    batchData.d_alignment_best_alignment_flags2.get(),
                     batchData.d_anchorSequencesLength.get(),
                     batchData.d_candidateSequencesLength.get(),
                     indices1, //d_indices,
@@ -1244,7 +1249,6 @@ namespace care{
                     kernelLaunchHandle
                 );
 
-                cudaDeviceSynchronize(); CUERR; // DEBUG
                 //refine msa
                 bool* d_shouldBeKept = (bool*)batchData.d_flagscandidates.get();
                 helpers::call_fill_kernel_async(indices2, batchData.totalNumCandidates, -42, firstStream); CUERR;
@@ -1255,7 +1259,8 @@ namespace care{
                     batchData.d_numCandidatesPerAnchor2.data(),
                     batchData.d_numCandidates2.get(),
                     multiMSA,
-                    batchData.d_alignment_best_alignment_flags.get(),
+                    //batchData.d_alignment_best_alignment_flags.get(),
+                    batchData.d_alignment_best_alignment_flags2.get(),
                     batchData.d_alignment_shifts.get(),
                     batchData.d_alignment_nOps.get(),
                     batchData.d_alignment_overlaps.get(),
@@ -1282,7 +1287,106 @@ namespace care{
                     kernelLaunchHandle
                 );
 
-                cudaDeviceSynchronize(); CUERR; // DEBUG
+                if(tasks[1].myReadId == 3 && tasks[1].iteration == 0){
+                    helpers::lambda_kernel<<<1, 1, 0, firstStream>>>(
+                        [
+                            shifts = batchData.d_alignment_shifts.data(),
+                            d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                            d_counts = batchData.d_counts.data(),
+                            d_coverage = batchData.d_coverage.data(),
+                            msaColumnPitchInElements = this->msaColumnPitchInElements,
+                            d_msa_column_properties = batchData.d_msa_column_properties.data(),
+                            numTasks = batchData.numTasks,
+                            splitcolumnsPitchElements = 32,
+                            d_possibleSplitColumns = batchData.d_possibleSplitColumns.data(),
+                            d_numPossibleSplitColumnsPerTask = batchData.d_numPossibleSplitColumnsPerAnchor.data(),
+                            d_candidateSequencesLength = batchData.d_candidateSequencesLength.data(),
+                            d_candidateSequencesData = batchData.d_candidateSequencesData.data(),
+                            encodedSequencePitchInInts = this->encodedSequencePitchInInts,
+                            d_subjectSequencesData = batchData.d_subjectSequencesData.data(),
+                            d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data()
+                        ] __device__ (){
+        
+                            const int task = 1;
+
+                            const int offset = d_numCandidatesPerAnchorPrefixSum[task];
+    
+                                const int firstColumn = d_msa_column_properties[task].firstColumn_incl;
+                                const int lastColumnExcl = d_msa_column_properties[task].lastColumn_excl;                                
+
+                                int* myCountsPtr[4];
+                                myCountsPtr[0] = d_counts + 4 * msaColumnPitchInElements * task + 0 * msaColumnPitchInElements;
+                                myCountsPtr[1] = d_counts + 4 * msaColumnPitchInElements * task + 1 * msaColumnPitchInElements;
+                                myCountsPtr[2] = d_counts + 4 * msaColumnPitchInElements * task + 2 * msaColumnPitchInElements;
+                                myCountsPtr[3] = d_counts + 4 * msaColumnPitchInElements * task + 3 * msaColumnPitchInElements;
+
+                                printf("anchor\n");
+                                for (int k = 0; k < 100; k++){
+                                    const std::uint8_t base = SequenceHelpers::getEncodedNuc2Bit(d_subjectSequencesData + task * encodedSequencePitchInInts, 100, k);
+                                    const char aaaa = SequenceHelpers::decodeBase(base);
+                                    printf("%c", aaaa);
+                                }
+                                printf("\n");
+
+                                printf("candidates:\n");
+                                for(int i = 0; i < d_numCandidatesPerAnchor[task]; i++){
+                                    printf("len %d\n", d_candidateSequencesLength[i]);
+                                    for (int k = 0; k < d_candidateSequencesLength[i]; k++){
+                                        const std::uint8_t base = SequenceHelpers::getEncodedNuc2Bit(
+                                            d_candidateSequencesData + (offset + i) * encodedSequencePitchInInts, 
+                                            d_candidateSequencesLength[i], 
+                                            k
+                                        );
+                                        const char aaaa = SequenceHelpers::decodeBase(base);
+                                        printf("%c", aaaa);
+                                    }
+                                    printf("\n");
+                                }
+                                printf("\n");
+
+                                printf("shifts:\n");
+                                for(int i = 0; i < d_numCandidatesPerAnchor[task]; i++){
+                                    printf("%d ", shifts[offset + i]);
+                                }
+                                printf("\n");
+
+                                printf("A:\n");
+                                for(int i = firstColumn; i < lastColumnExcl; i++){
+                                    printf("%d ", myCountsPtr[0][i]);
+                                }
+                                printf("\n");
+
+                                printf("C:\n");
+                                for(int i = firstColumn; i < lastColumnExcl; i++){
+                                    printf("%d ", myCountsPtr[1][i]);
+                                }
+                                printf("\n");
+
+                                printf("G:\n");
+                                for(int i = firstColumn; i < lastColumnExcl; i++){
+                                    printf("%d ", myCountsPtr[2][i]);
+                                }
+                                printf("\n");
+
+                                printf("T:\n");
+                                for(int i = firstColumn; i < lastColumnExcl; i++){
+                                    printf("%d ", myCountsPtr[3][i]);
+                                }
+                                printf("\n");
+
+
+                                printf("cov:\n");
+                                for(int i = firstColumn; i < lastColumnExcl; i++){
+                                    printf("%d ", d_coverage[i]);
+                                }
+                                printf("\n");
+                        }
+                    ); CUERR;
+
+                    cudaDeviceSynchronize(); CUERR; //DEBUG
+                }
+
+
 
                 cudaEventRecord(events[0], firstStream); CUERR;
                 cudaStreamWaitEvent(secondStream, events[0], 0); CUERR;
@@ -1294,6 +1398,45 @@ namespace care{
                     D2H,
                     secondStream
                 ); CUERR;
+
+                cudaEventRecord(events[0], secondStream); CUERR;
+
+                cudaMemcpyAsync(
+                    batchData.h_msa_column_properties.data(),
+                    batchData.d_msa_column_properties.data(),
+                    sizeof(gpu::MSAColumnProperties) * batchData.numTasks,
+                    D2H,
+                    secondStream
+                ); CUERR;
+
+                //convert encoded consensus to characters and copy to host
+                helpers::lambda_kernel<<<batchData.numTasks, 128, 0, secondStream>>>(
+                    [
+                        msaColumnPitchInElements = this->msaColumnPitchInElements,
+                        d_consensus = batchData.d_consensus.data(),
+                        h_consensus = batchData.h_consensus.data()
+                    ] __device__ (){
+                        
+                        for(int i = threadIdx.x; i < msaColumnPitchInElements; i += blockDim.x){
+                            std::uint8_t encoded = d_consensus[blockIdx.x * msaColumnPitchInElements + i];
+
+                            char decoded = 'F';
+                            if(encoded == std::uint8_t{0}){
+                                decoded = 'A';
+                            }else if(encoded == std::uint8_t{1}){
+                                decoded = 'C';
+                            }else if(encoded == std::uint8_t{2}){
+                                decoded = 'G';
+                            }else if(encoded == std::uint8_t{3}){
+                                decoded = 'T';
+                            }
+
+                            h_consensus[blockIdx.x * msaColumnPitchInElements + i] = decoded;
+                        }
+                    }
+                );
+
+
 
                 bool cubdebugsync = false;
 
@@ -1409,8 +1552,6 @@ namespace care{
                     }
                 ); CUERR;
 
-                cudaDeviceSynchronize(); CUERR; // DEBUG
-
                 //compact candidate sequences according to flags                
 
                 cubstatus = cub::DeviceSelect::Flagged(
@@ -1457,9 +1598,167 @@ namespace care{
                 std::swap(batchData.d_alignment_nOps, batchData.d_alignment_nOps2);
                 std::swap(batchData.d_alignment_best_alignment_flags, batchData.d_alignment_best_alignment_flags2);
 
-                cudaStreamSynchronize(secondStream); CUERR; //wait for h_numCandidates
 
-                #if 1
+                //compute possible msa splits
+
+                batchData.h_possibleSplitColumns.resize(32 * batchData.numTasks);
+                batchData.h_numPossibleSplitColumnsPerAnchor.resize(batchData.numTasks);
+
+                batchData.d_possibleSplitColumns.resize(32 * batchData.numTasks);
+                batchData.d_numPossibleSplitColumnsPerAnchor.resize(batchData.numTasks);
+
+                helpers::lambda_kernel<<<batchData.numTasks, 128, 0, firstStream>>>(
+                    [
+                        d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                        d_counts = batchData.d_counts.data(),
+                        d_coverage = batchData.d_coverage.data(),
+                        msaColumnPitchInElements = this->msaColumnPitchInElements,
+                        d_msa_column_properties = batchData.d_msa_column_properties.data(),
+                        numTasks = batchData.numTasks,
+                        splitcolumnsPitchElements = 32,
+                        d_possibleSplitColumns = batchData.d_possibleSplitColumns.data(),
+                        d_numPossibleSplitColumnsPerTask = batchData.d_numPossibleSplitColumnsPerAnchor.data(),
+                        size1 = batchData.d_msa_column_properties.size(),
+                        size2 = batchData.d_counts.size(),
+                        size3 = batchData.d_coverage.size()
+                    ] __device__ (){
+
+                        using PSC = MultipleSequenceAlignment::PossibleSplitColumn;
+                        constexpr int maxColumnsPerTask = 32;
+
+                        __shared__ PSC sharedPSC[maxColumnsPerTask];
+                        __shared__ int broadcastint;
+
+                        using BlockReduce = cub::BlockReduce<int, 128>;
+                        using BlockScan = cub::BlockScan<int, 128>;
+                        __shared__ typename BlockReduce::TempStorage blockreducetemp;
+                        __shared__ typename BlockScan::TempStorage blockscantemp;
+
+                        for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
+
+                            assert(task < size1);
+
+                            int* const numSplitColumnsPtr = d_numPossibleSplitColumnsPerTask + task;
+                            PSC* const splitColumnsPtr = d_possibleSplitColumns + splitcolumnsPitchElements * task;
+
+                            if(d_numCandidatesPerAnchor[task] > 0){
+
+                                //only check columns to the right of anchor
+                                const int firstColumn = d_msa_column_properties[task].subjectColumnsEnd_excl;
+                                const int lastColumnExcl = d_msa_column_properties[task].lastColumn_excl;                                
+
+                                int* myCountsPtr[4];
+                                myCountsPtr[0] = d_counts + 4 * msaColumnPitchInElements * task + 0 * msaColumnPitchInElements;
+                                myCountsPtr[1] = d_counts + 4 * msaColumnPitchInElements * task + 1 * msaColumnPitchInElements;
+                                myCountsPtr[2] = d_counts + 4 * msaColumnPitchInElements * task + 2 * msaColumnPitchInElements;
+                                myCountsPtr[3] = d_counts + 4 * msaColumnPitchInElements * task + 3 * msaColumnPitchInElements;   
+                                
+                                int* myCoveragesPtr = d_coverage + msaColumnPitchInElements * task;
+
+                                int totalNumResults = 0;
+
+                                const int numIterations = SDIV(lastColumnExcl - firstColumn, blockDim.x);
+
+                                for(int iteration = 0; iteration < numIterations; iteration++){
+                                    const int col = firstColumn + iteration * blockDim.x + threadIdx.x;
+
+                                    PSC myresults[3];
+                                    int myNumResults = 0;
+
+                                    if(col < lastColumnExcl){                                   
+        
+                                        auto checkNuc = [&](const auto& counts, const char nuc){
+                                            if(myNumResults < 3){
+
+
+                                                const float ratio = float(counts[col]) / float(myCoveragesPtr[col]);
+                                                //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+                                                if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
+        
+                                                    #pragma unroll
+                                                    for(int k = 0; k < 3; k++){
+                                                        if(myNumResults == k){
+                                                            myresults[k] = {nuc, col, ratio};
+                                                            myNumResults++;
+                                                            break;
+                                                        }
+                                                    }
+                                                    
+                                                }
+                                            }
+                                        };
+        
+                                        checkNuc(myCountsPtr[0], 'A');
+                                        checkNuc(myCountsPtr[1], 'C');
+                                        checkNuc(myCountsPtr[2], 'G');
+                                        checkNuc(myCountsPtr[3], 'T');
+        
+                                        if(myNumResults != 2){
+                                            myNumResults = 0;
+                                        }    
+                                    }
+
+                                    int totalNumResultsIteration = BlockReduce(blockreducetemp).Sum(myNumResults);
+                                    if(threadIdx.x == 0){
+                                        broadcastint = totalNumResultsIteration;
+                                    }
+                                    __syncthreads();
+                                    totalNumResultsIteration = broadcastint;
+
+                                    if(totalNumResultsIteration + totalNumResults > maxColumnsPerTask){
+                                        totalNumResults = 0;
+                                        break;
+                                    }else{
+                                        int outputoffset = 0;
+
+                                        BlockScan(blockscantemp).ExclusiveSum(myNumResults, outputoffset);
+
+                                        if(myNumResults == 2){
+                                            sharedPSC[totalNumResults + outputoffset + 0] = myresults[0];
+                                            sharedPSC[totalNumResults + outputoffset + 1] = myresults[1];
+                                        }
+
+                                        totalNumResults += totalNumResultsIteration;
+                                    }
+
+                                    __syncthreads();
+                                }
+
+                                for(int i = threadIdx.x; i < totalNumResults; i += blockDim.x){
+                                    splitColumnsPtr[i] = sharedPSC[i];
+                                }
+
+                                if(threadIdx.x == 0){
+                                    *numSplitColumnsPtr = totalNumResults;
+                                }
+                            }else{
+                                if(threadIdx.x == 0){
+                                    *numSplitColumnsPtr = 0;
+                                }
+                            }
+                        }
+                    }
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    batchData.h_possibleSplitColumns.get(),
+                    batchData.d_possibleSplitColumns.get(),
+                    sizeof(MultipleSequenceAlignment::PossibleSplitColumn) * 32 * batchData.numTasks,
+                    D2H,
+                    firstStream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    batchData.h_numPossibleSplitColumnsPerAnchor.get(),
+                    batchData.d_numPossibleSplitColumnsPerAnchor.get(),
+                    sizeof(int) * batchData.numTasks,
+                    D2H,
+                    firstStream
+                ); CUERR;
+
+                cudaEventSynchronize(events[0]); CUERR; //wait for h_numCandidates
+
+                #if 0
 
                 batchData.totalNumCandidates = *batchData.h_numCandidates;
 
@@ -1515,11 +1814,9 @@ namespace care{
                     batchData.totalNumCandidates,
                     h_zipped_begin
                 );
-                #endif
+                
     
                 cudaStreamSynchronize(firstStream); CUERR;
-
-                cubAllocator->DeviceFree(cubtemp);
 
                 for(int i = 0; i < numActiveTasks; i++){
                     auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
@@ -1538,6 +1835,13 @@ namespace care{
                     #endif
                 }
 
+                #endif
+
+                cudaStreamSynchronize(firstStream); CUERR;
+                cudaStreamSynchronize(secondStream); CUERR;
+
+                cubAllocator->DeviceFree(cubtemp);
+
             }
     
 
@@ -1547,12 +1851,6 @@ namespace care{
 
             auto constructMsaWithDataFromTask = [&](auto& task, int taskindex){
                 const std::string& decodedAnchor = task.totalDecodedAnchors.back();
-
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
 
                 MultipleSequenceAlignment msa;
 
@@ -1568,7 +1866,8 @@ namespace care{
                         vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
                             task.currentAnchorLength, 
                             vecAccess(task.alignments, c).nOps,
-                            vecAccess(task.alignments, c).overlap
+                            vecAccess(task.alignments, c).overlap,
+                            goodAlignmentProperties.maxErrorRate
                         );
                     }
 
@@ -1703,12 +2002,6 @@ namespace care{
             auto constructMsaWithDataFromBatchData = [&](auto& task, int taskindex){
                 const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
-
                 const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[taskindex];
 
                 MultipleSequenceAlignment msa;
@@ -1732,7 +2025,8 @@ namespace care{
                         vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
                             task.currentAnchorLength, 
                             myNops[c],
-                            myOverlaps[c]
+                            myOverlaps[c],
+                            goodAlignmentProperties.maxErrorRate
                         );
                     }
 
@@ -2096,6 +2390,11 @@ namespace care{
                 const int indexOfActiveTask = indicesOfActiveTasks[i];
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
+                if(task.numRemainingCandidates == 0){
+                    continue;
+                }
+                assert(task.numRemainingCandidates > 0);
+
                 //nvtx::push_range("constructMsa", 7);
                 const MultipleSequenceAlignment msa = constructMsa(task, i);
                 //nvtx::pop_range();
@@ -2117,6 +2416,30 @@ namespace care{
                         msa.countsT.data(),
                         msa.coverage.data()
                     );
+
+                    if(batchData.h_numPossibleSplitColumnsPerAnchor[i] == 0){
+                        if(!(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32)){
+                            std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() << "\n";
+                        }
+                        assert(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32);
+                    }else{
+                        if(!(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i])){
+                            std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() 
+                                << "i = " << i << ", batchData.h_numPossibleSplitColumnsPerAnchor[i] = " << batchData.h_numPossibleSplitColumnsPerAnchor[i] << "\n";
+                        }
+                        assert(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i]);
+
+                        auto* ptr = batchData.h_possibleSplitColumns.data() + 32 * i;
+                        for(int k = 0; k < batchData.h_numPossibleSplitColumnsPerAnchor[i]; k++){
+                            assert(possibleSplitColumns[k] == ptr[k]);
+                        }
+                    }
+
+                    assert(batchData.h_msa_column_properties[i].lastColumn_excl - batchData.h_msa_column_properties[i].firstColumn_incl == msa.consensus.size());
+
+                    // for(int k = 0; k < int(msa.consensus.size()); k++){
+                    //     assert(batchData.h_consensus[i * msaColumnPitchInElements + k] == msa.consensus[k]);
+                    // }
 
                     auto possibleSplitsNew = inspectColumnsRegionSplit(
                         possibleSplitColumns.data(),

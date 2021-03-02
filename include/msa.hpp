@@ -79,9 +79,9 @@ public:
     };
 
     struct PossibleSplitColumn{
-        char letter = 'F';
-        int column = -1;
-        float ratio = 0.0f;
+        char letter;
+        int column;
+        float ratio;
 
         bool operator==(const PossibleSplitColumn& rhs) const{
             return letter == rhs.letter
