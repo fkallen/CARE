@@ -1033,61 +1033,61 @@ namespace care{
        
             filterAlignments(batchData, firstStream);
 
-            thrust::copy_n(
-                thrustPolicy1,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
-                    batchData.d_numCandidatesPerAnchor.data()
-                )),
-                batchData.numTasks,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    batchData.h_numCandidatesPerAnchorPrefixSum.data() + 1,
-                    batchData.h_numCandidatesPerAnchor.data()
-                ))
-            );
+            // thrust::copy_n(
+            //     thrustPolicy1,
+            //     thrust::make_zip_iterator(thrust::make_tuple(
+            //         batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
+            //         batchData.d_numCandidatesPerAnchor.data()
+            //     )),
+            //     batchData.numTasks,
+            //     thrust::make_zip_iterator(thrust::make_tuple(
+            //         batchData.h_numCandidatesPerAnchorPrefixSum.data() + 1,
+            //         batchData.h_numCandidatesPerAnchor.data()
+            //     ))
+            // );
     
-            cudaStreamSynchronize(firstStream); CUERR;
+            // cudaStreamSynchronize(firstStream); CUERR;
 
-            batchData.totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
+            // batchData.totalNumCandidates = batchData.h_numCandidatesPerAnchorPrefixSum[batchData.numTasks];
 
-            cudaMemcpyAsync(
-                batchData.h_candidateSequencesData.get(),
-                batchData.d_candidateSequencesData.get(),
-                sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
-                H2D,
-                firstStream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     batchData.h_candidateSequencesData.get(),
+            //     batchData.d_candidateSequencesData.get(),
+            //     sizeof(unsigned int) * batchData.totalNumCandidates * encodedSequencePitchInInts,
+            //     H2D,
+            //     firstStream
+            // ); CUERR;
 
-            auto d_zipped_begin = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    batchData.d_candidateReadIds.data(),
-                    batchData.d_candidateSequencesLength.data(),
-                    batchData.d_alignment_overlaps.data(),
-                    batchData.d_alignment_isValid.data(),
-                    batchData.d_alignment_shifts.data(),
-                    batchData.d_alignment_nOps.data(),
-                    batchData.d_alignment_best_alignment_flags.data()
-                )
-            );
+            // auto d_zipped_begin = thrust::make_zip_iterator(
+            //     thrust::make_tuple(
+            //         batchData.d_candidateReadIds.data(),
+            //         batchData.d_candidateSequencesLength.data(),
+            //         batchData.d_alignment_overlaps.data(),
+            //         batchData.d_alignment_isValid.data(),
+            //         batchData.d_alignment_shifts.data(),
+            //         batchData.d_alignment_nOps.data(),
+            //         batchData.d_alignment_best_alignment_flags.data()
+            //     )
+            // );
 
-            auto h_zipped_begin = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    batchData.h_candidateReadIds.data(),
-                    batchData.h_candidateSequencesLength.data(),
-                    batchData.h_alignment_overlaps.data(),
-                    batchData.h_alignment_isValid.data(),
-                    batchData.h_alignment_shifts.data(),
-                    batchData.h_alignment_nOps.data(),
-                    batchData.h_alignment_best_alignment_flags.data()
-                )
-            );
+            // auto h_zipped_begin = thrust::make_zip_iterator(
+            //     thrust::make_tuple(
+            //         batchData.h_candidateReadIds.data(),
+            //         batchData.h_candidateSequencesLength.data(),
+            //         batchData.h_alignment_overlaps.data(),
+            //         batchData.h_alignment_isValid.data(),
+            //         batchData.h_alignment_shifts.data(),
+            //         batchData.h_alignment_nOps.data(),
+            //         batchData.h_alignment_best_alignment_flags.data()
+            //     )
+            // );
 
-            thrust::copy_n(
-                thrustPolicy1,
-                d_zipped_begin,
-                batchData.totalNumCandidates,
-                h_zipped_begin
-            );
+            // thrust::copy_n(
+            //     thrustPolicy1,
+            //     d_zipped_begin,
+            //     batchData.totalNumCandidates,
+            //     h_zipped_begin
+            // );
 
             cudaStreamSynchronize(firstStream); CUERR;
 
@@ -1133,35 +1133,35 @@ namespace care{
             };
 
 
-            for(int i = 0; i < numActiveTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+            // for(int i = 0; i < numActiveTasks; i++){
+            //     auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
 
-                #ifdef checkdebugtasks
-                copyBatchDataIntoTask(task, i);
-                task.dataIsAvailable = true;
-                #else
-                task.mateRemovedFromCandidates = false; //debug. not required
-                task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
+            //     #ifdef checkdebugtasks
+            //     copyBatchDataIntoTask(task, i);
+            //     task.dataIsAvailable = true;
+            //     #else
+            //     task.mateRemovedFromCandidates = false; //debug. not required
+            //     task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
 
-                if(task.numRemainingCandidates == 0){
-                    task.abort = true;
-                    task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
-                }
-                #endif
-            }
+            //     if(task.numRemainingCandidates == 0){
+            //         task.abort = true;
+            //         task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+            //     }
+            //     #endif
+            // }
 
-            #ifdef checkdebugtasks
-            for(int i = 0; i < numActiveTasks; i++){
-                auto& newtask = tasks[indicesOfActiveTasks[i]];
-                auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
+            // #ifdef checkdebugtasks
+            // for(int i = 0; i < numActiveTasks; i++){
+            //     auto& newtask = tasks[indicesOfActiveTasks[i]];
+            //     auto& oldtask = debugtasks[indicesOfActiveTasks[i]];
 
-                if(newtask != oldtask){
-                    std::cerr << "old task and new task differ. i=" 
-                        << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
-                    assert(false);
-                }
-            }
-            #endif
+            //     if(newtask != oldtask){
+            //         std::cerr << "old task and new task differ. i=" 
+            //             << i << ", indicesOfActiveTasks[i] " << indicesOfActiveTasks[i] << "\n";
+            //         assert(false);
+            //     }
+            // }
+            // #endif
 
             if(true){
                 //construct gpu msa
@@ -1183,7 +1183,7 @@ namespace care{
                 batchData.d_numCandidatesPerAnchor2.resize(batchData.numTasks);
                 batchData.d_flagscandidates.resize(batchData.totalNumCandidates);
 
-                helpers::call_fill_kernel_async(batchData.d_msa_column_properties.data(), numActiveTasks, gpu::MSAColumnProperties{-1,-1,-1,-1}, firstStream); CUERR;                
+                //helpers::call_fill_kernel_async(batchData.d_msa_column_properties.data(), numActiveTasks, gpu::MSAColumnProperties{-1,-1,-1,-1}, firstStream); CUERR;                
 
                 int* const indices1 = batchData.d_intbuffercandidates.data();
                 int* const indices2 = batchData.d_indexlist1.data();
@@ -1251,9 +1251,9 @@ namespace care{
 
                 //refine msa
                 bool* d_shouldBeKept = (bool*)batchData.d_flagscandidates.get();
-                helpers::call_fill_kernel_async(indices2, batchData.totalNumCandidates, -42, firstStream); CUERR;
-                helpers::call_fill_kernel_async(batchData.d_numCandidatesPerAnchor2.data(), batchData.numTasks, -13, firstStream); CUERR;
-                helpers::call_fill_kernel_async(batchData.d_numCandidates2.data(), 1, -9, firstStream); CUERR;
+                // helpers::call_fill_kernel_async(indices2, batchData.totalNumCandidates, -42, firstStream); CUERR;
+                // helpers::call_fill_kernel_async(batchData.d_numCandidatesPerAnchor2.data(), batchData.numTasks, -13, firstStream); CUERR;
+                // helpers::call_fill_kernel_async(batchData.d_numCandidates2.data(), 1, -9, firstStream); CUERR;
                 callMsaCandidateRefinementKernel_multiiter_async(
                     indices2,
                     batchData.d_numCandidatesPerAnchor2.data(),
@@ -1287,6 +1287,7 @@ namespace care{
                     kernelLaunchHandle
                 );
 
+                #if 0
                 if(tasks[1].myReadId == 3 && tasks[1].iteration == 0){
                     helpers::lambda_kernel<<<1, 1, 0, firstStream>>>(
                         [
@@ -1385,7 +1386,7 @@ namespace care{
 
                     cudaDeviceSynchronize(); CUERR; //DEBUG
                 }
-
+                #endif
 
 
                 cudaEventRecord(events[0], firstStream); CUERR;
@@ -1526,7 +1527,7 @@ namespace care{
 
                 helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.totalNumCandidates, false, firstStream); CUERR;
 
-                //convert output indices from task-local indices to global indices
+                //convert output indices from task-local indices to global flags
                 helpers::lambda_kernel<<<batchData.numTasks, 128, 0, firstStream>>>(
                     [
                         d_flagscandidates = batchData.d_flagscandidates.data(),
@@ -1617,10 +1618,7 @@ namespace care{
                         numTasks = batchData.numTasks,
                         splitcolumnsPitchElements = 32,
                         d_possibleSplitColumns = batchData.d_possibleSplitColumns.data(),
-                        d_numPossibleSplitColumnsPerTask = batchData.d_numPossibleSplitColumnsPerAnchor.data(),
-                        size1 = batchData.d_msa_column_properties.size(),
-                        size2 = batchData.d_counts.size(),
-                        size3 = batchData.d_coverage.size()
+                        d_numPossibleSplitColumnsPerTask = batchData.d_numPossibleSplitColumnsPerAnchor.data()
                     ] __device__ (){
 
                         using PSC = MultipleSequenceAlignment::PossibleSplitColumn;
@@ -1635,8 +1633,6 @@ namespace care{
                         __shared__ typename BlockScan::TempStorage blockscantemp;
 
                         for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
-
-                            assert(task < size1);
 
                             int* const numSplitColumnsPtr = d_numPossibleSplitColumnsPerTask + task;
                             PSC* const splitColumnsPtr = d_possibleSplitColumns + splitcolumnsPitchElements * task;
@@ -1758,7 +1754,7 @@ namespace care{
 
                 cudaEventSynchronize(events[0]); CUERR; //wait for h_numCandidates
 
-                #if 0
+                #if 1
 
                 batchData.totalNumCandidates = *batchData.h_numCandidates;
 
@@ -2143,9 +2139,8 @@ namespace care{
                 }
             };
 
-            auto extendWithMsa = [&](auto& task, const auto& msa, int taskIndex){
+            auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, int taskIndex){
 
-                int consensusLength = msa.consensus.size();
                 //can extend by at most maxextensionPerStep bps
                 int extendBy = std::min(
                     consensusLength - task.currentAnchorLength, 
@@ -2163,7 +2158,7 @@ namespace care{
 
                         //update data for next iteration of outer while loop                           
 
-                        std::string decodedAnchor(msa.consensus.data() + extendBy, task.currentAnchorLength);
+                        std::string decodedAnchor(consensus + extendBy, task.currentAnchorLength);
 
                         const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
 
@@ -2180,8 +2175,8 @@ namespace care{
 
                         // task.resultsequence.insert(
                         //     task.resultsequence.end(), 
-                        //     msa.consensus.data() + task.currentAnchorLength, 
-                        //     msa.consensus.data() + task.currentAnchorLength + extendBy
+                        //     consensus + task.currentAnchorLength, 
+                        //     consensus + task.currentAnchorLength + extendBy
                         // );
 
 
@@ -2223,14 +2218,14 @@ namespace care{
                         //compute metrics of overlap
                             
                         const int ham = cpu::hammingDistanceOverlap(
-                            msa.consensus.begin() + startpos, msa.consensus.end(), 
+                            consensus + startpos, consensus + consensusLength, 
                             task.decodedMateRevC.begin(), task.decodedMateRevC.end()
                         );
 
                         hamMap[ham].emplace_back(startpos);
 
                         // const int longest = cpu::longestMatch(
-                        //     msa.consensus.begin() + startpos, msa.consensus.end(), 
+                        //     consensus + startpos, consensus + consensusLength, 
                         //     task.decodedMateRevC.begin(), task.decodedMateRevC.end()
                         // );
 
@@ -2254,8 +2249,8 @@ namespace care{
                         if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
                             //bridge the gap between current anchor and mate
                             task.totalDecodedAnchors.emplace_back(
-                                msa.consensus.data() + missingPositionsBetweenAnchorEndAndMateBegin,
-                                msa.consensus.data() + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
+                                consensus + missingPositionsBetweenAnchorEndAndMateBegin,
+                                consensus + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
                             );
                             task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths + missingPositionsBetweenAnchorEndAndMateBegin);
                         }
@@ -2386,7 +2381,7 @@ namespace care{
             nvtx::push_range("MSA", 6);
             msaTimer.start();
 
-            for(int i = 0; i < numActiveTasks; i++){
+            for(int i = 0; i < numActiveTasks; i++){ 
                 const int indexOfActiveTask = indicesOfActiveTasks[i];
                 auto& task = vecAccess(tasks, indexOfActiveTask);
 
@@ -2396,63 +2391,110 @@ namespace care{
                 assert(task.numRemainingCandidates > 0);
 
                 //nvtx::push_range("constructMsa", 7);
-                const MultipleSequenceAlignment msa = constructMsa(task, i);
+                //const MultipleSequenceAlignment msa = constructMsa(task, i);
                 //nvtx::pop_range();
 
                 // std::cerr << "original msa\n";
                 // msa.print(std::cerr);
                 // std::cerr << "\n";
 
+                const std::size_t splitcolumnsPitchElements = 32;
+                const auto* const possibleSplitColumns = batchData.h_possibleSplitColumns.data() + splitcolumnsPitchElements * i;
+                const int numPossibleSplitColumns = batchData.h_numPossibleSplitColumnsPerAnchor[i];
+                const gpu::MSAColumnProperties msaProps = batchData.h_msa_column_properties[i];
+
+                const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
+                const char* const consensus = batchData.h_consensus.data() + i * msaColumnPitchInElements;
+
                 
 #if 1
                 //if(task.splitDepth == 0){
-                if(splitTracker[task.myReadId] <= 4){
-                    std::vector<MultipleSequenceAlignment::PossibleSplitColumn> possibleSplitColumns = computePossibleSplitColumns(
-                        task.currentAnchorLength, 
-                        msa.nColumns,
-                        msa.countsA.data(),
-                        msa.countsC.data(),
-                        msa.countsG.data(),
-                        msa.countsT.data(),
-                        msa.coverage.data()
-                    );
+                if(splitTracker[task.myReadId] <= 4 && batchData.h_numPossibleSplitColumnsPerAnchor[i] > 0){
+                    // const int* countsA = &batchData.h_counts[4 * i * msaColumnPitchInElements + 0 * msaColumnPitchInElements];
+                    // const int* countsC = &batchData.h_counts[4 * i * msaColumnPitchInElements + 1 * msaColumnPitchInElements];
+                    // const int* countsG = &batchData.h_counts[4 * i * msaColumnPitchInElements + 2 * msaColumnPitchInElements];
+                    // const int* countsT = &batchData.h_counts[4 * i * msaColumnPitchInElements + 3 * msaColumnPitchInElements];
+                    // const int* countsT = &batchData.h_counts[4 * i * msaColumnPitchInElements + 3 * msaColumnPitchInElements];
 
-                    if(batchData.h_numPossibleSplitColumnsPerAnchor[i] == 0){
-                        if(!(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32)){
-                            std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() << "\n";
-                        }
-                        assert(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32);
-                    }else{
-                        if(!(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i])){
-                            std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() 
-                                << "i = " << i << ", batchData.h_numPossibleSplitColumnsPerAnchor[i] = " << batchData.h_numPossibleSplitColumnsPerAnchor[i] << "\n";
-                        }
-                        assert(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i]);
+                    // std::vector<MultipleSequenceAlignment::PossibleSplitColumn> possibleSplitColumns = computePossibleSplitColumns(
+                    //     task.currentAnchorLength, 
+                    //     msa.nColumns,
+                    //     msa.countsA.data(),
+                    //     msa.countsC.data(),
+                    //     msa.countsG.data(),
+                    //     msa.countsT.data(),
+                    //     msa.coverage.data()
+                    // );
 
-                        auto* ptr = batchData.h_possibleSplitColumns.data() + 32 * i;
-                        for(int k = 0; k < batchData.h_numPossibleSplitColumnsPerAnchor[i]; k++){
-                            assert(possibleSplitColumns[k] == ptr[k]);
-                        }
-                    }
+                    // if(batchData.h_numPossibleSplitColumnsPerAnchor[i] == 0){
+                    //     if(!(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32)){
+                    //         std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() << "\n";
+                    //     }
+                    //     assert(possibleSplitColumns.size() == 0 || possibleSplitColumns.size() > 32);
+                    // }else{
+                    //     if(!(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i])){
+                    //         std::cerr << "possibleSplitColumns.size() = " << possibleSplitColumns.size() 
+                    //             << "i = " << i << ", batchData.h_numPossibleSplitColumnsPerAnchor[i] = " << batchData.h_numPossibleSplitColumnsPerAnchor[i] << "\n";
+                    //     }
+                    //     assert(possibleSplitColumns.size() == batchData.h_numPossibleSplitColumnsPerAnchor[i]);
 
-                    assert(batchData.h_msa_column_properties[i].lastColumn_excl - batchData.h_msa_column_properties[i].firstColumn_incl == msa.consensus.size());
+                    //     auto* ptr = batchData.h_possibleSplitColumns.data() + 32 * i;
+                    //     for(int k = 0; k < batchData.h_numPossibleSplitColumnsPerAnchor[i]; k++){
+                    //         assert(possibleSplitColumns[k] == ptr[k]);
+                    //     }
+                    // }
+
+                    // assert(batchData.h_msa_column_properties[i].lastColumn_excl - batchData.h_msa_column_properties[i].firstColumn_incl == msa.consensus.size());
 
                     // for(int k = 0; k < int(msa.consensus.size()); k++){
                     //     assert(batchData.h_consensus[i * msaColumnPitchInElements + k] == msa.consensus[k]);
                     // }
+                    
+                    const int numCandidates = task.numRemainingCandidates;
+                    const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
+                    const int* const candidateShifts = batchData.h_alignment_shifts.data() + offset;
+                    const int* const candidateLengths = batchData.h_candidateSequencesLength.data() + offset;
+
+                    const unsigned int* const myCandidateSequencesData = &batchData.h_candidateSequencesData[offset * encodedSequencePitchInInts];
+
+                    task.candidateStrings.resize(decodedSequencePitchInBytes * numCandidates, '\0');
+
+                    //decode the candidates for msa
+                    for(int c = 0; c < task.numRemainingCandidates; c++){
+                        SequenceHelpers::decode2BitSequence(
+                            task.candidateStrings.data() + c * decodedSequencePitchInBytes,
+                            myCandidateSequencesData + c * encodedSequencePitchInInts,
+                            candidateLengths[c]
+                        );
+                    }
 
                     auto possibleSplitsNew = inspectColumnsRegionSplit(
-                        possibleSplitColumns.data(),
-                        possibleSplitColumns.size(),
+                        possibleSplitColumns,
+                        numPossibleSplitColumns,
                         task.currentAnchorLength, 
-                        msa.nColumns,
-                        msa.subjectColumnsBegin_incl,
-                        msa.nCandidates,
+                        msaProps.lastColumn_excl - msaProps.firstColumn_incl,
+                        msaProps.subjectColumnsBegin_incl,
+                        numCandidates,
                         task.candidateStrings.data(),
                         decodedSequencePitchInBytes,
-                        msa.inputData.candidateShifts,
-                        msa.inputData.candidateLengths
+                        candidateShifts,
+                        candidateLengths
                     );
+
+                    // auto possibleSplitsNew = inspectColumnsRegionSplit(
+                    //     possibleSplitColumns,
+                    //     numPossibleSplitColumns,
+                    //     task.currentAnchorLength, 
+                    //     msa.nColumns,
+                    //     msa.subjectColumnsBegin_incl,
+                    //     msa.nCandidates,
+                    //     task.candidateStrings.data(),
+                    //     decodedSequencePitchInBytes,
+                    //     msa.inputData.candidateShifts,
+                    //     msa.inputData.candidateLengths
+                    // );
+
+
 
                     //auto possibleSplitsOld = msa.inspectColumnsRegionSplit(task.currentAnchorLength);
                     //assert(possibleSplitsOld == possibleSplitsNew);
@@ -2503,11 +2545,24 @@ namespace care{
                         //copy task's data from batchData into task
 
                         copyBatchDataIntoTask(task, i);
+
                         //create the separate shifts array
+                        //create defaultweights, which is split in keepSelectedCandidates
+
                         task.candidateShifts.resize(task.alignments.size());
+                        task.candidateOverlapWeights.resize(task.numRemainingCandidates);
+
                         for(int c = 0; c < task.numRemainingCandidates; c++){
                             task.candidateShifts[c] = task.alignments[c].shift;
-                        }
+
+                            task.candidateOverlapWeights[c] = calculateOverlapWeight(
+                                task.currentAnchorLength, 
+                                task.alignments[c].nOps,
+                                task.alignments[c].overlap,
+                                goodAlignmentProperties.maxErrorRate
+                            );
+                        }                       
+
                         task.dataIsAvailable = true;
                         //create a copy of task, and only keep candidates of first split
                         
@@ -2524,16 +2579,16 @@ namespace care{
                         // msaOfCopy.print(std::cerr); 
                         // std::cerr << "\n and \n";
 
-                        extendWithMsa(taskCopy, msaOfCopy, -1);
+                        extendWithMsa(taskCopy, msaOfCopy.consensus.data(), msaOfCopy.consensus.size(), -1);
 
                         //only keep canddiates of second split
-                        keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates, -1);
+                        keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates, -1); 
                         const MultipleSequenceAlignment newMsa = constructMsa(task, -1);
 
                         // newMsa.print(std::cerr); 
                         // std::cerr << "\n";
 
-                        extendWithMsa(task, newMsa, -1);
+                        extendWithMsa(task, newMsa.consensus.data(), newMsa.consensus.size(), -1);
 
                         //if extension was not possible in task, replace task by task copy
                         if(task.abort && task.abortReason == AbortReason::MsaNotExtended){
@@ -2550,13 +2605,13 @@ namespace care{
                         }
                         //nvtx::pop_range();                     
                     }else{
-                        extendWithMsa(task, msa, indexOfActiveTask);
+                        extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
                     }
                 }else{
-                    extendWithMsa(task, msa, indexOfActiveTask);
+                    extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
                 }
 #else 
-                extendWithMsa(task, msa, indexOfActiveTask);
+                extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
 #endif
 
             }
