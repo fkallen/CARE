@@ -43,6 +43,7 @@ namespace readextendergpukernels{
             }
         }
     }
+    
 
     template<int blocksize>
     __global__
@@ -117,7 +118,7 @@ namespace readextendergpukernels{
         const int* __restrict__ numCandidatesPerAnchorPrefixSum,
         const int* __restrict__ activeTaskIndices,
         int numTasksWithRemovedMate,
-        bool* __restrict__ outputflags
+        bool* __restrict__ output_keepflags
     ){
 
         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
@@ -126,7 +127,7 @@ namespace readextendergpukernels{
         const int groupindexinblock = threadIdx.x / groupsize;
 
         static_assert(blocksize % groupsize == 0);
-        constexpr int groupsperblock = blocksize / groupsize;
+        //constexpr int groupsperblock = blocksize / groupsize;
 
         extern __shared__ unsigned int smem[]; //sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts
 
@@ -143,54 +144,22 @@ namespace readextendergpukernels{
             }
             group.sync();
 
-            // if(printme && threadIdx.x == 0){
-            // //if(threadIdx.x == 0){
-            //     printf("task %d, globalTaskIndex %d, numCandidates %d, candidatesOffset %d\n", task, globalTaskIndex, numCandidates, candidatesOffset);
-            // }
-
             //compare mate to candidates. 1 thread per candidate
             for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
-                bool doRemove = true;
+                bool doKeep = false;
                 const unsigned int* const candidateptr = candidatefwddata + encodedSequencePitchInInts * (candidatesOffset + c);
 
-                // if(printme){
-                //     printf("c=%d\n", c);
-                //     for(int i = 0; i < encodedSequencePitchInInts; i++){
-                //         printf("%u ", candidateptr[i]);
-                //         //assert(candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i] == candidateptr[i]);
-                //     }
-                //     printf("\n");
-                
-                //     for(int i = 0; i < encodedSequencePitchInInts; i++){
-                //         printf("%u ", candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i]);
-                //         //assert(candidatefwddata2[encodedSequencePitchInInts * (candidatesOffset + c) + i] == candidateptr[i]);
-                //     }
-                // }
-                // if(c == 0){
-                //     printf(
-                //         "encodedSequencePitchInInts %d, candidatesOffset %d, globalTaskIndex %d, numCandidates %d\n", 
-                //         encodedSequencePitchInInts, 
-                //         candidatesOffset,
-                //         globalTaskIndex,
-                //         numCandidates
-                //     );
-                // }
-                //__syncthreads();
                 for(int p = 0; p < encodedSequencePitchInInts; p++){
                     const unsigned int aaa = sharedMate[p];
                     const unsigned int bbb = candidateptr[p];
 
                     if(aaa != bbb){
-                        // if(printme){
-                        //     printf("t %d c %d p %d, aaa %u, bbb %u\n", task, c, p, aaa, bbb);
-                        // }
-                        doRemove = false;
+                        doKeep = true;
                         break;
                     }
                 }
 
-                outputflags[(candidatesOffset + c)] = doRemove;
-                //printf("write %d to %d\n", doRemove, (candidatesOffset + c));
+                output_keepflags[(candidatesOffset + c)] = doKeep;
             }
         }
     }
@@ -230,11 +199,7 @@ public:
         minhashHandle(gpuMinhasher->makeQueryHandle()),
         cubAllocator(&cubAllocator_){
 
-
         cudaGetDevice(&deviceId); CUERR;
-
-        h_numAnchors.resize(1);
-        h_numCandidates.resize(1);
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
 
@@ -401,857 +366,6 @@ public: //private:
 
     std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
 
-private:
-
-    void getCandidateReadIdsSingle(
-        std::vector<read_number>& result, 
-        const unsigned int* encodedRead, 
-        int readLength, 
-        read_number readId,
-        int beginPos = 0 // only positions [beginPos, readLength] are hashed
-    ){
-        assert(false);
-
-        // result.clear();
-
-        // const bool containsN = readStorage->readContainsN(readId);
-
-        // //exclude anchors with ambiguous bases
-        // if(!(correctionOptions.excludeAmbiguousReads && containsN)){
-
-        //     const int length = readLength;
-        //     std::string sequence(length, '0');
-
-        //     decode2BitSequence(
-        //         &sequence[0],
-        //         encodedRead,
-        //         length
-        //     );
-
-        //     minhasher->getCandidates_any_map(
-        //         minhashHandle,
-        //         sequence.c_str() + beginPos,
-        //         std::max(0, readLength - beginPos),
-        //         0
-        //     );
-
-        //     auto minhashResultsEnd = minhashHandle.result().end();
-        //     //exclude candidates with ambiguous bases
-
-        //     if(correctionOptions.excludeAmbiguousReads){
-        //         minhashResultsEnd = std::remove_if(
-        //             minhashHandle.result().begin(),
-        //             minhashHandle.result().end(),
-        //             [&](read_number readId){
-        //                 return readStorage->readContainsN(readId);
-        //             }
-        //         );
-        //     }            
-
-        //     result.insert(
-        //         result.begin(),
-        //         minhashHandle.result().begin(),
-        //         minhashResultsEnd
-        //     );
-        // }else{
-        //     ; // no candidates
-        // }
-    }
-
-    void getCandidateReadIds(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks) {
-        // for(int indexOfActiveTask : indicesOfActiveTasks){
-        //     auto& task = tasks[indexOfActiveTask];
-
-        //     getCandidateReadIdsSingle(
-        //         task.candidateReadIds, 
-        //         task.currentAnchor.data(), 
-        //         task.currentAnchorLength,
-        //         task.currentAnchorReadId
-        //     );
-
-        // }
-
-        getCandidateReadIdsGpu(tasks, indicesOfActiveTasks);
-    }
-
-#if 1
-    void getCandidateReadIdsGpu(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
-        nvtx::push_range("gpu_hashing", 2);
-
-        const int numIndices = indicesOfActiveTasks.size();
-        const std::size_t encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
-
-        cudaStream_t stream = streams[primary_stream_index];
-
-        //input buffers
-        h_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
-        d_subjectSequencesData.resize(encodedSequencePitchInInts2Bit * numIndices);
-        h_anchorSequencesLength.resize(numIndices);
-        d_anchorSequencesLength.resize(numIndices);
-
-        //output buffers
-        h_numCandidatesPerAnchor.resize(numIndices);
-        d_numCandidatesPerAnchor.resize(numIndices);
-        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
-        d_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
-
-        #if 0
-        constexpr int batchsize = 64;
-        const int batches = SDIV(numIndices, batchsize);
-
-        for(int batch = 0; batch < batches; batch++){
-            const int begin = batch * batchsize;
-            const int end = std::min((batch + 1) * batchsize, numIndices);
-            const int num = end - begin;
-
-            for(int t = begin; t < end; t++){
-                const auto& task = tasks[indicesOfActiveTasks[t]];
-
-                if(task.iteration >= 0){
-
-                    h_anchorSequencesLength[t] = task.currentAnchorLength;
-
-                    std::copy(
-                        task.currentAnchor.begin(),
-                        task.currentAnchor.end(),
-                        h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
-                    );
-                }else{
-                    //only hash kmers which include extended positions
-
-                    const int extendedPositionsPreviousIteration 
-                        = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
-
-                    const int lengthToHash = std::min(task.currentAnchorLength, kmerLength + extendedPositionsPreviousIteration - 1);
-                    h_anchorSequencesLength[t] = lengthToHash;
-
-                    //std::cerr << "lengthToHash = " << lengthToHash << "\n";
-
-                    std::vector<char> buf(task.currentAnchorLength);
-                    SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
-                    SequenceHelpers::encodeSequence2Bit(
-                        h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
-                        buf.data() + task.currentAnchorLength - lengthToHash, 
-                        lengthToHash
-                    );
-
-                }
-            }
-
-            cudaMemcpyAsync(
-                d_subjectSequencesData.get() + encodedSequencePitchInInts2Bit * begin ,
-                h_subjectSequencesData.get() + encodedSequencePitchInInts2Bit * begin,
-                sizeof(unsigned int) * num * encodedSequencePitchInInts2Bit,
-                H2D,
-                streams[batch % streams.size()]
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_anchorSequencesLength.get() + begin,
-                h_anchorSequencesLength.get() + begin,
-                sizeof(int) * num,
-                H2D,
-                stream
-            ); CUERR;
-        }
-
-        #else
-
-        for(int t = 0; t < numIndices; t++){
-            const auto& task = tasks[indicesOfActiveTasks[t]];
-
-            if(task.iteration >= 0){
-
-                h_anchorSequencesLength[t] = task.currentAnchorLength;
-
-                std::copy(
-                    task.currentAnchor.begin(),
-                    task.currentAnchor.end(),
-                    h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit
-                );
-            }else{
-                //only hash kmers which include extended positions
-
-                const int extendedPositionsPreviousIteration 
-                    = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
-
-                const int lengthToHash = std::min(task.currentAnchorLength, kmerLength + extendedPositionsPreviousIteration - 1);
-                h_anchorSequencesLength[t] = lengthToHash;
-
-                //std::cerr << "lengthToHash = " << lengthToHash << "\n";
-
-                std::vector<char> buf(task.currentAnchorLength);
-                SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
-                SequenceHelpers::encodeSequence2Bit(
-                    h_subjectSequencesData.get() + t * encodedSequencePitchInInts2Bit, 
-                    buf.data() + task.currentAnchorLength - lengthToHash, 
-                    lengthToHash
-                );
-
-            }
-        }
-
-        #endif
-
-        cudaMemcpyAsync(
-            d_subjectSequencesData.get(),
-            h_subjectSequencesData.get(),
-            sizeof(unsigned int) * numIndices * encodedSequencePitchInInts2Bit,
-            H2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_anchorSequencesLength.get(),
-            h_anchorSequencesLength.get(),
-            sizeof(int) * numIndices,
-            H2D,
-            stream
-        ); CUERR;
-
-        int totalNumValues = 0;
-
-        gpuMinhasher->determineNumValues(
-            minhashHandle,
-            d_subjectSequencesData.get(),
-            encodedSequencePitchInInts2Bit,
-            d_anchorSequencesLength.get(),
-            numIndices,
-            d_numCandidatesPerAnchor.get(),
-            totalNumValues,
-            stream
-        );
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        d_candidateReadIds.resize(totalNumValues);
-        h_candidateReadIds.resize(totalNumValues);
-
-        if(totalNumValues == 0){
-            cudaMemsetAsync(d_numCandidatesPerAnchor.get(), 0, sizeof(int) * numIndices, stream); CUERR;
-            cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + numIndices), stream); CUERR;
-            return;
-        }
-
-        gpuMinhasher->retrieveValues(
-            minhashHandle,
-            nullptr,
-            numIndices,                
-            totalNumValues,
-            d_candidateReadIds.get(),
-            d_numCandidatesPerAnchor.get(),
-            d_numCandidatesPerAnchorPrefixSum.get(),
-            stream
-        );
-
-        //d_numCandidatesPerAnchor not copied to host because unused
-
-        cudaMemcpyAsync(
-            h_numCandidatesPerAnchorPrefixSum.get(),
-            d_numCandidatesPerAnchorPrefixSum.get(),
-            sizeof(int) * (numIndices+1),
-            D2H,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        cudaMemcpyAsync(
-            h_candidateReadIds.get(),
-            d_candidateReadIds.get(),
-            sizeof(read_number) * h_numCandidatesPerAnchorPrefixSum[numIndices],
-            D2H,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        for(int t = 0; t < numIndices; t++){
-            auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const int offsetBegin = h_numCandidatesPerAnchorPrefixSum[t];
-            const int offsetEnd = h_numCandidatesPerAnchorPrefixSum[t+1];
-
-            task.candidateReadIds.clear();
-            
-            task.candidateReadIds.insert(
-                task.candidateReadIds.begin(),
-                h_candidateReadIds.get() + offsetBegin,
-                h_candidateReadIds.get() + offsetEnd
-            );
-
-            //std::cerr << "task " << task.myReadId << ", iteration " << task.iteration << ", candidates " << task.candidateReadIds.size();
-        }
-
-        nvtx::pop_range();
-    }
-#endif
-
-
-    
-
-    void loadCandidateSequenceData(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
-
-        nvtx::push_range("gpu_loadCandidates", 2);
-
-        const int numIndices = indicesOfActiveTasks.size();
-
-        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);
-        h_numCandidatesPerAnchorPrefixSum[0] = 0;        
-
-        for(int t = 0; t < numIndices; t++){
-            const auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const int numCandidates = task.candidateReadIds.size();
-
-            h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
-        }
-
-        const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numIndices];
-
-        //input buffers
-        h_candidateReadIds.resize(totalNumCandidates);
-        d_candidateReadIds.resize(totalNumCandidates);
-
-        //output buffers
-        h_candidateSequencesLength.resize(totalNumCandidates);
-        h_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
-        h_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
-
-        d_candidateSequencesLength.resize(totalNumCandidates);
-        d_candidateSequencesData.resize(encodedSequencePitchInInts * totalNumCandidates);
-        d_candidateSequencesRevcData.resize(encodedSequencePitchInInts * totalNumCandidates);
-
-        for(int t = 0; t < numIndices; t++){
-            const auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const int numCandidates = task.candidateReadIds.size();
-
-            const int offset = h_numCandidatesPerAnchorPrefixSum[t];
-
-            std::copy(task.candidateReadIds.begin(), task.candidateReadIds.end(), h_candidateReadIds.get() + offset);
-        }
-
-        cudaStream_t stream = streams[primary_stream_index];
-
-        cudaMemcpyAsync(
-            d_candidateReadIds.get(),
-            h_candidateReadIds.get(),
-            sizeof(read_number) * totalNumCandidates,
-            H2D,
-            stream
-        ); CUERR;
-
-        gpuReadStorage->gatherSequences(
-            readStorageHandle,
-            d_candidateSequencesData.get(),
-            encodedSequencePitchInInts,
-            h_candidateReadIds.get(),
-            d_candidateReadIds.get(), //device accessible
-            totalNumCandidates,
-            stream
-        );
-
-        gpuReadStorage->gatherSequenceLengths(
-            readStorageHandle,
-            d_candidateSequencesLength.get(),
-            d_candidateReadIds.get(),
-            totalNumCandidates,
-            stream
-        );
-
-        readextendergpukernels::reverseComplement2bitKernel<128><<<320,128,0,stream>>>(
-            d_candidateSequencesLength.get(),
-            d_candidateSequencesData.get(),
-            d_candidateSequencesRevcData.get(),
-            totalNumCandidates,
-            encodedSequencePitchInInts
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            h_candidateSequencesLength.get(),
-            d_candidateSequencesLength.get(),
-            sizeof(int) * totalNumCandidates,
-            H2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            h_candidateSequencesData.get(),
-            d_candidateSequencesData.get(),
-            sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
-            H2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            h_candidateSequencesRevcData.get(),
-            d_candidateSequencesRevcData.get(),
-            sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
-            H2D,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-
-
-
-        for(int t = 0; t < numIndices; t++){
-            auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const int numCandidates = task.candidateReadIds.size();
-
-            task.candidateSequenceLengths.resize(numCandidates);
-            task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-            task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-
-            const int offset = h_numCandidatesPerAnchorPrefixSum[t];
-
-            // if(task.myReadId == 2720 && task.iteration == 4){
-            //     std::cerr << h_candidateSequencesData[(offset * encodedSequencePitchInInts) + 0] << "\n";
-            // }
-
-            std::copy_n(
-                h_candidateSequencesLength.get() + offset,
-                numCandidates,
-                task.candidateSequenceLengths.begin()
-            );
-
-            std::copy_n(
-                h_candidateSequencesData.get() + (offset * encodedSequencePitchInInts),
-                (numCandidates * encodedSequencePitchInInts),
-                task.candidateSequencesFwdData.begin()
-            );
-
-            std::copy_n(
-                h_candidateSequencesRevcData.get() + (offset * encodedSequencePitchInInts),
-                (numCandidates * encodedSequencePitchInInts),
-                task.candidateSequencesRevcData.begin()
-            );
-        }
-
-        nvtx::pop_range();
-    }
-
-
-    
-
-    void eraseDataOfRemovedMates(std::vector<Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
-            return vec.at(index);
-        };
-
-#if 1
-        // std::vector<Task> tasksorig = tasks;
-        // std::vector<Task> taskscopy = tasks;
-        // std::vector<int> indicesOfActiveTaskscopy = indicesOfActiveTasks;
-
-        const int numActiveTasks = indicesOfActiveTasks.size();
-        assert(std::all_of(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 
-            [&](auto i){return i < int(tasks.size());}));
-
-        h_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
-        d_anchormatedata.resize(numActiveTasks * encodedSequencePitchInInts);
-
-        h_activeTaskIndices.resize(numActiveTasks);
-        d_activeTaskIndices.resize(numActiveTasks);
-
-        h_numCandidatesPerAnchor.resize(numActiveTasks);
-        h_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);                
-
-        h_numCandidatesPerAnchorPrefixSum[0] = 0;
-
-        int numTasksWithMateRemoved = 0;  
-
-        for(int t = 0; t < numActiveTasks; t++){
-            const int indexOfActiveTask = indicesOfActiveTasks[t];
-            auto& task = vecAccess(tasks, indexOfActiveTask);
-
-            const int numCandidates = task.candidateReadIds.size();
-
-            h_numCandidatesPerAnchor[t] = numCandidates;
-            h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
-
-            if(task.mateRemovedFromCandidates){
-                h_activeTaskIndices[numTasksWithMateRemoved] = t;
-
-                std::copy(task.encodedMate.begin(), task.encodedMate.end(), h_anchormatedata.begin() + numTasksWithMateRemoved * encodedSequencePitchInInts);
-
-                numTasksWithMateRemoved++;
-            }
-        }
-
-        if(numTasksWithMateRemoved > 0){
-
-            h_flags.resize(h_numCandidatesPerAnchorPrefixSum[numActiveTasks]);
-            std::fill(h_flags.begin(), h_flags.end(), 0);
-
-            cudaStream_t stream = streams[primary_stream_index];
-
-            cudaMemcpyAsync(
-                d_anchormatedata.data(),
-                h_anchormatedata.data(),
-                sizeof(unsigned int) * numTasksWithMateRemoved * encodedSequencePitchInInts,
-                H2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_activeTaskIndices.data(),
-                h_activeTaskIndices.data(),
-                sizeof(int) * numTasksWithMateRemoved,
-                H2D,
-                stream
-            ); CUERR;
-
-            // std::cerr <<"d_candidateSequencesData.size() = " << d_candidateSequencesData.size() << "\n";
-            // std::cerr << "maxcandidates = " << h_numCandidatesPerAnchorPrefixSum[numActiveTasks] << "\n";
-
-            constexpr int groupsize = 32;
-            constexpr int blocksize = 128;
-            constexpr int groupsperblock = blocksize / groupsize;
-            dim3 block(blocksize,1,1);
-            dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, blocksize), 1, 1);
-            const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
-
-            readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-            //readextendergpukernels::filtermatekernel<1,1><<<1, 1, smembytes, stream>>>(
-                d_anchormatedata.data(),
-                d_candidateSequencesData.data(),
-                encodedSequencePitchInInts,
-                h_numCandidatesPerAnchor.data(),
-                h_numCandidatesPerAnchorPrefixSum.data(),
-                d_activeTaskIndices.data(),
-                numTasksWithMateRemoved,
-                h_flags.data()
-                //false//(tasks.size() > 1 && tasks[1].myReadId == 10243 && tasks[1].iteration == 2)
-            ); CUERR;
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            for(int t = 0; t < numActiveTasks; t++){
-                const int indexOfActiveTask = indicesOfActiveTasks[t];
-                auto& task = vecAccess(tasks, indexOfActiveTask);
-
-                if(task.mateRemovedFromCandidates){
-                    const int numCandidates = task.candidateReadIds.size();
-                    const std::size_t offset = h_numCandidatesPerAnchorPrefixSum[t];
-
-                    const bool* const removalflags = h_flags.data() + offset;
-                    int numremaining = 0;
-
-                    for(int c = 0; c < numCandidates; c++){
-                        if(!removalflags[c]){
-
-                            vecAccess(task.candidateReadIds, numremaining) = vecAccess(task.candidateReadIds, c);
-                            vecAccess(task.candidateSequenceLengths, numremaining) = vecAccess(task.candidateSequenceLengths, c);                     
-
-                            std::copy_n(
-                                task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts,
-                                encodedSequencePitchInInts,
-                                task.candidateSequencesFwdData.data() + numremaining * encodedSequencePitchInInts
-                            );
-
-                            std::copy_n(
-                                task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts,
-                                encodedSequencePitchInInts,
-                                task.candidateSequencesRevcData.data() + numremaining * encodedSequencePitchInInts
-                            );
-
-                            numremaining++;
-                        }
-                    }
-
-                    task.candidateReadIds.erase(
-                        task.candidateReadIds.begin() + numremaining, 
-                        task.candidateReadIds.end()
-                    );
-                    task.candidateSequenceLengths.erase(
-                        task.candidateSequenceLengths.begin() + numremaining, 
-                        task.candidateSequenceLengths.end()
-                    );
-                    task.candidateSequencesFwdData.erase(
-                        task.candidateSequencesFwdData.begin() + numremaining * encodedSequencePitchInInts, 
-                        task.candidateSequencesFwdData.end()
-                    );
-                    task.candidateSequencesRevcData.erase(
-                        task.candidateSequencesRevcData.begin() + numremaining * encodedSequencePitchInInts, 
-                        task.candidateSequencesRevcData.end()
-                    );
-
-                    task.mateRemovedFromCandidates = false;
-                }
-            }
-
-        }
-
-#else
-
-        for(int indexOfActiveTask : indicesOfActiveTasks){
-            auto& task = vecAccess(tasks, indexOfActiveTask);
-
-            if(task.mateRemovedFromCandidates){
-                const int numCandidates = task.candidateReadIds.size();
-
-                std::vector<int> positionsOfCandidatesToKeep;
-                positionsOfCandidatesToKeep.reserve(numCandidates);
-
-                for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
-                                                    + std::size_t(encodedSequencePitchInInts) * c;
-
-                    auto mismatchIters = std::mismatch(
-                        task.encodedMate.begin(), task.encodedMate.end(),
-                        seqPtr, seqPtr + encodedSequencePitchInInts
-                    );
-
-                    //candidate differs from mate
-                    if(mismatchIters.first != task.encodedMate.end()){                            
-                        positionsOfCandidatesToKeep.emplace_back(c);
-                    }else{
-                        ;//std::cerr << "";
-                    }
-                }
-
-                //compact
-                const int toKeep = positionsOfCandidatesToKeep.size();
-                for(int c = 0; c < toKeep; c++){
-                    const int index = vecAccess(positionsOfCandidatesToKeep, c);
-
-                    vecAccess(task.candidateReadIds, c) = vecAccess(task.candidateReadIds, index);
-                    vecAccess(task.candidateSequenceLengths, c) = vecAccess(task.candidateSequenceLengths, index);                        
-
-                    std::copy_n(
-                        task.candidateSequencesFwdData.data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        task.candidateSequencesFwdData.data() + c * encodedSequencePitchInInts
-                    );
-
-                    std::copy_n(
-                        task.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
-                    );
-
-                    
-                }
-
-                //erase
-                task.candidateReadIds.erase(
-                    task.candidateReadIds.begin() + toKeep, 
-                    task.candidateReadIds.end()
-                );
-                task.candidateSequenceLengths.erase(
-                    task.candidateSequenceLengths.begin() + toKeep, 
-                    task.candidateSequenceLengths.end()
-                );
-                task.candidateSequencesFwdData.erase(
-                    task.candidateSequencesFwdData.begin() + toKeep * encodedSequencePitchInInts, 
-                    task.candidateSequencesFwdData.end()
-                );
-                task.candidateSequencesRevcData.erase(
-                    task.candidateSequencesRevcData.begin() + toKeep * encodedSequencePitchInInts, 
-                    task.candidateSequencesRevcData.end()
-                );
-
-                task.mateRemovedFromCandidates = false;
-
-                //assert(task == taskscopy[indexOfActiveTask]);
-            }else{
-                //assert(task == taskscopy[indexOfActiveTask]);
-            }
-
-            
-
-        }
-#endif        
-    }
-
-    
-    void calculateAlignments(std::vector<ReadExtenderBase::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
-        nvtx::push_range("gpu_alignment", 2);
-
-        const int numIndices = indicesOfActiveTasks.size();
-
-        h_numCandidatesPerAnchor.resize(numIndices);
-        h_numCandidatesPerAnchorPrefixSum.resize(numIndices+1);                
-
-        h_numCandidatesPerAnchorPrefixSum[0] = 0;        
-
-        for(int t = 0; t < numIndices; t++){
-            const auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const int numCandidates = task.candidateReadIds.size();
-
-            h_numCandidatesPerAnchor[t] = numCandidates;
-            h_numCandidatesPerAnchorPrefixSum[t+1] = numCandidates + h_numCandidatesPerAnchorPrefixSum[t];
-        }
-
-        const int totalNumCandidates = h_numCandidatesPerAnchorPrefixSum[numIndices];
-
-        h_alignment_overlaps.resize(totalNumCandidates);
-        h_alignment_shifts.resize(totalNumCandidates);
-        h_alignment_nOps.resize(totalNumCandidates);
-        h_alignment_isValid.resize(totalNumCandidates);
-        h_alignment_best_alignment_flags.resize(totalNumCandidates);
-
-
-        h_anchorIndicesOfCandidates.resize(totalNumCandidates);
-        h_anchorSequencesLength.resize(numIndices);
-        h_candidateSequencesLength.resize(totalNumCandidates);
-        h_subjectSequencesData.resize(numIndices * encodedSequencePitchInInts);
-        h_candidateSequencesData.resize(totalNumCandidates * encodedSequencePitchInInts);
-
-        d_subjectSequencesData.resize(numIndices * encodedSequencePitchInInts);
-        d_candidateSequencesData.resize(totalNumCandidates * encodedSequencePitchInInts);
-
-        auto* anchorcpyptr = h_subjectSequencesData.get();
-        auto* candcpyptr = h_candidateSequencesData.get();
-
-        int maxLength = 0;
-
-        for(int t = 0; t < numIndices; t++){
-            const auto& task = tasks[indicesOfActiveTasks[t]];
-            const int numCandidates = task.candidateReadIds.size();
-
-            const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
-
-            h_anchorSequencesLength[t] = task.currentAnchorLength;
-
-            std::fill_n(
-                h_anchorIndicesOfCandidates.get() + offset, 
-                numCandidates, 
-                t
-            );
-
-            std::copy_n(
-                task.candidateSequenceLengths.begin(),
-                numCandidates,
-                h_candidateSequencesLength.get() + offset
-            );
-
-            auto localmax = std::max_element(task.candidateSequenceLengths.begin(), task.candidateSequenceLengths.end());
-            if(localmax != task.candidateSequenceLengths.end()){
-                maxLength = std::max(maxLength, *localmax);
-            }
-
-            anchorcpyptr = std::copy(
-                task.currentAnchor.begin(), 
-                task.currentAnchor.end(),
-                anchorcpyptr
-            );
-
-            candcpyptr = std::copy(
-                task.candidateSequencesFwdData.begin(), 
-                task.candidateSequencesFwdData.end(),
-                candcpyptr
-            );
-        }
-
-        h_numAnchors[0] = numIndices;
-        h_numCandidates[0] = totalNumCandidates;
-
-        const bool* const d_anchorContainsN = nullptr;
-        const bool* const d_candidateContainsN = nullptr;
-        const bool removeAmbiguousAnchors = false;
-        const bool removeAmbiguousCandidates = false;
-        const int maxNumAnchors = numIndices;
-        const int maxNumCandidates = totalNumCandidates;
-        const int maximumSequenceLength = maxLength;
-        const int encodedSequencePitchInInts2Bit = encodedSequencePitchInInts;
-        const int min_overlap = goodAlignmentProperties.min_overlap;
-        const float maxErrorRate = goodAlignmentProperties.maxErrorRate;
-        const float min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
-        const float estimatedNucleotideErrorRate = correctionOptions.estimatedErrorrate;
-        cudaStream_t stream = streams[primary_stream_index];
-
-        auto callAlignmentKernel = [&](void* d_tempstorage, size_t& tempstoragebytes){
-
-            call_popcount_rightshifted_hamming_distance_kernel_async(
-                d_tempstorage,
-                tempstoragebytes,
-                h_alignment_overlaps.get(),
-                h_alignment_shifts.get(),
-                h_alignment_nOps.get(),
-                h_alignment_isValid.get(),
-                h_alignment_best_alignment_flags.get(),
-                d_subjectSequencesData.get(),
-                d_candidateSequencesData.get(),
-                h_anchorSequencesLength.get(),
-                h_candidateSequencesLength.get(),
-                h_numCandidatesPerAnchorPrefixSum.get(),
-                h_numCandidatesPerAnchor.get(),
-                h_anchorIndicesOfCandidates.get(),
-                h_numAnchors.get(),
-                h_numCandidates.get(),
-                d_anchorContainsN,
-                removeAmbiguousAnchors,
-                d_candidateContainsN,
-                removeAmbiguousCandidates,
-                maxNumAnchors,
-                maxNumCandidates,
-                maximumSequenceLength,
-                encodedSequencePitchInInts2Bit,
-                min_overlap,
-                maxErrorRate,
-                min_overlap_ratio,
-                estimatedNucleotideErrorRate,
-                stream,
-                kernelLaunchHandle
-            );
-        };
-
-        cudaMemcpyAsync(
-            d_subjectSequencesData.get(),
-            h_subjectSequencesData.get(),
-            sizeof(unsigned int) * numIndices * encodedSequencePitchInInts,
-            H2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_candidateSequencesData.get(),
-            h_candidateSequencesData.get(),
-            sizeof(unsigned int) * totalNumCandidates * encodedSequencePitchInInts,
-            H2D,
-            stream
-        ); CUERR;
-
-        size_t tempstoragebytes = 0;
-        callAlignmentKernel(nullptr, tempstoragebytes);
-
-        d_tempstorage.resize(tempstoragebytes);
-
-        callAlignmentKernel(d_tempstorage.get(), tempstoragebytes);
-
-        for(int t = 0; t < numIndices; t++){
-            auto& task = tasks[indicesOfActiveTasks[t]];
-
-            const auto numCandidates = task.candidateReadIds.size();
-
-            task.alignmentFlags.resize(numCandidates);
-            task.alignments.resize(numCandidates);
-        }
-
-        cudaStreamSynchronize(stream); CUERR;
-
-        for(int t = 0; t < numIndices; t++){
-            auto& task = tasks[indicesOfActiveTasks[t]];
-            const int numCandidates = task.candidateReadIds.size();
-
-            const auto offset = h_numCandidatesPerAnchorPrefixSum[t];
-
-            for(int c = 0; c < numCandidates; c++){
-                task.alignments[c].shift = h_alignment_shifts[offset + c];
-                task.alignments[c].overlap = h_alignment_overlaps[offset + c];
-                task.alignments[c].nOps = h_alignment_nOps[offset + c];
-                task.alignments[c].isValid = h_alignment_isValid[offset + c];
-                task.alignmentFlags[c] = h_alignment_best_alignment_flags[offset + c];
-            }
-        }
-
-        nvtx::pop_range();
-    }
 
 public:
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const;
@@ -1260,6 +374,189 @@ public:
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
     void filterAlignments(BatchData& batchData, cudaStream_t stream) const;
 
+    void copyBatchDataIntoTask(Task& task, int taskindex, const BatchData& data) const{
+        const int numCandidates = data.h_numCandidatesPerAnchor[taskindex];
+        const int offset = data.h_numCandidatesPerAnchorPrefixSum[taskindex];
+
+        task.candidateReadIds.resize(numCandidates);
+        std::copy_n(data.h_candidateReadIds.data() + offset, numCandidates, task.candidateReadIds.begin());
+
+        task.candidateSequenceLengths.resize(numCandidates);
+        std::copy_n(data.h_candidateSequencesLength.data() + offset, numCandidates, task.candidateSequenceLengths.begin());
+
+        task.candidateSequenceData.resize(numCandidates * encodedSequencePitchInInts);
+        std::copy_n(
+            data.h_candidateSequencesData.data() + offset * encodedSequencePitchInInts, 
+            numCandidates * encodedSequencePitchInInts, 
+            task.candidateSequenceData.begin()
+        );
+
+        task.alignmentFlags.resize(numCandidates);
+        task.alignments.resize(numCandidates);
+
+        for(int c = 0; c < numCandidates; c++){
+            task.alignments[c].shift = data.h_alignment_shifts[offset + c];
+            task.alignments[c].overlap = data.h_alignment_overlaps[offset + c];
+            task.alignments[c].nOps = data.h_alignment_nOps[offset + c];
+            task.alignmentFlags[c] = data.h_alignment_best_alignment_flags[offset + c];
+        }
+
+        task.numRemainingCandidates = numCandidates;
+
+        if(task.numRemainingCandidates == 0){
+            task.abort = true;
+            task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+        }
+    }
+
+    MultipleSequenceAlignment constructMsaWithDataFromTask(Task& task) const{
+        const std::string& decodedAnchor = task.totalDecodedAnchors.back();
+
+        MultipleSequenceAlignment msa;
+
+        auto build = [&](){
+
+            task.candidateShifts.resize(task.numRemainingCandidates);
+            task.candidateOverlapWeights.resize(task.numRemainingCandidates);
+
+            //gather data required for msa
+            for(int c = 0; c < task.numRemainingCandidates; c++){
+                task.candidateShifts[c] = task.alignments[c].shift;
+
+                task.candidateOverlapWeights[c] = calculateOverlapWeight(
+                    task.currentAnchorLength, 
+                    task.alignments[c].nOps,
+                    task.alignments[c].overlap,
+                    goodAlignmentProperties.maxErrorRate
+                );
+            }
+
+            task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
+
+            //decode the candidates for msa
+            for(int c = 0; c < task.numRemainingCandidates; c++){
+                SequenceHelpers::decode2BitSequence(
+                    task.candidateStrings.data() + c * decodedSequencePitchInBytes,
+                    task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
+                    task.candidateSequenceLengths[c]
+                );
+            }
+
+            MultipleSequenceAlignment::InputData msaInput;
+            msaInput.useQualityScores = false;
+            msaInput.subjectLength = task.currentAnchorLength;
+            msaInput.nCandidates = task.numRemainingCandidates;
+            msaInput.candidatesPitch = decodedSequencePitchInBytes;
+            msaInput.candidateQualitiesPitch = 0;
+            msaInput.subject = decodedAnchor.c_str();
+            msaInput.candidates = task.candidateStrings.data();
+            msaInput.subjectQualities = nullptr;
+            msaInput.candidateQualities = nullptr;
+            msaInput.candidateLengths = task.candidateSequenceLengths.data();
+            msaInput.candidateShifts = task.candidateShifts.data();
+            msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();                    
+
+            msa.build(msaInput);
+        };
+
+        build();
+
+        #if 1
+
+        auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
+            const int numCandidates = task.candidateReadIds.size();
+
+            int insertpos = 0;
+            for(int i = 0; i < numCandidates; i++){
+                if(!minimizationResult.differentRegionCandidate[i]){               
+                    //keep candidate
+
+                    task.candidateReadIds[insertpos] = task.candidateReadIds[i];
+
+                    std::copy_n(
+                        task.candidateSequenceData.data() + i * size_t(encodedSequencePitchInInts),
+                        encodedSequencePitchInInts,
+                        task.candidateSequenceData.data() + insertpos * size_t(encodedSequencePitchInInts)
+                    );
+
+                    task.candidateSequenceLengths[insertpos] = task.candidateSequenceLengths[i];
+                    task.alignmentFlags[insertpos] = task.alignmentFlags[i];
+                    task.alignments[insertpos] = task.alignments[i];
+                    task.candidateOverlapWeights[insertpos] = task.candidateOverlapWeights[i];
+                    task.candidateShifts[insertpos] = task.candidateShifts[i];
+
+                    std::copy_n(
+                        task.candidateStrings.data() + i * size_t(decodedSequencePitchInBytes),
+                        decodedSequencePitchInBytes,
+                        task.candidateStrings.data() + insertpos * size_t(decodedSequencePitchInBytes)
+                    );
+
+                    insertpos++;
+                }
+            }
+
+            task.numRemainingCandidates = insertpos;
+
+            task.candidateReadIds.erase(
+                task.candidateReadIds.begin() + insertpos, 
+                task.candidateReadIds.end()
+            );
+            task.candidateSequenceData.erase(
+                task.candidateSequenceData.begin() + encodedSequencePitchInInts * insertpos, 
+                task.candidateSequenceData.end()
+            );
+            task.candidateSequenceLengths.erase(
+                task.candidateSequenceLengths.begin() + insertpos, 
+                task.candidateSequenceLengths.end()
+            );
+            task.alignmentFlags.erase(
+                task.alignmentFlags.begin() + insertpos, 
+                task.alignmentFlags.end()
+            );
+            task.alignments.erase(
+                task.alignments.begin() + insertpos, 
+                task.alignments.end()
+            );
+
+            task.candidateStrings.erase(
+                task.candidateStrings.begin() + decodedSequencePitchInBytes * insertpos, 
+                task.candidateStrings.end()
+            );
+            task.candidateOverlapWeights.erase(
+                task.candidateOverlapWeights.begin() + insertpos, 
+                task.candidateOverlapWeights.end()
+            );
+            task.candidateShifts.erase(
+                task.candidateShifts.begin() + insertpos, 
+                task.candidateShifts.end()
+            );
+            
+        };
+
+        if(getNumRefinementIterations() > 0){                
+
+            for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
+                const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
+                    correctionOptions.estimatedCoverage
+                );
+
+                if(minimizationResult.performedMinimization){
+                    removeCandidatesOfDifferentRegion(minimizationResult);
+
+                    //build minimized multiple sequence alignment
+                    build();
+                }else{
+                    break;
+                }               
+                
+            }
+        }   
+
+        #endif
+
+        return msa;
+    }
+
 private:
     int deviceId;
     int kmerLength;
@@ -1267,48 +564,6 @@ private:
 
     thrust::device_new_allocator<char> thrustallocator{};
     cub::CachingDeviceAllocator* cubAllocator{};
-
-    PinnedBuffer<read_number> h_readIds;
-    DeviceBuffer<read_number> d_readIds;
-    PinnedBuffer<read_number> h_candidateReadIds;
-    DeviceBuffer<read_number> d_candidateReadIds;
-
-    PinnedBuffer<unsigned int> h_anchormatedata;
-    DeviceBuffer<unsigned int> d_anchormatedata;
-
-    PinnedBuffer<int> h_numCandidatesPerAnchor;
-    DeviceBuffer<int> d_numCandidatesPerAnchor;
-    PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum;
-    DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum;
-    PinnedBuffer<int> h_alignment_overlaps;
-    PinnedBuffer<int> h_alignment_shifts;
-    PinnedBuffer<int> h_alignment_nOps;
-    PinnedBuffer<bool> h_alignment_isValid;
-    PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags;
-
-    PinnedBuffer<int> h_numAnchors;
-    PinnedBuffer<int> h_numCandidates;
-
-    PinnedBuffer<int> h_anchorIndicesOfCandidates;
-    PinnedBuffer<int> h_anchorSequencesLength;
-    DeviceBuffer<int> d_anchorSequencesLength;
-    PinnedBuffer<int> h_candidateSequencesLength;
-    DeviceBuffer<int> d_candidateSequencesLength;
-    PinnedBuffer<unsigned int> h_subjectSequencesData;
-    PinnedBuffer<unsigned int> h_candidateSequencesData;
-    PinnedBuffer<unsigned int> h_candidateSequencesRevcData;
-    
-
-    DeviceBuffer<unsigned int> d_subjectSequencesData;
-    DeviceBuffer<unsigned int> d_candidateSequencesData;
-    DeviceBuffer<unsigned int> d_candidateSequencesRevcData;
-
-    DeviceBuffer<int> d_activeTaskIndices;
-    PinnedBuffer<int> h_activeTaskIndices;
-
-    DeviceBuffer<char> d_tempstorage;
-    DeviceBuffer<bool> d_flags;
-    PinnedBuffer<bool> h_flags;
 
     std::array<CudaStream, 4> streams{};
     std::array<CudaEvent, 1> events{};
