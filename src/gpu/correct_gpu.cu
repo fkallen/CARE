@@ -17,6 +17,10 @@
 #include <corrector.hpp>
 #include <corrector_common.hpp>
 
+#include <classification.hpp>
+
+
+
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -175,11 +179,13 @@ public:
     SimpleGpuCorrectionPipeline(
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
-        ThreadPool* threadPool_          
+        ThreadPool* threadPool_,
+        ClfAgent* clfAgent_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
-        threadPool(threadPool_)
+        threadPool(threadPool_),
+        clfAgent(clfAgent_)
     {
 
     }
@@ -335,7 +341,8 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            clfAgent
         };
 
         OutputConstructor outputConstructor(            
@@ -601,7 +608,8 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            clfAgent
         };
 
         OutputConstructor outputConstructor(            
@@ -737,6 +745,7 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
+    ClfAgent* clfAgent;
 };
 
 
@@ -753,11 +762,13 @@ public:
     ComplexGpuCorrectionPipeline(
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
-        ThreadPool* threadPool_          
+        ThreadPool* threadPool_,
+        ClfAgent* clfAgent_ 
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
-        threadPool(threadPool_)
+        threadPool(threadPool_),
+        clfAgent(clfAgent_)
     {
 
     }
@@ -998,7 +1009,8 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            clfAgent
         };
 
         CudaStream stream;
@@ -1085,7 +1097,8 @@ public:
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            clfAgent
         };
 
         OutputConstructor outputConstructor(            
@@ -1324,6 +1337,7 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
+    ClfAgent* clfAgent;
 
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> unprocessedInputs;
@@ -1533,6 +1547,8 @@ correct_gpu_impl(
         progressThread.addProgress(size);
     };
 
+    ClfAgent clfAgent_(correctionOptions, fileOptions);
+
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
@@ -1544,7 +1560,8 @@ correct_gpu_impl(
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool
+                &clfAgent_
             );
     
             pipeline.runToCompletion(
@@ -1587,7 +1604,8 @@ correct_gpu_impl(
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool
+                &clfAgent_
             );
 
             constexpr int numBatches = 50;
@@ -1632,7 +1650,8 @@ correct_gpu_impl(
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool        
+                &clfAgent_
             );
 
             pipeline.runToCompletionDoubleBuffered(
@@ -1648,7 +1667,7 @@ correct_gpu_impl(
 
         auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config){
             
-            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr); //&threadPool);
+            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr, &clfAgent_);
 
             pipeline.run(
                 deviceId,

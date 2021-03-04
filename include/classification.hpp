@@ -22,6 +22,30 @@
 
 namespace care {
 
+struct ClfAgentDecisionInputData{
+    const char* decodedAnchor{};
+    int subjectColumnsBegin_incl{};
+    int subjectColumnsEnd_excl{};
+    const int* alignmentShifts{};
+    const int* candidateSequencesLengths{};
+    const char* decodedCandidateSequences{};
+    const int* countsA{};
+    const int* countsC{};
+    const int* countsG{};
+    const int* countsT{};
+    const float* weightsA{};
+    const float* weightsC{};
+    const float* weightsG{};
+    const float* weightsT{};
+    const int* coverages{};
+    const char* consensus{};
+
+    std::function<MSAProperties(int,int,float,float,float)> getMSAProperties{};
+
+    MSAProperties anchorMsaProperties{};
+};
+
+
 template<typename AnchorClf,
          typename CandClf,
          typename AnchorExtractor,
@@ -85,6 +109,14 @@ struct clf_agent
         return classifier_cands->decide(extract_cands(task, i, opt, cand, offset));
     }
 
+    bool decide_anchor(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt) {       
+        return classifier_anchor->decide(extract_anchor(data, i, opt));
+    }
+
+    bool decide_cand(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
+        return classifier_cands->decide(extract_cands(data, i, opt, cand, offset));
+    }
+
     void flush() {
         #pragma omp critical
         {
@@ -100,8 +132,59 @@ struct clf_agent
 
 namespace detail {
 
+
+
 struct extract_anchor_transformed {
     using features_t = std::array<float, 37>;
+
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
+        int pos = a_begin + i;
+        char orig = data.decodedAnchor[i];
+        float countsACGT = data.coverages[pos];
+
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(data.consensus[pos] == 'A'),
+            float(data.consensus[pos] == 'C'),
+            float(data.consensus[pos] == 'G'),
+            float(data.consensus[pos] == 'T'),
+            orig == 'A'?data.countsA[pos]/countsACGT:0,
+            orig == 'C'?data.countsC[pos]/countsACGT:0,
+            orig == 'G'?data.countsG[pos]/countsACGT:0,
+            orig == 'T'?data.countsT[pos]/countsACGT:0,
+            orig == 'A'?data.weightsA[pos]:0,
+            orig == 'C'?data.weightsC[pos]:0,
+            orig == 'G'?data.weightsG[pos]:0,
+            orig == 'T'?data.weightsT[pos]:0,
+            data.consensus[pos] == 'A'?data.countsA[pos]/countsACGT:0,
+            data.consensus[pos] == 'C'?data.countsC[pos]/countsACGT:0,
+            data.consensus[pos] == 'G'?data.countsG[pos]/countsACGT:0,
+            data.consensus[pos] == 'T'?data.countsT[pos]/countsACGT:0,
+            data.consensus[pos] == 'A'?data.weightsA[pos]:0,
+            data.consensus[pos] == 'C'?data.weightsC[pos]:0,
+            data.consensus[pos] == 'G'?data.weightsG[pos]:0,
+            data.consensus[pos] == 'T'?data.weightsT[pos]:0,
+            data.weightsA[pos],
+            data.weightsC[pos],
+            data.weightsG[pos],
+            data.weightsT[pos],
+            data.countsA[pos]/countsACGT,
+            data.countsC[pos]/countsACGT,
+            data.countsG[pos]/countsACGT,
+            data.countsT[pos]/countsACGT,
+            data.anchorMsaProperties.avg_support,
+            data.anchorMsaProperties.min_support,
+            float(data.anchorMsaProperties.max_coverage)/opt.estimatedCoverage,
+            float(data.anchorMsaProperties.min_coverage)/opt.estimatedCoverage,
+            float(std::max(a_begin-pos, pos-a_end))/(a_end-a_begin)
+        };
+    }
+
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.subjectColumnsBegin_incl;
@@ -151,8 +234,68 @@ struct extract_anchor_transformed {
     }
 };
 
+
+
+
 struct extract_cands_transformed {
     using features_t = std::array<float, 42>;
+
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
+        int c_begin = a_begin + data.alignmentShifts[cand];
+        int c_end = c_begin + data.candidateSequencesLengths[cand];
+        int pos = c_begin + i;
+        char orig = data.decodedCandidateSequences[offset+i];
+        float countsACGT = data.countsA[pos] + data.countsC[pos] + data.countsG[pos] + data.countsT[pos];
+        MSAProperties props = data.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(data.consensus[pos] == 'A'),
+            float(data.consensus[pos] == 'C'),
+            float(data.consensus[pos] == 'G'),
+            float(data.consensus[pos] == 'T'),
+            orig == 'A'?data.countsA[pos]/countsACGT:0,
+            orig == 'C'?data.countsC[pos]/countsACGT:0,
+            orig == 'G'?data.countsG[pos]/countsACGT:0,
+            orig == 'T'?data.countsT[pos]/countsACGT:0,
+            orig == 'A'?data.weightsA[pos]:0,
+            orig == 'C'?data.weightsC[pos]:0,
+            orig == 'G'?data.weightsG[pos]:0,
+            orig == 'T'?data.weightsT[pos]:0,
+            data.consensus[pos] == 'A'?data.countsA[pos]/countsACGT:0,
+            data.consensus[pos] == 'C'?data.countsC[pos]/countsACGT:0,
+            data.consensus[pos] == 'G'?data.countsG[pos]/countsACGT:0,
+            data.consensus[pos] == 'T'?data.countsT[pos]/countsACGT:0,
+            data.consensus[pos] == 'A'?data.weightsA[pos]:0,
+            data.consensus[pos] == 'C'?data.weightsC[pos]:0,
+            data.consensus[pos] == 'G'?data.weightsG[pos]:0,
+            data.consensus[pos] == 'T'?data.weightsT[pos]:0,
+            data.weightsA[pos],
+            data.weightsC[pos],
+            data.weightsG[pos],
+            data.weightsT[pos],
+            data.countsA[pos]/countsACGT,
+            data.countsC[pos]/countsACGT,
+            data.countsG[pos]/countsACGT,
+            data.countsT[pos]/countsACGT,
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(c_end-c_begin), // absolute shift (compatible with differing read lengths)
+            float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(a_end-a_begin),
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin), // relative overlap (ratio of a or c length in case of diff. read len)
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin),
+            float(std::max(a_begin-pos, pos-a_end))/(a_end-a_begin),
+            float(std::max(a_begin-pos, pos-a_end))/(c_end-c_begin)
+        };
+    }
+
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.subjectColumnsBegin_incl;
@@ -210,8 +353,42 @@ struct extract_cands_transformed {
     }
 };
 
+
+
 struct extract_anchor_21 {
     using features_t = std::array<float, 21>;
+
+    features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept {   
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
+        int pos = a_begin + i;
+        char orig = data.decodedAnchor[i];
+        float countsACGT = data.coverages[pos];
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(data.consensus[pos] == 'A'),
+            float(data.consensus[pos] == 'C'),
+            float(data.consensus[pos] == 'G'),
+            float(data.consensus[pos] == 'T'),
+            data.weightsA[pos],
+            data.weightsC[pos],
+            data.weightsG[pos],
+            data.weightsT[pos],
+            data.countsA[pos]/countsACGT,
+            data.countsC[pos]/countsACGT,
+            data.countsG[pos]/countsACGT,
+            data.countsT[pos]/countsACGT,
+            data.anchorMsaProperties.avg_support,
+            data.anchorMsaProperties.min_support,
+            float(data.anchorMsaProperties.max_coverage)/opt.estimatedCoverage,
+            float(data.anchorMsaProperties.min_coverage)/opt.estimatedCoverage,
+            float(std::max(a_begin-pos, pos-a_end))/(a_end-a_begin)
+        };
+    }
+
     features_t operator()(const CpuErrorCorrectorTask& task, int i, const CorrectionOptions& opt) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.subjectColumnsBegin_incl;
@@ -245,8 +422,49 @@ struct extract_anchor_21 {
     }
 };
 
+
 struct extract_cands_26 {
     using features_t = std::array<float, 26>;
+
+    features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
+        int a_begin = data.subjectColumnsBegin_incl;
+        int a_end = data.subjectColumnsEnd_excl;
+        int c_begin = a_begin + data.alignmentShifts[cand];
+        int c_end = c_begin + data.candidateSequencesLengths[cand];
+        int pos = c_begin + i;
+        char orig = data.decodedCandidateSequences[offset+i];
+        float countsACGT = data.coverages[pos];
+        MSAProperties props = data.getMSAProperties(c_begin, c_end, opt.estimatedErrorrate, opt.estimatedCoverage, opt.m_coverage);
+        return {
+            float(orig == 'A'),
+            float(orig == 'C'),
+            float(orig == 'G'),
+            float(orig == 'T'),
+            float(data.consensus[pos] == 'A'),
+            float(data.consensus[pos] == 'C'),
+            float(data.consensus[pos] == 'G'),
+            float(data.consensus[pos] == 'T'),
+            data.weightsA[pos],
+            data.weightsC[pos],
+            data.weightsG[pos],
+            data.weightsT[pos],
+            data.countsA[pos]/countsACGT,
+            data.countsC[pos]/countsACGT,
+            data.countsG[pos]/countsACGT,
+            data.countsT[pos]/countsACGT,
+            props.avg_support,
+            props.min_support,
+            float(props.max_coverage)/opt.estimatedCoverage,
+            float(props.min_coverage)/opt.estimatedCoverage,
+            float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(c_end-c_begin), // absolute shift (compatible with differing read lengths)
+            float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(a_end-a_begin),
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin), // relative overlap (ratio of a or c length in case of diff. read len)
+            float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin),
+            float(std::max(a_begin-pos, pos-a_end))/(a_end-a_begin),
+            float(std::max(a_begin-pos, pos-a_end))/(c_end-c_begin)
+        };
+    }
+
     features_t operator()(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
         auto& msa = task.multipleSequenceAlignment;
         int a_begin = msa.subjectColumnsBegin_incl;

@@ -21,6 +21,8 @@
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 
+#include <classification.hpp>
+
 
 //#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
