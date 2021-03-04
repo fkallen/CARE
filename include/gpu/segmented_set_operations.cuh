@@ -225,7 +225,7 @@ struct GpuSegmentedSetOperation{
 
         #endif
 
-        cudaStreamSynchronize(stream); CUERR;
+        //cudaStreamSynchronize(stream); CUERR;
 
         allocator.deallocate(tempPtr, sizeof(char) * temp_storage_bytes);        
 

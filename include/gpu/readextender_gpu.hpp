@@ -246,6 +246,9 @@ public:
         DeviceBuffer<int> d_segmentIdsOfUsedReadIds{};
         DeviceBuffer<int> d_segmentIds4{};
 
+        PinnedBuffer<int> h_segmentIdsOfUsedReadIds{};
+        PinnedBuffer<int> h_segmentIdsOfReadIds{};
+
         PinnedBuffer<unsigned int> h_anchormatedata{};
         DeviceBuffer<unsigned int> d_anchormatedata{};
 
@@ -363,6 +366,8 @@ public:
     void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const;
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
     void filterAlignments(BatchData& batchData, cudaStream_t stream) const;
+    void computeMSAs(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const;
+    void copyBuffersToHost(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const;
 
     void copyBatchDataIntoTask(Task& task, int taskindex, const BatchData& data) const{
         const int numCandidates = data.h_numCandidatesPerAnchor[taskindex];
