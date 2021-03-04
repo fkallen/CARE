@@ -1,3 +1,6 @@
+#ifndef CACHING_ALLOCATOR_CUH
+#define CACHING_ALLOCATOR_CUH
+
 #include <thrust/device_malloc_allocator.h>
 
 #include <cub/cub.cuh>
@@ -50,3 +53,5 @@ struct ThrustCachingAllocator : thrust::device_malloc_allocator<T> {
     	}
     }
 };
+
+#endif

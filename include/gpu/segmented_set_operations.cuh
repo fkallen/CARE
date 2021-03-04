@@ -52,6 +52,7 @@ void callFillSegmentIdsKernel(
     ); CUERR;
 }
 
+template<class dummy=void>
 __global__
 void setOutputSegmentSizesKernel(
     const int* __restrict__ uniqueIds,
@@ -68,6 +69,7 @@ void setOutputSegmentSizesKernel(
     }
 }
 
+template<class dummy=void>
 __global__
 void initAndSetOutputSegmentSizesSingleBlockKernel(
     const int* __restrict__ uniqueIds,
