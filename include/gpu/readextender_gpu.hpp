@@ -221,6 +221,7 @@ public:
     }
 
     struct BatchData{
+        bool pairedEnd = false;
         int numTasks = 0;
         int numTasksWithMateRemoved = 0;
 
@@ -357,7 +358,7 @@ public: //private:
 
 public:
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const;
-    void removeUsedIdsAndMateIds(BatchData& batchData, cudaStream_t stream) const;
+    void removeUsedIdsAndMateIds(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const;
     void loadCandidateSequenceData(BatchData& batchData, cudaStream_t stream) const;
     void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const;
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
