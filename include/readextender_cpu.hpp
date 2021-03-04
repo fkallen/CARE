@@ -303,6 +303,10 @@ private:
         }
     }
 
+    static constexpr int getNumRefinementIterations() noexcept{
+        return 5;
+    }
+
     const CpuReadStorage* readStorage;
     const CpuMinhasher* minhasher;
 

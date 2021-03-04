@@ -1,10 +1,13 @@
 #include <readextender_cpu.hpp>
 #include <readextenderbase.hpp>
 
+#include <sequencehelpers.hpp>
+#include <hostdevicefunctions.cuh>
+
 #include <vector>
 #include <algorithm>
-#include <sequencehelpers.hpp>
 #include <string>
+
 
 namespace care{
 
@@ -353,12 +356,6 @@ namespace care{
             auto constructMsa = [&](auto& task){
                 const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
-
                 MultipleSequenceAlignment msa;
 
                 auto build = [&](){
@@ -373,7 +370,8 @@ namespace care{
                         vecAccess(task.candidateOverlapWeights, c) = calculateOverlapWeight(
                             task.currentAnchorLength, 
                             vecAccess(task.alignments, c).nOps,
-                            vecAccess(task.alignments, c).overlap
+                            vecAccess(task.alignments, c).overlap,
+                            goodAlignmentProperties.maxErrorRate
                         );
                     }
 
@@ -408,8 +406,6 @@ namespace care{
                 build();
 
                 #if 1
-
-                constexpr int max_num_minimizations = 5;
 
                 auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
                     const int numCandidates = task.candidateReadIds.size();
@@ -481,9 +477,9 @@ namespace care{
                     
                 };
 
-                if(max_num_minimizations > 0){                
+                if(getNumRefinementIterations() > 0){                
 
-                    for(int numIterations = 0; numIterations < max_num_minimizations; numIterations++){
+                    for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
                         const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
                             correctionOptions.estimatedCoverage
                         );
@@ -747,6 +743,10 @@ namespace care{
 
             for(int indexOfActiveTask : indicesOfActiveTasks){
                 auto& task = vecAccess(tasks, indexOfActiveTask);
+
+                if(task.numRemainingCandidates == 0){
+                    continue;
+                }
 
                 const MultipleSequenceAlignment msa = constructMsa(task);
 

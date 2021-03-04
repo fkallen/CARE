@@ -242,7 +242,7 @@ public:
 
         DeviceBuffer<int> d_anchorIndicesOfCandidates{};
         DeviceBuffer<int> d_anchorIndicesOfCandidates2{};
-        DeviceBuffer<int> d_segmentIds2{};
+        DeviceBuffer<int> d_segmentIdsOfUsedReadIds{};
         DeviceBuffer<int> d_segmentIds4{};
 
         PinnedBuffer<unsigned int> h_anchormatedata{};
@@ -252,28 +252,21 @@ public:
         PinnedBuffer<unsigned int> h_inputanchormatedata{};
         DeviceBuffer<unsigned int> d_inputanchormatedata{};
 
-        PinnedBuffer<int> h_indexlist1{};
-        DeviceBuffer<int> d_indexlist1{};
+        DeviceBuffer<int> d_anchorIndicesWithRemovedMates{};
 
-        PinnedBuffer<int> h_indexlist2{};
-        DeviceBuffer<int> d_indexlist2{};
+        DeviceBuffer<int> d_indexlist1{};
 
         PinnedBuffer<int> h_numCandidatesPerAnchor{};
         PinnedBuffer<int> h_numCandidatesPerAnchor2{};
-        PinnedBuffer<int> h_numCandidatesPerAnchor3{};
         DeviceBuffer<int> d_numCandidatesPerAnchor{};
         DeviceBuffer<int> d_numCandidatesPerAnchor2{};
-        DeviceBuffer<int> d_numCandidatesPerAnchor3{};
         PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
-        PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum2{};
-        PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum3{};
         DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum{};
         DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum2{};
-        DeviceBuffer<int> d_numCandidatesPerAnchorPrefixSum3{};
         PinnedBuffer<int> h_alignment_overlaps{};
         PinnedBuffer<int> h_alignment_shifts{};
         PinnedBuffer<int> h_alignment_nOps{};
-        PinnedBuffer<bool> h_alignment_isValid{};
+
         PinnedBuffer<BestAlignment_t> h_alignment_best_alignment_flags{};
 
         DeviceBuffer<int> d_alignment_overlaps{};
@@ -285,7 +278,6 @@ public:
         DeviceBuffer<int> d_alignment_overlaps2{};
         DeviceBuffer<int> d_alignment_shifts2{};
         DeviceBuffer<int> d_alignment_nOps2{};
-        DeviceBuffer<bool> d_alignment_isValid2{};
         DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags2{};
 
         PinnedBuffer<int> h_numAnchors{};
@@ -293,6 +285,7 @@ public:
         DeviceBuffer<int> d_numAnchors{};
         DeviceBuffer<int> d_numCandidates{};
         DeviceBuffer<int> d_numCandidates2{};
+        PinnedBuffer<int> h_numAnchorsWithRemovedMates{};
 
         PinnedBuffer<int> h_anchorSequencesLength{};
         DeviceBuffer<int> d_anchorSequencesLength{};
@@ -306,8 +299,6 @@ public:
         DeviceBuffer<unsigned int> d_candidateSequencesData2{};
         DeviceBuffer<unsigned int> d_candidateSequencesRevcData2{};
         DeviceBuffer<read_number> d_candidateReadIds2{};
-        PinnedBuffer<read_number> h_candidateReadIds2{};
-        PinnedBuffer<read_number> h_candidateReadIds3{};
         
 
         DeviceBuffer<unsigned int> d_subjectSequencesData{};
@@ -318,15 +309,12 @@ public:
         PinnedBuffer<int> h_activeTaskIndices{};
 
         DeviceBuffer<int> d_intbuffercandidates{};
-        PinnedBuffer<int> h_intbuffercandidates{};
 
         DeviceBuffer<char> d_tempstorage{};
 
         DeviceBuffer<bool> d_flagsanchors{};
-        PinnedBuffer<bool> h_flagsanchors{};
 
         DeviceBuffer<bool> d_flagscandidates{};
-        PinnedBuffer<bool> h_flagscandidates{};
 
         PinnedBuffer<read_number> h_usedReadIds{};
         PinnedBuffer<int> h_numUsedReadIdsPerAnchor{};
@@ -369,6 +357,7 @@ public: //private:
 
 public:
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const;
+    void removeUsedIdsAndMateIds(BatchData& batchData, cudaStream_t stream) const;
     void loadCandidateSequenceData(BatchData& batchData, cudaStream_t stream) const;
     void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const;
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const;
@@ -440,6 +429,13 @@ public:
                     task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
                     task.candidateSequenceLengths[c]
                 );
+
+                if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                    SequenceHelpers::reverseComplementSequenceDecodedInplace(
+                        task.candidateStrings.data() + c * decodedSequencePitchInBytes, 
+                        task.candidateSequenceLengths[c]
+                    );
+                }
             }
 
             MultipleSequenceAlignment::InputData msaInput;
