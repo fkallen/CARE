@@ -2282,8 +2282,8 @@ namespace care{
         cubstatus = cub::DeviceScan::InclusiveSum(
             nullptr, 
             cubBytes2, 
-            batchData.d_numCandidatesPerAnchor2.data(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum2.data() + 1, 
+            (int*)nullptr,
+            (int*)nullptr,
             batchData.numTasks,
             firstStream
         );
@@ -2298,18 +2298,6 @@ namespace care{
             batchData.d_anchorIndicesOfCandidates.data(), 
             cub::Max{},
             batchData.totalNumCandidates,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
-                    
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr, 
-            cubBytes2, 
-            batchData.d_numCandidatesPerAnchor.data(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            batchData.numTasks,
             firstStream
         );
         assert(cubstatus == cudaSuccess);
@@ -2330,6 +2318,23 @@ namespace care{
         
         cubBytes = std::max(cubBytes, cubBytes2);
         
+        void* cubtempstorage; cubAllocator->DeviceAllocate((void**)&cubtempstorage, cubBytes, firstStream);
+
+        //cub storage for second stream
+        std::size_t cubtempstream2bytes = 0;
+
+        cubstatus = cub::DeviceScan::InclusiveScan(
+            nullptr, 
+            cubBytes2, 
+            batchData.d_segmentIdsOfUsedReadIds.data(), 
+            batchData.d_segmentIdsOfUsedReadIds.data(), 
+            cub::Max{},
+            batchData.totalNumberOfUsedIds,
+            secondStream
+        );
+        assert(cubstatus == cudaSuccess);
+        cubtempstream2bytes = std::max(cubtempstream2bytes, cubBytes2);
+
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
             cubBytes2,
@@ -2341,13 +2346,35 @@ namespace care{
             batchData.d_anchormatedata.data(),
             thrust::make_discard_iterator(),
             batchData.numTasks * encodedSequencePitchInInts,
-            firstStream
+            secondStream
         );
         assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
+        cubtempstream2bytes = std::max(cubtempstream2bytes, cubBytes2);
 
-        void* cubtempstorage; cubAllocator->DeviceAllocate((void**)&cubtempstorage, cubBytes, firstStream);
+        void* cubtempstream2 = nullptr; cubAllocator->DeviceAllocate((void**)&cubtempstream2, cubtempstream2bytes, secondStream);
+
+        helpers::call_fill_kernel_async(batchData.d_segmentIdsOfUsedReadIds.data(), batchData.totalNumberOfUsedIds, 0, secondStream);
+
+        setFirstSegmentIdsKernel<<<SDIV(batchData.numTasks, 256), 256, 0, secondStream>>>(
+            batchData.d_numUsedReadIdsPerAnchor.data(),
+            batchData.d_segmentIdsOfUsedReadIds.data(),
+            batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
+            batchData.numTasks
+        );          
+
+        cubstatus = cub::DeviceScan::InclusiveScan(
+            cubtempstream2, 
+            cubBytes, 
+            batchData.d_segmentIdsOfUsedReadIds.data(), 
+            batchData.d_segmentIdsOfUsedReadIds.data(), 
+            cub::Max{},
+            batchData.totalNumberOfUsedIds,
+            secondStream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        cudaEventRecord(events[0], secondStream); CUERR;
+        
     
         
         helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), false, firstStream);
@@ -2404,8 +2431,8 @@ namespace care{
             //copy mate sequence data of removed mates
                 
             cubstatus = cub::DeviceSelect::Flagged(
-                cubtempstorage,
-                cubBytes,
+                cubtempstream2,
+                cubtempstream2bytes,
                 batchData.d_inputanchormatedata.data(),
                 thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
@@ -2414,7 +2441,7 @@ namespace care{
                 batchData.d_anchormatedata.data(),
                 thrust::make_discard_iterator(),
                 batchData.numTasks * encodedSequencePitchInInts,
-                firstStream
+                secondStream
             );
             assert(cubstatus == cudaSuccess);
         }
@@ -2458,45 +2485,9 @@ namespace care{
    
         //compute segment ids for used candidate read ids in second stream
 
-        std::size_t cubtempstream2bytes = 0;
-
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            nullptr, 
-            cubtempstream2bytes, 
-            batchData.d_segmentIdsOfUsedReadIds.data(), 
-            batchData.d_segmentIdsOfUsedReadIds.data(), 
-            cub::Max{},
-            batchData.totalNumberOfUsedIds,
-            secondStream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        void* cubtempstream2 = nullptr; cubAllocator->DeviceAllocate((void**)&cubtempstream2, cubtempstream2bytes, secondStream);
-
-        helpers::call_fill_kernel_async(batchData.d_segmentIdsOfUsedReadIds.data(), batchData.totalNumberOfUsedIds, 0, secondStream);
-
-        setFirstSegmentIdsKernel<<<SDIV(batchData.numTasks, 256), 256, 0, secondStream>>>(
-            batchData.d_numUsedReadIdsPerAnchor.data(),
-            batchData.d_segmentIdsOfUsedReadIds.data(),
-            batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
-            batchData.numTasks
-        );          
-
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            cubtempstream2, 
-            cubBytes, 
-            batchData.d_segmentIdsOfUsedReadIds.data(), 
-            batchData.d_segmentIdsOfUsedReadIds.data(), 
-            cub::Max{},
-            batchData.totalNumberOfUsedIds,
-            secondStream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        cudaStreamSynchronize(secondStream); CUERR; //wait for used ids to be ready
-        cubAllocator->DeviceFree(cubtempstream2);
-
         ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
+
+        cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
 
         
         //compute segmented set difference between candidate read ids and used candidate read ids
@@ -2536,6 +2527,7 @@ namespace care{
         assert(cubstatus == cudaSuccess);
 
         cubAllocator->DeviceFree(cubtempstorage);
+        cubAllocator->DeviceFree(cubtempstream2);
     }
 
 
