@@ -1551,7 +1551,7 @@ correct_gpu_impl(
 
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(15000u, readStorage.getNumberOfReads()));
 
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
@@ -1723,7 +1723,7 @@ correct_gpu_impl(
         for(int i = 0; i < numDevices; i++){ 
             const int deviceId = deviceIds[i];
 
-            int threadsForDevice = std::min(availableThreads, requiredNumThreadsForComplex);
+            int threadsForDevice = std::max(1,std::min(availableThreads, requiredNumThreadsForComplex));
 
             if(threadsForDevice > 3){
 
@@ -1743,7 +1743,7 @@ correct_gpu_impl(
 
                 pipelineConfig.numHashers += threadsForDevice;
 
-                std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+                std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "
                 << pipelineConfig.numCorrectors << " corrector(s) "
                 << "on device " << deviceId << "\n";                
 
