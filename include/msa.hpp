@@ -184,6 +184,16 @@ public:
     ) const;
 };
 
+    MSAProperties getMSAProperties(
+        const float* support,
+        const int* coverage,
+        int firstCol,
+        int lastCol, //exclusive
+        float estimatedErrorrate,
+        float estimatedCoverage,
+        float m_coverage
+    );
+
 
 
 }
