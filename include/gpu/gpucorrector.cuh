@@ -1172,7 +1172,7 @@ namespace gpu{
 
             if(correctionOptions->correctionType == CorrectionType::Forest
                 || correctionOptions->correctionTypeCands == CorrectionType::Forest){
-                    
+
                 copyDataForForestCorrectionToHost(stream);
             }
 
@@ -2420,7 +2420,7 @@ namespace gpu{
                 correctCandidatesClassic(stream);
             }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
                 correctionCandidatesForest(stream);
-            }{
+            }else{
                 std::cerr << "correctCandidates not implemented for this type\n";
             }
         }
