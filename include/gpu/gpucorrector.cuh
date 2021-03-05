@@ -1170,7 +1170,11 @@ namespace gpu{
 
             }
 
-            //copyDataForForestCorrectionToHost(stream);
+            if(correctionOptions->correctionType == CorrectionType::Forest
+                || correctionOptions->correctionTypeCands == CorrectionType::Forest){
+                    
+                copyDataForForestCorrectionToHost(stream);
+            }
 
             nvtx::push_range("correctanchors", 8);
             correctAnchors(stream);
