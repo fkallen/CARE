@@ -2436,6 +2436,17 @@ namespace gpu{
 
             bool* const d_candidateCanBeCorrected = d_alignment_isValid.get(); //repurpose
 
+            if(correctionOptions->correctionType == CorrectionType::Forest){
+                //transfer flags of cpu forest anchor correction to gpu
+                cudaMemcpyAsync(
+                    d_is_high_quality_anchor.data(),
+                    currentOutput->h_is_high_quality_anchor.data(),
+                    sizeof(AnchorHighQualityFlag) * currentNumAnchors,
+                    H2D,
+                    stream
+                );
+            }
+
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor, IsHqAnchor{});
 
