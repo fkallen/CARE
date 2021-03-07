@@ -71,6 +71,10 @@ public:
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
+        if(!bool(is)){
+            throw std::runtime_error("Cannot open forest file " + path);
+        }
+        
         forest_ = Forest(read_one<uint32_t>(is));
         for (Tree& tree: forest_) {
             tree.reserve(read_one<uint32_t>(is));
