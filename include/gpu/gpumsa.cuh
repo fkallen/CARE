@@ -33,7 +33,6 @@ namespace gpu{
     };
 
     struct GpuMSAProperties{
-        bool isHQ;
         float avg_support;
         float min_support;
         int min_coverage;
@@ -93,6 +92,7 @@ namespace gpu{
             class GroupReduceIntMin,
             class GroupReduceIntMax
         >
+        __device__ __forceinline__
         GpuMSAProperties getMSAProperties(
             ThreadGroup& group,
             GroupReduceFloatSum& groupReduceFloatSum,
@@ -100,11 +100,11 @@ namespace gpu{
             GroupReduceIntMin& groupReduceIntMin,
             GroupReduceIntMax& groupReduceIntMax,
             int firstCol,
-            int lastCol, //exclusive
-            float estimatedErrorrate,
-            float estimatedCoverage,
-            float m_coverage
-        ){
+            int lastCol //exclusive
+            // float estimatedErrorrate,
+            // float estimatedCoverage,
+            // float m_coverage
+        ) const {
             const int firstColumn_incl = columnProperties->firstColumn_incl;
             const int lastColumn_excl = columnProperties->lastColumn_excl;
 
@@ -142,41 +142,41 @@ namespace gpu{
             msaProperties.min_coverage = min_coverage;
             msaProperties.max_coverage = max_coverage;
 
-            msaProperties.isHQ = false;
+            // msaProperties.isHQ = false;
 
-            const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-            const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-            const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+            // const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+            // const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+            // const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-            auto isGoodAvgSupport = [=](float avgsupport){
-                return fgeq(avgsupport, avg_support_threshold);
-            };
-            auto isGoodMinSupport = [=](float minsupport){
-                return fgeq(minsupport, min_support_threshold);
-            };
-            auto isGoodMinCoverage = [=](float mincoverage){
-                return fgeq(mincoverage, min_coverage_threshold);
-            };
+            // auto isGoodAvgSupport = [=](float avgsupport){
+            //     return fgeq(avgsupport, avg_support_threshold);
+            // };
+            // auto isGoodMinSupport = [=](float minsupport){
+            //     return fgeq(minsupport, min_support_threshold);
+            // };
+            // auto isGoodMinCoverage = [=](float mincoverage){
+            //     return fgeq(mincoverage, min_coverage_threshold);
+            // };
 
-            const bool allGood = isGoodAvgSupport(avg_support) 
-                                                && isGoodMinSupport(min_support) 
-                                                && isGoodMinCoverage(min_coverage);
-            if(allGood){
-                int smallestErrorrateThatWouldMakeHQ = 100;
+            // const bool allGood = isGoodAvgSupport(avg_support) 
+            //                                     && isGoodMinSupport(min_support) 
+            //                                     && isGoodMinCoverage(min_coverage);
+            // if(allGood){
+            //     int smallestErrorrateThatWouldMakeHQ = 100;
 
-                const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
-                for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
-                    const float factor = percent / 100.0f;
-                    const float avg_threshold = 1.0f - 1.0f * factor;
-                    const float min_threshold = 1.0f - 3.0f * factor;
-                    if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
-                        smallestErrorrateThatWouldMakeHQ = percent;
-                    }
-                }
+            //     const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+            //     for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+            //         const float factor = percent / 100.0f;
+            //         const float avg_threshold = 1.0f - 1.0f * factor;
+            //         const float min_threshold = 1.0f - 3.0f * factor;
+            //         if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+            //             smallestErrorrateThatWouldMakeHQ = percent;
+            //         }
+            //     }
 
-                msaProperties.isHQ = isGoodMinCoverage(min_coverage)
-                                    && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
-            }
+            //     msaProperties.isHQ = isGoodMinCoverage(min_coverage)
+            //                         && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+            // }
 
             return msaProperties;
         }

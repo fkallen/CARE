@@ -49,14 +49,13 @@ namespace gpu{
             float max_coverage_threshold,
             int k_region){
 
-        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
         using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
 
         __shared__ union {
-            typename BlockReduceBool::TempStorage boolreduce;
             typename BlockReduceInt::TempStorage intreduce;
             typename BlockReduceFloat::TempStorage floatreduce;
+            GpuMSAProperties msaProperties;
         } temp_storage;
 
         __shared__ int broadcastbuffer;
@@ -66,6 +65,30 @@ namespace gpu{
         //__shared__ float avgCountPerWeight[4];
 
         auto tbGroup = cg::this_thread_block();
+
+        auto groupReduceFloatSum = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceFloatMin = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Reduce(f, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMin = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMax = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Max{});
+            __syncthreads();
+            return result;
+        };
 
         const int n_subjects = *numAnchorsPtr;
 
@@ -93,46 +116,22 @@ namespace gpu{
 
                 const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
-                const int lastColumn_excl = msa.columnProperties->lastColumn_excl;
+                //const int lastColumn_excl = msa.columnProperties->lastColumn_excl;
 
-                float avg_support = 0;
-                float min_support = 1.0f;
-                //int max_coverage = 0;
-                int min_coverage = std::numeric_limits<int>::max();
-
-                for(int i = subjectColumnsBegin_incl + tbGroup.thread_rank(); 
-                        i < subjectColumnsEnd_excl; 
-                        i += tbGroup.size()){
-
-                    assert(i < lastColumn_excl);
-
-                    avg_support += msa.support[i];
-                    min_support = min(msa.support[i], min_support);
-                    //max_coverage = max(my_coverage[i], max_coverage);
-                    min_coverage = min(msa.coverages[i], min_coverage);
-                }
-
-                avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
-                __syncthreads();
-
-                min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
-                __syncthreads();
-
-                //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
-
-                min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
-                __syncthreads();
-
-                avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-
-
-                //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        		//const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+                GpuMSAProperties msaProperties = msa.getMSAProperties(
+                    tbGroup,
+                    groupReduceFloatSum,
+                    groupReduceFloatMin,
+                    groupReduceIntMin,
+                    groupReduceIntMax,
+                    subjectColumnsBegin_incl,
+                    subjectColumnsEnd_excl
+                );
 
                 if(tbGroup.thread_rank() == 0){
                     subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
 
-                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(msaProperties.avg_support) && isGoodMinSupport(msaProperties.min_support) && isGoodMinCoverage(msaProperties.min_coverage);
                     int flag = 0;
 
                     if(canBeCorrectedByConsensus){
@@ -143,16 +142,16 @@ namespace gpu{
                             const float factor = percent / 100.0f;
                             const float avg_threshold = 1.0f - 1.0f * factor;
                             const float min_threshold = 1.0f - 3.0f * factor;
-                            if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                            if(fgeq(msaProperties.avg_support, avg_threshold) && fgeq(msaProperties.min_support, min_threshold)){
                                 smallestErrorrateThatWouldMakeHQ = percent;
                             }
                             // if(readId == 134){
-                            //     printf("avg_support %f, avg_threshold %f, min_support %f, min_threshold %f\n", 
-                            //     avg_support, avg_threshold, min_support, min_threshold);
+                            //     printf("avg_support %f, avg_threshold %f, msaProperties.min_support %f, min_threshold %f\n", 
+                            //     avg_support, avg_threshold,msaProperties. min_support, min_threshold);
                             // }
                         }
 
-                        const bool isHQ = isGoodMinCoverage(min_coverage)
+                        const bool isHQ = isGoodMinCoverage(msaProperties.min_coverage)
                                             && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
 
                         //broadcastbuffer = isHQ;
