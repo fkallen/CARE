@@ -615,6 +615,10 @@ namespace gpu{
                 );         
             }
 
+            std::sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){
+                return l.readId < r.readId;
+            });
+
             return correctionOutput;
         }
 
@@ -1839,6 +1843,95 @@ namespace gpu{
             h_numSelected.resize(1);
             h_indices.resize(d_indices.size());
 
+            h_decoded_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
+            d_decoded_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
+            #if 0
+            //decode active candidates
+            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
+                [
+                    h_decoded_candidates = this->h_decoded_candidates.data(),
+                    d_candidate_sequences_data = this->d_candidate_sequences_data.data(),
+                    d_alignment_best_alignment_flags = this->d_alignment_best_alignment_flags.data(),
+                    d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
+                    d_indices = this->d_indices.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
+                    d_num_indices_tmp = this->d_num_indices_tmp.data(),
+                    d_anchorIndicesOfCandidates = this->d_anchorIndicesOfCandidates.data(),
+                    d_candidate_sequences_lengths = this->d_candidate_sequences_lengths.data(),
+                    encodedSequencePitchInInts = this->encodedSequencePitchInInts,
+                    decodedSequencePitchInBytes = this->decodedSequencePitchInBytes
+                ] __device__ (){
+
+                        auto decode = [](const std::uint8_t encoded){
+                            char decoded = 'F';
+                            if(encoded == std::uint8_t{0}){
+                                decoded = 'A';
+                            }else if(encoded == std::uint8_t{1}){
+                                decoded = 'C';
+                            }else if(encoded == std::uint8_t{2}){
+                                decoded = 'G';
+                            }else if(encoded == std::uint8_t{3}){
+                                decoded = 'T';
+                            }
+                            return decoded;
+                        };
+
+                        const int anchorIndex = blockIdx.x;
+                        const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
+                        const int numCandidates = d_indices_per_anchor[anchorIndex];
+
+                        for(int c = 0; c < numCandidates; c++){
+                            const int localCandidateIndex = d_indices[globalOffset + c];
+                            const int globalCandidateIndex = globalOffset + localCandidateIndex;
+                            const int length = d_candidate_sequences_lengths[globalCandidateIndex];
+                            const BestAlignment_t alignmentFlag = d_alignment_best_alignment_flags[globalCandidateIndex];
+
+                            const unsigned int* encodedPtr = d_candidate_sequences_data
+                                + globalCandidateIndex * encodedSequencePitchInInts;
+
+                            char* decodedPtr = h_decoded_candidates + globalCandidateIndex * decodedSequencePitchInBytes;
+
+
+                            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+                            const int fullInts = length / basesPerInt;   
+                            
+                            for(int i = 0; i < fullInts; i++){
+                                const unsigned int encodedDataInt = encodedPtr[i];
+
+                                for(int k = threadIdx.x; k < basesPerInt; k += blockDim.x){
+                                    const int posInInt = k;
+                                    const int posInSequence = i * basesPerInt + posInInt;
+                                    const std::uint8_t encodedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                                    const char decodedNuc = decode(encodedNuc);
+
+                                    if(alignmentFlag == BestAlignment_t::Forward){
+                                        decodedPtr[posInSequence] = decodedNuc;
+                                    }else{
+                                        decodedPtr[length - posInSequence - 1] = decodedNuc;
+                                    }
+                                }
+                            }
+
+                            const int remainingPositions = length - basesPerInt * fullInts;
+
+                            if(remainingPositions > 0){
+                                const unsigned int encodedDataInt = encodedPtr[fullInts];
+                                for(int posInInt = threadIdx.x; posInInt < remainingPositions; posInInt += blockDim.x){
+                                    const int posInSequence = fullInts * basesPerInt + posInInt;
+                                    const std::uint8_t encodedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                                    const char decodedNuc = decode(encodedNuc);
+
+                                    if(alignmentFlag == BestAlignment_t::Forward){
+                                        decodedPtr[posInSequence] = decodedNuc;
+                                    }else{
+                                        decodedPtr[length - posInSequence - 1] = decodedNuc;
+                                    }
+                                }
+                            }
+                        }
+                    }
+            ); CUERR;
+            #endif
             //decode encoded device consensus and store on host. copy column properties to host
             helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
                 [
@@ -2610,6 +2703,7 @@ namespace gpu{
 
         void correctionCandidatesForest(cudaStream_t stream){
 
+            nvtx::push_range("correctionCandidatesForest", 4);
             cudaStreamSynchronize(stream); CUERR;
 
             int numCorrectedCandidates = 0; //edit information is only stored for corrected anchors, and stored compact
@@ -2639,6 +2733,11 @@ namespace gpu{
                         correctionOptions->m_coverage
                     );
 
+                    auto it = std::find(&currentInput->h_candidate_read_ids[globalOffset], &currentInput->h_candidate_read_ids[globalOffset + numCandidates], 633);
+                    if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
+                        std::cerr << "found 633 at local position " << std::distance(&currentInput->h_candidate_read_ids[globalOffset], it) << "\n";
+                    }
+
                     if(anchorMsaProperties.isHQ){
 
                         const int* const myShifts = currentOutput->h_alignment_shifts.data() + globalOffset;
@@ -2646,8 +2745,9 @@ namespace gpu{
                         for(int c = 0; c < numCandidates; c++){
                             const int candidateIndex = h_indices[globalOffset + c];
                             const int cand_begin = subjectColumnsBegin_incl + myShifts[candidateIndex];
-                            const int cand_length = currentOutput->h_candidate_sequences_lengths[candidateIndex];
+                            const int cand_length = currentOutput->h_candidate_sequences_lengths[globalOffset + candidateIndex];
                             const int cand_end = cand_begin + cand_length;
+                            const read_number candidateReadId = currentInput->h_candidate_read_ids[globalOffset + candidateIndex];
 
                             if(cand_begin >= subjectColumnsBegin_incl - correctionOptions->new_columns_to_correct
                                 && cand_end <= subjectColumnsEnd_excl + correctionOptions->new_columns_to_correct){
@@ -2659,11 +2759,12 @@ namespace gpu{
                                 std::copy(myConsensus + cand_begin, myConsensus + cand_end, myCorrection);
 
                                 //decode encoded candidate with proper orientation
-                                std::vector<char> decodedCandidate(decodedSequencePitchInBytes);
+                                #if 1
                                 const unsigned int* const encodedCandidate = h_candidate_sequences_data.data() 
                                     + (globalOffset + candidateIndex) * encodedSequencePitchInInts;
                                 
 
+                                std::vector<char> decodedCandidate(decodedSequencePitchInBytes);
                                 SequenceHelpers::decode2BitSequence(
                                     decodedCandidate.data(), 
                                     encodedCandidate, 
@@ -2678,6 +2779,37 @@ namespace gpu{
                                     assert(alignmentDirection == BestAlignment_t::Forward);
                                 }
 
+                                const char* const decodedCandidatePtr = decodedCandidate.data();
+
+                                #else 
+
+                                const char* const decodedCandidatePtr = h_decoded_candidates.data()
+                                    + (globalOffset + candidateIndex) * decodedSequencePitchInBytes;
+
+                                #endif
+
+                                if(a == 5 && candidateReadId == 633){
+                                    std::cerr <<  "candidateIndex " << candidateIndex << "\n";
+                                    std::cerr <<  "cand_begin " << cand_begin << "\n";
+                                    std::cerr <<  "cand_end " << cand_end << "\n";
+                                    std::cerr <<  "cand_length " << cand_length << "\n";
+                                    std::cerr <<  "candidateReadId " << candidateReadId << "\n";
+                                    std::cerr <<  "alignmentDirection " << int(alignmentDirection) << "\n";
+
+                                    std::cerr << "decodedCandidate:\n";
+                                    for(int k = 0; k < cand_length; k++){
+                                        std::cerr << decodedCandidatePtr[k];
+                                    }
+                                    std::cerr << "\n";
+
+                                    std::cerr << "consensusCandidate:\n";
+                                    for(int k = 0; k < cand_length; k++){
+                                        std::cerr << myCorrection[k];
+                                    }
+                                    std::cerr << "\n";
+
+                                }
+
                                 const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
                                 const float* const myWeights = h_weights.data() + 4 * msaColumnPitchInElements * a;
 
@@ -2688,7 +2820,7 @@ namespace gpu{
                                 clfInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
                                 clfInput.alignmentShifts = &myShifts[candidateIndex]; //treat as if only 1 candidate exists
                                 clfInput.candidateSequencesLengths = &cand_length; //treat as if only 1 candidate exists
-                                clfInput.decodedCandidateSequences = decodedCandidate.data(); //treat as if only 1 candidate exists
+                                clfInput.decodedCandidateSequences = decodedCandidatePtr; //treat as if only 1 candidate exists
                                 clfInput.countsA = myCounts + 0 * msaColumnPitchInElements;
                                 clfInput.countsC = myCounts + 1 * msaColumnPitchInElements;
                                 clfInput.countsG = myCounts + 2 * msaColumnPitchInElements;
@@ -2719,9 +2851,13 @@ namespace gpu{
 
 
                                 for(int i = 0; i < cand_length; i++){
-                                    if(decodedCandidate[i] != myConsensus[cand_begin + i]){
+                                    if(decodedCandidatePtr[i] != myConsensus[cand_begin + i]){
+                                        if(a == 5 && candidateReadId == 633) std::cerr << "checking position " << i << ". ";
                                         if(!clfAgent->decide_cand(clfInput, i, *correctionOptions, 0, 0)){
-                                            myCorrection[i] = decodedCandidate[i];
+                                            myCorrection[i] = decodedCandidatePtr[i];
+                                            if(a == 5 && candidateReadId == 633) std::cerr << "revert consensus\n";
+                                        }else{
+                                            if(a == 5 && candidateReadId == 633) std::cerr << "keep consensus\n";
                                         }
                                     }
                                 }
@@ -2735,12 +2871,18 @@ namespace gpu{
                                     const int maxEdits = cand_length / 7;
                                     int numedits = 0;
                                     for(int i = 0; i < cand_length && numedits <= maxEdits; i++){
-                                        if(myCorrection[i] != decodedCandidate[i]){
-                                            edits[numedits] = TempCorrectedSequence::EncodedEdit{i, myCorrection[i]};
+                                        if(myCorrection[i] != decodedCandidatePtr[i]){
+                                            //edits are applied to the forward sequence
+                                            if(alignmentDirection == BestAlignment_t::ReverseComplement){
+                                                edits[numedits] = TempCorrectedSequence::EncodedEdit{cand_length - i - 1, SequenceHelpers::reverseComplementBaseDecoded(myCorrection[i])};
+                                            }else{
+                                                edits[numedits] = TempCorrectedSequence::EncodedEdit{i, myCorrection[i]};
+                                            }
                                             numedits++;
                                         }
                                     }
                                     if(numedits <= maxEdits){
+                                        std::sort(edits, edits + numedits, [](auto l, auto r){return l.pos() < r.pos();});
                                         *numEditsPtr = numedits;
                                     }else{
                                         *numEditsPtr = getDoNotUseEditsValue();
@@ -2764,6 +2906,8 @@ namespace gpu{
                             + numCorrectedCandidatesForAnchor;
                 }
             }
+        
+            nvtx::pop_range();
         }
 
         
@@ -2890,6 +3034,10 @@ namespace gpu{
         PinnedBuffer<bool> h_candidateContainsN;
         PinnedBuffer<int> h_candidates_per_anchor_prefixsum; 
         PinnedBuffer<int> h_indices;
+
+        PinnedBuffer<char> h_decoded_candidates;
+
+        DeviceBuffer<char> d_decoded_candidates;
 
         DeviceBuffer<bool> d_flagsCandidates;
         DeviceBuffer<int> d_alignment_shifts2;
