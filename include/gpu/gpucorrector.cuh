@@ -1854,7 +1854,7 @@ namespace gpu{
                     d_alignment_best_alignment_flags = this->d_alignment_best_alignment_flags.data(),
                     d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
                     d_indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor_tmp.data(),
                     d_num_indices_tmp = this->d_num_indices_tmp.data(),
                     d_anchorIndicesOfCandidates = this->d_anchorIndicesOfCandidates.data(),
                     d_candidate_sequences_lengths = this->d_candidate_sequences_lengths.data(),
@@ -2006,7 +2006,7 @@ namespace gpu{
                 [
                     d_flagscandidates = this->d_flagsCandidates.data(),
                     indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor_tmp.data(),
                     d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data()
                 ] __device__ (){
 
@@ -2075,7 +2075,7 @@ namespace gpu{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr,
                 cubBytes2,
-                d_indices_per_anchor.data(),
+                d_indices_per_anchor_tmp.data(),
                 h_segmentOffsets.data(),
                 currentNumAnchors,
                 stream
@@ -2090,7 +2090,7 @@ namespace gpu{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 d_cubtemp2.data(), 
                 cubBytes,
-                d_indices_per_anchor.data(),
+                d_indices_per_anchor_tmp.data(),
                 h_segmentOffsets.data(),
                 currentNumAnchors,
                 stream
@@ -2199,14 +2199,6 @@ namespace gpu{
             #endif
 
             //copy remaining data 
-            
-            cudaMemcpyAsync(
-                h_indices.data(),
-                d_indices.data(),
-                d_indices.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR; 
 
             cudaMemcpyAsync(
                 h_candidates_per_anchor_prefixsum.data(),
@@ -2282,11 +2274,19 @@ namespace gpu{
 
             cudaMemcpyAsync(
                 h_segmentSizes.data(),
-                d_indices_per_anchor.data(),
-                d_indices_per_anchor.sizeInBytes(),
+                d_indices_per_anchor_tmp.data(),
+                d_indices_per_anchor_tmp.sizeInBytes(),
                 D2H,
                 stream
-            ); CUERR;        
+            ); CUERR;   
+
+            cudaMemcpyAsync(
+                h_indices.data(),
+                d_indices_tmp.data(),
+                d_indices_tmp.sizeInBytes(),
+                D2H,
+                stream
+            ); CUERR;      
         };
 
         void correctAnchors(cudaStream_t stream){
@@ -2733,10 +2733,11 @@ namespace gpu{
                         correctionOptions->m_coverage
                     );
 
-                    auto it = std::find(&currentInput->h_candidate_read_ids[globalOffset], &currentInput->h_candidate_read_ids[globalOffset + numCandidates], 633);
-                    if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
-                        std::cerr << "found 633 at local position " << std::distance(&currentInput->h_candidate_read_ids[globalOffset], it) << "\n";
-                    }
+                    // auto it = std::find(&currentInput->h_candidate_read_ids[globalOffset], &currentInput->h_candidate_read_ids[globalOffset + numCandidates], 37);
+                    // if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
+                    //     std::cerr << "found 37 at local position " << std::distance(&currentInput->h_candidate_read_ids[globalOffset], it) << "\n";
+                    //     std::cerr << "anchorReadId " << currentInput->h_anchorReadIds[a] << "\n";
+                    // }
 
                     if(anchorMsaProperties.isHQ){
 
@@ -2748,6 +2749,16 @@ namespace gpu{
                             const int cand_length = currentOutput->h_candidate_sequences_lengths[globalOffset + candidateIndex];
                             const int cand_end = cand_begin + cand_length;
                             const read_number candidateReadId = currentInput->h_candidate_read_ids[globalOffset + candidateIndex];
+
+                            // if(candidateReadId == 37){
+                            //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
+                            //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+                            //     std::cerr <<  "cand_end " << cand_end << "\n";
+                            //     std::cerr <<  "cand_length " << cand_length << "\n";
+                            //     std::cerr <<  "candidateReadId " << candidateReadId << "\n";
+                            //     std::cerr << "anchorReadId " << currentInput->h_anchorReadIds[a] << "\n";
+                            //     std::cerr << "shift " << myShifts[candidateIndex] << "\n";
+                            // }
 
                             if(cand_begin >= subjectColumnsBegin_incl - correctionOptions->new_columns_to_correct
                                 && cand_end <= subjectColumnsEnd_excl + correctionOptions->new_columns_to_correct){
@@ -2788,27 +2799,27 @@ namespace gpu{
 
                                 #endif
 
-                                if(a == 5 && candidateReadId == 633){
-                                    std::cerr <<  "candidateIndex " << candidateIndex << "\n";
-                                    std::cerr <<  "cand_begin " << cand_begin << "\n";
-                                    std::cerr <<  "cand_end " << cand_end << "\n";
-                                    std::cerr <<  "cand_length " << cand_length << "\n";
-                                    std::cerr <<  "candidateReadId " << candidateReadId << "\n";
-                                    std::cerr <<  "alignmentDirection " << int(alignmentDirection) << "\n";
+                                // if(candidateReadId == 37){
+                                //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
+                                //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+                                //     std::cerr <<  "cand_end " << cand_end << "\n";
+                                //     std::cerr <<  "cand_length " << cand_length << "\n";
+                                //     std::cerr <<  "candidateReadId " << candidateReadId << "\n";
+                                //     std::cerr <<  "alignmentDirection " << int(alignmentDirection) << "\n";
 
-                                    std::cerr << "decodedCandidate:\n";
-                                    for(int k = 0; k < cand_length; k++){
-                                        std::cerr << decodedCandidatePtr[k];
-                                    }
-                                    std::cerr << "\n";
+                                //     std::cerr << "decodedCandidate:\n";
+                                //     for(int k = 0; k < cand_length; k++){
+                                //         std::cerr << decodedCandidatePtr[k];
+                                //     }
+                                //     std::cerr << "\n";
 
-                                    std::cerr << "consensusCandidate:\n";
-                                    for(int k = 0; k < cand_length; k++){
-                                        std::cerr << myCorrection[k];
-                                    }
-                                    std::cerr << "\n";
+                                //     std::cerr << "consensusCandidate:\n";
+                                //     for(int k = 0; k < cand_length; k++){
+                                //         std::cerr << myCorrection[k];
+                                //     }
+                                //     std::cerr << "\n";
 
-                                }
+                                // }
 
                                 const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
                                 const float* const myWeights = h_weights.data() + 4 * msaColumnPitchInElements * a;
@@ -2852,12 +2863,12 @@ namespace gpu{
 
                                 for(int i = 0; i < cand_length; i++){
                                     if(decodedCandidatePtr[i] != myConsensus[cand_begin + i]){
-                                        if(a == 5 && candidateReadId == 633) std::cerr << "checking position " << i << ". ";
+                                        //if(a == 5 && candidateReadId == 633) std::cerr << "checking position " << i << ". ";
                                         if(!clfAgent->decide_cand(clfInput, i, *correctionOptions, 0, 0)){
                                             myCorrection[i] = decodedCandidatePtr[i];
-                                            if(a == 5 && candidateReadId == 633) std::cerr << "revert consensus\n";
+                                            //if(a == 5 && candidateReadId == 633) std::cerr << "revert consensus\n";
                                         }else{
-                                            if(a == 5 && candidateReadId == 633) std::cerr << "keep consensus\n";
+                                            //if(a == 5 && candidateReadId == 633) std::cerr << "keep consensus\n";
                                         }
                                     }
                                 }
@@ -2893,8 +2904,16 @@ namespace gpu{
 
                                 numCorrectedCandidates++;
                                 numCorrectedCandidatesForAnchor++;
+                            }else{
+                                // if(candidateReadId == 37){
+                                //     std::cerr << "not in range with shift " << myShifts[candidateIndex] << "\n";
+                                // }
                             }
                         }
+                    }else{
+                        // if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
+                        //     std::cerr << "not hq anchor for candidate id 37\n";
+                        // }
                     }
                 }
 
