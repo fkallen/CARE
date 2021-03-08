@@ -2652,7 +2652,7 @@ namespace gpu{
                             if(cand_begin >= subjectColumnsBegin_incl - correctionOptions->new_columns_to_correct
                                 && cand_end <= subjectColumnsEnd_excl + correctionOptions->new_columns_to_correct){
 
-                                currentOutput->h_indices_of_corrected_candidates[globalOffset + numCorrectedCandidatesForAnchor] = globalOffset + c;
+                                currentOutput->h_indices_of_corrected_candidates[numCorrectedCandidates] = globalOffset + candidateIndex;
 
                                 char* const myCorrection = currentOutput->h_corrected_candidates.data() 
                                     + decodedSequencePitchInBytes * numCorrectedCandidates;
@@ -2755,6 +2755,8 @@ namespace gpu{
                         }
                     }
                 }
+
+                currentOutput->h_num_corrected_candidates_per_anchor[a] = numCorrectedCandidatesForAnchor;
             
                 if(a < currentNumAnchors - 1){
                     currentOutput->h_num_corrected_candidates_per_anchor_prefixsum[a+1]
