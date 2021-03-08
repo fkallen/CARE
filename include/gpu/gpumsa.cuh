@@ -32,6 +32,14 @@ namespace gpu{
         int lastColumn_excl;
     };
 
+    struct GpuMSAProperties{
+        bool isHQ;
+        float avg_support;
+        float min_support;
+        int min_coverage;
+        int max_coverage;
+    };
+
     struct GpuSingleMSA{
     public:
 
@@ -76,6 +84,103 @@ namespace gpu{
                 }
             }
         }
+
+        //only group.thread_rank() == 0 returns the correct MSAProperties
+        template<
+            class ThreadGroup,
+            class GroupReduceFloatSum,
+            class GroupReduceFloatMin,
+            class GroupReduceIntMin,
+            class GroupReduceIntMax
+        >
+        GpuMSAProperties getMSAProperties(
+            ThreadGroup& group,
+            GroupReduceFloatSum& groupReduceFloatSum,
+            GroupReduceFloatMin& groupReduceFloatMin,
+            GroupReduceIntMin& groupReduceIntMin,
+            GroupReduceIntMax& groupReduceIntMax,
+            int firstCol,
+            int lastCol, //exclusive
+            float estimatedErrorrate,
+            float estimatedCoverage,
+            float m_coverage
+        ){
+            const int firstColumn_incl = columnProperties->firstColumn_incl;
+            const int lastColumn_excl = columnProperties->lastColumn_excl;
+
+            float avg_support = 0;
+            float min_support = 1.0f;
+            int min_coverage = std::numeric_limits<int>::max();
+            int max_coverage = std::numeric_limits<int>::min();
+
+            for(int i = firstCol + group.thread_rank(); 
+                    i < lastCol; 
+                    i += group.size()){
+                
+                assert(firstColumn_incl <= i && i < lastColumn_excl);
+
+                avg_support += support[i];
+                min_support = min(support[i], min_support);
+                min_coverage = min(coverages[i], min_coverage);
+                max_coverage = max(coverages[i], max_coverage);
+            }
+
+            avg_support = groupReduceFloatSum(avg_support);
+            avg_support /= (lastCol - firstCol);
+
+            min_support = groupReduceFloatMin(min_support);
+
+            min_coverage = groupReduceIntMin(min_coverage);
+
+            max_coverage = groupReduceIntMax(max_coverage);
+
+
+            GpuMSAProperties msaProperties;
+
+            msaProperties.min_support = min_support;
+            msaProperties.avg_support = avg_support;
+            msaProperties.min_coverage = min_coverage;
+            msaProperties.max_coverage = max_coverage;
+
+            msaProperties.isHQ = false;
+
+            const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+            const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+            const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+            auto isGoodAvgSupport = [=](float avgsupport){
+                return fgeq(avgsupport, avg_support_threshold);
+            };
+            auto isGoodMinSupport = [=](float minsupport){
+                return fgeq(minsupport, min_support_threshold);
+            };
+            auto isGoodMinCoverage = [=](float mincoverage){
+                return fgeq(mincoverage, min_coverage_threshold);
+            };
+
+            const bool allGood = isGoodAvgSupport(avg_support) 
+                                                && isGoodMinSupport(min_support) 
+                                                && isGoodMinCoverage(min_coverage);
+            if(allGood){
+                int smallestErrorrateThatWouldMakeHQ = 100;
+
+                const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+                for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+                    const float factor = percent / 100.0f;
+                    const float avg_threshold = 1.0f - 1.0f * factor;
+                    const float min_threshold = 1.0f - 3.0f * factor;
+                    if(fgeq(avg_support, avg_threshold) && fgeq(min_support, min_threshold)){
+                        smallestErrorrateThatWouldMakeHQ = percent;
+                    }
+                }
+
+                msaProperties.isHQ = isGoodMinCoverage(min_coverage)
+                                    && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+            }
+
+            return msaProperties;
+        }
+
 
         template<
             class ThreadGroup, 
