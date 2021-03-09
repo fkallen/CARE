@@ -658,6 +658,7 @@ namespace gpu{
 
         GpuErrorCorrector(
             const GpuReadStorage& gpuReadStorage_,
+            const ReadCorrectionFlags& correctionFlags_,
             const CorrectionOptions& correctionOptions_,
             const GoodAlignmentProperties& goodAlignmentProperties_,
             int maxAnchorsPerCall,
@@ -666,6 +667,7 @@ namespace gpu{
         ) : 
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
+            correctionFlags{&correctionFlags_},
             gpuReadStorage{&gpuReadStorage_},
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
@@ -2662,6 +2664,10 @@ namespace gpu{
                             const int cand_end = cand_begin + cand_length;
                             const read_number candidateReadId = currentInput->h_candidate_read_ids[globalOffset + candidateIndex];
 
+                            if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
+                                continue;
+                            }
+
                             // if(candidateReadId == 37){
                             //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
                             //     std::cerr <<  "cand_begin " << cand_begin << "\n";
@@ -2865,6 +2871,8 @@ namespace gpu{
         int maxNumEditsPerSequence;
         int currentNumAnchors;
         int currentNumCandidates;
+
+        const ReadCorrectionFlags* correctionFlags;
 
         const GpuReadStorage* gpuReadStorage;
 

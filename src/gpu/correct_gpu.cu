@@ -338,6 +338,7 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
@@ -605,6 +606,7 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
@@ -883,8 +885,12 @@ public:
                     std::async(
                         std::launch::async,
                         [&](){ 
-                            correctorThreadFunction(deviceId, correctionOptions, 
-                                goodAlignmentProperties);                          
+                            correctorThreadFunction(
+                                deviceId, 
+                                correctionOptions, 
+                                goodAlignmentProperties,
+                                correctionFlags
+                            );                          
                         }
                     )
                 );
@@ -1000,12 +1006,14 @@ public:
     void correctorThreadFunction(
         int deviceId,
         const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ReadCorrectionFlags& correctionFlags
     ){
         cudaSetDevice(deviceId);
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
@@ -1094,6 +1102,7 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
@@ -1415,8 +1424,8 @@ correct_gpu_impl(
     BackgroundThread outputThread;
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
+        //std::cerr << *tmp << "\n";
         //useEditsCountMap[tmp.useEdits]++;
-        //std::cerr << tmp << "\n";
         //std::unique_lock<std::mutex> l(outputstreammutex);
         if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
             //outputstream << tmp << '\n';
@@ -1551,7 +1560,7 @@ correct_gpu_impl(
 
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(15000u, readStorage.getNumberOfReads()));
+    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(1500000u, readStorage.getNumberOfReads()));
 
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
@@ -1728,12 +1737,13 @@ correct_gpu_impl(
             if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
+                #if 0
                 pipelineConfig.numOutputConstructors = 0; //always 0
 
                 pipelineConfig.numCorrectors = 1;
                 threadsForDevice -= pipelineConfig.numCorrectors;
                 
-                pipelineConfig.numHashers = std::min(threadsForDevice, numHashersPerCorrectorByTime);
+                pipelineConfig.numHashers = std::max(1, std::min(threadsForDevice, numHashersPerCorrectorByTime));
                 threadsForDevice -= pipelineConfig.numHashers;
 
                 if(threadsForDevice > 0){
@@ -1742,6 +1752,11 @@ correct_gpu_impl(
                 }
 
                 pipelineConfig.numHashers += threadsForDevice;
+                #else
+                pipelineConfig.numOutputConstructors = 0; //always 0
+                pipelineConfig.numCorrectors = 13;
+                pipelineConfig.numHashers = 3;
+                #endif
 
                 std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "
                 << pipelineConfig.numCorrectors << " corrector(s) "
