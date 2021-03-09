@@ -22,7 +22,9 @@
 #include <memorymanagement.hpp>
 #include <msa.hpp>
 #include <classification.hpp>
-#include <forest_gpu.cuh>
+
+#include <forest.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <algorithm>
 #include <array>
@@ -689,7 +691,8 @@ namespace gpu{
             int maxAnchorsPerCall,
             ThreadPool* threadPool_,
             ClfAgent* clfAgent_,
-            GpuForest* gpuForest_,
+            const GpuForest<ForestClf>* gpuForestAnchor_,
+            const GpuForest<ForestClf>* gpuForestCandidate_
         ) : 
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
@@ -699,17 +702,18 @@ namespace gpu{
             goodAlignmentProperties{&goodAlignmentProperties_},
             threadPool{threadPool_},
             clfAgent{clfAgent_},
-            gpuForest{gpuForest_},
+            gpuForestAnchor{gpuForestAnchor_},
+            gpuForestCandidate{gpuForestCandidate_},
             readstorageHandle{gpuReadStorage->makeHandle()}
         {
             if(correctionOptions->correctionType != CorrectionType::Classic){
                 assert(clfAgent != nullptr);
-                assert(gpuForest != nullptr);
+                assert(gpuForestAnchor != nullptr);
             }
 
             if(correctionOptions->correctionTypeCands != CorrectionType::Classic){
                 assert(clfAgent != nullptr);
-                assert(gpuForest != nullptr);
+                assert(gpuForestCandidate != nullptr);
             }
 
             cudaGetDevice(&deviceId); CUERR;
@@ -1234,7 +1238,7 @@ namespace gpu{
                 nvtx::pop_range();
                 
             }
-        };
+        }
 
         void copyAnchorResultsFromDeviceToHost(cudaStream_t stream){
             //copyAnchorResultsFromDeviceToHostForest(stream);
@@ -3183,7 +3187,8 @@ namespace gpu{
         KernelLaunchHandle kernelLaunchHandle; 
 
         ClfAgent* clfAgent{};
-        GpuForest* gpuForest{};
+        const GpuForest<ForestClf>* gpuForestAnchor{};
+        const GpuForest<ForestClf>* gpuForestCandidate{};
 
         ReadStorageHandle readstorageHandle;
 

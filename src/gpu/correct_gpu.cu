@@ -18,7 +18,8 @@
 #include <corrector_common.hpp>
 
 #include <classification.hpp>
-#include <forest_gpu.cuh>
+#include <forest.hpp>
+#include <gpu/forest_gpu.cuh>
 
 
 #include <cassert>
@@ -180,12 +181,16 @@ public:
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
-        ClfAgent* clfAgent_
+        ClfAgent* clfAgent_,
+        const GpuForest<ForestClf>* gpuForestAnchor_, 
+        const GpuForest<ForestClf>* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
         threadPool(threadPool_),
-        clfAgent(clfAgent_)
+        clfAgent(clfAgent_),
+        gpuForestAnchor(gpuForestAnchor_),
+        gpuForestCandidate(gpuForestCandidate_)
     {
 
     }
@@ -343,7 +348,9 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent
+            clfAgent,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -611,7 +618,9 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent
+            clfAgent,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -748,6 +757,8 @@ private:
     const Minhasher* minhasher;
     ThreadPool* threadPool;
     ClfAgent* clfAgent;
+    const GpuForest<ForestClf>* gpuForestAnchor;
+    const GpuForest<ForestClf>* gpuForestCandidate;
 };
 
 
@@ -765,12 +776,16 @@ public:
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
-        ClfAgent* clfAgent_ 
+        ClfAgent* clfAgent_,
+        const GpuForest<ForestClf>* gpuForestAnchor_, 
+        const GpuForest<ForestClf>* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
         threadPool(threadPool_),
-        clfAgent(clfAgent_)
+        clfAgent(clfAgent_),
+        gpuForestAnchor(gpuForestAnchor_),
+        gpuForestCandidate(gpuForestCandidate_)
     {
 
     }
@@ -1018,7 +1033,9 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent
+            clfAgent,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         CudaStream stream;
@@ -1107,7 +1124,9 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent
+            clfAgent,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -1347,6 +1366,8 @@ private:
     const Minhasher* minhasher;
     ThreadPool* threadPool;
     ClfAgent* clfAgent;
+    const GpuForest<ForestClf>* gpuForestAnchor;
+    const GpuForest<ForestClf>* gpuForestCandidate;
 
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> unprocessedInputs;
@@ -1558,6 +1579,19 @@ correct_gpu_impl(
 
     ClfAgent clfAgent_(correctionOptions, fileOptions);
 
+    std::vector<GpuForest<ForestClf>> anchorForests{deviceIds.size()};
+    std::vector<GpuForest<ForestClf>> candidateForests{deviceIds.size()};
+
+    for(int i = 0; i < int(deviceIds.size()); i++){
+        cub::SwitchDevice sd{deviceIds[i]};
+        if(correctionOptions.correctionType == CorrectionType::Forest){
+            anchorForests[i] = std::move(GpuForest<ForestClf>(*clfAgent_.classifier_anchor, deviceIds[i]));
+        }
+
+        if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+            candidateForests[i] = std::move(GpuForest<ForestClf>(*clfAgent_.classifier_cands, deviceIds[i]));
+        }
+    }
 
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
@@ -1566,12 +1600,17 @@ correct_gpu_impl(
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
 
-        auto runPipeline = [&](int deviceId){    
+        auto runPipeline = [&](int deviceId, 
+            const GpuForest<ForestClf>* gpuForestAnchor, 
+            const GpuForest<ForestClf>* gpuForestCandidate
+        ){    
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
                 nullptr, //&threadPool
-                &clfAgent_
+                &clfAgent_,
+                gpuForestAnchor,
+                gpuForestCandidate
             );
     
             pipeline.runToCompletion(
@@ -1588,12 +1627,15 @@ correct_gpu_impl(
         std::vector<std::future<void>> futures;
     
         for(int i = 0; i < runtimeOptions.threads; i++){
-            const int deviceId = deviceIds[i % deviceIds.size()];
+            const int position = i % deviceIds.size();
+            const int deviceId = deviceIds[position];
 
             futures.emplace_back(std::async(
                 std::launch::async,
                 runPipeline,
-                deviceId
+                deviceId,
+                &anchorForests[position],
+                &candidateForests[position]
             ));
         }
     
@@ -1615,7 +1657,9 @@ correct_gpu_impl(
                 readStorage,
                 minhasher,
                 nullptr, //&threadPool
-                &clfAgent_
+                &clfAgent_,
+                &anchorForests[0],
+                &candidateForests[0]
             );
 
             constexpr int numBatches = 50;
@@ -1656,12 +1700,17 @@ correct_gpu_impl(
         //     // ); 
         // };
 
-        auto runSimpleGpuPipeline = [&](int deviceId){
+        auto runSimpleGpuPipeline = [&](int deviceId,
+            const GpuForest<ForestClf>* gpuForestAnchor, 
+            const GpuForest<ForestClf>* gpuForestCandidate
+        ){
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
                 nullptr, //&threadPool        
-                &clfAgent_
+                &clfAgent_,
+                gpuForestAnchor,
+                gpuForestCandidate
             );
 
             pipeline.runToCompletionDoubleBuffered(
@@ -1675,9 +1724,15 @@ correct_gpu_impl(
             );  
         };
 
-        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config){
+        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
+            const GpuForest<ForestClf>* gpuForestAnchor, 
+            const GpuForest<ForestClf>* gpuForestCandidate
+        ){
             
-            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr, &clfAgent_);
+            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr, &clfAgent_, 
+                gpuForestAnchor,
+                gpuForestCandidate
+            );
 
             pipeline.run(
                 deviceId,
@@ -1767,7 +1822,9 @@ correct_gpu_impl(
                     std::async(
                         std::launch::async,
                         runComplexGpuPipeline,
-                        deviceId, pipelineConfig
+                        deviceId, pipelineConfig,
+                        &anchorForests[i],
+                        &candidateForests[i]
                     )
                 );
 
@@ -1781,7 +1838,9 @@ correct_gpu_impl(
                     futures.emplace_back(std::async(
                         std::launch::async,
                         runSimpleGpuPipeline,
-                        deviceId
+                        deviceId,
+                        &anchorForests[i],
+                        &candidateForests[i]
                     ));
 
                     threadsForDevice--;
@@ -1859,7 +1918,6 @@ correct_gpu_impl(
 
 #if 0
 
-auto runPipeline = [&](int deviceId){
     auto printRunStats = [](const auto& runStatistics){
         std::cerr << "hashing time average: " << runStatistics.hasherTimeAverage << "\n";
         std::cerr << "corrector time average: " << runStatistics.correctorTimeAverage << "\n";

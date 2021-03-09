@@ -12,9 +12,14 @@
 
 namespace care {
 
+namespace gpu{
+    template<class CpuForest>
+    class GpuForest;
+}
+
 class ForestClf {
     template<class CpuForest>
-    friend class GpuForest;
+    friend class care::gpu::GpuForest;
 
     struct Node {
         uint8_t att;

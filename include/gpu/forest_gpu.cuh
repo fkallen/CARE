@@ -4,6 +4,7 @@
 
 #include <hpc_helpers.cuh>
 #include <classification.hpp>
+#include <utility>
 
 //#include <forest.hpp>
 
@@ -17,6 +18,7 @@ namespace cg = cooperative_groups;
 #endif
 
 namespace care{
+namespace gpu{
 
 template<class CpuForest>
 class GpuForest {
@@ -77,10 +79,13 @@ class GpuForest {
         
     };
 
-    int deviceId;
-    int numTrees;
-    Node** h_data;
+public:
+    int deviceId{};
+    int numTrees{};
+    Node** h_data{};
 
+
+    GpuForest() = default;
 
     GpuForest(const CpuForest& clf, int gpuId)
         : deviceId(gpuId) {
@@ -114,6 +119,23 @@ class GpuForest {
 
         cudaSetDevice(curgpu); CUERR;
     }
+
+    GpuForest(GpuForest&& rhs){
+        deviceId = std::exchange(rhs.deviceId, 0);
+        numTrees = std::exchange(rhs.numTrees, 0);
+        h_data = std::exchange(rhs.h_data, nullptr);
+    }
+
+    GpuForest(const GpuForest& rhs) = delete;
+
+    GpuForest& operator=(GpuForest&& rhs){
+        deviceId = std::exchange(rhs.deviceId, 0);
+        numTrees = std::exchange(rhs.numTrees, 0);
+        h_data = std::exchange(rhs.h_data, nullptr);
+        return *this;
+    }
+
+    GpuForest& operator=(const GpuForest& rhs) = delete;
 
     ~GpuForest(){
         int curgpu;
@@ -154,6 +176,7 @@ class GpuForest {
 
 
 
+}
 }
 
 
