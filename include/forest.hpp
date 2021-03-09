@@ -6,12 +6,14 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <string>
 #include <array>
 #include <deserialize.hpp>
 // #include <numeric>
 
 namespace care {
 
+template<size_t feature_count>
 class ForestClf {
     template<class CpuForest>
     friend class GpuForest;
@@ -27,6 +29,7 @@ class ForestClf {
     };
 
     using Tree = std::vector<Node>;
+    using features_t = std::array<float, feature_count>; // for now, only std::arrays are allowed
 
     void populate(std::ifstream& is, Tree& tree) {
         Node& node = *tree.emplace(tree.end());
@@ -47,7 +50,6 @@ class ForestClf {
         }
     }
 
-    template<typename features_t>
     float decide(const features_t& features, const Tree& tree, size_t i = 0) const {
         if (features[tree[i].att] < tree[i].thresh) {
             if (tree[i].flag / 2)
@@ -71,12 +73,19 @@ public:
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
+        
+        if (!is)
+            throw std::runtime_error("Loading classifier file failed!");
+
+        size_t file_feat_count = read_one<uint8_t>(is);
+        if (file_feat_count != feature_count)
+            throw std::runtime_error("Classifier feature shape does not match feature extractor! Expected: " +std::to_string(feature_count) + " Got: "+std::to_string(file_feat_count));
+
         forest_ = Forest(read_one<uint32_t>(is));
         for (Tree& tree: forest_) {
             tree.reserve(read_one<uint32_t>(is));
             populate(is, tree);
         }
-        is.close();
     }
 
     void threshold(float t) {
@@ -87,7 +96,6 @@ public:
         return thresh_;
     }
 
-    template<typename features_t>
     bool decide(const features_t& features) const {
         float prob = 0.f;
         for (const Tree& tree: forest_)
