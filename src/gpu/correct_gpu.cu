@@ -18,7 +18,7 @@
 #include <corrector_common.hpp>
 
 #include <classification.hpp>
-
+#include <forest_gpu.cuh>
 
 
 #include <cassert>
@@ -1559,6 +1559,7 @@ correct_gpu_impl(
     ClfAgent clfAgent_(correctionOptions, fileOptions);
 
 
+
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(std::min(1500000u, readStorage.getNumberOfReads()));
 
@@ -1737,7 +1738,7 @@ correct_gpu_impl(
             if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-                #if 0
+                #if 1
                 pipelineConfig.numOutputConstructors = 0; //always 0
 
                 pipelineConfig.numCorrectors = 1;

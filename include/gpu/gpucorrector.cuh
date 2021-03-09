@@ -22,6 +22,7 @@
 #include <memorymanagement.hpp>
 #include <msa.hpp>
 #include <classification.hpp>
+#include <forest_gpu.cuh>
 
 #include <algorithm>
 #include <array>
@@ -49,6 +50,30 @@ namespace gpu{
             return flags[i / pitch];
         }
     };
+
+    template<class Iter>
+    struct IteratorMultiplier{
+        using value_type = typename std::iterator_traits<Iter>::value_type;
+
+        int factor{};
+        Iter data{};
+
+        __host__ __device__
+        IteratorMultiplier(Iter data_, int factor_)
+            : factor(factor_), data(data_){
+
+        }
+
+        __host__ __device__
+        value_type operator()(int i) const{
+            return *(data + (i / factor));
+        }
+    };
+
+    template<class Iter>
+    IteratorMultiplier<Iter> make_iterator_multiplier(Iter data, int factor){
+        return IteratorMultiplier<Iter>{data, factor};
+    }
 
 
 
@@ -663,7 +688,8 @@ namespace gpu{
             const GoodAlignmentProperties& goodAlignmentProperties_,
             int maxAnchorsPerCall,
             ThreadPool* threadPool_,
-            ClfAgent* clfAgent_
+            ClfAgent* clfAgent_,
+            GpuForest* gpuForest_,
         ) : 
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
@@ -673,14 +699,17 @@ namespace gpu{
             goodAlignmentProperties{&goodAlignmentProperties_},
             threadPool{threadPool_},
             clfAgent{clfAgent_},
+            gpuForest{gpuForest_},
             readstorageHandle{gpuReadStorage->makeHandle()}
         {
             if(correctionOptions->correctionType != CorrectionType::Classic){
                 assert(clfAgent != nullptr);
+                assert(gpuForest != nullptr);
             }
 
             if(correctionOptions->correctionTypeCands != CorrectionType::Classic){
                 assert(clfAgent != nullptr);
+                assert(gpuForest != nullptr);
             }
 
             cudaGetDevice(&deviceId); CUERR;
@@ -799,9 +828,10 @@ namespace gpu{
                 copyCandidateResultsFromDeviceToHost(stream);
             }
 
+
             //fill missing output arrays. This may overlap with gpu execution
-            std::copy_n(currentInput->h_anchorReadIds.get(), currentNumAnchors, currentOutput->h_anchorReadIds.get());
-            std::copy_n(currentInput->h_candidate_read_ids.get(), currentNumCandidates, currentOutput->h_candidate_read_ids.get());
+            std::copy_n(currentInput->h_anchorReadIds.get(), currentNumAnchors, currentOutput->h_anchorReadIds.get());            
+            std::copy_n(currentInput->h_candidate_read_ids.get(), currentNumCandidates, currentOutput->h_candidate_read_ids.get()); //remove if candidates are compacted
 
             //after the current work in stream is completed, all results in currentOutput are ready to use.
             cudaEventRecord(currentOutput->event, stream); CUERR;
@@ -954,7 +984,8 @@ namespace gpu{
 
             //does not depend on number of candidates
             h_num_total_corrected_candidates.resize(1);
-            h_num_indices.resize(1);    
+            h_num_indices.resize(1);
+            h_numSelected.resize(1);
 
             //does not depend on number of candidates
             d_candidates_per_anchor_tmp.resize(maxAnchors);
@@ -1044,6 +1075,7 @@ namespace gpu{
             d_anchorIndicesOfCandidates.resize(maxCandidates);
             d_candidateContainsN.resize(maxCandidates);
             d_candidate_read_ids.resize(maxCandidates);
+            d_candidate_read_ids2.resize(maxCandidates);
             d_candidate_sequences_lengths.resize(maxCandidates);
             d_candidate_sequences_data.resize(maxCandidates * encodedSequencePitchInInts);
             d_transposedCandidateSequencesData.resize(maxCandidates * encodedSequencePitchInInts);
@@ -1068,6 +1100,15 @@ namespace gpu{
             d_editsPerCorrectedCandidate.resize(numEditsCandidates);
             d_numEditsPerCorrectedCandidate.resize(maxCandidates);
             d_indices_of_corrected_candidates.resize(maxCandidates);
+
+            d_alignment_shifts2.resize(maxCandidates);
+            d_alignment_overlaps2.resize(maxCandidates);
+            d_alignment_nOps2.resize(maxCandidates);
+            d_anchorIndicesOfCandidates2.resize(maxCandidates);
+            d_candidateContainsN2.resize(maxCandidates);
+            d_candidate_sequences_lengths2.resize(maxCandidates);
+            d_candidate_sequences_data2.resize(maxCandidates * decodedSequencePitchInBytes);
+            d_alignment_best_alignment_flags2.resize(maxCandidates);
 
             std::size_t flagTemp = sizeof(bool) * maxCandidates;
             std::size_t popcountShdTempBytes = 0; 
@@ -1628,6 +1669,8 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
+            #if 1
+
             callSelectIndicesOfGoodCandidatesKernelAsync(
                 d_indices.get(),
                 d_indices_per_anchor.get(),
@@ -1644,12 +1687,264 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
+            #else
+
+            cudaMemsetAsync(
+                d_indices_per_anchor.get(), 0, sizeof(int) * currentNumAnchors, stream
+            );
+
+            helpers::lambda_kernel<<<SDIV(currentNumAnchors, (128 / 32)), 128, 0, stream>>>(
+                [
+                    d_indicesOfGoodCandidates = this->d_indices.get(),
+                    d_numIndicesPerAnchor = this->d_indices_per_anchor.get(),
+                    d_alignmentFlags = this->d_alignment_best_alignment_flags.get(),
+                    d_candidates_per_subject = this->d_candidates_per_anchor.get(),
+                    d_candidates_per_subject_prefixsum = this->d_candidates_per_anchor_prefixsum.get(),
+                    currentNumAnchors = this->currentNumAnchors
+                ] __device__ ()
+            {
+                constexpr int blocksize = 128;
+                constexpr int tilesize = 32;
+
+                static_assert(blocksize % tilesize == 0);
+                static_assert(tilesize == 32);
+
+                constexpr int numTilesPerBlock = blocksize / tilesize;
+
+                const int numAnchors = currentNumAnchors;
+
+                const int numTiles = (gridDim.x * blocksize) / tilesize;
+                const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
+                const int tileIdInBlock = threadIdx.x / tilesize;
+
+                __shared__ int totalIndices;
+                __shared__ int counts[numTilesPerBlock];
+
+                if(threadIdx.x == 0){
+                    totalIndices = 0;
+                }
+                __syncthreads();
+
+                auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+
+                for(int anchorIndex = tileId; anchorIndex < numAnchors; anchorIndex += numTiles){
+
+                    const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
+                    int* const indicesPtr = d_indicesOfGoodCandidates + offset;
+                    int* const numIndicesPtr = d_numIndicesPerAnchor + anchorIndex;
+                    const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentFlags + offset;
+
+                    const int numCandidatesForAnchor = d_candidates_per_subject[anchorIndex];
+
+                    if(tile.thread_rank() == 0){
+                        counts[tileIdInBlock] = 0;
+                    }
+                    tile.sync();
+
+                    for(int localCandidateIndex = tile.thread_rank(); 
+                            localCandidateIndex < numCandidatesForAnchor; 
+                            localCandidateIndex += tile.size()){
+                        
+                        const BestAlignment_t alignmentflag = myAlignmentFlagsPtr[localCandidateIndex];
+
+                        if(alignmentflag != BestAlignment_t::None){
+                            cg::coalesced_group g = cg::coalesced_threads();
+                            int outputPos;
+                            if (g.thread_rank() == 0) {
+                                outputPos = atomicAdd(&counts[tileIdInBlock], g.size());
+                                atomicAdd(&totalIndices, g.size());
+                            }
+                            outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                            //indicesPtr[outputPos] = localCandidateIndex;
+                            indicesPtr[outputPos] = outputPos;
+                        }
+                    }
+
+                    tile.sync();
+                    if(tile.thread_rank() == 0){
+                        atomicAdd(numIndicesPtr, counts[tileIdInBlock]);
+                    }
+
+                }
+            }
+            );
+
+
+            std::size_t cubTempSize = d_tempstorage.sizeInBytes();
+            cudaError_t cubstatus = cub::DeviceScan::ExclusiveSum(
+                d_tempstorage.data(),
+                cubTempSize,
+                d_indices_per_anchor.data(),
+                d_indices_per_anchor_prefixsum.data(),
+                currentNumAnchors,
+                stream
+            );
+            assert(cubstatus == cudaSuccess);
+
+            //copy indices into contiguous locations
+            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
+                [
+                    d_indices_tmp = this->d_indices_tmp.data(),
+                    d_indices = this->d_indices.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
+                    d_indices_per_anchor_prefixsum = this->d_indices_per_anchor_prefixsum.data(),
+                    d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
+                    currentNumAnchors = this->currentNumAnchors
+                ] __device__ ()
+            {
+                for(int a = blockIdx.x; a < currentNumAnchors; a += gridDim.x){
+
+                    const int outputOffset = d_indices_per_anchor_prefixsum[a];
+                    const int inputOffset = d_candidates_per_anchor_prefixsum[a];
+                    const int segmentsize = d_indices_per_anchor[a];
+
+                    for(int c = threadIdx.x; c < segmentsize; c += blockDim.x){
+                        d_indices_tmp[outputOffset + c] = d_indices[inputOffset + c];
+                    }
+                }
+            }
+            );
+            std::swap(d_indices_tmp, d_indices);
+
+            //compact
+            auto flagsIter = thrust::make_transform_iterator(
+                d_alignment_best_alignment_flags.data(), 
+                [] __device__ (const auto& flag){ return flag != BestAlignment_t::None;}
+            );
+            auto srcIter = thrust::make_zip_iterator(thrust::make_tuple(
+                d_alignment_overlaps.get(),
+                d_alignment_shifts.get(),
+                d_alignment_nOps.get(),
+                d_alignment_best_alignment_flags.get(),
+                d_candidate_sequences_lengths.get(),
+                d_anchorIndicesOfCandidates.get(),
+                d_candidateContainsN.get(),
+                d_candidate_read_ids.get()
+            ));
+            auto destIter = thrust::make_zip_iterator(thrust::make_tuple(
+                d_alignment_overlaps2.get(),
+                d_alignment_shifts2.get(),
+                d_alignment_nOps2.get(),
+                d_alignment_best_alignment_flags2.get(),
+                d_candidate_sequences_lengths2.get(),
+                d_anchorIndicesOfCandidates2.get(),
+                d_candidateContainsN2.get(),
+                d_candidate_read_ids2.get()
+            ));
+            cubstatus = cub::DeviceSelect::Flagged(
+                d_tempstorage.data(),
+                cubTempSize,
+                srcIter, 
+                flagsIter, 
+                destIter, 
+                d_num_indices.data(), 
+                currentNumCandidates
+            );
+
+            assert(cubstatus == cudaSuccess);
+
+            cudaMemcpyAsync(
+                h_numSelected.data(),
+                d_num_indices.data(),
+                sizeof(int),
+                D2H,
+                stream
+            ); CUERR;
+
+            helpers::lambda_kernel<<<SDIV(maxCandidates, 256), 256, 0, stream>>>(
+                [
+                    dest = currentOutput->h_candidate_read_ids.get(),
+                    src = d_candidate_read_ids2.get(),
+                    numPtr = d_num_indices.get()
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                    const int stride = blockDim.x * gridDim.x;
+                    const int num = *numPtr;
+
+                    for(int i = tid; i < num; i += stride){
+                        dest[i] = src[i];
+                    }
+                }
+            );
+
+            cudaEventRecord(events[0], stream); CUERR;
+
+            auto flagsIter2 = thrust::make_transform_iterator(
+                thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    make_iterator_multiplier(d_alignment_best_alignment_flags.data(), int(encodedSequencePitchInInts))
+                ),
+                [] __device__ (const auto& flag){ return flag != BestAlignment_t::None;}
+            );
+
+            cubstatus = cub::DeviceSelect::Flagged(
+                d_tempstorage.data(),
+                cubTempSize,
+                d_candidate_sequences_data.data(),
+                flagsIter2,
+                d_candidate_sequences_data2.data(),
+                cub::DiscardOutputIterator<int>{},
+                currentNumCandidates * encodedSequencePitchInInts,
+                stream
+            );
+            assert(cubstatus == cudaSuccess);
+
+            cudaMemcpyAsync(
+                d_numCandidates.data(),
+                d_num_indices.data(),
+                sizeof(int),
+                D2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_candidates_per_anchor_prefixsum.data() + currentNumAnchors,
+                d_num_indices.data(),
+                sizeof(int),
+                D2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_candidates_per_anchor_prefixsum.data(),
+                d_indices_per_anchor_prefixsum.data(),
+                sizeof(int) * currentNumAnchors,
+                D2D,
+                stream
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                d_candidates_per_anchor.data(),
+                d_indices_per_anchor.data(),
+                sizeof(int) * currentNumAnchors,
+                D2D,
+                stream
+            ); CUERR;
+
+            std::swap(d_alignment_overlaps2, d_alignment_overlaps);
+            std::swap(d_alignment_shifts2, d_alignment_shifts);
+            std::swap(d_alignment_nOps2, d_alignment_nOps);
+            std::swap(d_alignment_best_alignment_flags2, d_alignment_best_alignment_flags);
+            std::swap(d_candidate_sequences_lengths2, d_candidate_sequences_lengths);
+            std::swap(d_anchorIndicesOfCandidates2, d_anchorIndicesOfCandidates);
+            std::swap(d_candidateContainsN2, d_candidateContainsN);
+            std::swap(d_candidate_sequences_data2, d_candidate_sequences_data);  
+            std::swap(d_candidate_read_ids2, d_candidate_read_ids);
+
+
+
+            cudaEventSynchronize(events[0]); CUERR; //wait for h_numSelected
+            currentNumCandidates = *h_numSelected;
+
+            #endif
+
+
             //testing 
 
             // int numSelected = 0;
             // cudaMemcpyAsync(&numSelected, d_num_indices, sizeof(int), D2H, stream); CUERR;
             // cudaStreamSynchronize(stream); CUERR;
-            // std::cerr << numSelected << " / " << currentNumCandidates << "\n";
+            //std::cerr << numSelected << " / " << currentNumCandidates << "\n";
         }
 
         void buildMultipleSequenceAlignment(cudaStream_t stream){
@@ -2888,6 +3183,7 @@ namespace gpu{
         KernelLaunchHandle kernelLaunchHandle; 
 
         ClfAgent* clfAgent{};
+        GpuForest* gpuForest{};
 
         ReadStorageHandle readstorageHandle;
 
@@ -2953,6 +3249,7 @@ namespace gpu{
         DeviceBuffer<unsigned int> d_anchor_sequences_data;
         DeviceBuffer<int> d_anchor_sequences_lengths;
         DeviceBuffer<read_number> d_candidate_read_ids;
+        DeviceBuffer<read_number> d_candidate_read_ids2;
         DeviceBuffer<int> d_candidates_per_anchor;
         DeviceBuffer<int> d_candidates_per_anchor_prefixsum; 
         DeviceBuffer<int> d_candidatesBeginOffsets;
@@ -2980,6 +3277,10 @@ namespace gpu{
 
         DeviceBuffer<bool> d_flagsCandidates;
         DeviceBuffer<int> d_alignment_shifts2;
+        DeviceBuffer<int> d_alignment_overlaps2;
+        DeviceBuffer<int> d_alignment_nOps2;
+        DeviceBuffer<int> d_anchorIndicesOfCandidates2;
+        DeviceBuffer<bool> d_candidateContainsN2;
         DeviceBuffer<int> d_candidate_sequences_lengths2;
         DeviceBuffer<unsigned int> d_candidate_sequences_data2;
         DeviceBuffer<BestAlignment_t> d_alignment_best_alignment_flags2;

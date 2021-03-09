@@ -235,6 +235,59 @@ namespace gpu{
             }
         }
 
+
+        template<
+            class ThreadGroup, 
+            class GroupReduceIntMin, 
+            class GroupReduceIntMax
+        >
+        __device__ __forceinline__
+        void initColumnProperties(
+                ThreadGroup& group,
+                GroupReduceIntMin& groupReduceIntMin,
+                GroupReduceIntMax& groupReduceIntMax,
+                int numGoodCandidates,
+                const int* __restrict__ shifts,
+                const BestAlignment_t* __restrict__ alignmentFlags,
+                const int subjectLength,
+                const int* __restrict__ candidateLengths
+        ){
+
+            int startindex = 0;
+            int endindex = subjectLength;
+
+            for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
+                const int localCandidateIndex = k;
+
+                const int shift = shifts[localCandidateIndex];
+                const BestAlignment_t flag = alignmentFlags[localCandidateIndex];
+                const int queryLength = candidateLengths[localCandidateIndex];
+
+                assert(flag != BestAlignment_t::None);
+
+                const int queryEndsAt = queryLength + shift;
+                startindex = min(startindex, shift);
+                endindex = max(endindex, queryEndsAt);
+            }
+
+            startindex = groupReduceIntMin(startindex);
+            endindex = groupReduceIntMax(endindex);
+
+            group.sync();
+
+
+            if(group.thread_rank() == 0) {
+                MSAColumnProperties my_columnproperties;
+
+                my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
+                my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+                my_columnproperties.firstColumn_incl = 0;
+                my_columnproperties.lastColumn_excl = endindex - startindex;
+
+                *columnProperties = my_columnproperties;
+            }
+        }
+
         template<class ThreadGroup>
         __device__ __forceinline__
         void updateColumnProperties(ThreadGroup& group){
@@ -426,6 +479,120 @@ namespace gpu{
             for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
 
                 const int localCandidateIndex = myIndices[indexInList];
+                const int shift = myShifts[localCandidateIndex];
+                const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
+
+                const int queryLength = myCandidateLengths[localCandidateIndex];
+                const unsigned int* const query = myCandidateSequencesData 
+                    + std::size_t(localCandidateIndex) * encodedSequencePitchInInts;
+
+                const char* const queryQualityScore = myCandidateQualities 
+                    + std::size_t(localCandidateIndex) * qualityPitchInBytes;
+
+                const int query_alignment_overlap = myOverlaps[localCandidateIndex];
+                const int query_alignment_nops = myNops[localCandidateIndex];
+
+                const float overlapweight = calculateOverlapWeight(
+                    subjectLength, 
+                    query_alignment_nops, 
+                    query_alignment_overlap,
+                    desiredAlignmentMaxErrorRate
+                );
+
+                assert(overlapweight <= 1.0f);
+                assert(overlapweight >= 0.0f);
+                assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
+
+                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+                const bool isForward = flag == BestAlignment_t::Forward;
+
+                msaAddOrDeleteASequence2Bit<true>(
+                    tile,
+                    query, 
+                    queryLength, 
+                    isForward,
+                    defaultcolumnoffset,
+                    overlapweight,
+                    queryQualityScore,
+                    canUseQualityScores
+                );
+            }
+        }
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void constructFromSequences(
+            ThreadGroup& group,
+            const int* __restrict__ myShifts,
+            const int* __restrict__ myOverlaps,
+            const int* __restrict__ myNops,
+            const BestAlignment_t* __restrict__ myAlignmentFlags,
+            const unsigned int* __restrict__ myAnchorSequenceData,
+            const char* __restrict__ myAnchorQualityData,
+            const unsigned int* __restrict__ myCandidateSequencesData,
+            const char* __restrict__ myCandidateQualities,
+            const int* __restrict__ myCandidateLengths,
+            int numIndices,
+            bool canUseQualityScores, 
+            size_t encodedSequencePitchInInts,
+            size_t qualityPitchInBytes,
+            float desiredAlignmentMaxErrorRate,
+            int subjectIndex
+        ){   
+            constexpr int threadsPerSequence = 8;
+            auto tile = cg::tiled_partition<threadsPerSequence>(group);
+            const int tileIdInGroup = group.thread_rank() / threadsPerSequence;
+            const int numTilesInGroup = group.size() / threadsPerSequence;
+
+            for(int column = group.thread_rank(); column < columnPitchInElements; column += group.size()){
+                for(int i = 0; i < 4; i++){
+                    counts[i * columnPitchInElements + column] = 0;
+                    weights[i * columnPitchInElements + column] = 0.0f;
+                }
+
+                coverages[column] = 0;
+            }
+            
+            group.sync();
+
+            
+            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
+
+            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+            const unsigned int* const subject = myAnchorSequenceData;
+            const char* const subjectQualityScore = myAnchorQualityData;
+                            
+            // for(int i = group.thread_rank(); i < subjectLength; i += group.size()){
+            //     const int columnIndex = subjectColumnsBegin_incl + i;
+            //     const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
+            //     const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
+            //     const int rowOffset = int(encbase) * columnPitchInElements;
+
+            //     atomicAdd(counts + rowOffset + columnIndex, 1);
+            //     atomicAdd(weights + rowOffset + columnIndex, weight);
+            //     atomicAdd(coverages + columnIndex, 1);
+            // }
+
+            //add anchor
+
+            if(tileIdInGroup == 0){
+                msaAddOrDeleteASequence2Bit<true>(
+                    tile,
+                    subject, 
+                    subjectLength, 
+                    true,
+                    subjectColumnsBegin_incl,
+                    1.0f,
+                    subjectQualityScore,
+                    canUseQualityScores
+                );
+            }
+
+            for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
+
+                const int localCandidateIndex = indexInList;
                 const int shift = myShifts[localCandidateIndex];
                 const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
 
