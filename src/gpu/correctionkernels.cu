@@ -214,6 +214,240 @@ namespace gpu{
 
 
 
+
+    template<int BLOCKSIZE, class GpuClf>
+    __global__
+    void msaCorrectAnchorsWithForestKernel(
+        char* __restrict__ correctedSubjects,
+        bool* __restrict__ subjectIsCorrected,
+        AnchorHighQualityFlag* __restrict__ isHighQualitySubject,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        const unsigned int* __restrict__ subjectSequencesData,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLength,
+        const int* __restrict__ d_indices_per_subject,
+        const int* __restrict__ numAnchorsPtr,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maximumSequenceLength,
+        float estimatedErrorrate,
+        float desiredAlignmentMaxErrorRate,
+        float estimatedCoverage,
+        float avg_support_threshold,
+        float min_support_threshold,
+        float min_coverage_threshold,
+        float max_coverage_threshold
+    ){
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceInt::TempStorage intreduce;
+            typename BlockReduceFloat::TempStorage floatreduce;
+            GpuMSAProperties msaProperties;
+        } temp_storage;
+
+        __shared__ int broadcastbuffer;
+
+        auto tbGroup = cg::this_thread_block();
+
+        auto groupReduceFloatSum = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceFloatMin = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Reduce(f, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMin = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMax = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Max{});
+            __syncthreads();
+            return result;
+        };
+
+        const int n_subjects = *numAnchorsPtr;
+
+        auto isGoodAvgSupport = [&](float avgsupport){
+            return fgeq(avgsupport, avg_support_threshold);
+        };
+        auto isGoodMinSupport = [&](float minsupport){
+            return fgeq(minsupport, min_support_threshold);
+        };
+        auto isGoodMinCoverage = [&](float mincoverage){
+            return fgeq(mincoverage, min_coverage_threshold);
+        };
+
+        auto to_nuc = [](std::uint8_t c){
+            return SequenceHelpers::decodeBase(c);
+        };
+
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            const int myNumIndices = d_indices_per_subject[subjectIndex];
+            if(myNumIndices > 0){
+
+                const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+
+                char* const my_corrected_subject = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
+
+                const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
+                //const int lastColumn_excl = msa.columnProperties->lastColumn_excl;
+
+                GpuMSAProperties msaProperties = msa.getMSAProperties(
+                    tbGroup,
+                    groupReduceFloatSum,
+                    groupReduceFloatMin,
+                    groupReduceIntMin,
+                    groupReduceIntMax,
+                    subjectColumnsBegin_incl,
+                    subjectColumnsEnd_excl
+                );
+
+                if(tbGroup.thread_rank() == 0){
+                    subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
+
+                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(msaProperties.avg_support) && isGoodMinSupport(msaProperties.min_support) && isGoodMinCoverage(msaProperties.min_coverage);
+
+                    if(canBeCorrectedByConsensus){
+                        int smallestErrorrateThatWouldMakeHQ = 100;
+
+                        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+                        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+                            const float factor = percent / 100.0f;
+                            const float avg_threshold = 1.0f - 1.0f * factor;
+                            const float min_threshold = 1.0f - 3.0f * factor;
+                            if(fgeq(msaProperties.avg_support, avg_threshold) && fgeq(msaProperties.min_support, min_threshold)){
+                                smallestErrorrateThatWouldMakeHQ = percent;
+                            }
+                        }
+
+                        const bool isHQ = isGoodMinCoverage(msaProperties.min_coverage)
+                                            && fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f);
+
+                        //broadcastbuffer = isHQ;
+                        isHighQualitySubject[subjectIndex].hq(isHQ);
+                    }else{
+                        isHighQualitySubject[subjectIndex].hq(false);
+                    }
+
+                }
+
+                tbGroup.sync();
+
+                //set corrected anchor to consensus
+                for(int i = subjectColumnsBegin_incl + tbGroup.thread_rank(); 
+                        i < subjectColumnsEnd_excl; 
+                        i += tbGroup.size()){
+
+                    const std::uint8_t nuc = msa.consensus[i];
+                    //assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
+                    assert(0 == nuc || nuc < 4);
+
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(nuc);
+                }
+
+                if(!isHighQualitySubject[subjectIndex].hq()){
+                    //maybe revert some positions to original base
+                    const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+                    const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+
+                    for (int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
+                        const int msaPos = subjectColumnsBegin_incl + i;
+                        const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
+                        const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
+
+                        if (origEncodedBase != consensusEncodedBase){          
+                            
+                            const float countsACGT = msa.coverages[msaPos];
+
+                            float features[37]{
+                                float(origEncodedBase == SequenceHelpers::encodedbaseA()),
+                                float(origEncodedBase == SequenceHelpers::encodedbaseC()),
+                                float(origEncodedBase == SequenceHelpers::encodedbaseG()),
+                                float(origEncodedBase == SequenceHelpers::encodedbaseT()),
+                                float(consensusEncodedBase == SequenceHelpers::encodedbaseA()),
+                                float(consensusEncodedBase == SequenceHelpers::encodedbaseC()),
+                                float(consensusEncodedBase == SequenceHelpers::encodedbaseG()),
+                                float(consensusEncodedBase == SequenceHelpers::encodedbaseT()),
+                                origEncodedBase == SequenceHelpers::encodedbaseA() ? msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseC() ? msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseG() ? msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseT() ? msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseA() ? msa.weights[0 * msa.columnPitchInElements + msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseC() ? msa.weights[1 * msa.columnPitchInElements + msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseG() ? msa.weights[2 * msa.columnPitchInElements + msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseT() ? msa.weights[3 * msa.columnPitchInElements + msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? msa.weights[0 * msa.columnPitchInElements + msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? msa.weights[1 * msa.columnPitchInElements + msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? msa.weights[2 * msa.columnPitchInElements + msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? msa.weights[3 * msa.columnPitchInElements + msaPos]:0,
+                                msa.weights[0 * msa.columnPitchInElements + msaPos],
+                                msa.weights[1 * msa.columnPitchInElements + msaPos],
+                                msa.weights[2 * msa.columnPitchInElements + msaPos],
+                                msa.weights[3 * msa.columnPitchInElements + msaPos],
+                                msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT,
+                                msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT,
+                                msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT,
+                                msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT,
+                                msaProperties.avg_support,
+                                msaProperties.min_support,
+                                float(msaProperties.max_coverage) / estimatedCoverage,
+                                float(msaProperties.min_coverage) / estimatedCoverage,
+                                float(std::max(subjectColumnsBegin_incl - i, i - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl)
+                            };
+
+                            const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
+                            if(!useConsensus){
+                                my_corrected_subject[i] = to_nuc(origEncodedBase);
+                            }else{
+                                ; //consensus
+                            }
+                        }else{
+                            ; //consensus
+                        }
+                    }
+                }
+
+            }else{
+                if(tbGroup.thread_rank() == 0){
+                    isHighQualitySubject[subjectIndex].hq(false);
+                    subjectIsCorrected[subjectIndex] = false;
+                }
+            }
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     __device__ __forceinline__
     bool checkIfCandidateShouldBeCorrectedGlobal(
         const GpuSingleMSA msa,
