@@ -511,8 +511,9 @@ struct extract_cands_26 {
 
 //--------------------------------------------------------------------------------
 
-using anchor_extractor = detail::extract_anchor_21;
-using cands_extractor = detail::extract_cands_26;
+//using anchor_extractor = detail::extract_anchor_21;
+using anchor_extractor = detail::extract_anchor_transformed;
+using cands_extractor = detail::extract_cands_transformed;
 
 using anchor_clf_t = ForestClf;
 using cands_clf_t = ForestClf;
