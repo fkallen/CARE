@@ -1390,13 +1390,35 @@ private:
 
         task.candidateCorrections = std::vector<CorrectedCandidate>{};
 
+        // auto it = std::find(task.candidateReadIds.begin(), task.candidateReadIds.end(), 37);
+        // if(it != task.candidateReadIds.end()){
+        //     std::cerr << "found 37 at local position " << std::distance(task.candidateReadIds.begin(), it) << "\n";
+        // }
+
         const int subject_begin = msa.subjectColumnsBegin_incl;
         const int subject_end = msa.subjectColumnsEnd_excl;
         for(int cand = 0; cand < msa.nCandidates; ++cand) {
+            read_number candidateReadId = task.candidateReadIds[cand];
+
+            //if this read has already been corrected as a high quality anchor, the candidate correction will not be used for output construction.
+            //-> don't compute it.
+            if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
+                continue;
+            }
             const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
             const int cand_length = task.candidateSequencesLengths[cand];
             const int cand_end = cand_begin + cand_length;
             const int offset = cand * decodedSequencePitchInBytes;
+
+            // if(task.candidateReadIds[cand] == 37){
+            //     std::cerr <<  "candidateIndex " << cand << "\n";
+            //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+            //     std::cerr <<  "cand_end " << cand_end << "\n";
+            //     std::cerr <<  "cand_length " << cand_length << "\n";
+            //     std::cerr <<  "candidateReadId " << task.candidateReadIds[cand] << "\n";
+            //     std::cerr <<  "anchorReadId " << task.input.anchorReadId << "\n";
+            // }
+
             
             if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
                 && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
@@ -1405,14 +1427,45 @@ private:
                 task.candidateCorrections.emplace_back(cand, task.alignmentShifts[cand],
                     std::string(&msa.consensus[cand_begin], cand_length));
 
+                // if(task.candidateReadIds[cand] == 37){
+                //     std::cerr << "in range\n";
+                //     std::cerr <<  "candidateIndex " << cand << "\n";
+                //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+                //     std::cerr <<  "cand_end " << cand_end << "\n";
+                //     std::cerr <<  "cand_length " << cand_length << "\n";
+                //     std::cerr <<  "candidateReadId " << task.candidateReadIds[cand] << "\n";
+
+                //     std::cerr << "decodedCandidate:\n";
+                //     for(int k = 0; k < cand_length; k++){
+                //         std::cerr << task.decodedCandidateSequences[offset+k];
+                //     }
+                //     std::cerr << "\n";
+
+                //     std::cerr << "consensusCandidate:\n";
+                //     for(int k = 0; k < cand_length; k++){
+                //         std::cerr << task.candidateCorrections.back().sequence[k];
+                //     }
+                //     std::cerr << "\n";
+
+                // }
+
 
                 for (int i = 0; i < cand_length; ++i) {
                     if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
                         && !clfAgent->decide_cand(task, i, *correctionOptions, cand, offset))
                     {
                         task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];
+                        //if(task.input.anchorReadId == 5 && task.candidateReadIds[cand] == 633) std::cerr << "checking position " << i << ". revert consensus\n";
+                    }else{
+                        // if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]){
+                        //     if(task.input.anchorReadId == 5 && task.candidateReadIds[cand] == 633) std::cerr << "checking position " << i << ". keep consensus\n";
+                        // }
                     }
                 }
+            }else{
+                // if(task.candidateReadIds[cand] == 37){
+                //     std::cerr << "not in range with shift " << task.alignmentShifts[cand] << "\n";
+                // }
             }
         }
     }
@@ -1497,6 +1550,11 @@ private:
                     );
                     tmp.sequence = std::move(fwd);
                 }
+
+                // if(candidateId == 1180257){
+                //     std::cerr << "processing 1180257\n";
+                //     std::cerr << "tmp.sequence = " << tmp.sequence << "\n";
+                // }
                 
                 bool originalCandidateReadContainsN = false;
                 readStorage->areSequencesAmbiguous(readStorageHandle, &originalCandidateReadContainsN, &candidateId, 1);
