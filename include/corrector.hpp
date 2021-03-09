@@ -1393,6 +1393,14 @@ private:
         const int subject_begin = msa.subjectColumnsBegin_incl;
         const int subject_end = msa.subjectColumnsEnd_excl;
         for(int cand = 0; cand < msa.nCandidates; ++cand) {
+            read_number candidateReadId = task.candidateReadIds[cand];
+
+            //if this read has already been corrected as a high quality anchor, the candidate correction will not be used for output construction.
+            //-> don't compute it.
+            if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
+                continue;
+            }
+            
             const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
             const int cand_length = task.candidateSequencesLengths[cand];
             const int cand_end = cand_begin + cand_length;
