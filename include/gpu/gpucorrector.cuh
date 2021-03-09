@@ -1644,9 +1644,9 @@ namespace gpu{
 
             //testing 
 
-            //cudaStreamSynchronize(stream); CUERR;
             // int numSelected = 0;
-            // cudaMemcpy(&numSelected, d_num_indices, sizeof(int), D2H); CUERR;
+            // cudaMemcpyAsync(&numSelected, d_num_indices, sizeof(int), D2H, stream); CUERR;
+            // cudaStreamSynchronize(stream); CUERR;
             // std::cerr << numSelected << " / " << currentNumCandidates << "\n";
         }
 
@@ -1673,8 +1673,8 @@ namespace gpu{
                 d_alignment_best_alignment_flags.get(),
                 d_anchor_sequences_lengths.get(),
                 d_candidate_sequences_lengths.get(),
-                d_indices,
-                d_indices_per_anchor,
+                d_indices.get(),
+                d_indices_per_anchor.get(),
                 d_candidates_per_anchor_prefixsum,
                 d_anchor_sequences_data.get(),
                 d_candidate_sequences_data.get(),
@@ -1694,19 +1694,6 @@ namespace gpu{
 
         void refineMultipleSequenceAlignment(cudaStream_t stream){
 
-            std::array<int*,2> d_indices_dblbuf{
-                d_indices.get(), 
-                d_indices_tmp.get()
-            };
-            std::array<int*,2> d_indices_per_anchor_dblbuf{
-                d_indices_per_anchor.get(), 
-                d_indices_per_anchor_tmp.get()
-            };
-            std::array<int*,2> d_num_indices_dblbuf{
-                d_num_indices.get(), 
-                d_num_indices_tmp.get()
-            };
-
             GPUMultiMSA multiMSA;
 
             multiMSA.numMSAs = maxAnchors;
@@ -1720,60 +1707,6 @@ namespace gpu{
             multiMSA.origCoverages = d_origCoverages.get();
             multiMSA.columnProperties = d_msa_column_properties.get();
 
-    #if 0        
-
-            static_assert(getNumRefinementIterations() % 2 == 1, "");
-
-            const std::size_t requiredTempStorageBytes = 
-                SDIV(sizeof(bool) * maxCandidates, 128) * 128 // d_shouldBeKept + padding to align the next pointer
-                + (sizeof(bool) * maxAnchors); // d_anchorIsFinished
-            assert(d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
-            
-            bool* d_shouldBeKept = (bool*)d_tempstorage.get();
-            bool* d_anchorIsFinished = d_shouldBeKept + (SDIV(sizeof(bool) * maxCandidates, 128) * 128);
-
-            cudaMemsetAsync(d_anchorIsFinished, 0, sizeof(bool) * maxAnchors, stream);
-
-            for(int iteration = 0; iteration < getNumRefinementIterations(); iteration++){
-
-                callMsaCandidateRefinementKernel_singleiter_async(
-                    d_indices_dblbuf[(1 + iteration) % 2],
-                    d_indices_per_anchor_dblbuf[(1 + iteration) % 2],
-                    d_num_indices_dblbuf[(1 + iteration) % 2],
-                    multiMSA,
-                    d_alignment_best_alignment_flags.get(),
-                    d_alignment_shifts.get(),
-                    d_alignment_nOps.get(),
-                    d_alignment_overlaps.get(),
-                    d_anchor_sequences_data.get(),
-                    d_candidate_sequences_data.get(),
-                    d_anchor_sequences_lengths.get(),
-                    d_candidate_sequences_lengths.get(),
-                    d_anchor_qualities.get(),
-                    d_candidate_qualities.get(),
-                    d_shouldBeKept,
-                    d_candidates_per_anchor_prefixsum,
-                    d_numAnchors.get(),
-                    goodAlignmentProperties->maxErrorRate,
-                    maxAnchors,
-                    maxCandidates,
-                    correctionOptions->useQualityScores,
-                    encodedSequencePitchInInts,
-                    qualityPitchInBytes,
-                    d_indices_dblbuf[(0 + iteration) % 2],
-                    d_indices_per_anchor_dblbuf[(0 + iteration) % 2],
-                    correctionOptions->estimatedCoverage,
-                    iteration,
-                    d_anchorIsFinished,
-                    stream,
-                    kernelLaunchHandle
-                );
-
-
-            }
-
-    #else 
-
             const std::size_t requiredTempStorageBytes = sizeof(bool) * maxCandidates; // d_shouldBeKept
                 
             assert(d_tempstorage.sizeInBytes() >= requiredTempStorageBytes);
@@ -1781,9 +1714,9 @@ namespace gpu{
             bool* d_shouldBeKept = (bool*)d_tempstorage.get();
 
             callMsaCandidateRefinementKernel_multiiter_async(
-                d_indices_dblbuf[1],
-                d_indices_per_anchor_dblbuf[1],
-                d_num_indices_dblbuf[1],
+                d_indices_tmp.get(),
+                d_indices_per_anchor_tmp.get(),
+                d_num_indices_tmp.get(),
                 multiMSA,
                 d_alignment_best_alignment_flags.get(),
                 d_alignment_shifts.get(),
@@ -1811,7 +1744,10 @@ namespace gpu{
                 stream,
                 kernelLaunchHandle
             );
-    #endif 
+
+            std::swap(d_indices_tmp, d_indices);
+            std::swap(d_indices_per_anchor_tmp, d_indices_per_anchor);
+            std::swap(d_num_indices_tmp, d_num_indices);
 
         }
 
@@ -1854,8 +1790,8 @@ namespace gpu{
                     d_alignment_best_alignment_flags = this->d_alignment_best_alignment_flags.data(),
                     d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
                     d_indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor_tmp.data(),
-                    d_num_indices_tmp = this->d_num_indices_tmp.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
+                    d_num_indices = this->d_num_indices.data(),
                     d_anchorIndicesOfCandidates = this->d_anchorIndicesOfCandidates.data(),
                     d_candidate_sequences_lengths = this->d_candidate_sequences_lengths.data(),
                     encodedSequencePitchInInts = this->encodedSequencePitchInInts,
@@ -2006,7 +1942,7 @@ namespace gpu{
                 [
                     d_flagscandidates = this->d_flagsCandidates.data(),
                     indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor_tmp.data(),
+                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
                     d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data()
                 ] __device__ (){
 
@@ -2075,7 +2011,7 @@ namespace gpu{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr,
                 cubBytes2,
-                d_indices_per_anchor_tmp.data(),
+                d_indices_per_anchor.data(),
                 h_segmentOffsets.data(),
                 currentNumAnchors,
                 stream
@@ -2090,7 +2026,7 @@ namespace gpu{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 d_cubtemp2.data(), 
                 cubBytes,
-                d_indices_per_anchor_tmp.data(),
+                d_indices_per_anchor.data(),
                 h_segmentOffsets.data(),
                 currentNumAnchors,
                 stream
@@ -2274,16 +2210,16 @@ namespace gpu{
 
             cudaMemcpyAsync(
                 h_segmentSizes.data(),
-                d_indices_per_anchor_tmp.data(),
-                d_indices_per_anchor_tmp.sizeInBytes(),
+                d_indices_per_anchor.data(),
+                d_indices_per_anchor.sizeInBytes(),
                 D2H,
                 stream
             ); CUERR;   
 
             cudaMemcpyAsync(
                 h_indices.data(),
-                d_indices_tmp.data(),
-                d_indices_tmp.sizeInBytes(),
+                d_indices.data(),
+                d_indices.sizeInBytes(),
                 D2H,
                 stream
             ); CUERR;      
@@ -2311,18 +2247,6 @@ namespace gpu{
 
             // correct anchors
 
-            std::array<int*,2> d_indices_per_anchor_dblbuf{
-                d_indices_per_anchor.get(), 
-                d_indices_per_anchor_tmp.get()
-            };
-            std::array<int*,2> d_num_indices_dblbuf{
-                d_num_indices.get(), 
-                d_num_indices_tmp.get()
-            };
-
-            const int* d_indices_per_anchor = d_indices_per_anchor_dblbuf[/*getNumRefinementIterations() % 2*/ 1];
-            const int* d_num_indices = d_num_indices_dblbuf[/*getNumRefinementIterations() % 2*/ 1];
-
             GPUMultiMSA multiMSA;
 
             multiMSA.numMSAs = maxAnchors;
@@ -2345,7 +2269,7 @@ namespace gpu{
                 d_anchor_sequences_data.get(),
                 d_candidate_sequences_data.get(),
                 d_candidate_sequences_lengths.get(),
-                d_indices_per_anchor,
+                d_indices_per_anchor.get(),
                 d_numAnchors.get(),
                 maxAnchors,
                 encodedSequencePitchInInts,
@@ -2557,19 +2481,7 @@ namespace gpu{
                 d_candidateCanBeCorrected
             ); CUERR;
 
-            std::array<int*,2> d_indices_dblbuf{
-                d_indices.get(), 
-                d_indices_tmp.get()
-            };
-            std::array<int*,2> d_indices_per_anchor_dblbuf{
-                d_indices_per_anchor.get(), 
-                d_indices_per_anchor_tmp.get()
-            };
-            std::array<int*,2> d_num_indices_dblbuf{
-                d_num_indices.get(), 
-                d_num_indices_tmp.get()
-            };
-
+   
             GPUMultiMSA multiMSA;
 
             multiMSA.numMSAs = maxAnchors;
@@ -2592,8 +2504,8 @@ namespace gpu{
                 d_anchorIndicesOfCandidates.get(),
                 d_is_high_quality_anchor.get(),
                 d_candidates_per_anchor_prefixsum,
-                d_indices_dblbuf[/*getNumRefinementIterations() % 2*/1],
-                d_indices_per_anchor_dblbuf[/*getNumRefinementIterations() % 2*/1],
+                d_indices.get(),
+                d_indices_per_anchor.get(),
                 d_numAnchors,
                 d_numCandidates,
                 min_support_threshold,
