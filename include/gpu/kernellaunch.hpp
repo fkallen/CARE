@@ -27,6 +27,7 @@ enum class KernelId {
     MSACandidateRefinementSingleIter,
     MSACandidateRefinementMultiIter,
     FlagCandidatesToBeCorrected,
+    FlagCandidatesToBeCorrectedWithExcludeFlags,
 };
 
 struct KernelLaunchConfig {

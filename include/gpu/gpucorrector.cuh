@@ -37,6 +37,7 @@
 
 
 #define GPUANCHORFOREST
+#define GPUCANDIDATEFOREST
 
 namespace care{
 namespace gpu{
@@ -811,11 +812,13 @@ namespace gpu{
                 currentInput->d_candidates_per_anchor_prefixsum
             ); CUERR;
 
+
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             currentInput->event.record(stream);
 
             getAmbiguousFlagsOfAnchors(stream);
             getAmbiguousFlagsOfCandidates(stream);
+
 
             nvtx::push_range("getCandidateSequenceData", 3);
             getCandidateSequenceData(stream); 
@@ -836,10 +839,9 @@ namespace gpu{
                 copyCandidateResultsFromDeviceToHost(stream);
             }
 
-
-            //fill missing output arrays. This may overlap with gpu execution
             std::copy_n(currentInput->h_anchorReadIds.get(), currentNumAnchors, currentOutput->h_anchorReadIds.get());            
             std::copy_n(currentInput->h_candidate_read_ids.get(), currentNumCandidates, currentOutput->h_candidate_read_ids.get()); //remove if candidates are compacted
+
 
             //after the current work in stream is completed, all results in currentOutput are ready to use.
             cudaEventRecord(currentOutput->event, stream); CUERR;
@@ -1087,6 +1089,9 @@ namespace gpu{
             d_candidate_sequences_lengths.resize(maxCandidates);
             d_candidate_sequences_data.resize(maxCandidates * encodedSequencePitchInInts);
             d_transposedCandidateSequencesData.resize(maxCandidates * encodedSequencePitchInInts);
+
+            d_flagsCandidates.resize(maxCandidates);
+            h_flagsCandidates.resize(maxCandidates);
             
             if(correctionOptions->useQualityScores){
                 d_candidate_qualities.resize(maxCandidates * qualityPitchInBytes);
@@ -1225,7 +1230,7 @@ namespace gpu{
 
             }
 
-            #ifndef GPUANCHORFOREST
+            #if !defined(GPUANCHORFOREST) || !defined(GPUCANDIDATEFOREST)
             if(correctionOptions->correctionType == CorrectionType::Forest
                 || correctionOptions->correctionTypeCands == CorrectionType::Forest){
 
@@ -1333,6 +1338,14 @@ namespace gpu{
         void copyCandidateResultsFromDeviceToHost(cudaStream_t stream){
             if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
                 copyCandidateResultsFromDeviceToHostClassic(stream);
+            }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
+                #ifdef GPUCANDIDATEFOREST
+                copyCandidateResultsFromDeviceToHostForestGpu(stream);
+                #else
+                copyCandidateResultsFromDeviceToHostForest(stream);
+                #endif
+            }else{
+                std::cerr << "copyCandidateResultsFromDeviceToHost not implemented for correctionTypeCands\n";
             }
         }
 
@@ -1404,7 +1417,13 @@ namespace gpu{
             ); CUERR;
         }
 
+        void copyCandidateResultsFromDeviceToHostForest(cudaStream_t stream){
+            ; //nothing to do.
+        }
 
+        void copyCandidateResultsFromDeviceToHostForestGpu(cudaStream_t stream){
+            copyCandidateResultsFromDeviceToHostClassic(stream);
+        }
 
         void getAmbiguousFlagsOfAnchors(cudaStream_t stream){
 
@@ -2800,7 +2819,8 @@ namespace gpu{
                 min_support_threshold,
                 min_coverage_threshold,
                 max_coverage_threshold,
-                stream
+                stream,
+                kernelLaunchHandle
             );
 
             gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
@@ -2836,7 +2856,11 @@ namespace gpu{
             if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
                 correctCandidatesClassic(stream);
             }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
-                correctionCandidatesForest(stream);
+                #ifdef GPUCANDIDATEFOREST
+                correctCandidatesForestGpu(stream);
+                #else
+                correctCandidatesForest(stream);
+                #endif
             }else{
                 std::cerr << "correctCandidates not implemented for this type\n";
             }
@@ -3013,9 +3037,9 @@ namespace gpu{
 #endif
         }
 
-        void correctionCandidatesForest(cudaStream_t stream){
+        void correctCandidatesForest(cudaStream_t stream){
 
-            nvtx::push_range("correctionCandidatesForest", 4);
+            nvtx::push_range("correctCandidatesForest", 4);
             cudaStreamSynchronize(stream); CUERR;
 
             int numCorrectedCandidates = 0; //edit information is only stored for corrected anchors, and stored compact
@@ -3245,7 +3269,162 @@ namespace gpu{
             nvtx::pop_range();
         }
 
-        
+        void correctCandidatesForestGpu(cudaStream_t stream){
+
+            const float min_support_threshold = 1.0f-3.0f*correctionOptions->estimatedErrorrate;
+            // coverage is always >= 1
+            const float min_coverage_threshold = std::max(1.0f,
+                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
+            const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
+
+            bool* const d_candidateCanBeCorrected = d_alignment_isValid.get(); //repurpose
+
+            #ifndef GPUANCHORFOREST
+            if(correctionOptions->correctionType == CorrectionType::Forest){
+                //transfer flags of cpu forest anchor correction to gpu
+                cudaMemcpyAsync(
+                    d_is_high_quality_anchor.data(),
+                    currentOutput->h_is_high_quality_anchor.data(),
+                    sizeof(AnchorHighQualityFlag) * currentNumAnchors,
+                    H2D,
+                    stream
+                );
+            }
+            #endif
+
+            cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
+                d_isHqanchor(d_is_high_quality_anchor, IsHqAnchor{});
+
+            gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
+                d_high_quality_anchor_indices.get(),
+                d_num_high_quality_anchor_indices.get(),
+                d_isHqanchor,
+                d_numAnchors.get()
+            ); CUERR;
+
+            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<640, 128, 0, stream>>>(
+                maxCandidates,
+                d_numAnchors.get(),
+                d_num_corrected_candidates_per_anchor.get(),
+                d_candidateCanBeCorrected
+            ); CUERR;
+
+   
+            GPUMultiMSA multiMSA;
+
+            multiMSA.numMSAs = maxAnchors;
+            multiMSA.columnPitchInElements = msaColumnPitchInElements;
+            multiMSA.counts = d_counts.get();
+            multiMSA.weights = d_weights.get();
+            multiMSA.coverages = d_coverage.get();
+            multiMSA.consensus = d_consensus.get();
+            multiMSA.support = d_support.get();
+            multiMSA.origWeights = d_origWeights.get();
+            multiMSA.origCoverages = d_origCoverages.get();
+            multiMSA.columnProperties = d_msa_column_properties.get();
+
+            #if 1
+                bool* d_excludeFlags = d_flagsCandidates.data();
+                bool* h_excludeFlags = h_flagsCandidates.data();
+
+                //corrections of candidates for which a high quality anchor correction exists will not be used
+                //-> don't compute them
+                for(int i = 0; i < currentNumCandidates; i++){
+                    const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                    h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                }
+
+                cudaMemcpyAsync(
+                    d_excludeFlags,
+                    h_excludeFlags,
+                    sizeof(bool) * currentNumCandidates,
+                    H2D,
+                    stream
+                );
+
+                callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                    d_candidateCanBeCorrected,
+                    d_num_corrected_candidates_per_anchor.get(),
+                    multiMSA,
+                    d_excludeFlags,
+                    d_alignment_shifts.get(),
+                    d_candidate_sequences_lengths.get(),
+                    d_anchorIndicesOfCandidates.get(),
+                    d_is_high_quality_anchor.get(),
+                    d_candidates_per_anchor_prefixsum,
+                    d_indices.get(),
+                    d_indices_per_anchor.get(),
+                    d_numAnchors,
+                    d_numCandidates,
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    new_columns_to_correct,
+                    stream,
+                    kernelLaunchHandle
+                );
+            #else
+            callFlagCandidatesToBeCorrectedKernel_async(
+                d_candidateCanBeCorrected,
+                d_num_corrected_candidates_per_anchor.get(),
+                multiMSA,
+                d_alignment_shifts.get(),
+                d_candidate_sequences_lengths.get(),
+                d_anchorIndicesOfCandidates.get(),
+                d_is_high_quality_anchor.get(),
+                d_candidates_per_anchor_prefixsum,
+                d_indices.get(),
+                d_indices_per_anchor.get(),
+                d_numAnchors,
+                d_numCandidates,
+                min_support_threshold,
+                min_coverage_threshold,
+                new_columns_to_correct,
+                stream,
+                kernelLaunchHandle
+            );
+            #endif
+
+            size_t cubTempSize = d_tempstorage.sizeInBytes();
+
+            cub::DeviceSelect::Flagged(
+                d_tempstorage.get(),
+                cubTempSize,
+                cub::CountingInputIterator<int>(0),
+                d_candidateCanBeCorrected,
+                d_indices_of_corrected_candidates.get(),
+                d_num_total_corrected_candidates.get(),
+                maxCandidates,
+                stream
+            ); CUERR;
+
+            callMsaCorrectCandidatesWithForestKernel(
+                d_corrected_candidates.get(),
+                d_editsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate.get(),              
+                multiMSA,
+                *gpuForestCandidate,
+                correctionOptions->thresholdCands,
+                correctionOptions->estimatedCoverage,
+                d_alignment_shifts.get(),
+                d_alignment_best_alignment_flags.get(),
+                d_candidate_sequences_data.get(),
+                d_candidate_sequences_lengths.get(),
+                d_candidateContainsN.get(),
+                d_indices_of_corrected_candidates.get(),
+                d_num_total_corrected_candidates.get(),
+                d_anchorIndicesOfCandidates.get(),
+                currentNumCandidates,
+                getDoNotUseEditsValue(),
+                maxNumEditsPerSequence,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes,
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                stream,
+                kernelLaunchHandle
+            );
+            
+        }
 
         static constexpr int getDoNotUseEditsValue() noexcept{
             return -1;
@@ -3379,6 +3558,7 @@ namespace gpu{
 
         DeviceBuffer<char> d_decoded_candidates;
 
+        PinnedBuffer<bool> h_flagsCandidates;
         DeviceBuffer<bool> d_flagsCandidates;
         DeviceBuffer<int> d_alignment_shifts2;
         DeviceBuffer<int> d_alignment_overlaps2;

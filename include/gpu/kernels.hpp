@@ -397,6 +397,27 @@ void callFlagCandidatesToBeCorrectedKernel_async(
     KernelLaunchHandle& handle
 );
 
+void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+    bool* d_candidateCanBeCorrected,
+    int* d_numCorrectedCandidatesPerAnchor,
+    GPUMultiMSA multiMSA,
+    const bool* d_excludeFlags, //candidates with flag == true will not be considered
+    const int* d_alignmentShifts,
+    const int* d_candidateSequencesLengths,
+    const int* d_anchorIndicesOfCandidates,
+    const AnchorHighQualityFlag* d_hqflags,
+    const int* d_candidatesPerSubjectPrefixsum,
+    const int* d_localGoodCandidateIndices,
+    const int* d_numLocalGoodCandidateIndicesPerSubject,
+    const int* d_numAnchors,
+    const int* d_numCandidates,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    int new_columns_to_correct,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
 void callCorrectCandidatesKernel_async(
     char* __restrict__ correctedCandidates,
     TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
@@ -442,7 +463,35 @@ void callMsaCorrectAnchorsWithForestKernel(
     float min_support_threshold,
     float min_coverage_threshold,
     float max_coverage_threshold,
-    cudaStream_t stream
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
+void callMsaCorrectCandidatesWithForestKernel(
+    char* d_correctedCandidates,
+    TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
+    int* d_numEditsPerCorrectedCandidate,
+    GPUMultiMSA multiMSA,
+    GpuForest::Clf gpuForest,
+    float forestThreshold,
+    float estimatedCoverage,
+    const int* d_shifts,
+    const BestAlignment_t* d_bestAlignmentFlags,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_candidateSequencesLengths,
+    const bool* d_candidateContainsN,
+    const int* d_candidateIndicesOfCandidatesToBeCorrected,
+    const int* d_numCandidatesToBeCorrected,
+    const int* d_anchorIndicesOfCandidates,
+    const int numCandidates,
+    int doNotUseEditsValue,
+    int numEditsThreshold,            
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,
+    int maximum_sequence_length,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
 );
 
 
