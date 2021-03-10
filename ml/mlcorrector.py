@@ -173,6 +173,7 @@ def extract_node(tree_, i, out_file):
 
 def extract_forest(clf, out_file):
     with open(out_file, "wb") as out_file:
+        out_file.write(struct.pack("B", clf.n_features))
         out_file.write(struct.pack("I", len(clf.estimators_)))
         for i, tree in enumerate(clf.estimators_):
             out_file.write(struct.pack("I", tree.get_n_leaves()-1))
