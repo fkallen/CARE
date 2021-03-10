@@ -1003,6 +1003,9 @@ public:
 
         if(activeHasherThreads == 0){
             noMoreInputs = true;
+            for(int i = 0; i < 2 * currentConfig.numCorrectors; i++){
+                unprocessedInputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(hasherStream);
@@ -1040,12 +1043,14 @@ public:
 
         CudaStream stream;
 
-        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
-            [&](){
-                return !noMoreInputs;  //if noMoreInputs, return nullptr
-            },
-            nullptr
-        ); 
+        // GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+        //     },
+        //     nullptr
+        // ); 
+
+        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.pop(); 
 
         while(inputPtr != nullptr){
             nvtx::push_range("getFreeRawOutput",1);
@@ -1083,12 +1088,13 @@ public:
             unprocessedRawOutputs.push(rawOutputPtr);
         
             nvtx::push_range("getUnprocessedInput",2);
-            inputPtr = unprocessedInputs.popOrDefault(
-                [&](){
-                    return !noMoreInputs;  //if noMoreInputs, return nullptr
-                },
-                nullptr
-            ); 
+            // inputPtr = unprocessedInputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+            //     },
+            //     nullptr
+            // ); 
+            inputPtr = unprocessedInputs.pop(); 
             nvtx::pop_range();
 
         };
@@ -1097,6 +1103,9 @@ public:
 
         if(activeCorrectorThreads == 0){
             noMoreRawOutputs = true;
+            for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
+                unprocessedRawOutputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(stream); CUERR;
@@ -1169,12 +1178,14 @@ public:
         std::queue<std::pair<GpuErrorCorrectorInput*,
             GpuErrorCorrectorRawOutput*>> dataInFlight;
 
-        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
-            [&](){
-                return !noMoreInputs;  //if noMoreInputs, return nullptr
-            },
-            nullptr
-        ); 
+        // GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+        //     },
+        //     nullptr
+        // ); 
+
+        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.pop(); 
 
         for(int preIters = 0; preIters < getNumExtraBuffers(); preIters++){
 
@@ -1191,12 +1202,13 @@ public:
 
                 dataInFlight.emplace(inputPtr, rawOutputPtr);
 
-                inputPtr = unprocessedInputs.popOrDefault(
-                    [&](){
-                        return !noMoreInputs;  //if noMoreInputs, return nullptr
-                    },
-                    nullptr
-                ); 
+                // inputPtr = unprocessedInputs.popOrDefault(
+                //     [&](){
+                //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+                //     },
+                //     nullptr
+                // ); 
+                inputPtr = unprocessedInputs.pop();
             }
         }
 
@@ -1243,12 +1255,13 @@ public:
             }            
 
             nvtx::push_range("getUnprocessedInput",2);
-            inputPtr = unprocessedInputs.popOrDefault(
-                [&](){
-                    return !noMoreInputs;  //if noMoreInputs, return nullptr
-                },
-                nullptr
-            ); 
+            // inputPtr = unprocessedInputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+            //     },
+            //     nullptr
+            // ); 
+            inputPtr = unprocessedInputs.pop();
             nvtx::pop_range();
 
         };
@@ -1267,8 +1280,11 @@ public:
 
         activeCorrectorThreads--;
 
-        if(activeCorrectorThreads == 0){
+        if(activeCorrectorThreads == 0){            
             noMoreRawOutputs = true;
+            for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
+                unprocessedRawOutputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(stream); CUERR;
@@ -1292,12 +1308,14 @@ public:
         //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
-        GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-            [&](){
-                return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-            },
-            nullptr
-        );
+        // GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
+        //     },
+        //     nullptr
+        // );
+
+        GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
             nvtx::push_range("constructResults", 0);
@@ -1350,12 +1368,14 @@ public:
             freeRawOutputs.push(rawOutputPtr);
 
             nvtx::push_range("getUnprocessedRawOutput", 2);
-            rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-                [&](){
-                    return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-                },
-                nullptr
-            );  
+            // rawOutputPtr = unprocessedRawOutputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
+            //     },
+            //     nullptr
+            // );  
+
+            rawOutputPtr = unprocessedRawOutputs.pop();
 
             nvtx::pop_range();
         }
@@ -1793,7 +1813,7 @@ correct_gpu_impl(
             if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-                #if 1
+                #if 0
                 pipelineConfig.numOutputConstructors = 0; //always 0
 
                 pipelineConfig.numCorrectors = 1;
