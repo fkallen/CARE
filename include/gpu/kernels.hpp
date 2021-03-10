@@ -9,6 +9,7 @@
 
 #include <bestalignment.hpp>
 #include <correctionresultprocessing.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
 
@@ -421,6 +422,28 @@ void callCorrectCandidatesKernel_async(
     KernelLaunchHandle& handle
 );
 
+void callMsaCorrectAnchorsWithForestKernel(
+    char* d_correctedSubjects,
+    bool* d_subjectIsCorrected,
+    AnchorHighQualityFlag* d_isHighQualitySubject,
+    GPUMultiMSA multiMSA,
+    GpuForest::Clf gpuForest,
+    float forestThreshold,
+    const unsigned int* d_subjectSequencesData,
+    const int* d_indices_per_subject,
+    const int numAnchors,
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int maximumSequenceLength,
+    float estimatedErrorrate,
+    float desiredAlignmentMaxErrorRate,
+    float estimatedCoverage,
+    float avg_support_threshold,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    float max_coverage_threshold,
+    cudaStream_t stream
+);
 
 
 void callConversionKernel2BitTo2BitHiLoNN(

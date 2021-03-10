@@ -20,8 +20,7 @@ namespace cg = cooperative_groups;
 namespace care{
 namespace gpu{
 
-template<class CpuForest>
-class GpuForest {
+struct GpuForest {
 
     using Features = anchor_extractor::features_t;
 
@@ -53,12 +52,13 @@ class GpuForest {
         }
 
         HOSTDEVICEQUALIFIER
-        float decide(const float* features) const {
+        bool decide(const float* features, float thresh) const {
             float prob = 0.f;
             for(int t = 0; t < numTrees; t++){
                 prob += decide(features, data[t]);
             }
-            return prob / numTrees;
+            //printf("%f %d %f\n", prob, numTrees, thresh);
+            return prob / numTrees >= thresh;
         }
 
         #if __CUDACC_VER_MAJOR__ >= 11
@@ -82,11 +82,12 @@ class GpuForest {
 public:
     int deviceId{};
     int numTrees{};
-    Node** h_data{};
+    Node** d_data{};
 
 
     GpuForest() = default;
 
+    template<class CpuForest>
     GpuForest(const CpuForest& clf, int gpuId)
         : deviceId(gpuId) {
 
@@ -96,12 +97,12 @@ public:
 
         numTrees = clf.forest_.size();
 
-        cudaMallocHost(&h_data, sizeof(Node*) * numTrees); CUERR;
+        std::vector<Node*> devicePointers(numTrees);
 
         for(int t = 0; t < numTrees; t++){
             const int numNodes = clf.forest_[t].size();
 
-            cudaMallocHost(&h_data[t], sizeof(Node) * numNodes); CUERR;
+            std::vector<Node> nodes(numNodes);
 
             for(int n = 0; n < numNodes; n++){
                 const auto forestNode = clf.forest_[t][n];
@@ -113,9 +114,26 @@ public:
                 node.lhs.idx = forestNode.lhs.idx;
                 node.rhs.idx = forestNode.rhs.idx;
 
-                h_data[t][n] = node;
+                nodes[n] = node;
             }
+
+            cudaMalloc(&devicePointers[t], sizeof(Node) * numNodes); CUERR;
+            cudaMemcpy(
+                devicePointers[t],
+                nodes.data(),
+                sizeof(Node) * numNodes,
+                H2D
+            );CUERR;
         }
+
+        cudaMalloc(&d_data, sizeof(Node*) * numTrees);
+
+        cudaMemcpy(
+            d_data,
+            devicePointers.data(),
+            sizeof(Node*) * numTrees,
+            H2D
+        );CUERR;
 
         cudaSetDevice(curgpu); CUERR;
     }
@@ -123,7 +141,7 @@ public:
     GpuForest(GpuForest&& rhs){
         deviceId = std::exchange(rhs.deviceId, 0);
         numTrees = std::exchange(rhs.numTrees, 0);
-        h_data = std::exchange(rhs.h_data, nullptr);
+        d_data = std::exchange(rhs.d_data, nullptr);
     }
 
     GpuForest(const GpuForest& rhs) = delete;
@@ -131,7 +149,7 @@ public:
     GpuForest& operator=(GpuForest&& rhs){
         deviceId = std::exchange(rhs.deviceId, 0);
         numTrees = std::exchange(rhs.numTrees, 0);
-        h_data = std::exchange(rhs.h_data, nullptr);
+        d_data = std::exchange(rhs.d_data, nullptr);
         return *this;
     }
 
@@ -142,10 +160,18 @@ public:
         cudaGetDevice(&curgpu); CUERR;
         cudaSetDevice(deviceId); CUERR;
 
+        std::vector<Node*> devicePointers(numTrees);
+        cudaMemcpy(
+            devicePointers.data(),
+            d_data,
+            sizeof(Node*) * numTrees,
+            D2H
+        );CUERR;
+
         for(int t = 0; t < numTrees; t++){
-            cudaFreeHost(h_data[t]); CUERR;
+            cudaFree(devicePointers[t]); CUERR;
         }
-        cudaFreeHost(h_data); CUERR;
+        cudaFree(d_data); CUERR;
 
 
         cudaSetDevice(curgpu); CUERR;
@@ -156,22 +182,9 @@ public:
     }
 
     Clf getClf() const{
-        return Clf{numTrees, h_data};
+        return Clf{numTrees, d_data};
     }
 
-    float decide(const float* features) const {
-        Clf clf = getClf();
-
-        float prob = 0.f;
-        for(int t = 0; t < numTrees; t++){
-            prob += clf.decide(features, h_data[t]);
-        }
-        return prob / numTrees;
-    }
-
-    float decide(const Features& features) const {
-        return decide(features.data());
-    }
 };
 
 

@@ -13,12 +13,10 @@
 namespace care {
 
 namespace gpu{
-    template<class CpuForest>
     class GpuForest;
 }
 
 class ForestClf {
-    template<class CpuForest>
     friend class care::gpu::GpuForest;
 
     struct Node {

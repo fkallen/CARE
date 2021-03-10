@@ -182,8 +182,8 @@ public:
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
         ClfAgent* clfAgent_,
-        const GpuForest<ForestClf>* gpuForestAnchor_, 
-        const GpuForest<ForestClf>* gpuForestCandidate_
+        const GpuForest* gpuForestAnchor_, 
+        const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
@@ -757,8 +757,8 @@ private:
     const Minhasher* minhasher;
     ThreadPool* threadPool;
     ClfAgent* clfAgent;
-    const GpuForest<ForestClf>* gpuForestAnchor;
-    const GpuForest<ForestClf>* gpuForestCandidate;
+    const GpuForest* gpuForestAnchor;
+    const GpuForest* gpuForestCandidate;
 };
 
 
@@ -777,8 +777,8 @@ public:
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
         ClfAgent* clfAgent_,
-        const GpuForest<ForestClf>* gpuForestAnchor_, 
-        const GpuForest<ForestClf>* gpuForestCandidate_
+        const GpuForest* gpuForestAnchor_, 
+        const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
@@ -1366,8 +1366,8 @@ private:
     const Minhasher* minhasher;
     ThreadPool* threadPool;
     ClfAgent* clfAgent;
-    const GpuForest<ForestClf>* gpuForestAnchor;
-    const GpuForest<ForestClf>* gpuForestCandidate;
+    const GpuForest* gpuForestAnchor;
+    const GpuForest* gpuForestCandidate;
 
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> unprocessedInputs;
@@ -1579,30 +1579,30 @@ correct_gpu_impl(
 
     ClfAgent clfAgent_(correctionOptions, fileOptions);
 
-    std::vector<GpuForest<ForestClf>> anchorForests{deviceIds.size()};
-    std::vector<GpuForest<ForestClf>> candidateForests{deviceIds.size()};
+    std::vector<GpuForest> anchorForests(deviceIds.size());
+    std::vector<GpuForest> candidateForests(deviceIds.size());
 
     for(int i = 0; i < int(deviceIds.size()); i++){
         cub::SwitchDevice sd{deviceIds[i]};
         if(correctionOptions.correctionType == CorrectionType::Forest){
-            anchorForests[i] = std::move(GpuForest<ForestClf>(*clfAgent_.classifier_anchor, deviceIds[i]));
+            anchorForests[i] = std::move(GpuForest(*clfAgent_.classifier_anchor, deviceIds[i]));
         }
 
         if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
-            candidateForests[i] = std::move(GpuForest<ForestClf>(*clfAgent_.classifier_cands, deviceIds[i]));
+            candidateForests[i] = std::move(GpuForest(*clfAgent_.classifier_cands, deviceIds[i]));
         }
     }
 
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(1500000u, readStorage.getNumberOfReads()));
+    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(100u, readStorage.getNumberOfReads()));
 
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
 
         auto runPipeline = [&](int deviceId, 
-            const GpuForest<ForestClf>* gpuForestAnchor, 
-            const GpuForest<ForestClf>* gpuForestCandidate
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
         ){    
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
@@ -1701,8 +1701,8 @@ correct_gpu_impl(
         // };
 
         auto runSimpleGpuPipeline = [&](int deviceId,
-            const GpuForest<ForestClf>* gpuForestAnchor, 
-            const GpuForest<ForestClf>* gpuForestCandidate
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
         ){
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
@@ -1725,8 +1725,8 @@ correct_gpu_impl(
         };
 
         auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
-            const GpuForest<ForestClf>* gpuForestAnchor, 
-            const GpuForest<ForestClf>* gpuForestCandidate
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
         ){
             
             ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr, &clfAgent_, 

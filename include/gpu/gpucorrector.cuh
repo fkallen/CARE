@@ -34,6 +34,10 @@
 
 #include <thrust/iterator/zip_iterator.h>
 
+
+
+#define GPUANCHORFOREST
+
 namespace care{
 namespace gpu{
 
@@ -691,8 +695,8 @@ namespace gpu{
             int maxAnchorsPerCall,
             ThreadPool* threadPool_,
             ClfAgent* clfAgent_,
-            const GpuForest<ForestClf>* gpuForestAnchor_,
-            const GpuForest<ForestClf>* gpuForestCandidate_
+            const GpuForest* gpuForestAnchor_,
+            const GpuForest* gpuForestCandidate_
         ) : 
             maxAnchors{maxAnchorsPerCall},
             maxCandidates{0},
@@ -1221,11 +1225,13 @@ namespace gpu{
 
             }
 
+            #ifndef GPUANCHORFOREST
             if(correctionOptions->correctionType == CorrectionType::Forest
                 || correctionOptions->correctionTypeCands == CorrectionType::Forest){
 
                 copyDataForForestCorrectionToHost(stream);
             }
+            #endif
 
             nvtx::push_range("correctanchors", 8);
             correctAnchors(stream);
@@ -1245,7 +1251,11 @@ namespace gpu{
             if(correctionOptions->correctionType == CorrectionType::Classic){
                 copyAnchorResultsFromDeviceToHostClassic(stream);
             }else if(correctionOptions->correctionType == CorrectionType::Forest){
+                #ifdef GPUANCHORFOREST
+                copyAnchorResultsFromDeviceToHostForestGpu(stream);
+                #else
                 copyAnchorResultsFromDeviceToHostForest(stream);
+                #endif
             }else{
                 std::cerr << "copyAnchorResultsFromDeviceToHost not implemented for correctionType\n";
             }
@@ -1312,6 +1322,11 @@ namespace gpu{
             //currentOutput->h_is_high_quality_anchor
             //currentOutput->h_editsPerCorrectedanchor
             //currentOutput->h_numEditsPerCorrectedanchor
+        }
+
+        void copyAnchorResultsFromDeviceToHostForestGpu(cudaStream_t stream){
+            //same as default correction
+            copyAnchorResultsFromDeviceToHostClassic(stream);
         }
 
 
@@ -2531,7 +2546,11 @@ namespace gpu{
             if(correctionOptions->correctionType == CorrectionType::Classic){
                 correctAnchorsClassic(stream);
             }else if(correctionOptions->correctionType == CorrectionType::Forest){
+                #ifdef GPUANCHORFOREST
+                correctAnchorsForestGpu(stream);
+                #else
                 correctAnchorsForest(stream);
+                #endif
             }else{
                 std::cerr << "correctAnchors not implemented for this type\n";
             }
@@ -2666,7 +2685,6 @@ namespace gpu{
 
                     SequenceHelpers::decode2BitSequence(decodedAnchor.data(), encodedAnchor, anchorLength);
 
-
                     if(!anchorMsaProperties.isHQ){
 
                         const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
@@ -2700,6 +2718,8 @@ namespace gpu{
                                 myCorrection[i] = decodedAnchor[i];
                             }
                         }
+                    }else{
+                        ;
                     }
 
                     currentOutput->h_anchor_is_corrected[a] = true;
@@ -2732,6 +2752,83 @@ namespace gpu{
                 }
             }
         }
+
+        void correctAnchorsForestGpu(cudaStream_t stream){
+
+            const float avg_support_threshold = 1.0f - 1.0f * correctionOptions->estimatedErrorrate;
+            const float min_support_threshold = 1.0f - 3.0f * correctionOptions->estimatedErrorrate;
+            // coverage is always >= 1
+            const float min_coverage_threshold = std::max(1.0f,
+                correctionOptions->m_coverage / 6.0f * correctionOptions->estimatedCoverage);
+            const float max_coverage_threshold = 0.5 * correctionOptions->estimatedCoverage;
+
+            // correct anchors
+
+            GPUMultiMSA multiMSA;
+
+            multiMSA.numMSAs = maxAnchors;
+            multiMSA.columnPitchInElements = msaColumnPitchInElements;
+            multiMSA.counts = d_counts.get();
+            multiMSA.weights = d_weights.get();
+            multiMSA.coverages = d_coverage.get();
+            multiMSA.consensus = d_consensus.get();
+            multiMSA.support = d_support.get();
+            multiMSA.origWeights = d_origWeights.get();
+            multiMSA.origCoverages = d_origCoverages.get();
+            multiMSA.columnProperties = d_msa_column_properties.get();
+
+
+            callMsaCorrectAnchorsWithForestKernel(
+                d_corrected_anchors.get(),
+                d_anchor_is_corrected.get(),
+                d_is_high_quality_anchor.get(),
+                multiMSA,
+                *gpuForestAnchor,
+                correctionOptions->thresholdAnchor,
+                d_anchor_sequences_data.get(),
+                d_indices_per_anchor.get(),
+                currentNumAnchors,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                gpuReadStorage->getSequenceLengthUpperBound(),
+                correctionOptions->estimatedErrorrate,
+                goodAlignmentProperties->maxErrorRate,
+                correctionOptions->estimatedCoverage,
+                avg_support_threshold,
+                min_support_threshold,
+                min_coverage_threshold,
+                max_coverage_threshold,
+                stream
+            );
+
+            gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
+                d_indices_of_corrected_anchors.get(),
+                d_num_indices_of_corrected_anchors.get(),
+                d_anchor_is_corrected.get(),
+                d_numAnchors.get()
+            ); CUERR;
+
+            callConstructAnchorResultsKernelAsync(
+                d_editsPerCorrectedanchor.get(),
+                d_numEditsPerCorrectedanchor.get(),
+                getDoNotUseEditsValue(),
+                d_indices_of_corrected_anchors.get(),
+                d_num_indices_of_corrected_anchors.get(),
+                d_anchorContainsN.get(),
+                d_anchor_sequences_data.get(),
+                d_anchor_sequences_lengths.get(),
+                d_corrected_anchors.get(),
+                maxNumEditsPerSequence,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes,
+                d_numAnchors.get(),
+                maxAnchors,
+                stream,
+                kernelLaunchHandle
+            );
+        }
+        
 
         void correctCandidates(cudaStream_t stream){
             if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
@@ -3187,8 +3284,8 @@ namespace gpu{
         KernelLaunchHandle kernelLaunchHandle; 
 
         ClfAgent* clfAgent{};
-        const GpuForest<ForestClf>* gpuForestAnchor{};
-        const GpuForest<ForestClf>* gpuForestCandidate{};
+        const GpuForest* gpuForestAnchor{};
+        const GpuForest* gpuForestCandidate{};
 
         ReadStorageHandle readstorageHandle;
 

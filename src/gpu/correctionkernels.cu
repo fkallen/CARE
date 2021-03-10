@@ -14,6 +14,8 @@
 #include <config.hpp>
 #include <cassert>
 
+#include <gpu/forest_gpu.cuh>
+
 
 #include <cub/cub.cuh>
 
@@ -213,8 +215,6 @@ namespace gpu{
     }
 
 
-
-
     template<int BLOCKSIZE, class GpuClf>
     __global__
     void msaCorrectAnchorsWithForestKernel(
@@ -225,10 +225,8 @@ namespace gpu{
         GpuClf gpuForest,
         float forestThreshold,
         const unsigned int* __restrict__ subjectSequencesData,
-        const unsigned int* __restrict__ candidateSequencesData,
-        const int* __restrict__ candidateSequencesLength,
         const int* __restrict__ d_indices_per_subject,
-        const int* __restrict__ numAnchorsPtr,
+        const int numAnchors,
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         int maximumSequenceLength,
@@ -278,8 +276,6 @@ namespace gpu{
             return result;
         };
 
-        const int n_subjects = *numAnchorsPtr;
-
         auto isGoodAvgSupport = [&](float avgsupport){
             return fgeq(avgsupport, avg_support_threshold);
         };
@@ -294,7 +290,7 @@ namespace gpu{
             return SequenceHelpers::decodeBase(c);
         };
 
-        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < numAnchors; subjectIndex += gridDim.x){
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
 
@@ -347,6 +343,9 @@ namespace gpu{
 
                 tbGroup.sync();
 
+                const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
+
                 //set corrected anchor to consensus
                 for(int i = subjectColumnsBegin_incl + tbGroup.thread_rank(); 
                         i < subjectColumnsEnd_excl; 
@@ -360,9 +359,7 @@ namespace gpu{
                 }
 
                 if(!isHighQualitySubject[subjectIndex].hq()){
-                    //maybe revert some positions to original base
-                    const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
-                    const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                    //maybe revert some positions to original base                                        
 
                     for (int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
                         const int msaPos = subjectColumnsBegin_incl + i;
@@ -423,6 +420,8 @@ namespace gpu{
                             ; //consensus
                         }
                     }
+                }else{
+                    ; //consensus
                 }
 
             }else{
@@ -435,7 +434,53 @@ namespace gpu{
     }
 
 
+    void callMsaCorrectAnchorsWithForestKernel(
+        char* d_correctedSubjects,
+        bool* d_subjectIsCorrected,
+        AnchorHighQualityFlag* d_isHighQualitySubject,
+        GPUMultiMSA multiMSA,
+        GpuForest::Clf gpuForest,
+        float forestThreshold,
+        const unsigned int* d_subjectSequencesData,
+        const int* d_indices_per_subject,
+        const int numAnchors,
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maximumSequenceLength,
+        float estimatedErrorrate,
+        float desiredAlignmentMaxErrorRate,
+        float estimatedCoverage,
+        float avg_support_threshold,
+        float min_support_threshold,
+        float min_coverage_threshold,
+        float max_coverage_threshold,
+        cudaStream_t stream
+    ){
+        constexpr int blocksize = 128;
+        const int numBlocks = numAnchors;
 
+        msaCorrectAnchorsWithForestKernel<blocksize><<<numBlocks, blocksize, 0, stream>>>(
+            d_correctedSubjects,
+            d_subjectIsCorrected,
+            d_isHighQualitySubject,
+            multiMSA,
+            gpuForest,
+            forestThreshold,
+            d_subjectSequencesData,
+            d_indices_per_subject,
+            numAnchors,
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            maximumSequenceLength,
+            estimatedErrorrate,
+            desiredAlignmentMaxErrorRate,
+            estimatedCoverage,
+            avg_support_threshold,
+            min_support_threshold,
+            min_coverage_threshold,
+            max_coverage_threshold
+        );
+    }
 
 
 
