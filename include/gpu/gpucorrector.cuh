@@ -36,7 +36,7 @@
 
 
 
-//#define GPUANCHORFOREST
+#define GPUANCHORFOREST
 
 namespace care{
 namespace gpu{
@@ -2710,6 +2710,8 @@ namespace gpu{
                         clfInput.consensus = myConsensus;
                         clfInput.getMSAProperties = nullptr; // unused for anchor correction
                         clfInput.anchorMsaProperties = anchorMsaProperties;
+
+                        
 
                         for (int i = 0; i < anchorLength; ++i) {
                             if (decodedAnchor[i] != myConsensus[subjectColumnsBegin_incl+i] 

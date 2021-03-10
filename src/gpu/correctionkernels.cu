@@ -248,7 +248,7 @@ namespace gpu{
             GpuMSAProperties msaProperties;
         } temp_storage;
 
-        __shared__ int broadcastbuffer;
+        __shared__ bool sharedHQ;
 
         auto tbGroup = cg::this_thread_block();
 
@@ -302,6 +302,7 @@ namespace gpu{
                 const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
                 //const int lastColumn_excl = msa.columnProperties->lastColumn_excl;
 
+                //only first thread in group returns valid properties
                 GpuMSAProperties msaProperties = msa.getMSAProperties(
                     tbGroup,
                     groupReduceFloatSum,
@@ -313,6 +314,8 @@ namespace gpu{
                 );
 
                 if(tbGroup.thread_rank() == 0){
+                    temp_storage.msaProperties = msaProperties;
+
                     subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
 
                     const bool canBeCorrectedByConsensus = isGoodAvgSupport(msaProperties.avg_support) && isGoodMinSupport(msaProperties.min_support) && isGoodMinCoverage(msaProperties.min_coverage);
@@ -335,13 +338,18 @@ namespace gpu{
 
                         //broadcastbuffer = isHQ;
                         isHighQualitySubject[subjectIndex].hq(isHQ);
+                        sharedHQ = isHQ;
                     }else{
                         isHighQualitySubject[subjectIndex].hq(false);
+                        sharedHQ = false;
                     }
 
                 }
 
                 tbGroup.sync();
+
+                msaProperties = temp_storage.msaProperties;
+                const bool isHQ = sharedHQ;
 
                 const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
@@ -358,7 +366,7 @@ namespace gpu{
                     my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(nuc);
                 }
 
-                if(!isHighQualitySubject[subjectIndex].hq()){
+                if(!isHQ){
                     //maybe revert some positions to original base                                        
 
                     for (int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
@@ -369,6 +377,15 @@ namespace gpu{
                         if (origEncodedBase != consensusEncodedBase){          
                             
                             const float countsACGT = msa.coverages[msaPos];
+                            const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
+                            const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
+                            const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
+                            const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
+
+                            const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
+                            const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
+                            const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
+                            const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
 
                             float features[37]{
                                 float(origEncodedBase == SequenceHelpers::encodedbaseA()),
@@ -379,40 +396,58 @@ namespace gpu{
                                 float(consensusEncodedBase == SequenceHelpers::encodedbaseC()),
                                 float(consensusEncodedBase == SequenceHelpers::encodedbaseG()),
                                 float(consensusEncodedBase == SequenceHelpers::encodedbaseT()),
-                                origEncodedBase == SequenceHelpers::encodedbaseA() ? msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseC() ? msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseG() ? msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseT() ? msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseA() ? msa.weights[0 * msa.columnPitchInElements + msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseC() ? msa.weights[1 * msa.columnPitchInElements + msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseG() ? msa.weights[2 * msa.columnPitchInElements + msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseT() ? msa.weights[3 * msa.columnPitchInElements + msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? msa.weights[0 * msa.columnPitchInElements + msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? msa.weights[1 * msa.columnPitchInElements + msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? msa.weights[2 * msa.columnPitchInElements + msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? msa.weights[3 * msa.columnPitchInElements + msaPos]:0,
-                                msa.weights[0 * msa.columnPitchInElements + msaPos],
-                                msa.weights[1 * msa.columnPitchInElements + msaPos],
-                                msa.weights[2 * msa.columnPitchInElements + msaPos],
-                                msa.weights[3 * msa.columnPitchInElements + msaPos],
-                                msa.counts[0 * msa.columnPitchInElements + msaPos] / countsACGT,
-                                msa.counts[1 * msa.columnPitchInElements + msaPos] / countsACGT,
-                                msa.counts[2 * msa.columnPitchInElements + msaPos] / countsACGT,
-                                msa.counts[3 * msa.columnPitchInElements + msaPos] / countsACGT,
+                                origEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0,
+                                origEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0,
+                                origEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0,
+                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0,
+                                weightsA[msaPos],
+                                weightsC[msaPos],
+                                weightsG[msaPos],
+                                weightsT[msaPos],
+                                countsA[msaPos] / countsACGT,
+                                countsC[msaPos] / countsACGT,
+                                countsG[msaPos] / countsACGT,
+                                countsT[msaPos] / countsACGT,
                                 msaProperties.avg_support,
                                 msaProperties.min_support,
                                 float(msaProperties.max_coverage) / estimatedCoverage,
                                 float(msaProperties.min_coverage) / estimatedCoverage,
-                                float(std::max(subjectColumnsBegin_incl - i, i - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl)
+                                float(std::max(subjectColumnsBegin_incl - msaPos, msaPos - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl)
                             };
+
+                            // if(subjectIndex == 2 && i == 95){
+                            //     printf("features\n");
+                            //     for(int k = 0; k < 37; k++){
+                            //         printf("%f\n", features[k]);
+                            //     }
+                            //     printf("anchorMsaProperties.avg_support %f\n", msaProperties.avg_support);
+                            //     printf("anchorMsaProperties.min_support %f\n", msaProperties.min_support);
+                            //     printf("anchorMsaProperties.max_coverage %f\n", float(msaProperties.max_coverage));
+                            //     printf("anchorMsaProperties.min_coverage %f\n", float(msaProperties.min_coverage));
+                            //     printf("a_begin %d\n", subjectColumnsBegin_incl);
+                            //     printf("pos %d\n", msaPos);
+                            //     printf("a_end %d\n", subjectColumnsEnd_excl);
+                            //     printf("estimatedCoverage %f\n", estimatedCoverage);
+                            // }
 
                             const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
                             if(!useConsensus){
                                 my_corrected_subject[i] = to_nuc(origEncodedBase);
+                                // if(subjectIndex == 2){
+                                //     printf("revert position %d\n", i);
+                                // }
                             }else{
                                 ; //consensus
                             }
@@ -430,6 +465,8 @@ namespace gpu{
                     subjectIsCorrected[subjectIndex] = false;
                 }
             }
+
+            tbGroup.sync();
         }
     }
 
