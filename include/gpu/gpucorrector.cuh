@@ -36,7 +36,7 @@
 
 
 
-#define GPUANCHORFOREST
+//#define GPUANCHORFOREST
 
 namespace care{
 namespace gpu{
