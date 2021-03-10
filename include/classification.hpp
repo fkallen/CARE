@@ -6,7 +6,7 @@
 #include <forest.hpp>
 #include <msa.hpp>
 #include <cpucorrectortask.hpp>
-
+#include <options.hpp>
 
 // This header allows toggling of feature transformations and classifiers,
 // and seperates classification logic from the main corrector code.
