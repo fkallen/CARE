@@ -406,11 +406,10 @@ namespace gpu{
                         const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
                         const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
 
-                        if (origEncodedBase != consensusEncodedBase){
-
-                            AnchorExtractor extractFeatures{};
+                        if (origEncodedBase != consensusEncodedBase){                            
 
                             if(subgroup.thread_rank() == 0){
+
                                 ExtractAnchorInputData& extractorInput = sharedExtractInput[subgroupIdInBlock];
 
                                 extractorInput.origBase = to_nuc(origEncodedBase);
@@ -422,6 +421,7 @@ namespace gpu{
                                 extractorInput.msaProperties = msaProperties;
                                 extractorInput.msa = msa;
 
+                                AnchorExtractor extractFeatures{};
                                 extractFeatures(&sharedFeatures[subgroupIdInBlock][0], extractorInput);
                             }
 
@@ -431,7 +431,7 @@ namespace gpu{
                             const bool useConsensus = gpuForest.decide(subgroup, &sharedFeatures[subgroupIdInBlock][0], forestThreshold, subgroupReduceFloatSum);
                             if(subgroup.thread_rank() == 0){
                                 if(!useConsensus){
-                                    sharedCorrectedAnchor[i] = extractorInput.origBase;
+                                    sharedCorrectedAnchor[i] = sharedExtractInput[subgroupIdInBlock].origBase;
                                 }
                             }
                         }
@@ -518,7 +518,7 @@ namespace gpu{
 
 
 
-    template<int BLOCKSIZE, int groupsize, class GpuClf>
+    template<int BLOCKSIZE, int groupsize, class CandidateExtractor, class GpuClf>
     __global__
     void msaCorrectCandidatesWithForestKernel(
         char* __restrict__ correctedCandidates,
@@ -718,7 +718,8 @@ namespace gpu{
         __shared__ typename WarpReduceInt::TempStorage intreduce[groupsPerBlock];
         __shared__ typename WarpReduceFloat::TempStorage floatreduce[groupsPerBlock];
         __shared__ GpuMSAProperties sharedMsaProperties[groupsPerBlock];
-        __shared__ float sharedFeatures[groupsPerBlock][42];
+        __shared__ float sharedFeatures[groupsPerBlock][CandidateExtractor::numFeatures()];
+        __shared__ ExtractCandidateInputData sharedExtractInput[groupsPerBlock];
        
 
         __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
@@ -857,7 +858,6 @@ namespace gpu{
             //     tgroup.sync();
             // }
 
-            #if 1 // 1: use full group per position, 0: use 1 thread per position
 
             for(int i = 0; i < candidate_length; i += 1){
                 std::uint8_t origEncodedBase = 0;
@@ -881,245 +881,39 @@ namespace gpu{
                 const char consensusBase = shared_correctedCandidate[i];
                 if(origBase != consensusBase){
 
-                    const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
-                    const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
-                    const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
-                    const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
-
-                    const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
-                    const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
-                    const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
-                    const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
-
-                    const int a_begin = subjectColumnsBegin_incl;
-                    const int a_end = subjectColumnsEnd_excl;
-                    const int c_begin = queryColumnsBegin_incl;
-                    const int c_end = queryColumnsEnd_excl;
-                    const int msaPos = c_begin + i;
-                    const char orig = origBase;
-                    const float countsACGT = msa.coverages[msaPos];
+                    const int msaPos = queryColumnsBegin_incl + i;
 
                     if(tgroup.thread_rank() == 0){
-                        sharedFeatures[groupIdInBlock][0] = float(orig == 'A');
-                        sharedFeatures[groupIdInBlock][1] = float(orig == 'C');
-                        sharedFeatures[groupIdInBlock][2] = float(orig == 'G');
-                        sharedFeatures[groupIdInBlock][3] = float(orig == 'T');
-                        sharedFeatures[groupIdInBlock][4] = float(consensusBase == 'A');
-                        sharedFeatures[groupIdInBlock][5] = float(consensusBase == 'C');
-                        sharedFeatures[groupIdInBlock][6] = float(consensusBase == 'G');
-                        sharedFeatures[groupIdInBlock][7] = float(consensusBase == 'T');
-                        sharedFeatures[groupIdInBlock][8] = orig == 'A'? countsA[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][9] = orig == 'C'? countsC[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][10] = orig == 'G'? countsG[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][11] = orig == 'T'? countsT[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][12] = orig == 'A'? weightsA[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][13] = orig == 'C'? weightsC[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][14] = orig == 'G'? weightsG[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][15] = orig == 'T'? weightsT[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][16] = consensusBase == 'A'? countsA[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][17] = consensusBase == 'C'? countsC[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][18] = consensusBase == 'G'? countsG[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][19] = consensusBase == 'T'? countsT[msaPos] / countsACGT : 0;
-                        sharedFeatures[groupIdInBlock][20] = consensusBase == 'A'? weightsA[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][21] = consensusBase == 'C'? weightsC[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][22] = consensusBase == 'G'? weightsG[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][23] = consensusBase == 'T'? weightsT[msaPos]:0;
-                        sharedFeatures[groupIdInBlock][24] = weightsA[msaPos];
-                        sharedFeatures[groupIdInBlock][25] = weightsC[msaPos];
-                        sharedFeatures[groupIdInBlock][26] = weightsG[msaPos];
-                        sharedFeatures[groupIdInBlock][27] = weightsT[msaPos];
-                        sharedFeatures[groupIdInBlock][28] = countsA[msaPos] / countsACGT;
-                        sharedFeatures[groupIdInBlock][29] = countsC[msaPos] / countsACGT;
-                        sharedFeatures[groupIdInBlock][30] = countsG[msaPos] / countsACGT;
-                        sharedFeatures[groupIdInBlock][31] = countsT[msaPos] / countsACGT;
-                        sharedFeatures[groupIdInBlock][32] = msaProperties.avg_support;
-                        sharedFeatures[groupIdInBlock][33] = msaProperties.min_support;
-                        sharedFeatures[groupIdInBlock][34] = float(msaProperties.max_coverage)/estimatedCoverage;
-                        sharedFeatures[groupIdInBlock][35] = float(msaProperties.min_coverage)/estimatedCoverage;
-                        sharedFeatures[groupIdInBlock][36] = float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(c_end-c_begin); // absolute shift (compatible with differing read lengths)
-                        sharedFeatures[groupIdInBlock][37] = float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(a_end-a_begin);
-                        sharedFeatures[groupIdInBlock][38] = float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin); // relative overlap (ratio of a or c length in case of diff. read len)
-                        sharedFeatures[groupIdInBlock][39] = float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin);
-                        sharedFeatures[groupIdInBlock][40] = float(std::max(a_begin-msaPos, msaPos-a_end))/(a_end-a_begin);
-                        sharedFeatures[groupIdInBlock][41] = float(std::max(a_begin-msaPos, msaPos-a_end))/(c_end-c_begin);
+                        ExtractCandidateInputData& extractorInput = sharedExtractInput[groupIdInBlock];
+
+                        extractorInput.origBase = origBase;
+                        extractorInput.consensusBase = consensusBase;
+                        extractorInput.estimatedCoverage = estimatedCoverage;
+                        extractorInput.msaPos = msaPos;
+                        extractorInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
+                        extractorInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
+                        extractorInput.queryColumnsBegin_incl = queryColumnsBegin_incl;
+                        extractorInput.queryColumnsEnd_excl = queryColumnsEnd_excl;
+                        extractorInput.msaProperties = msaProperties;
+                        extractorInput.msa = msa;
+
+                        CandidateExtractor extractFeatures{};
+                        extractFeatures(&sharedFeatures[groupIdInBlock][0], extractorInput);
                     }
 
                     tgroup.sync();
 
-                    // float features[42] {
-                    //     float(orig == 'A'),
-                    //     float(orig == 'C'),
-                    //     float(orig == 'G'),
-                    //     float(orig == 'T'),
-                    //     float(consensusBase == 'A'),
-                    //     float(consensusBase == 'C'),
-                    //     float(consensusBase == 'G'),
-                    //     float(consensusBase == 'T'),
-                    //     orig == 'A'? countsA[msaPos] / countsACGT : 0,
-                    //     orig == 'C'? countsC[msaPos] / countsACGT : 0,
-                    //     orig == 'G'? countsG[msaPos] / countsACGT : 0,
-                    //     orig == 'T'? countsT[msaPos] / countsACGT : 0,
-                    //     orig == 'A'? weightsA[msaPos]:0,
-                    //     orig == 'C'? weightsC[msaPos]:0,
-                    //     orig == 'G'? weightsG[msaPos]:0,
-                    //     orig == 'T'? weightsT[msaPos]:0,
-                    //     consensusBase == 'A'? countsA[msaPos] / countsACGT : 0,
-                    //     consensusBase == 'C'? countsC[msaPos] / countsACGT : 0,
-                    //     consensusBase == 'G'? countsG[msaPos] / countsACGT : 0,
-                    //     consensusBase == 'T'? countsT[msaPos] / countsACGT : 0,
-                    //     consensusBase == 'A'? weightsA[msaPos]:0,
-                    //     consensusBase == 'C'? weightsC[msaPos]:0,
-                    //     consensusBase == 'G'? weightsG[msaPos]:0,
-                    //     consensusBase == 'T'? weightsT[msaPos]:0,
-                    //     weightsA[msaPos],
-                    //     weightsC[msaPos],
-                    //     weightsG[msaPos],
-                    //     weightsT[msaPos],
-                    //     countsA[msaPos] / countsACGT,
-                    //     countsC[msaPos] / countsACGT,
-                    //     countsG[msaPos] / countsACGT,
-                    //     countsT[msaPos] / countsACGT,
-                    //     msaProperties.avg_support,
-                    //     msaProperties.min_support,
-                    //     float(msaProperties.max_coverage)/estimatedCoverage,
-                    //     float(msaProperties.min_coverage)/estimatedCoverage,
-                    //     float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(c_end-c_begin), // absolute shift (compatible with differing read lengths)
-                    //     float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(a_end-a_begin),
-                    //     float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin), // relative overlap (ratio of a or c length in case of diff. read len)
-                    //     float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin),
-                    //     float(std::max(a_begin-msaPos, msaPos-a_end))/(a_end-a_begin),
-                    //     float(std::max(a_begin-msaPos, msaPos-a_end))/(c_end-c_begin)
-                    // };
-
                     //only thread 0 has valid result                   
                     const bool useConsensus = gpuForest.decide(tgroup, &sharedFeatures[groupIdInBlock][0], forestThreshold, groupReduceFloatSum);
-                    //const bool useConsensus = gpuForest.decide(tgroup, &features[0], forestThreshold, groupReduceFloatSum);
 
                     if(tgroup.thread_rank() == 0){
                         if(!useConsensus){
                             shared_correctedCandidate[i] = origBase;
-                        }else{
-                            ; //keep consensus
                         }
                     }
                 }
             }
-            #else
-
-            for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()){
-                std::uint8_t origEncodedBase = 0;
-
-                if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
-                    origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
-                        encUncorrectedCandidate,
-                        candidate_length,
-                        candidate_length - i - 1
-                    );
-                    origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
-                }else{
-                    origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
-                        encUncorrectedCandidate,
-                        candidate_length,
-                        i
-                    );
-                }
-
-                const char origBase = to_nuc(origEncodedBase);
-                const char consensusBase = shared_correctedCandidate[i];
-                if(origBase != consensusBase){
-
-                    const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
-                    const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
-                    const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
-                    const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
-
-                    const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
-                    const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
-                    const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
-                    const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
-
-                    const int a_begin = subjectColumnsBegin_incl;
-                    const int a_end = subjectColumnsEnd_excl;
-                    const int c_begin = queryColumnsBegin_incl;
-                    const int c_end = queryColumnsEnd_excl;
-                    const int msaPos = c_begin + i;
-                    const char orig = origBase;
-                    const float countsACGT = msa.coverages[msaPos];
-
-                    float features[42] {
-                        float(orig == 'A'),
-                        float(orig == 'C'),
-                        float(orig == 'G'),
-                        float(orig == 'T'),
-                        float(consensusBase == 'A'),
-                        float(consensusBase == 'C'),
-                        float(consensusBase == 'G'),
-                        float(consensusBase == 'T'),
-                        orig == 'A'? countsA[msaPos] / countsACGT : 0,
-                        orig == 'C'? countsC[msaPos] / countsACGT : 0,
-                        orig == 'G'? countsG[msaPos] / countsACGT : 0,
-                        orig == 'T'? countsT[msaPos] / countsACGT : 0,
-                        orig == 'A'? weightsA[msaPos]:0,
-                        orig == 'C'? weightsC[msaPos]:0,
-                        orig == 'G'? weightsG[msaPos]:0,
-                        orig == 'T'? weightsT[msaPos]:0,
-                        consensusBase == 'A'? countsA[msaPos] / countsACGT : 0,
-                        consensusBase == 'C'? countsC[msaPos] / countsACGT : 0,
-                        consensusBase == 'G'? countsG[msaPos] / countsACGT : 0,
-                        consensusBase == 'T'? countsT[msaPos] / countsACGT : 0,
-                        consensusBase == 'A'? weightsA[msaPos]:0,
-                        consensusBase == 'C'? weightsC[msaPos]:0,
-                        consensusBase == 'G'? weightsG[msaPos]:0,
-                        consensusBase == 'T'? weightsT[msaPos]:0,
-                        weightsA[msaPos],
-                        weightsC[msaPos],
-                        weightsG[msaPos],
-                        weightsT[msaPos],
-                        countsA[msaPos] / countsACGT,
-                        countsC[msaPos] / countsACGT,
-                        countsG[msaPos] / countsACGT,
-                        countsT[msaPos] / countsACGT,
-                        msaProperties.avg_support,
-                        msaProperties.min_support,
-                        float(msaProperties.max_coverage)/estimatedCoverage,
-                        float(msaProperties.min_coverage)/estimatedCoverage,
-                        float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(c_end-c_begin), // absolute shift (compatible with differing read lengths)
-                        float(std::max(std::abs(c_begin-a_begin), std::abs(a_end-c_end)))/(a_end-a_begin),
-                        float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(a_end-a_begin), // relative overlap (ratio of a or c length in case of diff. read len)
-                        float(std::min(a_end, c_end)-std::max(a_begin, c_begin))/(c_end-c_begin),
-                        float(std::max(a_begin-msaPos, msaPos-a_end))/(a_end-a_begin),
-                        float(std::max(a_begin-msaPos, msaPos-a_end))/(c_end-c_begin)
-                    };
-
-                    // if(candidateReadId == 38851 && i == 5){
-                    //     printf("features 38851,5\n");
-                    //     for(int k = 0; k < 42; k++){
-                    //         printf("%f\n", features[k]);
-                    //     }
-                    //     printf("msaProperties.avg_support %f\n", msaProperties.avg_support);
-                    //     printf("msaProperties.min_support %f\n", msaProperties.min_support);
-                    //     printf("msaProperties.max_coverage %f\n", float(msaProperties.max_coverage));
-                    //     printf("msaProperties.min_coverage %f\n", float(msaProperties.min_coverage));
-                    // }
-
-
-                    const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
-
-                    if(!useConsensus){
-                        shared_correctedCandidate[i] = origBase;
-
-                        // if(candidateReadId == 38851){
-                        //     printf("position %d revert consensus\n", i);
-                        // }
-                    }else{
-                        // if(candidateReadId == 38851){
-                        //     printf("position %d keep consensus\n", i);
-                        // }
-                    }
-                }
-            }
-
-            #endif
+            
 
             tgroup.sync();
 
@@ -1358,7 +1152,7 @@ namespace gpu{
         dim3 grid = 270;
 
 
-        msaCorrectCandidatesWithForestKernel<blocksize, groupsize><<<grid, block, smem, stream>>>(
+        msaCorrectCandidatesWithForestKernel<blocksize, groupsize, cands_extractor><<<grid, block, smem, stream>>>(
             d_correctedCandidates,
             d_editsPerCorrectedCandidate,
             d_numEditsPerCorrectedCandidate,
