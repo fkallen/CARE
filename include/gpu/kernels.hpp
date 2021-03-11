@@ -491,7 +491,8 @@ void callMsaCorrectCandidatesWithForestKernel(
     size_t editsPitchInBytes,
     int maximum_sequence_length,
     cudaStream_t stream,
-    KernelLaunchHandle& handle
+    KernelLaunchHandle& handle,
+    const read_number* candidateReadIds
 );
 
 

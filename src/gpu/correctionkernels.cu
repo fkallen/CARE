@@ -545,7 +545,8 @@ namespace gpu{
         int encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
         size_t editsPitchInBytes,
-        size_t dynamicsmemSequencePitchInInts
+        size_t dynamicsmemSequencePitchInInts,
+        const read_number* candidateReadIds
     ){
 
         /*
@@ -787,6 +788,8 @@ namespace gpu{
             const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
             const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
 
+            //const int candidateReadId = candidateReadIds[candidateIndex];
+
             //only first thread in group returns valid properties
             GpuMSAProperties msaProperties = msa.getMSAProperties(
                 tgroup,
@@ -820,15 +823,59 @@ namespace gpu{
             const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
                         + std::size_t(candidateIndex) * encodedSequencePitchInInts;
 
+            // if(candidateReadId == 25787){
+            //     if(tgroup.thread_rank() == 0){
+            //         printf("decodedCandidate:\n");
+            //         for(int i = 0; i < candidate_length; i++){
+            //             std::uint8_t origEncodedBase = 0;
+
+            //             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+            //                 origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+            //                     encUncorrectedCandidate,
+            //                     candidate_length,
+            //                     candidate_length - i - 1
+            //                 );
+            //                 origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+            //             }else{
+            //                 origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+            //                     encUncorrectedCandidate,
+            //                     candidate_length,
+            //                     i
+            //                 );
+            //             }
+
+            //             const char origBase = to_nuc(origEncodedBase);
+
+            //             printf("%c", origBase);
+            //         }
+            //         printf("\n");
+
+            //         printf("consensusCandidate:\n");
+            //         for(int i = 0; i < candidate_length; i++){
+            //             printf("%c", shared_correctedCandidate[i]);
+            //         }
+            //         printf("\n");
+            //     }
+
+            //     tgroup.sync();
+            // }
+
             for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()){
-                std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
-                    encUncorrectedCandidate,
-                    candidate_length,
-                    i
-                );
+                std::uint8_t origEncodedBase = 0;
 
                 if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                    origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                        encUncorrectedCandidate,
+                        candidate_length,
+                        candidate_length - i - 1
+                    );
                     origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+                }else{
+                    origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                        encUncorrectedCandidate,
+                        candidate_length,
+                        i
+                    );
                 }
 
                 const char origBase = to_nuc(origEncodedBase);
@@ -898,14 +945,34 @@ namespace gpu{
                         float(std::max(a_begin-msaPos, msaPos-a_end))/(c_end-c_begin)
                     };
 
+                    // if(candidateReadId == 25787 && i == 5){
+                    //     printf("features 25787,5\n");
+                    //     for(int k = 0; k < 42; k++){
+                    //         printf("%f\n", features[k]);
+                    //     }
+                    //     printf("msaProperties.avg_support %f\n", msaProperties.avg_support);
+                    //     printf("msaProperties.min_support %f\n", msaProperties.min_support);
+                    //     printf("msaProperties.max_coverage %f\n", float(msaProperties.max_coverage));
+                    //     printf("msaProperties.min_coverage %f\n", float(msaProperties.min_coverage));
+                    // }
+
 
                     const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
 
                     if(!useConsensus){
                         shared_correctedCandidate[i] = origBase;
+
+                        // if(candidateReadId == 25787){
+                        //     printf("position %d revert consensus\n", i);
+                        // }
+                        
+                            
                         //if(a == 5 && candidateReadId == 633) std::cerr << "revert consensus\n";
                     }else{
                         //if(a == 5 && candidateReadId == 633) std::cerr << "keep consensus\n";
+                        // if(candidateReadId == 25787){
+                        //     printf("position %d keep consensus\n", i);
+                        // }
                     }
                 }
             }
@@ -915,9 +982,7 @@ namespace gpu{
             //the forward strand will be returned -> make reverse complement again
             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
                 for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
-                    shared_correctedCandidate[i] = to_nuc(
-                        SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i])
-                    );
+                    shared_correctedCandidate[i] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
                 }
                 tgroup.sync(); // threads may access elements in shared memory which were written by another thread
                 reverseWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
@@ -925,6 +990,18 @@ namespace gpu{
             }else{
                 ; //orientation ok
             }
+
+            // if(candidateReadId == 25787){
+            //     if(tgroup.thread_rank() == 0){
+            //         printf("correctedCandidate:\n");
+            //         for(int i = 0; i < candidate_length; i++){
+            //             printf("%c", shared_correctedCandidate[i]);
+            //         }
+            //         printf("\n");
+            //     }
+
+            //     tgroup.sync();
+            // }
             
             //copy corrected sequence from smem to global output
             const int fullInts1 = candidate_length / sizeof(int);
@@ -1113,7 +1190,8 @@ namespace gpu{
         size_t editsPitchInBytes,
         int maximum_sequence_length,
         cudaStream_t stream,
-        KernelLaunchHandle& handle
+        KernelLaunchHandle& handle,
+        const read_number* candidateReadIds
     ){
 
         constexpr int blocksize = 128;
@@ -1157,7 +1235,8 @@ namespace gpu{
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes,
             editsPitchInBytes,
-            dynamicsmemPitchInInts
+            dynamicsmemPitchInInts,
+            candidateReadIds
         );
     }
 
