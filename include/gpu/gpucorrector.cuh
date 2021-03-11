@@ -3090,7 +3090,7 @@ namespace gpu{
                                 continue;
                             }
 
-                            // if(candidateReadId == 37){
+                            // if(candidateReadId == 38851){
                             //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
                             //     std::cerr <<  "cand_begin " << cand_begin << "\n";
                             //     std::cerr <<  "cand_end " << cand_end << "\n";
@@ -3139,7 +3139,7 @@ namespace gpu{
 
                                 #endif
 
-                                // if(candidateReadId == 37){
+                                // if(candidateReadId == 38851){
                                 //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
                                 //     std::cerr <<  "cand_begin " << cand_begin << "\n";
                                 //     std::cerr <<  "cand_end " << cand_end << "\n";
@@ -3203,15 +3203,26 @@ namespace gpu{
 
                                 for(int i = 0; i < cand_length; i++){
                                     if(decodedCandidatePtr[i] != myConsensus[cand_begin + i]){
-                                        //if(a == 5 && candidateReadId == 633) std::cerr << "checking position " << i << ". ";
+                                        //if(candidateReadId == 38851) std::cerr << "checking position " << i << ". ";
+                                        const bool debug = false; //(candidateReadId == 38851);
+
                                         if(!clfAgent->decide_cand(clfInput, i, *correctionOptions, 0, 0)){
                                             myCorrection[i] = decodedCandidatePtr[i];
-                                            //if(a == 5 && candidateReadId == 633) std::cerr << "revert consensus\n";
+                                            //if(candidateReadId == 38851) std::cerr << "revert consensus\n";
                                         }else{
-                                            //if(a == 5 && candidateReadId == 633) std::cerr << "keep consensus\n";
+                                            //if(candidateReadId == 38851) std::cerr << "keep consensus\n";
                                         }
                                     }
                                 }
+
+                                // if(candidateReadId == 38851){
+                                //     std::cerr << "correctedCandidate:\n";
+                                //     for(int k = 0; k < cand_length; k++){
+                                //         std::cerr << myCorrection[k];
+                                //     }
+                                //     std::cerr << "\n";
+
+                                // }
 
                                 auto* const edits = (TempCorrectedSequence::EncodedEdit*)(((char*)currentOutput->h_editsPerCorrectedCandidate.data())
                                     + editsPitchInBytes * numCorrectedCandidates);
@@ -3421,7 +3432,8 @@ namespace gpu{
                 editsPitchInBytes,
                 gpuReadStorage->getSequenceLengthUpperBound(),
                 stream,
-                kernelLaunchHandle
+                kernelLaunchHandle,
+                d_candidate_read_ids.data()
             );
             
         }

@@ -38,9 +38,10 @@ struct GpuForest {
         int numTrees;
         Node** data;
 
+        template<class Iter>
         HOSTDEVICEQUALIFIER
-        float decide(const float* features, const Node* tree, size_t i = 0) const {
-            if (features[tree[i].att] < tree[i].thresh) {
+        float decide(Iter features, const Node* tree, size_t i = 0) const {
+            if (*(features + tree[i].att) < tree[i].thresh) {
                 if (tree[i].flag / 2)
                     return tree[i].lhs.prob;
                 return decide(features, tree, tree[i].lhs.idx);
@@ -51,31 +52,28 @@ struct GpuForest {
             }
         }
 
+        template<class Iter>
         HOSTDEVICEQUALIFIER
-        bool decide(const float* features, float thresh) const {
+        bool decide(Iter features, float thresh) const {
             float prob = 0.f;
             for(int t = 0; t < numTrees; t++){
                 prob += decide(features, data[t]);
             }
-            //printf("%f %d %f\n", prob, numTrees, thresh);
             return prob / numTrees >= thresh;
         }
 
-        #if __CUDACC_VER_MAJOR__ >= 11
-
-            //correct result is returned by the first thread in the group
-            template<class Group>
-            DEVICEQUALIFIER
-            float decide(Group& g, const float* features) const{
-                float prob = 0.f;
-                for(int t = g.thread_rank(); t < numTrees; t += g.size()){
-                    prob += decide(features, data[t]);
-                }
-                prob = cg::reduce(g, prob, cg::plus<float>{});
-
-                return prob / numTrees;
+        //use group to parallelize over trees. one thread per tree
+        //correct result is returned by the first thread in the group
+        template<class Group, class Iter, class GroupReduceFloatSum>
+        DEVICEQUALIFIER
+        float decide(Group& g, Iter features, float thresh, GroupReduceFloatSum reduce) const{
+            float prob = 0.f;
+            for(int t = g.thread_rank(); t < numTrees; t += g.size()){
+                prob += decide(features, data[t]);
             }
-        #endif
+            prob = reduce(prob);
+            return prob / numTrees >= thresh;
+        }
         
     };
 
