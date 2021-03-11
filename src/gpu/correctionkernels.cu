@@ -786,6 +786,8 @@ namespace gpu{
             const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
             const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
 
+            unsigned long long time1 = clock64();
+
             //const int candidateReadId = candidateReadIds[candidateIndex];
 
             //only first thread in group returns valid properties
@@ -911,23 +913,42 @@ namespace gpu{
                             shared_correctedCandidate[i] = origBase;
                         }
                     }
+
+                    tgroup.sync();
                 }
             }
             
 
             tgroup.sync();
 
+            unsigned long long time2 = clock64();
+
             //the forward strand will be returned -> make reverse complement again
             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+                #if 0
+                for(int i = tgroup.thread_rank(); i < candidate_length / 2; i += tgroup.size()) {
+                    const char l = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
+                    const char r = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
+                    shared_correctedCandidate[i] = r;
+                    shared_correctedCandidate[candidate_length - i - 1] = l;
+                }
+                if(tgroup.thread_rank() == 0 && candidate_length % 2 == 1){
+                    shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
+                }
+                tgroup.sync();
+                #else
                 for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
                     shared_correctedCandidate[i] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
                 }
                 tgroup.sync(); // threads may access elements in shared memory which were written by another thread
                 reverseWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
                 tgroup.sync();
+                #endif
             }else{
                 ; //orientation ok
             }
+
+            unsigned long long time3 = clock64();
 
             // if(candidateReadId == 38851){
             //     if(tgroup.thread_rank() == 0){
@@ -954,6 +975,8 @@ namespace gpu{
             }       
 
             //compare corrected candidate with uncorrected candidate, calculate edits   
+
+            unsigned long long time4 = clock64();
             
             
             const bool thisSequenceContainsN = d_candidateContainsN[candidateIndex];            
@@ -1098,6 +1121,12 @@ namespace gpu{
             
 
             tgroup.sync(); //sync before handling next candidate
+
+            unsigned long long time5 = clock64();
+
+            // if(tgroup.thread_rank() == 0){
+            //     printf("times: forest %llu, reverse %llu, seqout %llu, editout %llu\n", (time2 - time1), (time3 - time2), (time4 - time3), (time5 - time4));
+            // }
                         
         }
     }
