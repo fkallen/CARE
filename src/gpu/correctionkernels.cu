@@ -267,6 +267,10 @@ namespace gpu{
 
         __shared__ float sharedFeatures[numSubGroupsInBlock][37];
 
+        extern __shared__ int externalsmem[];
+        
+        char* const sharedCorrectedAnchor = (char*)&externalsmem[0];
+
         auto subgroupReduceFloatSum = [&](float f){
             const float result = WarpReduceFloat(warpfloatreducetemp[subgroupIdInBlock]).Sum(f);
             subgroup.sync();
@@ -317,7 +321,7 @@ namespace gpu{
 
                 const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
 
-                char* const my_corrected_subject = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
+                char* const globalCorrectedAnchor = correctedSubjects + subjectIndex * decodedSequencePitchInBytes;
 
                 const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
@@ -375,29 +379,33 @@ namespace gpu{
                 const int anchorLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const unsigned int* const subject = subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
 
-                //set corrected anchor to consensus
-                for(int i = subjectColumnsBegin_incl + tbGroup.thread_rank(); 
-                        i < subjectColumnsEnd_excl; 
-                        i += tbGroup.size()){
+                if(isHQ){
 
-                    const std::uint8_t nuc = msa.consensus[i];
-                    //assert(nuc == 'A' || nuc == 'C' || nuc == 'G' || nuc == 'T');
-                    assert(0 == nuc || nuc < 4);
+                    //set corrected anchor to consensus
+                    for(int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
+                        const std::uint8_t nuc = msa.consensus[subjectColumnsBegin_incl + i];
+                        assert(nuc < 4);
+                        globalCorrectedAnchor[i] = to_nuc(nuc);
+                    }
 
-                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(nuc);
-                }
+                }else{
 
-                if(!isHQ){
-                    //maybe revert some positions to original base
+                    //set corrected anchor to consensus
+                    for(int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
+                        const std::uint8_t nuc = msa.consensus[subjectColumnsBegin_incl + i];
+                        assert(nuc < 4);
+                        sharedCorrectedAnchor[i] = to_nuc(nuc);
+                    }
+                    
                     tbGroup.sync();                                   
-
-                    #if 1
+                    
+                    //maybe revert some positions to original base
                     for (int i = subgroupIdInBlock; i < anchorLength; i += numSubGroupsInBlock){
                         const int msaPos = subjectColumnsBegin_incl + i;
                         const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
                         const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
 
-                        if (origEncodedBase != consensusEncodedBase){          
+                        if (origEncodedBase != consensusEncodedBase){
                             
                             const float countsACGT = msa.coverages[msaPos];
                             const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
@@ -456,88 +464,36 @@ namespace gpu{
                             const bool useConsensus = gpuForest.decide(subgroup, &sharedFeatures[subgroupIdInBlock][0], forestThreshold, subgroupReduceFloatSum);
                             if(subgroup.thread_rank() == 0){
                                 if(!useConsensus){
-                                    my_corrected_subject[i] = to_nuc(origEncodedBase);
+                                    sharedCorrectedAnchor[i] = to_nuc(origEncodedBase);
                                 }
                             }
                         }
                     }
-                    #else
-                    for (int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
-                        const int msaPos = subjectColumnsBegin_incl + i;
-                        const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
-                        const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
 
-                        if (origEncodedBase != consensusEncodedBase){          
-                            
-                            const float countsACGT = msa.coverages[msaPos];
-                            const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
-                            const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
-                            const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
-                            const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
+                    tbGroup.sync();
 
-                            const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
-                            const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
-                            const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
-                            const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
+                    //copy shared correction to gmem
+                    const int fullInts1 = anchorLength / sizeof(int);
 
-                            float features[37]{
-                                float(origEncodedBase == SequenceHelpers::encodedbaseA()),
-                                float(origEncodedBase == SequenceHelpers::encodedbaseC()),
-                                float(origEncodedBase == SequenceHelpers::encodedbaseG()),
-                                float(origEncodedBase == SequenceHelpers::encodedbaseT()),
-                                float(consensusEncodedBase == SequenceHelpers::encodedbaseA()),
-                                float(consensusEncodedBase == SequenceHelpers::encodedbaseC()),
-                                float(consensusEncodedBase == SequenceHelpers::encodedbaseG()),
-                                float(consensusEncodedBase == SequenceHelpers::encodedbaseT()),
-                                origEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0,
-                                origEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0,
-                                origEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0,
-                                consensusEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0,
-                                weightsA[msaPos],
-                                weightsC[msaPos],
-                                weightsG[msaPos],
-                                weightsT[msaPos],
-                                countsA[msaPos] / countsACGT,
-                                countsC[msaPos] / countsACGT,
-                                countsG[msaPos] / countsACGT,
-                                countsT[msaPos] / countsACGT,
-                                msaProperties.avg_support,
-                                msaProperties.min_support,
-                                float(msaProperties.max_coverage) / estimatedCoverage,
-                                float(msaProperties.min_coverage) / estimatedCoverage,
-                                float(std::max(subjectColumnsBegin_incl - msaPos, msaPos - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl)
-                            };
-
-                            const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
-                            if(!useConsensus){
-                                my_corrected_subject[i] = to_nuc(origEncodedBase);
-
-                            }
-                        }
+                    for(int i = tbGroup.thread_rank(); i < fullInts1; i += tbGroup.size()) {
+                        ((int*)globalCorrectedAnchor)[i] = ((int*)sharedCorrectedAnchor)[i];
                     }
-                    #endif
+
+                    for(int i = tbGroup.thread_rank(); i < anchorLength - fullInts1 * sizeof(int); i += tbGroup.size()) {
+                        globalCorrectedAnchor[fullInts1 * sizeof(int) + i] 
+                            = sharedCorrectedAnchor[fullInts1 * sizeof(int) + i];
+                    } 
+
                 }
+                
+                tbGroup.sync();
 
             }else{
                 if(tbGroup.thread_rank() == 0){
                     isHighQualitySubject[subjectIndex].hq(false);
                     subjectIsCorrected[subjectIndex] = false;
                 }
-            }
-
-            tbGroup.sync();
+            }            
         }
     }
 
@@ -568,7 +524,9 @@ namespace gpu{
         constexpr int blocksize = 128;
         const int numBlocks = numAnchors;
 
-        msaCorrectAnchorsWithForestKernel<blocksize><<<numBlocks, blocksize, 0, stream>>>(
+        const std::size_t smem = SDIV(sizeof(char) * maximumSequenceLength, sizeof(int)) * sizeof(int);
+
+        msaCorrectAnchorsWithForestKernel<blocksize><<<numBlocks, blocksize, smem, stream>>>(
             d_correctedSubjects,
             d_subjectIsCorrected,
             d_isHighQualitySubject,
