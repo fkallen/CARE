@@ -15,7 +15,7 @@
 #include <cassert>
 
 #include <gpu/forest_gpu.cuh>
-
+#include <gpu/classification_gpu.cuh>
 
 #include <cub/cub.cuh>
 
@@ -215,7 +215,7 @@ namespace gpu{
     }
 
 
-    template<int BLOCKSIZE, class GpuClf>
+    template<int BLOCKSIZE, class AnchorExtractor, class GpuClf>
     __global__
     void msaCorrectAnchorsWithForestKernel(
         char* __restrict__ correctedSubjects,
@@ -265,7 +265,8 @@ namespace gpu{
 
         __shared__ bool sharedHQ;
 
-        __shared__ float sharedFeatures[numSubGroupsInBlock][37];
+        __shared__ float sharedFeatures[numSubGroupsInBlock][AnchorExtractor::numFeatures()];
+        __shared__ ExtractAnchorInputData sharedExtractInput[numSubGroupsInBlock];
 
         extern __shared__ int externalsmem[];
         
@@ -406,65 +407,31 @@ namespace gpu{
                         const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
 
                         if (origEncodedBase != consensusEncodedBase){
-                            
-                            const float countsACGT = msa.coverages[msaPos];
-                            const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
-                            const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
-                            const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
-                            const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
 
-                            const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
-                            const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
-                            const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
-                            const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
+                            AnchorExtractor extractFeatures{};
 
                             if(subgroup.thread_rank() == 0){
+                                ExtractAnchorInputData& extractorInput = sharedExtractInput[subgroupIdInBlock];
 
-                                sharedFeatures[subgroupIdInBlock][0] = float(origEncodedBase == SequenceHelpers::encodedbaseA());
-                                sharedFeatures[subgroupIdInBlock][1] = float(origEncodedBase == SequenceHelpers::encodedbaseC());
-                                sharedFeatures[subgroupIdInBlock][2] = float(origEncodedBase == SequenceHelpers::encodedbaseG());
-                                sharedFeatures[subgroupIdInBlock][3] = float(origEncodedBase == SequenceHelpers::encodedbaseT());
-                                sharedFeatures[subgroupIdInBlock][4] = float(consensusEncodedBase == SequenceHelpers::encodedbaseA());
-                                sharedFeatures[subgroupIdInBlock][5] = float(consensusEncodedBase == SequenceHelpers::encodedbaseC());
-                                sharedFeatures[subgroupIdInBlock][6] = float(consensusEncodedBase == SequenceHelpers::encodedbaseG());
-                                sharedFeatures[subgroupIdInBlock][7] = float(consensusEncodedBase == SequenceHelpers::encodedbaseT());
-                                sharedFeatures[subgroupIdInBlock][8] = origEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][9] = origEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][10] = origEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][11] = origEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][12] = origEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][13] = origEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][14] = origEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][15] = origEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][16] = consensusEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][17] = consensusEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][18] = consensusEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][19] = consensusEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0;
-                                sharedFeatures[subgroupIdInBlock][20] = consensusEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][21] = consensusEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][22] = consensusEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][23] = consensusEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0;
-                                sharedFeatures[subgroupIdInBlock][24] = weightsA[msaPos];
-                                sharedFeatures[subgroupIdInBlock][25] = weightsC[msaPos];
-                                sharedFeatures[subgroupIdInBlock][26] = weightsG[msaPos];
-                                sharedFeatures[subgroupIdInBlock][27] = weightsT[msaPos];
-                                sharedFeatures[subgroupIdInBlock][28] = countsA[msaPos] / countsACGT;
-                                sharedFeatures[subgroupIdInBlock][29] = countsC[msaPos] / countsACGT;
-                                sharedFeatures[subgroupIdInBlock][30] = countsG[msaPos] / countsACGT;
-                                sharedFeatures[subgroupIdInBlock][31] = countsT[msaPos] / countsACGT;
-                                sharedFeatures[subgroupIdInBlock][32] = msaProperties.avg_support;
-                                sharedFeatures[subgroupIdInBlock][33] = msaProperties.min_support;
-                                sharedFeatures[subgroupIdInBlock][34] = float(msaProperties.max_coverage) / estimatedCoverage;
-                                sharedFeatures[subgroupIdInBlock][35] = float(msaProperties.min_coverage) / estimatedCoverage;
-                                sharedFeatures[subgroupIdInBlock][36] = float(std::max(subjectColumnsBegin_incl - msaPos, msaPos - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl);
+                                extractorInput.origBase = to_nuc(origEncodedBase);
+                                extractorInput.consensusBase = to_nuc(consensusEncodedBase);
+                                extractorInput.estimatedCoverage = estimatedCoverage;
+                                extractorInput.msaPos = msaPos;
+                                extractorInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
+                                extractorInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
+                                extractorInput.msaProperties = msaProperties;
+                                extractorInput.msa = msa;
+
+                                extractFeatures(&sharedFeatures[subgroupIdInBlock][0], extractorInput);
                             }
+
                             subgroup.sync();
 
                             //only thread 0 of group has valid result
                             const bool useConsensus = gpuForest.decide(subgroup, &sharedFeatures[subgroupIdInBlock][0], forestThreshold, subgroupReduceFloatSum);
                             if(subgroup.thread_rank() == 0){
                                 if(!useConsensus){
-                                    sharedCorrectedAnchor[i] = to_nuc(origEncodedBase);
+                                    sharedCorrectedAnchor[i] = extractorInput.origBase;
                                 }
                             }
                         }
@@ -526,7 +493,7 @@ namespace gpu{
 
         const std::size_t smem = SDIV(sizeof(char) * maximumSequenceLength, sizeof(int)) * sizeof(int);
 
-        msaCorrectAnchorsWithForestKernel<blocksize><<<numBlocks, blocksize, smem, stream>>>(
+        msaCorrectAnchorsWithForestKernel<blocksize, anchor_extractor><<<numBlocks, blocksize, smem, stream>>>(
             d_correctedSubjects,
             d_subjectIsCorrected,
             d_isHighQualitySubject,
