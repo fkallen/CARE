@@ -239,18 +239,39 @@ namespace gpu{
         float max_coverage_threshold
     ){
 
+        constexpr int subgroupsize = 32;
+        constexpr int numSubGroupsInBlock = BLOCKSIZE / subgroupsize;
+
+        static_assert(subgroupsize == 32);
+        static_assert(BLOCKSIZE % subgroupsize == 0);
+
+        auto tbGroup = cg::this_thread_block();
+        auto subgroup = cg::tiled_partition<subgroupsize>(tbGroup);
+
+        const int subgroupIdInBlock = threadIdx.x / subgroupsize;
+
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
         using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        using WarpReduceFloat = cub::WarpReduce<float>;
 
         __shared__ union {
             typename BlockReduceInt::TempStorage intreduce;
             typename BlockReduceFloat::TempStorage floatreduce;
             GpuMSAProperties msaProperties;
-        } temp_storage;
+        } temp_storage;        
+
+        __shared__ typename WarpReduceFloat::TempStorage warpfloatreducetemp[numSubGroupsInBlock];       
 
         __shared__ bool sharedHQ;
 
-        auto tbGroup = cg::this_thread_block();
+        __shared__ float sharedFeatures[numSubGroupsInBlock][37];
+
+        auto subgroupReduceFloatSum = [&](float f){
+            const float result = WarpReduceFloat(warpfloatreducetemp[subgroupIdInBlock]).Sum(f);
+            subgroup.sync();
+            return result;
+        };
 
         auto groupReduceFloatSum = [&](float f){
             const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
@@ -367,8 +388,80 @@ namespace gpu{
                 }
 
                 if(!isHQ){
-                    //maybe revert some positions to original base                                        
+                    //maybe revert some positions to original base
+                    tbGroup.sync();                                   
 
+                    #if 1
+                    for (int i = subgroupIdInBlock; i < anchorLength; i += numSubGroupsInBlock){
+                        const int msaPos = subjectColumnsBegin_incl + i;
+                        const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
+                        const std::uint8_t consensusEncodedBase = msa.consensus[msaPos];
+
+                        if (origEncodedBase != consensusEncodedBase){          
+                            
+                            const float countsACGT = msa.coverages[msaPos];
+                            const int* const countsA = &msa.counts[0 * msa.columnPitchInElements];
+                            const int* const countsC = &msa.counts[1 * msa.columnPitchInElements];
+                            const int* const countsG = &msa.counts[2 * msa.columnPitchInElements];
+                            const int* const countsT = &msa.counts[3 * msa.columnPitchInElements];
+
+                            const float* const weightsA = &msa.weights[0 * msa.columnPitchInElements];
+                            const float* const weightsC = &msa.weights[1 * msa.columnPitchInElements];
+                            const float* const weightsG = &msa.weights[2 * msa.columnPitchInElements];
+                            const float* const weightsT = &msa.weights[3 * msa.columnPitchInElements];
+
+                            if(subgroup.thread_rank() == 0){
+
+                                sharedFeatures[subgroupIdInBlock][0] = float(origEncodedBase == SequenceHelpers::encodedbaseA());
+                                sharedFeatures[subgroupIdInBlock][1] = float(origEncodedBase == SequenceHelpers::encodedbaseC());
+                                sharedFeatures[subgroupIdInBlock][2] = float(origEncodedBase == SequenceHelpers::encodedbaseG());
+                                sharedFeatures[subgroupIdInBlock][3] = float(origEncodedBase == SequenceHelpers::encodedbaseT());
+                                sharedFeatures[subgroupIdInBlock][4] = float(consensusEncodedBase == SequenceHelpers::encodedbaseA());
+                                sharedFeatures[subgroupIdInBlock][5] = float(consensusEncodedBase == SequenceHelpers::encodedbaseC());
+                                sharedFeatures[subgroupIdInBlock][6] = float(consensusEncodedBase == SequenceHelpers::encodedbaseG());
+                                sharedFeatures[subgroupIdInBlock][7] = float(consensusEncodedBase == SequenceHelpers::encodedbaseT());
+                                sharedFeatures[subgroupIdInBlock][8] = origEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][9] = origEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][10] = origEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][11] = origEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][12] = origEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][13] = origEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][14] = origEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][15] = origEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][16] = consensusEncodedBase == SequenceHelpers::encodedbaseA() ? countsA[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][17] = consensusEncodedBase == SequenceHelpers::encodedbaseC() ? countsC[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][18] = consensusEncodedBase == SequenceHelpers::encodedbaseG() ? countsG[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][19] = consensusEncodedBase == SequenceHelpers::encodedbaseT() ? countsT[msaPos] / countsACGT : 0;
+                                sharedFeatures[subgroupIdInBlock][20] = consensusEncodedBase == SequenceHelpers::encodedbaseA() ? weightsA[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][21] = consensusEncodedBase == SequenceHelpers::encodedbaseC() ? weightsC[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][22] = consensusEncodedBase == SequenceHelpers::encodedbaseG() ? weightsG[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][23] = consensusEncodedBase == SequenceHelpers::encodedbaseT() ? weightsT[msaPos]:0;
+                                sharedFeatures[subgroupIdInBlock][24] = weightsA[msaPos];
+                                sharedFeatures[subgroupIdInBlock][25] = weightsC[msaPos];
+                                sharedFeatures[subgroupIdInBlock][26] = weightsG[msaPos];
+                                sharedFeatures[subgroupIdInBlock][27] = weightsT[msaPos];
+                                sharedFeatures[subgroupIdInBlock][28] = countsA[msaPos] / countsACGT;
+                                sharedFeatures[subgroupIdInBlock][29] = countsC[msaPos] / countsACGT;
+                                sharedFeatures[subgroupIdInBlock][30] = countsG[msaPos] / countsACGT;
+                                sharedFeatures[subgroupIdInBlock][31] = countsT[msaPos] / countsACGT;
+                                sharedFeatures[subgroupIdInBlock][32] = msaProperties.avg_support;
+                                sharedFeatures[subgroupIdInBlock][33] = msaProperties.min_support;
+                                sharedFeatures[subgroupIdInBlock][34] = float(msaProperties.max_coverage) / estimatedCoverage;
+                                sharedFeatures[subgroupIdInBlock][35] = float(msaProperties.min_coverage) / estimatedCoverage;
+                                sharedFeatures[subgroupIdInBlock][36] = float(std::max(subjectColumnsBegin_incl - msaPos, msaPos - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl);
+                            }
+                            subgroup.sync();
+
+                            //only thread 0 of group has valid result
+                            const bool useConsensus = gpuForest.decide(subgroup, &sharedFeatures[subgroupIdInBlock][0], forestThreshold, subgroupReduceFloatSum);
+                            if(subgroup.thread_rank() == 0){
+                                if(!useConsensus){
+                                    my_corrected_subject[i] = to_nuc(origEncodedBase);
+                                }
+                            }
+                        }
+                    }
+                    #else
                     for (int i = tbGroup.thread_rank(); i < anchorLength; i += tbGroup.size()){
                         const int msaPos = subjectColumnsBegin_incl + i;
                         const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(subject, anchorLength, i);
@@ -427,36 +520,14 @@ namespace gpu{
                                 float(std::max(subjectColumnsBegin_incl - msaPos, msaPos - subjectColumnsEnd_excl)) / (subjectColumnsEnd_excl-subjectColumnsBegin_incl)
                             };
 
-                            // if(subjectIndex == 2 && i == 95){
-                            //     printf("features\n");
-                            //     for(int k = 0; k < 37; k++){
-                            //         printf("%f\n", features[k]);
-                            //     }
-                            //     printf("anchorMsaProperties.avg_support %f\n", msaProperties.avg_support);
-                            //     printf("anchorMsaProperties.min_support %f\n", msaProperties.min_support);
-                            //     printf("anchorMsaProperties.max_coverage %f\n", float(msaProperties.max_coverage));
-                            //     printf("anchorMsaProperties.min_coverage %f\n", float(msaProperties.min_coverage));
-                            //     printf("a_begin %d\n", subjectColumnsBegin_incl);
-                            //     printf("pos %d\n", msaPos);
-                            //     printf("a_end %d\n", subjectColumnsEnd_excl);
-                            //     printf("estimatedCoverage %f\n", estimatedCoverage);
-                            // }
-
                             const bool useConsensus = gpuForest.decide(&features[0], forestThreshold);
                             if(!useConsensus){
                                 my_corrected_subject[i] = to_nuc(origEncodedBase);
-                                // if(subjectIndex == 2){
-                                //     printf("revert position %d\n", i);
-                                // }
-                            }else{
-                                ; //consensus
+
                             }
-                        }else{
-                            ; //consensus
                         }
                     }
-                }else{
-                    ; //consensus
+                    #endif
                 }
 
             }else{
