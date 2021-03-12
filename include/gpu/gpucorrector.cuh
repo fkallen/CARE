@@ -3409,6 +3409,8 @@ namespace gpu{
                 stream
             ); CUERR;
 
+            cudaStreamSynchronize(stream); CUERR; //DEBUG
+
             callMsaCorrectCandidatesWithForestKernel(
                 d_corrected_candidates.get(),
                 d_editsPerCorrectedCandidate.get(),
