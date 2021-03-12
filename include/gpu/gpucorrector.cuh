@@ -2633,7 +2633,7 @@ namespace gpu{
                 d_numAnchors.get()
             ); CUERR;
 
-            callConstructAnchorResultsKernelAsync(
+            callConstructSequenceCorrectionResultsKernel(
                 d_editsPerCorrectedanchor.get(),
                 d_numEditsPerCorrectedanchor.get(),
                 getDoNotUseEditsValue(),
@@ -2643,12 +2643,12 @@ namespace gpu{
                 d_anchor_sequences_data.get(),
                 d_anchor_sequences_lengths.get(),
                 d_corrected_anchors.get(),
+                currentNumAnchors,
+                false,
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                editsPitchInBytes,
-                d_numAnchors.get(),
-                maxAnchors,
+                editsPitchInBytes,      
                 stream,
                 kernelLaunchHandle
             );
@@ -2830,7 +2830,7 @@ namespace gpu{
                 d_numAnchors.get()
             ); CUERR;
 
-            callConstructAnchorResultsKernelAsync(
+            callConstructSequenceCorrectionResultsKernel(
                 d_editsPerCorrectedanchor.get(),
                 d_numEditsPerCorrectedanchor.get(),
                 getDoNotUseEditsValue(),
@@ -2840,15 +2840,16 @@ namespace gpu{
                 d_anchor_sequences_data.get(),
                 d_anchor_sequences_lengths.get(),
                 d_corrected_anchors.get(),
+                currentNumAnchors,
+                false,
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
                 decodedSequencePitchInBytes,
-                editsPitchInBytes,
-                d_numAnchors.get(),
-                maxAnchors,
+                editsPitchInBytes,      
                 stream,
                 kernelLaunchHandle
             );
+
         }
         
 
@@ -3434,6 +3435,26 @@ namespace gpu{
                 stream,
                 kernelLaunchHandle,
                 d_candidate_read_ids.data()
+            );
+
+            callConstructSequenceCorrectionResultsKernel(
+                d_editsPerCorrectedCandidate.get(),
+                d_numEditsPerCorrectedCandidate.get(),
+                getDoNotUseEditsValue(),
+                d_indices_of_corrected_candidates.get(),
+                d_num_total_corrected_candidates.get(),
+                d_candidateContainsN.get(),
+                d_candidate_sequences_data.get(),
+                d_candidate_sequences_lengths.get(),
+                d_corrected_candidates.get(),
+                currentNumCandidates,
+                true,
+                maxNumEditsPerSequence,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes,      
+                stream,
+                kernelLaunchHandle
             );
             
         }

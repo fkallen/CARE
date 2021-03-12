@@ -22,7 +22,7 @@ enum class KernelId {
 	MSACorrectSubject,
 	MSACorrectCandidates,
     MSACorrectSubjectImplicit,
-    ConstructAnchorResults,
+    ConstructSequenceCorrectionResults,
     MSAConstruction,
     MSACandidateRefinementSingleIter,
     MSACandidateRefinementMultiIter,

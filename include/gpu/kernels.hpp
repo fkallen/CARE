@@ -357,25 +357,6 @@ void call_msaCorrectAnchorsKernel_async(
     KernelLaunchHandle& handle
 );
 
-void callConstructAnchorResultsKernelAsync(
-    TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
-    int* __restrict__ d_numEditsPerCorrectedSubject,
-    int doNotUseEditsValue,
-    const int* __restrict__ d_indicesOfCorrectedSubjects,
-    const int* __restrict__ d_numIndicesOfCorrectedSubjects,
-    const bool* __restrict__ d_readContainsN,
-    const unsigned int* __restrict__ d_uncorrectedSubjects,
-    const int* __restrict__ d_subjectLengths,
-    const char* __restrict__ d_correctedSubjects,
-    int numEditsThreshold,
-    size_t encodedSequencePitchInInts,
-    size_t decodedSequencePitchInBytes,
-    size_t editsPitchInBytes,
-    const int* d_numAnchors,
-    int maxNumAnchors,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
-);
 
 void callFlagCandidatesToBeCorrectedKernel_async(
     bool* d_candidateCanBeCorrected,
@@ -494,6 +475,27 @@ void callMsaCorrectCandidatesWithForestKernel(
     KernelLaunchHandle& handle,
     const read_number* candidateReadIds
 );
+
+void callConstructSequenceCorrectionResultsKernel(
+    TempCorrectedSequence::EncodedEdit* d_edits,
+    int* d_numEditsPerCorrection,
+    int doNotUseEditsValue,
+    const int* d_indicesOfUncorrectedSequences,
+    const int* d_numIndices,
+    const bool* d_readContainsN,
+    const unsigned int* d_uncorrectedEncodedSequences,
+    const int* d_sequenceLengths,
+    const char* d_correctedSequences,
+    const int numCorrectedSequencesUpperBound, // >= *d_numIndices. d_edits must be large enought to store the edits of this many sequences
+    bool isCompactCorrection,
+    int numEditsThreshold,
+    size_t encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,        
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
 
 
 void callConversionKernel2BitTo2BitHiLoNN(

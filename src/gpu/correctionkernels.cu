@@ -989,6 +989,8 @@ namespace gpu{
             //compare corrected candidate with uncorrected candidate, calculate edits   
 
             unsigned long long time4 = clock64();
+
+            #if 0
             
             
             const bool thisSequenceContainsN = d_candidateContainsN[candidateIndex];            
@@ -1130,7 +1132,7 @@ namespace gpu{
                 }
 
             }
-            
+            #endif
 
             tgroup.sync(); //sync before handling next candidate
 
@@ -2199,20 +2201,20 @@ namespace gpu{
     }
 
 
-
-
-
+    //if isCompactCorrection == true, compare originalsequence[d_indicesOfCorrectedSequences[i]] with correctedsequence[i] to compute edits
+    //if isCompactCorrection == false, compare originalsequence[d_indicesOfCorrectedSequences[i]] with correctedsequence[d_indicesOfCorrectedSequences[i]] to compute edits
+    template<bool isCompactCorrection>
     __global__
-    void constructAnchorResultsKernel(
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
-        int* __restrict__ d_numEditsPerCorrectedSubject,
+    void constructSequenceCorrectionResultsKernel(
+        TempCorrectedSequence::EncodedEdit* __restrict__ d_edits,
+        int* __restrict__ d_numEditsPerCorrection,
         int doNotUseEditsValue,
-        const int* __restrict__ d_indicesOfCorrectedSubjects,
-        const int* __restrict__ d_numIndicesOfCorrectedSubjects,
+        const int* __restrict__ d_indicesOfUncorrectedSequences,
+        const int* __restrict__ d_numIndices,
         const bool* __restrict__ d_readContainsN,
-        const unsigned int* __restrict__ d_uncorrectedSubjects,
-        const int* __restrict__ d_subjectLengths,
-        const char* __restrict__ d_correctedSubjects,
+        const unsigned int* __restrict__ d_uncorrectedEncodedSequences,
+        const int* __restrict__ d_sequenceLengths,
+        const char* __restrict__ d_correctedSequences,
         int numEditsThreshold,
         size_t encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
@@ -2223,24 +2225,26 @@ namespace gpu{
             return SequenceHelpers::decodeBase(enc);
         };
 
-        const int numIndicesToProcess = *d_numIndicesOfCorrectedSubjects;
+        const int numIndicesToProcess = *d_numIndices;
 
         for(int tid = threadIdx.x + blockIdx.x * blockDim.x; tid < numIndicesToProcess; tid += blockDim.x * gridDim.x){
-            const int indexOfCorrectedSubject = d_indicesOfCorrectedSubjects[tid];
+            const int indexOfUncorrected = d_indicesOfUncorrectedSequences[tid];
+            const int indexOfCorrected = isCompactCorrection ? tid : indexOfUncorrected;
+            const int indexOutput = tid;
 
-            const bool thisSequenceContainsN = d_readContainsN[indexOfCorrectedSubject];            
-            int* const myNumEdits = d_numEditsPerCorrectedSubject + tid;
+            const bool thisSequenceContainsN = d_readContainsN[indexOfUncorrected];            
+            int* const myNumEdits = d_numEditsPerCorrection + indexOutput;
 
             if(thisSequenceContainsN){
                 *myNumEdits = doNotUseEditsValue;
             }else{
-                const int length = d_subjectLengths[indexOfCorrectedSubject];
+                const int length = d_sequenceLengths[indexOfUncorrected];
 
                 //find correct pointers
-                const unsigned int* const encodedUncorrectedSequence = d_uncorrectedSubjects + encodedSequencePitchInInts * indexOfCorrectedSubject;
-                const char* const decodedCorrectedSequence = d_correctedSubjects + decodedSequencePitchInBytes * indexOfCorrectedSubject;
+                const unsigned int* const encodedUncorrectedSequence = d_uncorrectedEncodedSequences + encodedSequencePitchInInts * indexOfUncorrected;
+                const char* const decodedCorrectedSequence = d_correctedSequences + decodedSequencePitchInBytes * indexOfCorrected;
     
-                TempCorrectedSequence::EncodedEdit* const myEdits = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedSubject) + editsPitchInBytes * tid);
+                TempCorrectedSequence::EncodedEdit* const myEdits = (TempCorrectedSequence::EncodedEdit*)(((char*)d_edits) + editsPitchInBytes * tid);
 
                 const int maxEdits = min(length / 7, numEditsThreshold);
                 int edits = 0;
@@ -2703,119 +2707,74 @@ namespace gpu{
     }
 
 
-
-
-    void callConstructAnchorResultsKernelAsync(
-        TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
-        int* __restrict__ d_numEditsPerCorrectedSubject,
+    void callConstructSequenceCorrectionResultsKernel(
+        TempCorrectedSequence::EncodedEdit* d_edits,
+        int* d_numEditsPerCorrection,
         int doNotUseEditsValue,
-        const int* __restrict__ d_indicesOfCorrectedSubjects,
-        const int* __restrict__ d_numIndicesOfCorrectedSubjects,
-        const bool* __restrict__ d_readContainsN,
-        const unsigned int* __restrict__ d_uncorrectedSubjects,
-        const int* __restrict__ d_subjectLengths,
-        const char* __restrict__ d_correctedSubjects,
+        const int* d_indicesOfUncorrectedSequences,
+        const int* d_numIndices,
+        const bool* d_readContainsN,
+        const unsigned int* d_uncorrectedEncodedSequences,
+        const int* d_sequenceLengths,
+        const char* d_correctedSequences,
+        const int numCorrectedSequencesUpperBound, // >= *d_numIndices. d_edits must be large enought to store the edits of this many sequences
+        bool isCompactCorrection,
         int numEditsThreshold,
         size_t encodedSequencePitchInInts,
         size_t decodedSequencePitchInBytes,
-        size_t editsPitchInBytes,
-        const int* d_numAnchors,
-        int maxNumAnchors,
+        size_t editsPitchInBytes,        
         cudaStream_t stream,
         KernelLaunchHandle& handle
     ){
 
         cudaMemsetAsync(
-            d_editsPerCorrectedSubject, 
+            d_edits, 
             0, 
-            editsPitchInBytes * maxNumAnchors, 
+            editsPitchInBytes * numCorrectedSequencesUpperBound, 
             stream
         ); CUERR;
 
         const int blocksize = 128;
         const std::size_t smem = 0;
 
-        int max_blocks_per_device = 1;
+        dim3 block = blocksize;
+        dim3 grid = SDIV(numCorrectedSequencesUpperBound, block.x);
+        const std::size_t smem = 0;
 
-        KernelLaunchConfig kernelLaunchConfig;
-        kernelLaunchConfig.threads_per_block = blocksize;
-        kernelLaunchConfig.smem = smem;
-
-        auto iter = handle.kernelPropertiesMap.find(KernelId::ConstructAnchorResults);
-        if(iter == handle.kernelPropertiesMap.end()){
-
-            std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-            #define getProp(blocksize) { \
-                KernelLaunchConfig kernelLaunchConfig; \
-                kernelLaunchConfig.threads_per_block = (blocksize); \
-                kernelLaunchConfig.smem = 0; \
-                KernelProperties kernelProperties; \
-                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    constructAnchorResultsKernel, \
-                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                mymap[kernelLaunchConfig] = kernelProperties; \
-            }
-
-            getProp(32);
-            getProp(64);
-            getProp(96);
-            getProp(128);
-            getProp(160);
-            getProp(192);
-            getProp(224);
-            getProp(256);
-
-            const auto& kernelProperties = mymap[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-            handle.kernelPropertiesMap[KernelId::ConstructAnchorResults] = std::move(mymap);
-
-            #undef getProp
+        if(isCompactCorrection){
+            constructSequenceCorrectionResultsKernel<true><<<grid, block, smem, stream>>>(
+                d_edits,
+                d_numEditsPerCorrection,
+                doNotUseEditsValue,
+                d_indicesOfUncorrectedSequences,
+                d_numIndices,
+                d_readContainsN,
+                d_uncorrectedEncodedSequences,
+                d_sequenceLengths,
+                d_correctedSequences,
+                numEditsThreshold,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes
+            ); CUERR;
         }else{
-            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            constructSequenceCorrectionResultsKernel<false><<<grid, block, smem, stream>>>(
+                d_edits,
+                d_numEditsPerCorrection,
+                doNotUseEditsValue,
+                d_indicesOfUncorrectedSequences,
+                d_numIndices,
+                d_readContainsN,
+                d_uncorrectedEncodedSequences,
+                d_sequenceLengths,
+                d_correctedSequences,
+                numEditsThreshold,
+                encodedSequencePitchInInts,
+                decodedSequencePitchInBytes,
+                editsPitchInBytes
+            ); CUERR;
         }
-
-        dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(SDIV(maxNumAnchors, blocksize), max_blocks_per_device));
-
-        #define mycall(blocksize) constructAnchorResultsKernel \
-                                <<<grid, block, 0, stream>>>( \
-                                        d_editsPerCorrectedSubject, \
-                                        d_numEditsPerCorrectedSubject, \
-                                        doNotUseEditsValue, \
-                                        d_indicesOfCorrectedSubjects, \
-                                        d_numIndicesOfCorrectedSubjects, \
-                                        d_readContainsN, \
-                                        d_uncorrectedSubjects, \
-                                        d_subjectLengths, \
-                                        d_correctedSubjects, \
-                                        numEditsThreshold, \
-                                        encodedSequencePitchInInts, \
-                                        decodedSequencePitchInBytes, \
-                                        editsPitchInBytes); CUERR;
-
-        mycall();
-
-        // switch(blocksize){
-        //     case 32: mycall(32); break;
-        //     case 64: mycall(64); break;
-        //     case 96: mycall(96); break;
-        //     case 128: mycall(128); break;
-        //     case 160: mycall(160); break;
-        //     case 192: mycall(192); break;
-        //     case 224: mycall(224); break;
-        //     case 256: mycall(256); break;
-        //     default: mycall(256); break;
-        // }
-         #undef mycall
     }
-
-
-
-
 
 
 
