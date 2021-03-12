@@ -1465,7 +1465,9 @@ correct_gpu_impl(
     BackgroundThread outputThread;
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
-        //std::cerr << *tmp << "\n";
+        // if(tmp->readId == 38851){
+        // std::cerr << *tmp << "\n";
+        // }
         //useEditsCountMap[tmp.useEdits]++;
         //std::unique_lock<std::mutex> l(outputstreammutex);
         if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
@@ -1478,50 +1480,6 @@ correct_gpu_impl(
         }
     };
 
-    // auto processResults = [&](
-    //     std::vector<TempCorrectedSequence>&& anchorCorrections,
-    //     std::vector<TempCorrectedSequence>&& candidateCorrections,
-    //     std::vector<EncodedTempCorrectedSequence>&& encodedAnchorCorrections,
-    //     std::vector<EncodedTempCorrectedSequence>&& encodedCandidateCorrections
-    // ){
-    //     assert(anchorCorrections.size() == encodedAnchorCorrections.size());
-    //     assert(candidateCorrections.size() == encodedCandidateCorrections.size());
-
-    //     const int numA = encodedAnchorCorrections.size();
-    //     const int numC = encodedCandidateCorrections.size();
-
-    //     auto outputFunction = [
-    //         &,
-    //         anchorCorrections = std::move(anchorCorrections),
-    //         candidateCorrections = std::move(candidateCorrections),
-    //         encodedAnchorCorrections = std::move(encodedAnchorCorrections),
-    //         encodedCandidateCorrections = std::move(encodedCandidateCorrections)
-    //     ](){
-
-    //         const int numA = encodedAnchorCorrections.size();
-    //         const int numC = encodedCandidateCorrections.size();
-
-    //         for(int i = 0; i < numA; i++){
-    //             saveCorrectedSequence(
-    //                 &anchorCorrections[i], 
-    //                 &encodedAnchorCorrections[i]
-    //             );
-    //         }
-
-    //         for(int i = 0; i < numC; i++){
-    //             saveCorrectedSequence(
-    //                 &candidateCorrections[i], 
-    //                 &encodedCandidateCorrections[i]
-    //             );
-    //         }
-    //     };
-
-    //     if(numA > 0 || numC > 0){
-    //         outputThread.enqueue(std::move(outputFunction));
-    //         //outputFunction();
-    //     }
-    // };
-
     auto processResults = [&](
         CorrectionOutput&& correctionOutput
     ){
@@ -1530,6 +1488,9 @@ correct_gpu_impl(
 
         const int numA = correctionOutput.encodedAnchorCorrections.size();
         const int numC = correctionOutput.encodedCandidateCorrections.size();
+
+        // std::stable_sort(correctionOutput.encodedCandidateCorrections.begin(), correctionOutput.encodedCandidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
+        // std::stable_sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
 
         auto outputFunction = [
             &,
@@ -1568,6 +1529,29 @@ correct_gpu_impl(
     //std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
     //ThreadPool threadPool(threadPoolSize);
 
+    
+
+    ClfAgent clfAgent_(correctionOptions, fileOptions);
+
+    std::vector<GpuForest> anchorForests(deviceIds.size());
+    std::vector<GpuForest> candidateForests(deviceIds.size());
+
+    for(int i = 0; i < int(deviceIds.size()); i++){
+        cub::SwitchDevice sd{deviceIds[i]};
+        if(correctionOptions.correctionType == CorrectionType::Forest){
+            anchorForests[i] = std::move(GpuForest(*clfAgent_.classifier_anchor, deviceIds[i]));
+        }
+
+        if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+            candidateForests[i] = std::move(GpuForest(*clfAgent_.classifier_cands, deviceIds[i]));
+        }
+    }
+
+
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(200000u, readStorage.getNumberOfReads()));
+
+
     auto showProgress = [&](std::int64_t totalCount, int seconds){
         if(runtimeOptions.showProgress){
 
@@ -1596,26 +1580,6 @@ correct_gpu_impl(
         //std::cerr << "Add progress " << size << "\n";
         progressThread.addProgress(size);
     };
-
-    ClfAgent clfAgent_(correctionOptions, fileOptions);
-
-    std::vector<GpuForest> anchorForests(deviceIds.size());
-    std::vector<GpuForest> candidateForests(deviceIds.size());
-
-    for(int i = 0; i < int(deviceIds.size()); i++){
-        cub::SwitchDevice sd{deviceIds[i]};
-        if(correctionOptions.correctionType == CorrectionType::Forest){
-            anchorForests[i] = std::move(GpuForest(*clfAgent_.classifier_anchor, deviceIds[i]));
-        }
-
-        if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
-            candidateForests[i] = std::move(GpuForest(*clfAgent_.classifier_cands, deviceIds[i]));
-        }
-    }
-
-
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(100u, readStorage.getNumberOfReads()));
 
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
@@ -1813,7 +1777,7 @@ correct_gpu_impl(
             if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
-                #if 0
+                #if 1
                 pipelineConfig.numOutputConstructors = 0; //always 0
 
                 pipelineConfig.numCorrectors = 1;

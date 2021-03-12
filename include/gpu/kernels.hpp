@@ -449,6 +449,10 @@ void callMsaCorrectAnchorsWithForestKernel(
 );
 
 void callMsaCorrectCandidatesWithForestKernel(
+    int* d_forestOpCandidateIndices,
+    int* d_forestOpPositionsInCandidates,
+    int* d_numForestOperationsPerCandidate,
+    int* d_numForestOperations,
     char* d_correctedCandidates,
     TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
     int* d_numEditsPerCorrectedCandidate,

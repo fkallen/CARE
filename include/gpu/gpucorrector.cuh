@@ -1725,6 +1725,16 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
+            // cudaMemcpyAsync(
+            //     h_num_indices.get(),
+            //     d_num_indices.get(),
+            //     sizeof(int),
+            //     D2H,
+            //     stream
+            // );
+
+            //cudaEventRecord(events[1], stream); CUERR;
+
             #else
 
             cudaMemsetAsync(
@@ -3409,9 +3419,29 @@ namespace gpu{
                 stream
             ); CUERR;
 
-            cudaStreamSynchronize(stream); CUERR; //DEBUG
+            // cudaMemcpyAsync(
+            //     h_num_total_corrected_candidates.get(),
+            //     d_num_total_corrected_candidates.get(),
+            //     sizeof(int),
+            //     D2H,
+            //     stream
+            // ); CUERR;
+
+            // cudaStreamSynchronize(stream); CUERR; //DEBUG
+
+            int* d_forestOpCandidateIndices = nullptr;
+            int* d_forestOpPositionsInCandidates = nullptr;
+            int* d_numForestOperationsPerCandidate = d_indices_tmp.get();
+            int* d_numForestOperations = d_num_indices_tmp.get();
+
+            //cudaEventSynchronize(events[1]); CUERR; //wait for h_num_indices after alignment
+
 
             callMsaCorrectCandidatesWithForestKernel(
+                d_forestOpCandidateIndices,
+                d_forestOpPositionsInCandidates,
+                d_numForestOperationsPerCandidate,
+                d_numForestOperations,
                 d_corrected_candidates.get(),
                 d_editsPerCorrectedCandidate.get(),
                 d_numEditsPerCorrectedCandidate.get(),              
@@ -3427,7 +3457,7 @@ namespace gpu{
                 d_indices_of_corrected_candidates.get(),
                 d_num_total_corrected_candidates.get(),
                 d_anchorIndicesOfCandidates.get(),
-                currentNumCandidates,
+                currentNumCandidates, //*h_num_total_corrected_candidates,
                 getDoNotUseEditsValue(),
                 maxNumEditsPerSequence,
                 encodedSequencePitchInInts,
@@ -3468,7 +3498,7 @@ namespace gpu{
     public: //private:
 
         int deviceId;
-        std::array<CudaEvent, 1> events;
+        std::array<CudaEvent, 2> events;
         CudaStream backgroundStream;
         CudaEvent previousBatchFinishedEvent;
 

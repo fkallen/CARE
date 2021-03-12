@@ -1066,9 +1066,84 @@ namespace gpu{
         }
     }
 
+    __global__
+    void countNumberOfForestPositionsForCorrectedCandidates(
+        int* __restrict__ numForestOperationsPerCandidate,
+        int* __restrict__ numForestOperations, //must be 0 initialized
+        const char* __restrict__ correctedCandidates,
+        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,       
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes
+    ){
+
+        auto to_nuc = [](std::uint8_t c){
+            return SequenceHelpers::decodeBase(c);
+        };
+
+        __shared__ int sharednum;
+
+        int totalNumForestOps = 0;
+
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        for(int id = blockIdx.x; id < loopEnd; id += gridDim.x){
+
+            if(threadIdx.x == 0){
+                sharednum = 0;
+            }
+            __syncthreads();
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int destinationIndex = id;
+
+            const char* const my_corrected_candidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+
+            const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+            const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                        + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+            for(int i = 0; i < candidate_length; i += 1){
+                const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                    encUncorrectedCandidate,
+                    candidate_length,
+                    i
+                );
+
+                char origBase = to_nuc(origEncodedBase);
+                char consensusBase = my_corrected_candidate[i];
+
+                if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                    origBase = SequenceHelpers::reverseComplementBaseDecoded(origBase);
+                    consensusBase = SequenceHelpers::reverseComplementBaseDecoded(consensusBase);
+                }
+                if(origBase != consensusBase){
+                    helpers::atomicAggInc(&sharednum);
+                }
+            }
+
+            __syncthreads();
+
+            if(threadIdx.x == 0){
+                numForestOperationsPerCandidate[destinationIndex] = sharednum;
+                totalNumForestOps += sharednum;
+            }
+            __syncthreads();
+        }
+
+        if(threadIdx.x == 0){
+            atomicAdd(numForestOperations, totalNumForestOps);
+        }
+    }
+
     template<int BLOCKSIZE, int groupsize, class CandidateExtractor, class GpuClf>
     __global__
-    void applyForestToCorrectedCandidates(
+    void applyForestToCorrectedCandidatesKernel(
         char* __restrict__ correctedCandidates,
         GPUMultiMSA multiMSA,
         GpuClf gpuForest,
@@ -1252,6 +1327,310 @@ namespace gpu{
             
             tgroup.sync();
         }
+    }
+
+    template<class Iter>
+    struct StridedIterator{
+        using value_type = typename std::iterator_traits<Iter>::value_type;
+
+        Iter data;
+        int stride;
+
+        HOSTDEVICEQUALIFIER
+        StridedIterator(Iter data_, int stride_) 
+            : data(data_), stride(stride_){
+        }
+
+        HOSTDEVICEQUALIFIER
+        value_type& operator*(){
+            return *data;
+        }
+
+        HOSTDEVICEQUALIFIER
+        const value_type& operator*() const{
+            return *data;
+        }
+
+        HOSTDEVICEQUALIFIER
+        StridedIterator operator+(int i) const{
+            return StridedIterator{data + i * stride, stride};
+        }
+    };
+
+
+    template<int BLOCKSIZE, class CandidateExtractor, class GpuClf>
+    __global__
+    void applyForestToCorrectedCandidatesWithBlockSelectionKernel(
+        char* __restrict__ correctedCandidates,
+        GPUMultiMSA multiMSA,
+        GpuClf gpuForest,
+        float forestThreshold,
+        float estimatedCoverage,
+        const int* __restrict__ shifts,
+        const BestAlignment_t* __restrict__ bestAlignmentFlags,
+        const unsigned int* __restrict__ candidateSequencesData,
+        const int* __restrict__ candidateSequencesLengths,
+        const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+        const int* __restrict__ numCandidatesToBeCorrected,
+        const int* __restrict__ anchorIndicesOfCandidates,         
+        int encodedSequencePitchInInts,
+        size_t decodedSequencePitchInBytes,
+        int maxPositionsToProcess
+    ){
+
+        auto tgroup = cg::this_thread_block();
+
+        auto to_nuc = [](std::uint8_t c){
+            return SequenceHelpers::decodeBase(c);
+        };
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceInt::TempStorage intreduce;
+            typename BlockReduceFloat::TempStorage floatreduce;
+        } temp_storage;
+        __shared__ GpuMSAProperties sharedMsaProperties;
+        __shared__ float sharedFeatures[BLOCKSIZE * CandidateExtractor::numFeatures()];
+        //__shared__ ExtractCandidateInputData sharedExtractInput[groupsPerBlock];
+
+        struct Pos{
+            char origBase;
+            char consensusBase;
+            std::uint16_t position;
+            int id;
+        };
+
+        static_assert(sizeof(Pos) == sizeof(int2));
+
+        extern __shared__ int2 externalsharedmem[]; // >= maxSequenceLength  + blocksize  
+
+        Pos* const sharedPositionsToProcess = (Pos*)externalsharedmem;
+
+        __shared__ int sharedNumStoredPositions;
+
+        auto groupReduceFloatSum = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceFloatMin = [&](float f){
+            const float result = BlockReduceFloat(temp_storage.floatreduce).Reduce(f, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMin = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Min{});
+            __syncthreads();
+            return result;
+        };
+
+        auto groupReduceIntMax = [&](int i){
+            const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Max{});
+            __syncthreads();
+            return result;
+        };
+
+        
+
+        //StridedIterator<float*> myFeatures{&sharedFeatures[threadIdx.x], BLOCKSIZE};
+
+        auto processSharedPositions = [&](){
+            const int numIters = SDIV(sharedNumStoredPositions, BLOCKSIZE);
+                
+            int previousId = -1;
+
+            for(int iter = 0; iter < numIters; iter++){
+
+                const int first = iter * BLOCKSIZE;
+                const int last = min((iter+1) * BLOCKSIZE, sharedNumStoredPositions);
+                const int num = last - first;
+
+                GpuMSAProperties myMsaProperties;
+
+                //use block to compute msa properties of candidate of sharedPositionsToProcess[positionIndex], and store it in thread with threadIdx.x == positionIndex
+                for(int b = 0; b < num; b++){
+                    const int positionIndex = first + b;
+                    const int id = sharedPositionsToProcess[positionIndex].id;
+                    if(id == previousId){
+                        if(tgroup.thread_rank() == positionIndex){
+                            myMsaProperties = sharedMsaProperties;
+                        }
+                    }else{
+                        tgroup.sync();
+                        //assert(*numCandidatesToBeCorrected > sharedPositionsToProcess[positionIndex].id);   
+                        const int candidateIndex2 = candidateIndicesOfCandidatesToBeCorrected[sharedPositionsToProcess[positionIndex].id];
+                        const int subjectIndex2 = anchorIndicesOfCandidates[candidateIndex2];
+                        const int candidate_length2 = candidateSequencesLengths[candidateIndex2];
+
+                        const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex2);
+
+                        const int shift = shifts[candidateIndex2];
+                        const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
+                        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+                        const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length2;                        
+
+                        GpuMSAProperties msaProperties = msa.getMSAProperties(
+                            tgroup,
+                            groupReduceFloatSum,
+                            groupReduceFloatMin,
+                            groupReduceIntMin,
+                            groupReduceIntMax,
+                            queryColumnsBegin_incl,
+                            queryColumnsEnd_excl
+                        );
+            
+                        if(tgroup.thread_rank() == 0){                        
+                            sharedMsaProperties = msaProperties;
+                        }
+                        tgroup.sync(); 
+                        if(tgroup.thread_rank() == positionIndex){
+                            myMsaProperties = sharedMsaProperties;
+                        }
+                        
+                        previousId = id;
+                    }
+                }
+
+                tgroup.sync();
+
+                //process the positions using the computed msa properties
+                for(int b = threadIdx.x; b < BLOCKSIZE; b += blockDim.x){
+                    const int positionIndex = first + b;
+                    if(positionIndex < last){ 
+                        const int candidateIndex2 = candidateIndicesOfCandidatesToBeCorrected[sharedPositionsToProcess[positionIndex].id];
+                        const int subjectIndex2 = anchorIndicesOfCandidates[candidateIndex2];
+                        const int destinationIndex2 = sharedPositionsToProcess[positionIndex].id;
+                        const int candidate_length2 = candidateSequencesLengths[candidateIndex2];
+
+                        const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex2);
+            
+                        char* const my_corrected_candidate = correctedCandidates + destinationIndex2 * decodedSequencePitchInBytes;
+
+                        const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex2];
+
+                        const int shift = shifts[candidateIndex2];
+                        const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
+                        const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
+                        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+                        const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length2;
+
+                        const int positionInCandidate = sharedPositionsToProcess[positionIndex].position;
+                        //assert(0 <= positionInCandidate && positionInCandidate < candidate_length2);
+                        const int msaPos = bestAlignmentFlag == BestAlignment_t::Forward ? 
+                            queryColumnsBegin_incl + positionInCandidate : queryColumnsEnd_excl - 1 - positionInCandidate;
+
+                        //assert(msa.columnProperties->firstColumn_incl <= msaPos && msaPos < msa.columnProperties->lastColumn_excl);
+
+                        ExtractCandidateInputData extractorInput;
+
+                        extractorInput.origBase = sharedPositionsToProcess[positionIndex].origBase;
+                        extractorInput.consensusBase = sharedPositionsToProcess[positionIndex].consensusBase;
+                        extractorInput.estimatedCoverage = estimatedCoverage;
+                        extractorInput.msaPos = msaPos;
+                        extractorInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
+                        extractorInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
+                        extractorInput.queryColumnsBegin_incl = queryColumnsBegin_incl;
+                        extractorInput.queryColumnsEnd_excl = queryColumnsEnd_excl;
+                        extractorInput.msaProperties = myMsaProperties;
+                        extractorInput.msa = msa;
+
+                        float myFeatures[CandidateExtractor::numFeatures()];
+
+                        CandidateExtractor extractFeatures{};
+                        extractFeatures(&myFeatures[0], extractorInput);
+
+                        const bool useConsensus = gpuForest.decide(&myFeatures[0], forestThreshold);
+
+                        if(!useConsensus){
+                            char oldBase = extractorInput.origBase;
+                            if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                                oldBase = SequenceHelpers::reverseComplementBaseDecoded(oldBase);
+                            }
+                            my_corrected_candidate[positionInCandidate] = oldBase;
+                        }
+                    }
+                }
+                __syncthreads();
+            }
+        };
+        
+
+        const int loopEnd = *numCandidatesToBeCorrected;
+
+        if(threadIdx.x == 0){
+            sharedNumStoredPositions = 0;
+        }
+
+        for(int id = blockIdx.x; id < loopEnd; id += blockDim.x){
+            __syncthreads();
+
+            const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+            const int candidate_length = candidateSequencesLengths[candidateIndex];
+
+            if(candidate_length + sharedNumStoredPositions <= maxPositionsToProcess){ 
+
+                const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+                            + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+                char* const my_corrected_candidate = correctedCandidates + id * decodedSequencePitchInBytes;
+
+                //find positions which should be processed with forest, and save them to shared memory
+                for(int i = threadIdx.x; i < candidate_length; i += blockDim.x){
+                    const std::uint8_t origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+                        encUncorrectedCandidate,
+                        candidate_length,
+                        i
+                    );
+
+                    char origBase = to_nuc(origEncodedBase);
+                    char consensusBase = my_corrected_candidate[i];
+
+                    if(origBase != consensusBase){
+                        const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+                        if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                            origBase = SequenceHelpers::reverseComplementBaseDecoded(origBase);
+                            consensusBase = SequenceHelpers::reverseComplementBaseDecoded(consensusBase);
+                        }
+
+                        auto g = cg::coalesced_threads();
+
+                        int currentNumPositions = 0;
+                        if(g.thread_rank() == 0){
+                            currentNumPositions = atomicAdd(&sharedNumStoredPositions, g.size());
+                        }
+                        currentNumPositions = g.shfl(currentNumPositions, 0);
+        
+                        const int outputPos = g.thread_rank() + currentNumPositions;
+                        const auto data = Pos{
+                            origBase,
+                            consensusBase,
+                            std::uint16_t(i),
+                            id
+                        };
+                        sharedPositionsToProcess[outputPos] = data;
+                    }
+                }
+                //__syncthreads();
+            }else{
+                //process stored positions from shared memory  
+
+                processSharedPositions();
+
+                __syncthreads();
+
+                if(threadIdx.x == 0){
+                    sharedNumStoredPositions = 0;
+                }
+            }
+        }
+
+        //process leftovers
+        processSharedPositions();
     }
 
 
@@ -1601,6 +1980,10 @@ namespace gpu{
 
 
     void callMsaCorrectCandidatesWithForestKernel(
+        int* d_forestOpCandidateIndices,
+        int* d_forestOpPositionsInCandidates,
+        int* d_numForestOperationsPerCandidate,
+        int* d_numForestOperations,
         char* d_correctedCandidates,
         TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
         int* d_numEditsPerCorrectedCandidate,
@@ -1644,7 +2027,7 @@ namespace gpu{
             return smem;
         };
 
-        #if 1
+        #if 0
         setCorrectedCandidatesToConsensusWithOrientation<<<1024, 128, SDIV(maximum_sequence_length, sizeof(int)) * sizeof(int), stream>>>(
             d_correctedCandidates,
             multiMSA,
@@ -1657,10 +2040,36 @@ namespace gpu{
             decodedSequencePitchInBytes
         );
 
+        // cudaMemsetAsync(d_numForestOperations, 0, sizeof(int)); CUERR;
+
+        // countNumberOfForestPositionsForCorrectedCandidates<<<numCandidates, 128, 0, stream>>>(
+        //     d_numForestOperationsPerCandidate,
+        //     d_numForestOperations,
+        //     d_correctedCandidates,
+        //     d_bestAlignmentFlags,
+        //     d_candidateSequencesData,
+        //     d_candidateSequencesLengths,
+        //     d_candidateIndicesOfCandidatesToBeCorrected,
+        //     d_numCandidatesToBeCorrected,     
+        //     encodedSequencePitchInInts,
+        //     decodedSequencePitchInBytes
+        // );
+
+        // int numForestOperations = 0;
+        // cudaMemcpyAsync(
+        //     &numForestOperations,
+        //     d_numForestOperations,
+        //     sizeof(int),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+        // cudaStreamSynchronize(stream); CUERR;
+        // std::cerr << numForestOperations << "\n";
+
         dim3 block = blocksize;
         dim3 grid = 270;
 
-        applyForestToCorrectedCandidates<blocksize, groupsize, cands_extractor><<<grid, block, treePointersPitchInInts * sizeof(int), stream>>>(
+        applyForestToCorrectedCandidatesKernel<blocksize, groupsize, cands_extractor><<<grid, block, treePointersPitchInInts * sizeof(int), stream>>>(
             d_correctedCandidates,
             multiMSA,
             gpuForest,
@@ -1676,6 +2085,26 @@ namespace gpu{
             encodedSequencePitchInInts,
             decodedSequencePitchInBytes
         );
+
+        // const int maxPositionsToProcess = maximum_sequence_length + blocksize;
+
+        // applyForestToCorrectedCandidatesWithBlockSelectionKernel<blocksize, cands_extractor><<<480, block, maxPositionsToProcess * sizeof(int2), stream>>>(
+        //     d_correctedCandidates,
+        //     multiMSA,
+        //     gpuForest,
+        //     forestThreshold,
+        //     estimatedCoverage,
+        //     d_shifts,
+        //     d_bestAlignmentFlags,
+        //     d_candidateSequencesData,
+        //     d_candidateSequencesLengths,
+        //     d_candidateIndicesOfCandidatesToBeCorrected,
+        //     d_numCandidatesToBeCorrected,
+        //     d_anchorIndicesOfCandidates,         
+        //     encodedSequencePitchInInts,
+        //     decodedSequencePitchInBytes,
+        //     maxPositionsToProcess
+        // );
 
         #else
         const std::size_t smem = calculateSmemUsage(blocksize);
