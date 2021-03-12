@@ -35,8 +35,10 @@ struct GpuForest {
     };
 
     struct Clf{
+        using NodeType = Node;
+
         int numTrees;
-        Node** data;
+        const Node** data;
 
         template<class Iter>
         HOSTDEVICEQUALIFIER
@@ -180,7 +182,7 @@ public:
     }
 
     Clf getClf() const{
-        return Clf{numTrees, d_data};
+        return Clf{numTrees, (const Node**)d_data};
     }
 
 };

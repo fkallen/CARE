@@ -756,16 +756,27 @@ namespace gpu{
         };
 
         const std::size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
+        const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
 
-        char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * groupIdInBlock);
+        const typename GpuClf::NodeType** sharedForestNodes = (const typename GpuClf::NodeType**)dynamicsmem;
 
-
+        char* const shared_correctedCandidate = (char*)(dynamicsmem + treePointersPitchInInts + dynamicsmemSequencePitchInInts * groupIdInBlock);
 
         TempCorrectedSequence::EncodedEdit* const shared_Edits 
-            = (TempCorrectedSequence::EncodedEdit*)((dynamicsmem + dynamicsmemSequencePitchInInts * groupsPerBlock) 
+            = (TempCorrectedSequence::EncodedEdit*)((dynamicsmem + treePointersPitchInInts + dynamicsmemSequencePitchInInts * groupsPerBlock) 
                 + smemPitchEditsInInts * groupIdInBlock);
 
         const int loopEnd = *numCandidatesToBeCorrected;
+
+        GpuClf localForest;
+        localForest.numTrees = gpuForest.numTrees;
+        localForest.data = sharedForestNodes;
+
+        for(int i = threadIdx.x; i < localForest.numTrees; i += BLOCKSIZE){
+            localForest.data[i] = gpuForest.data[i];
+        }
+        
+        __syncthreads();
 
         for(int id = groupId;
                 id < loopEnd;
@@ -905,8 +916,9 @@ namespace gpu{
 
                     tgroup.sync();
 
-                    //only thread 0 has valid result                   
-                    const bool useConsensus = gpuForest.decide(tgroup, &sharedFeatures[groupIdInBlock][0], forestThreshold, groupReduceFloatSum);
+                    //only thread 0 has valid result
+                    //localForest gpuForest
+                    const bool useConsensus = localForest.decide(tgroup, &sharedFeatures[groupIdInBlock][0], forestThreshold, groupReduceFloatSum);
 
                     if(tgroup.thread_rank() == 0){
                         if(!useConsensus){
@@ -1133,6 +1145,352 @@ namespace gpu{
 
 
 
+
+    // template<int BLOCKSIZE, class CandidateExtractor, class GpuClf>
+    // __global__
+    // void msaCorrectCandidatesWithForestOneBlockPerCandKernel(
+    //     char* __restrict__ correctedCandidates,
+    //     TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedCandidate,
+    //     int* __restrict__ d_numEditsPerCorrectedCandidate,
+    //     GPUMultiMSA multiMSA,
+    //     GpuClf gpuForest,
+    //     float forestThreshold,
+    //     float estimatedCoverage,
+    //     const int* __restrict__ shifts,
+    //     const BestAlignment_t* __restrict__ bestAlignmentFlags,
+    //     const unsigned int* __restrict__ candidateSequencesData,
+    //     const int* __restrict__ candidateSequencesLengths,
+    //     const bool* __restrict__ d_candidateContainsN,
+    //     const int* __restrict__ candidateIndicesOfCandidatesToBeCorrected,
+    //     const int* __restrict__ numCandidatesToBeCorrected,
+    //     const int* __restrict__ anchorIndicesOfCandidates,
+    //     int doNotUseEditsValue,
+    //     int numEditsThreshold,            
+    //     int encodedSequencePitchInInts,
+    //     size_t decodedSequencePitchInBytes,
+    //     size_t editsPitchInBytes,
+    //     size_t dynamicsmemSequencePitchInInts,
+    //     const read_number* candidateReadIds
+    // ){
+
+
+    //     auto tgroup = cg::this_thread_block();
+
+    //     using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+    //     using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+
+    //     __shared__ union {
+    //         typename BlockReduceInt::TempStorage intreduce;
+    //         typename BlockReduceFloat::TempStorage floatreduce;
+    //         GpuMSAProperties msaProperties;
+    //     } temp_storage; 
+
+
+    //     __shared__ float sharedFeatures[CandidateExtractor::numFeatures()];
+    //     __shared__ ExtractCandidateInputData sharedExtractInput;    
+    //     __shared__ int shared_numEditsOfCandidate;
+
+    //     extern __shared__ int dynamicsmem[]; // for sequences
+
+
+    //     const int numGroups = (gridDim.x * blockDim.x) / BLOCKSIZE;
+    //     const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / BLOCKSIZE;
+
+    //     auto to_nuc = [](std::uint8_t c){
+    //         return SequenceHelpers::decodeBase(c);
+    //     };
+
+    //     auto groupReduceFloatSum = [&](float f){
+    //         const float result = BlockReduceFloat(temp_storage.floatreduce).Sum(f);
+    //         __syncthreads();
+    //         return result;
+    //     };
+
+    //     auto groupReduceFloatMin = [&](float f){
+    //         const float result = BlockReduceFloat(temp_storage.floatreduce).Reduce(f, cub::Min{});
+    //         __syncthreads();
+    //         return result;
+    //     };
+
+    //     auto groupReduceIntMin = [&](int i){
+    //         const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Min{});
+    //         __syncthreads();
+    //         return result;
+    //     };
+
+    //     auto groupReduceIntMax = [&](int i){
+    //         const int result = BlockReduceInt(temp_storage.intreduce).Reduce(i, cub::Max{});
+    //         __syncthreads();
+    //         return result;
+    //     };
+
+    //     const std::size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
+
+    //     char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemSequencePitchInInts * 0);
+
+
+
+    //     TempCorrectedSequence::EncodedEdit* const shared_Edits 
+    //         = (TempCorrectedSequence::EncodedEdit*)((dynamicsmem + dynamicsmemSequencePitchInInts * 1) 
+    //             + smemPitchEditsInInts * 0);
+
+    //     const int loopEnd = *numCandidatesToBeCorrected;
+
+    //     for(int id = groupId;
+    //             id < loopEnd;
+    //             id += numGroups){
+
+    //         const int candidateIndex = candidateIndicesOfCandidatesToBeCorrected[id];
+    //         const int subjectIndex = anchorIndicesOfCandidates[candidateIndex];
+    //         const int destinationIndex = id;
+
+    //         const GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
+
+    //         char* const my_corrected_candidate = correctedCandidates + destinationIndex * decodedSequencePitchInBytes;
+    //         const int candidate_length = candidateSequencesLengths[candidateIndex];
+
+    //         const int shift = shifts[candidateIndex];
+    //         const int subjectColumnsBegin_incl = msa.columnProperties->subjectColumnsBegin_incl;
+    //         const int subjectColumnsEnd_excl = msa.columnProperties->subjectColumnsEnd_excl;
+    //         const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+    //         const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
+
+    //         unsigned long long time1 = clock64();
+
+    //         //const int candidateReadId = candidateReadIds[candidateIndex];
+
+    //         //only first thread in group returns valid properties
+    //         GpuMSAProperties msaProperties = msa.getMSAProperties(
+    //             tgroup,
+    //             groupReduceFloatSum,
+    //             groupReduceFloatMin,
+    //             groupReduceIntMin,
+    //             groupReduceIntMax,
+    //             queryColumnsBegin_incl,
+    //             queryColumnsEnd_excl
+    //         );
+
+    //         if(tgroup.thread_rank() == 0){                        
+    //             shared_numEditsOfCandidate = 0;
+    //             temp_storage.msaProperties = msaProperties;
+    //         }
+    //         tgroup.sync(); 
+
+    //         msaProperties = temp_storage.msaProperties;
+
+    //         const int copyposbegin = queryColumnsBegin_incl;
+    //         const int copyposend = queryColumnsEnd_excl;
+    //         assert(copyposend - copyposbegin == candidate_length);
+            
+    //         for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+    //             shared_correctedCandidate[i - queryColumnsBegin_incl] = to_nuc(msa.consensus[i]);
+    //         }
+    //         tgroup.sync();
+
+    //         const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
+
+    //         const unsigned int* const encUncorrectedCandidate = candidateSequencesData 
+    //                     + std::size_t(candidateIndex) * encodedSequencePitchInInts;
+
+    //         for(int i = 0; i < candidate_length; i += 1){
+    //             std::uint8_t origEncodedBase = 0;
+
+    //             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+    //                 origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+    //                     encUncorrectedCandidate,
+    //                     candidate_length,
+    //                     candidate_length - i - 1
+    //                 );
+    //                 origEncodedBase = SequenceHelpers::complementBase2Bit(origEncodedBase);
+    //             }else{
+    //                 origEncodedBase = SequenceHelpers::getEncodedNuc2Bit(
+    //                     encUncorrectedCandidate,
+    //                     candidate_length,
+    //                     i
+    //                 );
+    //             }
+
+    //             const char origBase = to_nuc(origEncodedBase);
+    //             const char consensusBase = shared_correctedCandidate[i];
+    //             if(origBase != consensusBase){
+
+    //                 const int msaPos = queryColumnsBegin_incl + i;
+
+    //                 if(tgroup.thread_rank() == 0){
+    //                     ExtractCandidateInputData& extractorInput = sharedExtractInput;
+
+    //                     extractorInput.origBase = origBase;
+    //                     extractorInput.consensusBase = consensusBase;
+    //                     extractorInput.estimatedCoverage = estimatedCoverage;
+    //                     extractorInput.msaPos = msaPos;
+    //                     extractorInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
+    //                     extractorInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
+    //                     extractorInput.queryColumnsBegin_incl = queryColumnsBegin_incl;
+    //                     extractorInput.queryColumnsEnd_excl = queryColumnsEnd_excl;
+    //                     extractorInput.msaProperties = msaProperties;
+    //                     extractorInput.msa = msa;
+
+    //                     CandidateExtractor extractFeatures{};
+    //                     extractFeatures(&sharedFeatures[0], extractorInput);
+    //                 }
+
+    //                 tgroup.sync();
+
+    //                 //only thread 0 has valid result                   
+    //                 const bool useConsensus = gpuForest.decide(tgroup, &sharedFeatures[0], forestThreshold, groupReduceFloatSum);
+
+    //                 if(tgroup.thread_rank() == 0){
+    //                     if(!useConsensus){
+    //                         shared_correctedCandidate[i] = origBase;
+    //                     }
+    //                 }
+
+    //                 tgroup.sync();
+    //             }
+    //         }
+            
+
+    //         tgroup.sync();
+
+    //         unsigned long long time2 = clock64();
+
+    //         //the forward strand will be returned -> make reverse complement again
+    //         if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+    //             for(int i = tgroup.thread_rank(); i < candidate_length / 2; i += tgroup.size()) {
+    //                 const char l = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
+    //                 const char r = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
+    //                 shared_correctedCandidate[i] = r;
+    //                 shared_correctedCandidate[candidate_length - i - 1] = l;
+    //             }
+    //             if(tgroup.thread_rank() == 0 && candidate_length % 2 == 1){
+    //                 shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
+    //             }
+    //             tgroup.sync();
+    //         }else{
+    //             ; //orientation ok
+    //         }
+
+    //         unsigned long long time3 = clock64();
+
+    //         // if(candidateReadId == 38851){
+    //         //     if(tgroup.thread_rank() == 0){
+    //         //         printf("correctedCandidate:\n");
+    //         //         for(int i = 0; i < candidate_length; i++){
+    //         //             printf("%c", shared_correctedCandidate[i]);
+    //         //         }
+    //         //         printf("\n");
+    //         //     }
+
+    //         //     tgroup.sync();
+    //         // }
+            
+    //         //copy corrected sequence from smem to global output
+    //         const int fullInts1 = candidate_length / sizeof(int);
+
+    //         for(int i = tgroup.thread_rank(); i < fullInts1; i += tgroup.size()) {
+    //             ((int*)my_corrected_candidate)[i] = ((int*)shared_correctedCandidate)[i];
+    //         }
+
+    //         for(int i = tgroup.thread_rank(); i < candidate_length - fullInts1 * sizeof(int); i += tgroup.size()) {
+    //             my_corrected_candidate[fullInts1 * sizeof(int) + i] 
+    //                 = shared_correctedCandidate[fullInts1 * sizeof(int) + i];
+    //         }       
+
+    //         //compare corrected candidate with uncorrected candidate, calculate edits   
+
+    //         unsigned long long time4 = clock64();
+            
+            
+    //         const bool thisSequenceContainsN = d_candidateContainsN[candidateIndex];            
+
+    //         if(thisSequenceContainsN){
+    //             if(tgroup.thread_rank() == 0){
+    //                 d_numEditsPerCorrectedCandidate[destinationIndex] = doNotUseEditsValue;
+    //             }
+    //         }else{
+    //             const int maxEdits = min(candidate_length / 7, numEditsThreshold);
+
+    //             auto countAndSaveEditInSmem = [&](const int posInSequence, const char correctedNuc){
+    //                 cg::coalesced_group g = cg::coalesced_threads();
+                                
+    //                 int currentNumEdits = 0;
+    //                 if(g.thread_rank() == 0){
+    //                     currentNumEdits = atomicAdd(&shared_numEditsOfCandidate, g.size());
+    //                 }
+    //                 currentNumEdits = g.shfl(currentNumEdits, 0);
+    
+    //                 if(currentNumEdits + g.size() <= maxEdits){
+    //                     const int myEditOutputPos = g.thread_rank() + currentNumEdits;
+    //                     if(myEditOutputPos < maxEdits){
+    //                         const auto theEdit = TempCorrectedSequence::EncodedEdit{posInSequence, correctedNuc};
+    //                         shared_Edits[myEditOutputPos] = theEdit;
+    //                     }
+    //                 }
+    //             };
+
+    //             //process remaining positions
+    //             for(int posInSequence = tgroup.thread_rank(); posInSequence < candidate_length; posInSequence += tgroup.size()){
+
+    //                 const std::uint8_t encodedUncorrectedNuc = SequenceHelpers::getEncodedNuc2Bit(
+    //                     encUncorrectedCandidate,
+    //                     candidate_length,
+    //                     posInSequence
+    //                 );
+    //                 const char correctedNuc = shared_correctedCandidate[posInSequence];
+
+    //                 if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
+    //                     countAndSaveEditInSmem(posInSequence, correctedNuc);
+    //                 }
+    //             }
+
+    //             tgroup.sync();
+
+    //             int* const myNumEdits = d_numEditsPerCorrectedCandidate + destinationIndex;
+
+    //             TempCorrectedSequence::EncodedEdit* const myEdits 
+    //                 = (TempCorrectedSequence::EncodedEdit*)(((char*)d_editsPerCorrectedCandidate) + destinationIndex * editsPitchInBytes);
+
+    //             if(shared_numEditsOfCandidate <= maxEdits){
+    //                 const int numEdits = shared_numEditsOfCandidate;
+
+    //                 if(tgroup.thread_rank() == 0){ 
+    //                     *myNumEdits = numEdits;
+    //                 }
+
+    //                 const int fullInts = (numEdits * sizeof(TempCorrectedSequence::EncodedEdit)) / sizeof(int);
+    //                 static_assert(sizeof(TempCorrectedSequence::EncodedEdit) * 2 == sizeof(int), "");
+
+    //                 for(int i = tgroup.thread_rank(); i < fullInts; i += tgroup.size()) {
+    //                     ((int*)myEdits)[i] = ((int*)shared_Edits)[i];
+    //                 }
+
+    //                 for(int i = tgroup.thread_rank(); i < numEdits - fullInts * 2; i += tgroup.size()) {
+    //                     myEdits[fullInts * 2 + i] = shared_Edits[fullInts * 2 + i];
+    //                 } 
+    //             }else{
+    //                 if(tgroup.thread_rank() == 0){
+    //                     *myNumEdits = doNotUseEditsValue;
+    //                 }
+    //             }
+
+    //         }
+            
+
+    //         tgroup.sync(); //sync before handling next candidate
+
+    //         unsigned long long time5 = clock64();
+
+    //         // if(tgroup.thread_rank() == 0){
+    //         //     printf("times: forest %llu, reverse %llu, seqout %llu, editout %llu\n", (time2 - time1), (time3 - time2), (time4 - time3), (time5 - time4));
+    //         // }
+                        
+    //     }
+    // }
+
+
+
+
     void callMsaCorrectCandidatesWithForestKernel(
         char* d_correctedCandidates,
         TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
@@ -1164,13 +1522,15 @@ namespace gpu{
         constexpr int blocksize = 128;
         constexpr int groupsize = 32;
 
-        const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
-        const size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
+        const std::size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
+        const std::size_t smemPitchEditsInInts = SDIV(editsPitchInBytes, sizeof(int));
+        const std::size_t treePointersPitchInInts = SDIV(sizeof(void*) * gpuForest.numTrees, sizeof(int));
 
         auto calculateSmemUsage = [&](int blockDim){
             const int numGroupsPerBlock = blockDim / groupsize;
             std::size_t smem = numGroupsPerBlock * (sizeof(int) * dynamicsmemPitchInInts)
-                + numGroupsPerBlock * (sizeof(int) * smemPitchEditsInInts);
+                + numGroupsPerBlock * (sizeof(int) * smemPitchEditsInInts)
+                + treePointersPitchInInts * sizeof(int); 
 
             return smem;
         };
