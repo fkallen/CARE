@@ -808,10 +808,9 @@ public: //inherited GPUReadStorage interface
             if(hasHostSequences()){
 
                 hostGather();
-                cudaStreamSynchronize(stream);
+
                 gpuGather();
             }else{
-                cudaStreamSynchronize(stream);
                 gpuGather();
             }
         }else{
