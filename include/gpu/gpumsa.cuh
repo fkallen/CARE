@@ -1234,6 +1234,8 @@ namespace gpu{
                         }
                         group.sync();
 
+                        assert(group.size() <= 256);
+
                         const int limit = SDIV(myNumIndices, group.size()) * group.size();
                         for(int k = group.thread_rank(); k < limit; k += group.size()){
                             bool keep = false;
@@ -1241,15 +1243,19 @@ namespace gpu{
                                 keep = myShouldBeKept[k];
                             }                               
                 
-                            if(keep){
-                                cg::coalesced_group g = cg::coalesced_threads();
-                                int outputPos;
-                                if (g.thread_rank() == 0) {
-                                    outputPos = atomicAdd(&smemcounts[0], g.size());
+                            //warp time-sliced compaction to make it a stable compaction
+                            #pragma unroll
+                            for(int x = 0; x < 256 / 32; x++){
+                                if(keep && group.thread_rank() / 32 == x){
+                                    cg::coalesced_group g = cg::coalesced_threads();
+                                    int outputPos;
+                                    if (g.thread_rank() == 0) {
+                                        outputPos = atomicAdd(&smemcounts[0], g.size());
+                                    }
+                                    outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                                    myNewIndicesPtr[outputPos] = myIndices[k];
                                 }
-                                outputPos = g.thread_rank() + g.shfl(outputPos, 0);
-                                myNewIndicesPtr[outputPos] = myIndices[k];
-                            }                        
+                            }
                         }
 
                         group.sync();
