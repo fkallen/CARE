@@ -21,6 +21,8 @@
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 
+#include <classification.hpp>
+
 
 //#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
@@ -113,6 +115,8 @@ correct_cpu(
     outputThread.setMaximumQueueSize(runtimeOptions.threads);
 
     CpuErrorCorrector::TimeMeasurements timingsOfAllThreads;
+
+    ClfAgent clfAgent_(correctionOptions, fileOptions);
     
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -141,6 +145,7 @@ correct_cpu(
     {
         //const int threadId = omp_get_thread_num();
 
+        ClfAgent clfAgent = clfAgent_;
         const std::size_t encodedSequencePitchInInts2Bit = SequenceHelpers::getEncodedNumInts2Bit(readStorage.getSequenceLengthUpperBound());
         const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
         const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
@@ -153,7 +158,8 @@ correct_cpu(
             goodAlignmentProperties,
             minhasher,
             readStorage,
-            correctionFlags
+            correctionFlags,
+            clfAgent
         );
 
         ReadStorageHandle readStorageHandle = readStorage.makeHandle();
@@ -252,6 +258,8 @@ correct_cpu(
             };
 
             outputThread.enqueue(std::move(outputfunction));
+
+            clfAgent.flush();
 
             progressThread.addProgress(batchReadIds.size()); 
             

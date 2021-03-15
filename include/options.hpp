@@ -10,6 +10,18 @@
 
 namespace care{
 
+    enum class CorrectionType : int {Classic, Forest, Print};
+
+    __inline__
+    std::string nameOfCorrectionType(CorrectionType t){
+        switch(t){
+            case CorrectionType::Classic: return "Classic"; break;
+            case CorrectionType::Forest: return "Forest"; break;
+            case CorrectionType::Print: return "Print"; break;
+            default: return "Forgot to name correction type"; break;
+        }
+    }
+
 	//Options which can be parsed from command-line arguments
 
     struct GoodAlignmentProperties{
@@ -31,7 +43,14 @@ namespace care{
         int new_columns_to_correct = 15;
         int kmerlength = 20;
         int numHashFunctions = 48;
+        CorrectionType correctionType = CorrectionType::Classic;
+        CorrectionType correctionTypeCands = CorrectionType::Classic;
+        float thresholdAnchor = .5f; // threshold for anchor classifier
+        float thresholdCands = .5f; // threshold for cands classifier
+        float sampleRateAnchor = 1.f;
+        float sampleRateCands = 0.01f;
     };
+
 
 	struct RuntimeOptions{
 		int threads = 1;
@@ -56,6 +75,8 @@ namespace care{
         std::string save_hashtables_to = "";
         std::string load_hashtables_from = "";
         std::string tempdirectory;
+        std::string mlForestfileAnchor = "";
+        std::string mlForestfileCands = "";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 	};

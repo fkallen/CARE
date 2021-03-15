@@ -12,6 +12,10 @@
 #include <bestalignment.hpp>
 #include <msa.hpp>
 #include <qualityscoreweights.hpp>
+#include <classification.hpp>
+#include <correctionresultprocessing.hpp>
+#include <hostdevicefunctions.cuh>
+#include <cpucorrectortask.hpp>
 #include <correctionresultprocessing.hpp>
 #include <hostdevicefunctions.cuh>
 #include <corrector_common.hpp>
@@ -123,8 +127,9 @@ public:
         const GoodAlignmentProperties& goodAlignmentProperties_,
         const CpuMinhasher& minhasher_,
         const CpuReadStorage& readStorage_,
-        ReadCorrectionFlags& correctionFlags_
-    ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
+        ReadCorrectionFlags& correctionFlags_,
+        ClfAgent& clfAgent_
+   ) : encodedSequencePitchInInts(encodedSequencePitchInInts_),
         decodedSequencePitchInBytes(decodedSequencePitchInBytes_),
         qualityPitchInBytes(qualityPitchInBytes_),
         correctionOptions(&correctionOptions_),
@@ -134,6 +139,7 @@ public:
         readStorage{&readStorage_},
         readStorageHandle{readStorage->makeHandle()},
         correctionFlags(&correctionFlags_),
+        clfAgent(&clfAgent_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
     {
 
@@ -145,7 +151,7 @@ public:
 
     CpuErrorCorrectorOutput process(const CpuErrorCorrectorInput input){
         CpuErrorCorrectorTask task = makeTask(input);
-
+    
         TimeMeasurements timings;
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
@@ -310,6 +316,17 @@ public:
         return correctionOutput;
     }
 
+    const TimeMeasurements& getTimings() const noexcept{
+        return totalTime;
+    }
+
+    std::stringstream& getMlStreamAnchor(){
+        return ml_stream_anchor;
+    }
+
+    std::stringstream& getMlStreamCandidates(){
+        return ml_stream_cands;
+    }
     std::vector<CpuErrorCorrectorOutput> processMulti(const MultiCorrectionInput input){
         const int numAnchors = input.anchorReadIds.size();
         if(numAnchors == 0){
@@ -488,14 +505,9 @@ public:
         totalTime += timings;
 
         return resultVector;
-    }
-
-    const TimeMeasurements& getTimings() const noexcept{
-        return totalTime;
-    }
+    }   
 
 private:
-
 
     CpuErrorCorrectorTask makeTask(const CpuErrorCorrectorInput& input){
         CpuErrorCorrectorTask task;
@@ -1071,7 +1083,7 @@ private:
                     task.candidateQualities.data() + (c+1) * size_t(qualityPitchInBytes)
                 );
             }
-        } 
+        }             
     }
 
     //compute decoded candidate strings with respect to alignment direction
@@ -1258,6 +1270,8 @@ private:
 
     void correctAnchorClassic(CpuErrorCorrectorTask& task) const{
 
+        assert(correctionOptions->correctionType == CorrectionType::Classic);
+
         const int subjectColumnsBegin_incl = task.multipleSequenceAlignment.subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = task.multipleSequenceAlignment.subjectColumnsEnd_excl;
 
@@ -1279,8 +1293,60 @@ private:
         );        
     }       
 
+    void correctAnchorClf(CpuErrorCorrectorTask& task) const
+    {
+        auto& msa = task.multipleSequenceAlignment;
+        int subject_b = msa.subjectColumnsBegin_incl;
+        int subject_e = msa.subjectColumnsEnd_excl;
+        auto& cons = msa.consensus;
+        auto& orig = task.decodedAnchor;
+        auto& corr = task.subjectCorrection.correctedSequence;
+
+        task.msaProperties = msa.getMSAProperties(
+            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            correctionOptions->m_coverage);
+
+        corr.insert(0, cons.data()+subject_b, task.input.anchorLength);
+        if (!task.msaProperties.isHQ) {
+            for (int i = 0; i < task.input.anchorLength; ++i) {
+                if (orig[i] != cons[subject_b+i] && !clfAgent->decide_anchor(task, i, *correctionOptions))
+                {
+                    corr[i] = orig[i];
+                }
+            }
+        }
+
+        task.subjectCorrection.isCorrected = true;
+    }
+
+    void correctAnchorPrint(CpuErrorCorrectorTask& task) const{
+        auto& msa = task.multipleSequenceAlignment;
+        int subject_b = msa.subjectColumnsBegin_incl;
+        int subject_e = msa.subjectColumnsEnd_excl;
+        auto& cons = msa.consensus;
+        auto& orig = task.decodedAnchor;
+
+        task.msaProperties = msa.getMSAProperties(
+            subject_b, subject_e, correctionOptions->estimatedErrorrate, correctionOptions->estimatedCoverage,
+            correctionOptions->m_coverage);
+
+        if (!task.msaProperties.isHQ) {
+            for (int i = 0; i < task.input.anchorLength; ++i) {
+                if (orig[i] != cons[subject_b+i]) {
+                    clfAgent->print_anchor(task, i, *correctionOptions);
+                }
+            }
+        }
+        task.subjectCorrection.isCorrected = false;
+    }
+
     void correctAnchor(CpuErrorCorrectorTask& task) const{
-        correctAnchorClassic(task);
+        if(correctionOptions->correctionType == CorrectionType::Classic)
+            correctAnchorClassic(task);
+        else if(correctionOptions->correctionType == CorrectionType::Forest)
+            correctAnchorClf(task);
+        else if (correctionOptions->correctionType == CorrectionType::Print)
+            correctAnchorPrint(task);
     }
 
     void correctCandidatesClassic(CpuErrorCorrectorTask& task) const{
@@ -1293,8 +1359,128 @@ private:
         );
     }
 
+    void correctCandidatesPrint(CpuErrorCorrectorTask& task) const{
+
+        const auto& msa = task.multipleSequenceAlignment;
+        const int subject_begin = msa.subjectColumnsBegin_incl;
+        const int subject_end = msa.subjectColumnsEnd_excl;
+
+        for(int cand = 0; cand < msa.nCandidates; ++cand) {
+            const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
+            const int cand_length = task.candidateSequencesLengths[cand];
+            const int cand_end = cand_begin + cand_length;
+            const int offset = cand * decodedSequencePitchInBytes;
+            
+            if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
+                && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
+            {
+                for (int i = 0; i < cand_length; ++i) {
+                    if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]) {
+                        clfAgent->print_cand(task, i, *correctionOptions, cand, offset);
+                    }
+                }
+            }
+        }
+        task.candidateCorrections = std::vector<CorrectedCandidate>{};
+    }
+
+    void correctCandidatesClf(CpuErrorCorrectorTask& task) const 
+    {
+        const auto& msa = task.multipleSequenceAlignment;
+
+        task.candidateCorrections = std::vector<CorrectedCandidate>{};
+
+        // auto it = std::find(task.candidateReadIds.begin(), task.candidateReadIds.end(), 37);
+        // if(it != task.candidateReadIds.end()){
+        //     std::cerr << "found 37 at local position " << std::distance(task.candidateReadIds.begin(), it) << "\n";
+        // }
+
+        const int subject_begin = msa.subjectColumnsBegin_incl;
+        const int subject_end = msa.subjectColumnsEnd_excl;
+        for(int cand = 0; cand < msa.nCandidates; ++cand) {
+            read_number candidateReadId = task.candidateReadIds[cand];
+
+            //if this read has already been corrected as a high quality anchor, the candidate correction will not be used for output construction.
+            //-> don't compute it.
+            if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
+                continue;
+            }
+            const int cand_begin = msa.subjectColumnsBegin_incl + task.alignmentShifts[cand];
+            const int cand_length = task.candidateSequencesLengths[cand];
+            const int cand_end = cand_begin + cand_length;
+            const int offset = cand * decodedSequencePitchInBytes;
+
+            // if(task.candidateReadIds[cand] == 37){
+            //     std::cerr <<  "candidateIndex " << cand << "\n";
+            //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+            //     std::cerr <<  "cand_end " << cand_end << "\n";
+            //     std::cerr <<  "cand_length " << cand_length << "\n";
+            //     std::cerr <<  "candidateReadId " << task.candidateReadIds[cand] << "\n";
+            //     std::cerr <<  "anchorReadId " << task.input.anchorReadId << "\n";
+            // }
+
+            
+            if(cand_begin >= subject_begin - correctionOptions->new_columns_to_correct
+                && cand_end <= subject_end + correctionOptions->new_columns_to_correct)
+            {
+
+                task.candidateCorrections.emplace_back(cand, task.alignmentShifts[cand],
+                    std::string(&msa.consensus[cand_begin], cand_length));
+
+                // if(task.candidateReadIds[cand] == 37){
+                //     std::cerr << "in range\n";
+                //     std::cerr <<  "candidateIndex " << cand << "\n";
+                //     std::cerr <<  "cand_begin " << cand_begin << "\n";
+                //     std::cerr <<  "cand_end " << cand_end << "\n";
+                //     std::cerr <<  "cand_length " << cand_length << "\n";
+                //     std::cerr <<  "candidateReadId " << task.candidateReadIds[cand] << "\n";
+
+                //     std::cerr << "decodedCandidate:\n";
+                //     for(int k = 0; k < cand_length; k++){
+                //         std::cerr << task.decodedCandidateSequences[offset+k];
+                //     }
+                //     std::cerr << "\n";
+
+                //     std::cerr << "consensusCandidate:\n";
+                //     for(int k = 0; k < cand_length; k++){
+                //         std::cerr << task.candidateCorrections.back().sequence[k];
+                //     }
+                //     std::cerr << "\n";
+
+                // }
+
+
+                for (int i = 0; i < cand_length; ++i) {
+                    if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]
+                        && !clfAgent->decide_cand(task, i, *correctionOptions, cand, offset))
+                    {
+                        task.candidateCorrections.back().sequence[i] = task.decodedCandidateSequences[offset+i];
+                        //if(task.input.anchorReadId == 5 && task.candidateReadIds[cand] == 633) std::cerr << "checking position " << i << ". revert consensus\n";
+                    }else{
+                        // if (task.decodedCandidateSequences[offset+i] != msa.consensus[cand_begin+i]){
+                        //     if(task.input.anchorReadId == 5 && task.candidateReadIds[cand] == 633) std::cerr << "checking position " << i << ". keep consensus\n";
+                        // }
+                    }
+                }
+            }else{
+                // if(task.candidateReadIds[cand] == 37){
+                //     std::cerr << "not in range with shift " << task.alignmentShifts[cand] << "\n";
+                // }
+            }
+        }
+    }
+
     void correctCandidates(CpuErrorCorrectorTask& task) const{
-        correctCandidatesClassic(task);
+        switch (correctionOptions->correctionTypeCands) {
+            case CorrectionType::Print:
+                correctCandidatesPrint(task);
+                break;
+            case CorrectionType::Forest:
+                correctCandidatesClf(task);
+                break;
+            default:
+                correctCandidatesClassic(task);
+        }
     }
 
     CpuErrorCorrectorOutput makeOutputOfTask(CpuErrorCorrectorTask& task) const{
@@ -1364,6 +1550,11 @@ private:
                     );
                     tmp.sequence = std::move(fwd);
                 }
+
+                // if(candidateId == 1180257){
+                //     std::cerr << "processing 1180257\n";
+                //     std::cerr << "tmp.sequence = " << tmp.sequence << "\n";
+                // }
                 
                 bool originalCandidateReadContainsN = false;
                 readStorage->areSequencesAmbiguous(readStorageHandle, &originalCandidateReadContainsN, &candidateId, 1);
@@ -1431,8 +1622,12 @@ private:
     mutable ReadStorageHandle readStorageHandle;
 
     ReadCorrectionFlags* correctionFlags{};
-  
+    ClfAgent* clfAgent{};
+
     mutable cpu::shd::CpuAlignmentHandle alignmentHandle{};
+
+    mutable std::stringstream ml_stream_anchor;
+    mutable std::stringstream ml_stream_cands;
 
     std::unique_ptr<cpu::QualityScoreConversion> qualityCoversion;
 

@@ -448,6 +448,9 @@ namespace gpu{
         const int n_subjects = *numAnchorsPtr;
         const int n_candidates = *numCandidatesPtr;
 
+        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
+            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
+        };
 
         auto no_bank_conflict_index = [](int logical_index) -> int {
             return logical_index * blockDim.x;
@@ -589,7 +592,7 @@ namespace gpu{
                         const bool isReverseComplement = orientation == 1;
 
                         if(isReverseComplement) {
-                            SequenceHelpers::reverseComplementSequenceInplace2BitHiLo(queryBackup, querybases, no_bank_conflict_index);
+                            make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
                         }
 
                         //begin SHD algorithm
@@ -691,7 +694,6 @@ namespace gpu{
             }
         }
     }
-
 
 
     /*

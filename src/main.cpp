@@ -157,6 +157,22 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>())
 		("m,memTotal", "Total memory limit in bytes. Can use suffix K,M,G , e.g. 20G means 20 gigabyte. This option is not a hard limit. Default: All free memory.",
 		cxxopts::value<std::string>())
+		("correctionType", "0: Classic, 1: Forest, 2: Print",
+			cxxopts::value<int>()->default_value("0"))
+		("correctionTypeCands", "0: Classic, 1: Forest, 2: Print",
+			cxxopts::value<int>()->default_value("0"))
+		("ml-forestfile", "The file for interfaceing with the scikit-learn classifier (Anchor correction)",
+			cxxopts::value<std::string>())
+		("ml-cands-forestfile", "The file for interfaceing with the scikit-learn classifier (Candidate correction)",
+			cxxopts::value<std::string>())
+		("thresholdAnchor", "Classification threshold for anchor classifier (\"Forest\") mode",
+			cxxopts::value<float>())
+		("thresholdCands", "Classification threshold for candidates classifier (\"Forest\") mode",
+			cxxopts::value<float>())
+		("samplingRateAnchor", "sampling rate for anchor features (print mode)",
+			cxxopts::value<float>())
+		("samplingRateCands", "sampling rate for candidates features (print mode)",
+			cxxopts::value<float>())
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
@@ -219,6 +235,18 @@ int main(int argc, char** argv){
 
 	}
 
+	if(correctionOptions.correctionType != CorrectionType::Classic){
+		if(fileOptions.mlForestfileAnchor == ""){
+			std::cerr << "CorrectionType is not set to Classic, but no valid classifier file is provided. Abort!\n";
+			return 0;
+		}
+
+		if(fileOptions.mlForestfileCands == ""){
+			fileOptions.mlForestfileCands = fileOptions.mlForestfileAnchor;
+		}
+	}
+
+
 	//print all options that will be used
 	std::cout << std::boolalpha;
 	std::cout << "CARE version " << CARE_VERSION_STRING << " will be started with the following parameters:\n";
@@ -245,6 +273,10 @@ int main(int argc, char** argv){
 	std::cout << "errorfactortuning: " << correctionOptions.estimatedErrorrate << "\n";
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
+	std::cout << "Correction type (anchor): " << int(correctionOptions.correctionType) 
+		<< " (" << nameOfCorrectionType(correctionOptions.correctionType) << ")\n";
+	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
+		<< " (" << nameOfCorrectionType(correctionOptions.correctionTypeCands) << ")\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
@@ -280,6 +312,11 @@ int main(int argc, char** argv){
 		std::cout << s << ' ';
 	}
 	std::cout << "\n";
+	std::cout << "ml-forestfile: " << fileOptions.mlForestfileAnchor << "\n";
+	std::cout << "ml-cands-forestfile: " << fileOptions.mlForestfileCands << "\n";
+	std::cout << "anchor sampling rate: " << correctionOptions.sampleRateAnchor << "\n";
+	std::cout << "cands sampling rate: " << correctionOptions.sampleRateCands << "\n";
+	std::cout << "classification thresholds: " << correctionOptions.thresholdAnchor << " | " << correctionOptions.thresholdCands << "\n";
 	std::cout << "----------------------------------------\n";
 	std::cout << std::noboolalpha;
 

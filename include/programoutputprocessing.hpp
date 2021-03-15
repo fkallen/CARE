@@ -325,7 +325,28 @@ namespace care{
                 auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
 
                 auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
-                auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;      
+                auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;    
+
+                // assert(std::is_sorted(
+                //     first1,
+                //     last1,
+                //     [](const auto& l, const auto& r){
+                //         if(l.fileId < r.fileId) return true;
+                //         if(l.fileId > r.fileId) return false;
+                //         if(l.readIdInFile < r.readIdInFile) return true;
+                //         if(l.readIdInFile > r.readIdInFile) return false;
+                        
+                //         return l.globalReadId < r.globalReadId;
+                //     }
+                // ));
+
+                // assert(std::is_sorted(
+                //     first2,
+                //     last2,
+                //     [](const auto& l, const auto& r){
+                //         return l.readId < r.readId;
+                //     }
+                // ));
 
                 while(first1 != last1) {
                     if(first2 == last2){
