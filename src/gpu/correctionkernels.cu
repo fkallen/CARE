@@ -236,8 +236,7 @@ namespace gpu{
         float avg_support_threshold,
         float min_support_threshold,
         float min_coverage_threshold,
-        float max_coverage_threshold,
-        const read_number* anchorReadIds
+        float max_coverage_threshold
     ){
 
         constexpr int subgroupsize = 32;
@@ -366,25 +365,9 @@ namespace gpu{
                         //broadcastbuffer = isHQ;
                         isHighQualitySubject[subjectIndex].hq(isHQ);
                         sharedHQ = isHQ;
-
-                        // if(anchorReadIds[subjectIndex] == 14045697){
-                        //     if(threadIdx.x == 0){
-                        //         printf("\nhq %d, %.10f %.10f %d %d, %d %d %d %d, %d\n", 
-                        //             isHQ, msaProperties.avg_support, msaProperties.min_support, msaProperties.min_coverage, msaProperties.max_coverage,
-                        //             isGoodAvgSupport(msaProperties.avg_support), isGoodMinSupport(msaProperties.min_support), isGoodMinCoverage(msaProperties.min_coverage), fleq(smallestErrorrateThatWouldMakeHQ, estimatedErrorratePercent * 0.5f),
-                        //             smallestErrorrateThatWouldMakeHQ
-                        //         );
-                        //     }
-                        // }
                     }else{
                         isHighQualitySubject[subjectIndex].hq(false);
                         sharedHQ = false;
-
-                        if(anchorReadIds[subjectIndex] == 14045697){
-                            if(threadIdx.x == 0){
-                                printf("\nnot hq\n");
-                            }
-                        }
                     }
 
                 }
@@ -503,8 +486,7 @@ namespace gpu{
         float min_coverage_threshold,
         float max_coverage_threshold,
         cudaStream_t stream,
-        KernelLaunchHandle& handle,
-        const read_number* anchorReadIds
+        KernelLaunchHandle& handle
     ){
         if(numAnchors == 0) return;
 
@@ -532,8 +514,7 @@ namespace gpu{
             avg_support_threshold,
             min_support_threshold,
             min_coverage_threshold,
-            max_coverage_threshold,
-            anchorReadIds
+            max_coverage_threshold
         );
     }
 

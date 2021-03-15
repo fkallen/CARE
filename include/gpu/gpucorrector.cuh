@@ -2571,7 +2571,6 @@ namespace gpu{
         };
 
         void correctAnchors(cudaStream_t stream){
-            //correctAnchorsForest(stream);
             if(correctionOptions->correctionType == CorrectionType::Classic){
                 correctAnchorsClassic(stream);
             }else if(correctionOptions->correctionType == CorrectionType::Forest){
@@ -2581,7 +2580,7 @@ namespace gpu{
                 correctAnchorsForest(stream);
                 #endif
             }else{
-                std::cerr << "correctAnchors not implemented for this type\n";
+                throw std::runtime_error("correctAnchors not implemented for this type");
             }
         }
 
@@ -2830,8 +2829,7 @@ namespace gpu{
                 min_coverage_threshold,
                 max_coverage_threshold,
                 stream,
-                kernelLaunchHandle,
-                d_anchorReadIds.get()
+                kernelLaunchHandle
             );
 
             gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
@@ -3029,65 +3027,7 @@ namespace gpu{
                 stream,
                 kernelLaunchHandle
             );    
-            
-#if 0            
-            //debug: sanity check kernel
-            helpers::lambda_kernel<<<1,1, 0, stream>>>([
-                encodedSequencePitchInInts = encodedSequencePitchInInts,
-                decodedSequencePitchInBytes = decodedSequencePitchInBytes,
-                d_num_total_corrected_candidates = d_num_total_corrected_candidates.get(),
-                noEdits = getDoNotUseEditsValue(),
-                maxNumEditsPerSequence,
-                d_numEditsPerCorrectedCandidate = d_numEditsPerCorrectedCandidate.get(),
-                d_indices_of_corrected_candidates = d_indices_of_corrected_candidates.get(),
-                d_candidate_sequences_lengths = d_candidate_sequences_lengths.get(),
-                d_candidate_sequences_data = d_candidate_sequences_data.get(),
-                d_corrected_candidates = d_corrected_candidates.data(),
-                d_alignment_best_alignment_flags = d_alignment_best_alignment_flags.data()
-            ] __device__ (){
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-
-                const int totalNumCorrected = d_num_total_corrected_candidates[0];
-
-                for(int i = tid; i < totalNumCorrected; i += stride){
-                    const int numEdits = d_numEditsPerCorrectedCandidate[i];
-                    if(numEdits != noEdits && numEdits > maxNumEditsPerSequence){
-                        printf("corrected candidate %d, numEdits = %d\n", i, numEdits);
-                        printf("read numEdits of corrected %d from address %p\n", i, (d_numEditsPerCorrectedCandidate + i));
-
-                        const int candidateIndex = d_indices_of_corrected_candidates[i];
-
-                        printf("candidateIndex %d\n", candidateIndex);
-
-                        const int len = d_candidate_sequences_lengths[candidateIndex];
-                        const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[candidateIndex];
-
-                        printf("len %d, bestAlignmentFlag %d\n", len, int(bestAlignmentFlag));
-                        printf("encodedSequencePitchInInts %lu\n", encodedSequencePitchInInts);
-
-
-
-                        printf("%lu\n", sizeof(d_candidate_sequences_data[0]));
-
-                        for(int k = 0; k < len; k++){
-                            const char corChar =  d_corrected_candidates[decodedSequencePitchInBytes * i + k];
-                            const std::uint8_t a = SequenceHelpers::getEncodedNuc2Bit((const unsigned int*)(d_candidate_sequences_data) + encodedSequencePitchInInts * candidateIndex, len, k);
-                            const std::uint8_t b = SequenceHelpers::getEncodedNuc2Bit((const unsigned int*)(d_candidate_sequences_data) + encodedSequencePitchInInts * candidateIndex, len, len - 1 - k);
-                            const char uncorFwChar = SequenceHelpers::decodeBase(a);
-                            const char uncorRcChar = SequenceHelpers::decodeBase(b);
-
-                            printf("%d %c %c %c, %d %d %d %d\n", k, corChar, uncorFwChar, uncorRcChar, int(corChar), int(uncorFwChar), int(uncorRcChar), (uncorFwChar == corChar) ? 0 : 1);
-                        }
-
-                        assert(false);
-                    }
-                    
-                }
-            });
-
-            cudaStreamSynchronize(stream); CUERR; //DEBUG
-#endif
+  
         }
 
         void correctCandidatesForest(cudaStream_t stream){
@@ -3122,12 +3062,6 @@ namespace gpu{
                         correctionOptions->m_coverage
                     );
 
-                    // auto it = std::find(&currentInput->h_candidate_read_ids[globalOffset], &currentInput->h_candidate_read_ids[globalOffset + numCandidates], 37);
-                    // if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
-                    //     std::cerr << "found 37 at local position " << std::distance(&currentInput->h_candidate_read_ids[globalOffset], it) << "\n";
-                    //     std::cerr << "anchorReadId " << currentInput->h_anchorReadIds[a] << "\n";
-                    // }
-
                     if(anchorMsaProperties.isHQ){
 
                         const int* const myShifts = currentOutput->h_alignment_shifts.data() + globalOffset;
@@ -3142,16 +3076,6 @@ namespace gpu{
                             if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
                                 continue;
                             }
-
-                            // if(candidateReadId == 38851){
-                            //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
-                            //     std::cerr <<  "cand_begin " << cand_begin << "\n";
-                            //     std::cerr <<  "cand_end " << cand_end << "\n";
-                            //     std::cerr <<  "cand_length " << cand_length << "\n";
-                            //     std::cerr <<  "candidateReadId " << candidateReadId << "\n";
-                            //     std::cerr << "anchorReadId " << currentInput->h_anchorReadIds[a] << "\n";
-                            //     std::cerr << "shift " << myShifts[candidateIndex] << "\n";
-                            // }
 
                             if(cand_begin >= subjectColumnsBegin_incl - correctionOptions->new_columns_to_correct
                                 && cand_end <= subjectColumnsEnd_excl + correctionOptions->new_columns_to_correct){
@@ -3191,28 +3115,6 @@ namespace gpu{
                                     + (globalOffset + candidateIndex) * decodedSequencePitchInBytes;
 
                                 #endif
-
-                                // if(candidateReadId == 38851){
-                                //     std::cerr <<  "candidateIndex " << candidateIndex << "\n";
-                                //     std::cerr <<  "cand_begin " << cand_begin << "\n";
-                                //     std::cerr <<  "cand_end " << cand_end << "\n";
-                                //     std::cerr <<  "cand_length " << cand_length << "\n";
-                                //     std::cerr <<  "candidateReadId " << candidateReadId << "\n";
-                                //     std::cerr <<  "alignmentDirection " << int(alignmentDirection) << "\n";
-
-                                //     std::cerr << "decodedCandidate:\n";
-                                //     for(int k = 0; k < cand_length; k++){
-                                //         std::cerr << decodedCandidatePtr[k];
-                                //     }
-                                //     std::cerr << "\n";
-
-                                //     std::cerr << "consensusCandidate:\n";
-                                //     for(int k = 0; k < cand_length; k++){
-                                //         std::cerr << myCorrection[k];
-                                //     }
-                                //     std::cerr << "\n";
-
-                                // }
 
                                 const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
                                 const float* const myWeights = h_weights.data() + 4 * msaColumnPitchInElements * a;
@@ -3256,26 +3158,13 @@ namespace gpu{
 
                                 for(int i = 0; i < cand_length; i++){
                                     if(decodedCandidatePtr[i] != myConsensus[cand_begin + i]){
-                                        //if(candidateReadId == 38851) std::cerr << "checking position " << i << ". ";
-                                        const bool debug = false; //(candidateReadId == 38851);
 
                                         if(!clfAgent->decide_cand(clfInput, i, *correctionOptions, 0, 0)){
                                             myCorrection[i] = decodedCandidatePtr[i];
-                                            //if(candidateReadId == 38851) std::cerr << "revert consensus\n";
                                         }else{
-                                            //if(candidateReadId == 38851) std::cerr << "keep consensus\n";
                                         }
                                     }
                                 }
-
-                                // if(candidateReadId == 38851){
-                                //     std::cerr << "correctedCandidate:\n";
-                                //     for(int k = 0; k < cand_length; k++){
-                                //         std::cerr << myCorrection[k];
-                                //     }
-                                //     std::cerr << "\n";
-
-                                // }
 
                                 auto* const edits = (TempCorrectedSequence::EncodedEdit*)(((char*)currentOutput->h_editsPerCorrectedCandidate.data())
                                     + editsPitchInBytes * numCorrectedCandidates);
@@ -3308,16 +3197,8 @@ namespace gpu{
 
                                 numCorrectedCandidates++;
                                 numCorrectedCandidatesForAnchor++;
-                            }else{
-                                // if(candidateReadId == 37){
-                                //     std::cerr << "not in range with shift " << myShifts[candidateIndex] << "\n";
-                                // }
                             }
                         }
-                    }else{
-                        // if(it != &currentInput->h_candidate_read_ids[globalOffset + numCandidates]){
-                        //     std::cerr << "not hq anchor for candidate id 37\n";
-                        // }
                     }
                 }
 
@@ -3509,32 +3390,7 @@ namespace gpu{
                 stream,
                 kernelLaunchHandle,
                 d_candidate_read_ids.data()
-            );
-
-            // callCorrectCandidatesKernel_async(
-            //     d_corrected_candidates.get(),
-            //     d_editsPerCorrectedCandidate.get(),
-            //     d_numEditsPerCorrectedCandidate.get(),              
-            //     multiMSA,
-            //     d_alignment_shifts.get(),
-            //     d_alignment_best_alignment_flags.get(),
-            //     d_candidate_sequences_data.get(),
-            //     d_candidate_sequences_lengths.get(),
-            //     d_candidateContainsN.get(),
-            //     d_indices_of_corrected_candidates.get(),
-            //     d_num_total_corrected_candidates.get(),
-            //     d_anchorIndicesOfCandidates.get(),
-            //     d_numAnchors,
-            //     d_numCandidates,
-            //     getDoNotUseEditsValue(),
-            //     maxNumEditsPerSequence,
-            //     encodedSequencePitchInInts,
-            //     decodedSequencePitchInBytes,
-            //     editsPitchInBytes,
-            //     gpuReadStorage->getSequenceLengthUpperBound(),
-            //     stream,
-            //     kernelLaunchHandle
-            // );    
+            );  
 
             callConstructSequenceCorrectionResultsKernel(
                 d_editsPerCorrectedCandidate.get(),
