@@ -2830,7 +2830,8 @@ namespace gpu{
                 min_coverage_threshold,
                 max_coverage_threshold,
                 stream,
-                kernelLaunchHandle
+                kernelLaunchHandle,
+                d_anchorReadIds.get()
             );
 
             gpucorrectorkernels::selectIndicesOfFlagsOneBlock<256><<<1,256,0, stream>>>(
@@ -2930,6 +2931,46 @@ namespace gpu{
             multiMSA.origCoverages = d_origCoverages.get();
             multiMSA.columnProperties = d_msa_column_properties.get();
 
+            #if 1
+                bool* d_excludeFlags = d_flagsCandidates.data();
+                bool* h_excludeFlags = h_flagsCandidates.data();
+
+                //corrections of candidates for which a high quality anchor correction exists will not be used
+                //-> don't compute them
+                for(int i = 0; i < currentNumCandidates; i++){
+                    const read_number candidateReadId = currentInput->h_candidate_read_ids[i];
+                    h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
+                }
+
+                cudaMemcpyAsync(
+                    d_excludeFlags,
+                    h_excludeFlags,
+                    sizeof(bool) * currentNumCandidates,
+                    H2D,
+                    stream
+                );
+
+                callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+                    d_candidateCanBeCorrected,
+                    d_num_corrected_candidates_per_anchor.get(),
+                    multiMSA,
+                    d_excludeFlags,
+                    d_alignment_shifts.get(),
+                    d_candidate_sequences_lengths.get(),
+                    d_anchorIndicesOfCandidates.get(),
+                    d_is_high_quality_anchor.get(),
+                    d_candidates_per_anchor_prefixsum,
+                    d_indices.get(),
+                    d_indices_per_anchor.get(),
+                    d_numAnchors,
+                    d_numCandidates,
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    new_columns_to_correct,
+                    stream,
+                    kernelLaunchHandle
+                );
+            #else
             callFlagCandidatesToBeCorrectedKernel_async(
                 d_candidateCanBeCorrected,
                 d_num_corrected_candidates_per_anchor.get(),
@@ -2949,6 +2990,7 @@ namespace gpu{
                 stream,
                 kernelLaunchHandle
             );
+            #endif
 
             size_t cubTempSize = d_tempstorage.sizeInBytes();
 
@@ -3468,6 +3510,31 @@ namespace gpu{
                 kernelLaunchHandle,
                 d_candidate_read_ids.data()
             );
+
+            // callCorrectCandidatesKernel_async(
+            //     d_corrected_candidates.get(),
+            //     d_editsPerCorrectedCandidate.get(),
+            //     d_numEditsPerCorrectedCandidate.get(),              
+            //     multiMSA,
+            //     d_alignment_shifts.get(),
+            //     d_alignment_best_alignment_flags.get(),
+            //     d_candidate_sequences_data.get(),
+            //     d_candidate_sequences_lengths.get(),
+            //     d_candidateContainsN.get(),
+            //     d_indices_of_corrected_candidates.get(),
+            //     d_num_total_corrected_candidates.get(),
+            //     d_anchorIndicesOfCandidates.get(),
+            //     d_numAnchors,
+            //     d_numCandidates,
+            //     getDoNotUseEditsValue(),
+            //     maxNumEditsPerSequence,
+            //     encodedSequencePitchInInts,
+            //     decodedSequencePitchInBytes,
+            //     editsPitchInBytes,
+            //     gpuReadStorage->getSequenceLengthUpperBound(),
+            //     stream,
+            //     kernelLaunchHandle
+            // );    
 
             callConstructSequenceCorrectionResultsKernel(
                 d_editsPerCorrectedCandidate.get(),
