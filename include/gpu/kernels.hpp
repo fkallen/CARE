@@ -445,7 +445,8 @@ void callMsaCorrectAnchorsWithForestKernel(
     float min_coverage_threshold,
     float max_coverage_threshold,
     cudaStream_t stream,
-    KernelLaunchHandle& handle
+    KernelLaunchHandle& handle,
+    const read_number* anchorReadIds
 );
 
 void callMsaCorrectCandidatesWithForestKernel(
