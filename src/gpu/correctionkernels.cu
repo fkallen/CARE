@@ -506,6 +506,8 @@ namespace gpu{
         KernelLaunchHandle& handle,
         const read_number* anchorReadIds
     ){
+        if(numAnchors == 0) return;
+
         constexpr int blocksize = 128;
         const int numBlocks = numAnchors;
 
@@ -2129,7 +2131,7 @@ namespace gpu{
         const std::size_t smem = calculateSmemUsage(blocksize);
 
         dim3 block = blocksize;
-        dim3 grid = 270;
+        dim3 grid = 480;
 
 
         msaCorrectCandidatesWithForestKernel<blocksize, groupsize, cands_extractor><<<grid, block, smem, stream>>>(
@@ -3437,6 +3439,7 @@ namespace gpu{
         cudaStream_t stream,
         KernelLaunchHandle& handle
     ){
+        if(numCorrectedSequencesUpperBound == 0) return;
 
         cudaMemsetAsync(
             d_edits, 
