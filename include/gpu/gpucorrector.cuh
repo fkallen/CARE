@@ -36,9 +36,6 @@
 
 
 
-#define GPUANCHORFOREST
-#define GPUCANDIDATEFOREST
-
 namespace care{
 namespace gpu{
 
@@ -711,7 +708,6 @@ namespace gpu{
             const GoodAlignmentProperties& goodAlignmentProperties_,
             int maxAnchorsPerCall,
             ThreadPool* threadPool_,
-            ClfAgent* clfAgent_,
             const GpuForest* gpuForestAnchor_,
             const GpuForest* gpuForestCandidate_
         ) : 
@@ -722,18 +718,15 @@ namespace gpu{
             correctionOptions{&correctionOptions_},
             goodAlignmentProperties{&goodAlignmentProperties_},
             threadPool{threadPool_},
-            clfAgent{clfAgent_},
             gpuForestAnchor{gpuForestAnchor_},
             gpuForestCandidate{gpuForestCandidate_},
             readstorageHandle{gpuReadStorage->makeHandle()}
         {
             if(correctionOptions->correctionType != CorrectionType::Classic){
-                assert(clfAgent != nullptr);
                 assert(gpuForestAnchor != nullptr);
             }
 
             if(correctionOptions->correctionTypeCands != CorrectionType::Classic){
-                assert(clfAgent != nullptr);
                 assert(gpuForestCandidate != nullptr);
             }
 
@@ -1259,14 +1252,6 @@ namespace gpu{
 
             }
 
-            #if !defined(GPUANCHORFOREST) || !defined(GPUCANDIDATEFOREST)
-            if(correctionOptions->correctionType == CorrectionType::Forest
-                || correctionOptions->correctionTypeCands == CorrectionType::Forest){
-
-                copyDataForForestCorrectionToHost(stream);
-            }
-            #endif
-
             nvtx::push_range("correctanchors", 8);
             correctAnchors(stream);
             nvtx::pop_range();
@@ -1281,17 +1266,12 @@ namespace gpu{
         }
 
         void copyAnchorResultsFromDeviceToHost(cudaStream_t stream){
-            //copyAnchorResultsFromDeviceToHostForest(stream);
             if(correctionOptions->correctionType == CorrectionType::Classic){
                 copyAnchorResultsFromDeviceToHostClassic(stream);
             }else if(correctionOptions->correctionType == CorrectionType::Forest){
-                #ifdef GPUANCHORFOREST
                 copyAnchorResultsFromDeviceToHostForestGpu(stream);
-                #else
-                copyAnchorResultsFromDeviceToHostForest(stream);
-                #endif
             }else{
-                std::cerr << "copyAnchorResultsFromDeviceToHost not implemented for correctionType\n";
+                throw std::runtime_error("copyAnchorResultsFromDeviceToHost not implemented for this correctionType");
             }
         }
 
@@ -1463,40 +1443,21 @@ namespace gpu{
                 (int*)currentOutput->h_corrected_anchors.data(), 
                 currentNumAnchors * decodedSequencePitchInBytes / sizeof(int),
                 stream
-            );
-            
+            );            
 
-        }
-
-        void copyAnchorResultsFromDeviceToHostForest(cudaStream_t stream){
-            //filled by copying data for forest to host
-            //currentOutput->h_anchor_sequences_lengths 
-
-            //filled by forest anchor correction
-            //currentOutput->h_corrected_anchors
-            //currentOutput->h_anchor_is_corrected
-            //currentOutput->h_is_high_quality_anchor
-            //currentOutput->h_editsPerCorrectedanchor
-            //currentOutput->h_numEditsPerCorrectedanchor
         }
 
         void copyAnchorResultsFromDeviceToHostForestGpu(cudaStream_t stream){
-            //same as default correction
             copyAnchorResultsFromDeviceToHostClassic(stream);
         }
-
 
         void copyCandidateResultsFromDeviceToHost(cudaStream_t stream){
             if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
                 copyCandidateResultsFromDeviceToHostClassic(stream);
             }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
-                #ifdef GPUCANDIDATEFOREST
                 copyCandidateResultsFromDeviceToHostForestGpu(stream);
-                #else
-                copyCandidateResultsFromDeviceToHostForest(stream);
-                #endif
             }else{
-                std::cerr << "copyCandidateResultsFromDeviceToHost not implemented for correctionTypeCands\n";
+                throw std::runtime_error("copyCandidateResultsFromDeviceToHost not implemented for this correctionTypeCands");
             }
         }
 
@@ -1723,10 +1684,6 @@ namespace gpu{
                 stream
             );
 
-        }
-
-        void copyCandidateResultsFromDeviceToHostForest(cudaStream_t stream){
-            ; //nothing to do.
         }
 
         void copyCandidateResultsFromDeviceToHostForestGpu(cudaStream_t stream){
@@ -2016,8 +1973,6 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
-            #if 1
-
             callSelectIndicesOfGoodCandidatesKernelAsync(
                 d_indices.get(),
                 d_indices_per_anchor.get(),
@@ -2043,265 +1998,6 @@ namespace gpu{
             );
 
             cudaEventRecord(events[1], stream); CUERR;
-
-            #else
-
-            cudaMemsetAsync(
-                d_indices_per_anchor.get(), 0, sizeof(int) * currentNumAnchors, stream
-            );
-
-            helpers::lambda_kernel<<<SDIV(currentNumAnchors, (128 / 32)), 128, 0, stream>>>(
-                [
-                    d_indicesOfGoodCandidates = this->d_indices.get(),
-                    d_numIndicesPerAnchor = this->d_indices_per_anchor.get(),
-                    d_alignmentFlags = this->d_alignment_best_alignment_flags.get(),
-                    d_candidates_per_subject = this->d_candidates_per_anchor.get(),
-                    d_candidates_per_subject_prefixsum = this->d_candidates_per_anchor_prefixsum.get(),
-                    currentNumAnchors = this->currentNumAnchors
-                ] __device__ ()
-            {
-                constexpr int blocksize = 128;
-                constexpr int tilesize = 32;
-
-                static_assert(blocksize % tilesize == 0);
-                static_assert(tilesize == 32);
-
-                constexpr int numTilesPerBlock = blocksize / tilesize;
-
-                const int numAnchors = currentNumAnchors;
-
-                const int numTiles = (gridDim.x * blocksize) / tilesize;
-                const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
-                const int tileIdInBlock = threadIdx.x / tilesize;
-
-                __shared__ int totalIndices;
-                __shared__ int counts[numTilesPerBlock];
-
-                if(threadIdx.x == 0){
-                    totalIndices = 0;
-                }
-                __syncthreads();
-
-                auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
-
-                for(int anchorIndex = tileId; anchorIndex < numAnchors; anchorIndex += numTiles){
-
-                    const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
-                    int* const indicesPtr = d_indicesOfGoodCandidates + offset;
-                    int* const numIndicesPtr = d_numIndicesPerAnchor + anchorIndex;
-                    const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentFlags + offset;
-
-                    const int numCandidatesForAnchor = d_candidates_per_subject[anchorIndex];
-
-                    if(tile.thread_rank() == 0){
-                        counts[tileIdInBlock] = 0;
-                    }
-                    tile.sync();
-
-                    for(int localCandidateIndex = tile.thread_rank(); 
-                            localCandidateIndex < numCandidatesForAnchor; 
-                            localCandidateIndex += tile.size()){
-                        
-                        const BestAlignment_t alignmentflag = myAlignmentFlagsPtr[localCandidateIndex];
-
-                        if(alignmentflag != BestAlignment_t::None){
-                            cg::coalesced_group g = cg::coalesced_threads();
-                            int outputPos;
-                            if (g.thread_rank() == 0) {
-                                outputPos = atomicAdd(&counts[tileIdInBlock], g.size());
-                                atomicAdd(&totalIndices, g.size());
-                            }
-                            outputPos = g.thread_rank() + g.shfl(outputPos, 0);
-                            //indicesPtr[outputPos] = localCandidateIndex;
-                            indicesPtr[outputPos] = outputPos;
-                        }
-                    }
-
-                    tile.sync();
-                    if(tile.thread_rank() == 0){
-                        atomicAdd(numIndicesPtr, counts[tileIdInBlock]);
-                    }
-
-                }
-            }
-            );
-
-
-            std::size_t cubTempSize = d_tempstorage.sizeInBytes();
-            cudaError_t cubstatus = cub::DeviceScan::ExclusiveSum(
-                d_tempstorage.data(),
-                cubTempSize,
-                d_indices_per_anchor.data(),
-                d_indices_per_anchor_prefixsum.data(),
-                currentNumAnchors,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-
-            //copy indices into contiguous locations
-            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
-                [
-                    d_indices_tmp = this->d_indices_tmp.data(),
-                    d_indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
-                    d_indices_per_anchor_prefixsum = this->d_indices_per_anchor_prefixsum.data(),
-                    d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
-                    currentNumAnchors = this->currentNumAnchors
-                ] __device__ ()
-            {
-                for(int a = blockIdx.x; a < currentNumAnchors; a += gridDim.x){
-
-                    const int outputOffset = d_indices_per_anchor_prefixsum[a];
-                    const int inputOffset = d_candidates_per_anchor_prefixsum[a];
-                    const int segmentsize = d_indices_per_anchor[a];
-
-                    for(int c = threadIdx.x; c < segmentsize; c += blockDim.x){
-                        d_indices_tmp[outputOffset + c] = d_indices[inputOffset + c];
-                    }
-                }
-            }
-            );
-            std::swap(d_indices_tmp, d_indices);
-
-            //compact
-            auto flagsIter = thrust::make_transform_iterator(
-                d_alignment_best_alignment_flags.data(), 
-                [] __device__ (const auto& flag){ return flag != BestAlignment_t::None;}
-            );
-            auto srcIter = thrust::make_zip_iterator(thrust::make_tuple(
-                d_alignment_overlaps.get(),
-                d_alignment_shifts.get(),
-                d_alignment_nOps.get(),
-                d_alignment_best_alignment_flags.get(),
-                d_candidate_sequences_lengths.get(),
-                d_anchorIndicesOfCandidates.get(),
-                d_candidateContainsN.get(),
-                d_candidate_read_ids.get()
-            ));
-            auto destIter = thrust::make_zip_iterator(thrust::make_tuple(
-                d_alignment_overlaps2.get(),
-                d_alignment_shifts2.get(),
-                d_alignment_nOps2.get(),
-                d_alignment_best_alignment_flags2.get(),
-                d_candidate_sequences_lengths2.get(),
-                d_anchorIndicesOfCandidates2.get(),
-                d_candidateContainsN2.get(),
-                d_candidate_read_ids2.get()
-            ));
-            cubstatus = cub::DeviceSelect::Flagged(
-                d_tempstorage.data(),
-                cubTempSize,
-                srcIter, 
-                flagsIter, 
-                destIter, 
-                d_num_indices.data(), 
-                currentNumCandidates
-            );
-
-            assert(cubstatus == cudaSuccess);
-
-            cudaMemcpyAsync(
-                h_numSelected.data(),
-                d_num_indices.data(),
-                sizeof(int),
-                D2H,
-                stream
-            ); CUERR;
-
-            helpers::lambda_kernel<<<SDIV(maxCandidates, 256), 256, 0, stream>>>(
-                [
-                    dest = currentOutput->h_candidate_read_ids.get(),
-                    src = d_candidate_read_ids2.get(),
-                    numPtr = d_num_indices.get()
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
-                    const int num = *numPtr;
-
-                    for(int i = tid; i < num; i += stride){
-                        dest[i] = src[i];
-                    }
-                }
-            );
-
-            cudaEventRecord(events[0], stream); CUERR;
-
-            auto flagsIter2 = thrust::make_transform_iterator(
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    make_iterator_multiplier(d_alignment_best_alignment_flags.data(), int(encodedSequencePitchInInts))
-                ),
-                [] __device__ (const auto& flag){ return flag != BestAlignment_t::None;}
-            );
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                d_tempstorage.data(),
-                cubTempSize,
-                d_candidate_sequences_data.data(),
-                flagsIter2,
-                d_candidate_sequences_data2.data(),
-                cub::DiscardOutputIterator<int>{},
-                currentNumCandidates * encodedSequencePitchInInts,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-
-            cudaMemcpyAsync(
-                d_numCandidates.data(),
-                d_num_indices.data(),
-                sizeof(int),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidates_per_anchor_prefixsum.data() + currentNumAnchors,
-                d_num_indices.data(),
-                sizeof(int),
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidates_per_anchor_prefixsum.data(),
-                d_indices_per_anchor_prefixsum.data(),
-                sizeof(int) * currentNumAnchors,
-                D2D,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                d_candidates_per_anchor.data(),
-                d_indices_per_anchor.data(),
-                sizeof(int) * currentNumAnchors,
-                D2D,
-                stream
-            ); CUERR;
-
-            std::swap(d_alignment_overlaps2, d_alignment_overlaps);
-            std::swap(d_alignment_shifts2, d_alignment_shifts);
-            std::swap(d_alignment_nOps2, d_alignment_nOps);
-            std::swap(d_alignment_best_alignment_flags2, d_alignment_best_alignment_flags);
-            std::swap(d_candidate_sequences_lengths2, d_candidate_sequences_lengths);
-            std::swap(d_anchorIndicesOfCandidates2, d_anchorIndicesOfCandidates);
-            std::swap(d_candidateContainsN2, d_candidateContainsN);
-            std::swap(d_candidate_sequences_data2, d_candidate_sequences_data);  
-            std::swap(d_candidate_read_ids2, d_candidate_read_ids);
-
-
-
-            cudaEventSynchronize(events[0]); CUERR; //wait for h_numSelected
-            currentNumCandidates = *h_numSelected;
-
-            #endif
-
-
-            //testing 
-
-            // int numSelected = 0;
-            // cudaMemcpyAsync(&numSelected, d_num_indices, sizeof(int), D2H, stream); CUERR;
-            // cudaStreamSynchronize(stream); CUERR;
-            //std::cerr << numSelected << " / " << currentNumCandidates << "\n";
         }
 
         void buildMultipleSequenceAlignment(cudaStream_t stream){
@@ -2405,491 +2101,13 @@ namespace gpu{
 
         }
 
-        void copyDataForForestCorrectionToHost(cudaStream_t stream){
-            h_consensus.resize(d_consensus.size());
-            h_msa_column_properties.resize(d_msa_column_properties.size());
-            h_coverage.resize(d_coverage.size());
-            h_counts.resize(d_counts.size());
-            h_weights.resize(d_weights.size());
-            h_support.resize(d_support.size());
-            //h_alignment_shifts.resize(d_alignment_shifts.size());
-            //h_anchor_sequences_lengths.resize(d_anchor_sequences_lengths.size());
-            //h_candidate_sequences_lengths.resize(d_candidate_sequences_lengths.size());
-            h_anchor_sequences_data.resize(d_anchor_sequences_data.size());
-            h_candidate_sequences_data.resize(d_candidate_sequences_data.size());
-            h_alignment_best_alignment_flags.resize(d_alignment_best_alignment_flags.size());
-            h_segmentSizes.resize(d_indices_per_anchor.size());
-            h_segmentOffsets.resize(d_candidates_per_anchor_prefixsum.size());
-            h_candidates_per_anchor_prefixsum.resize(d_candidates_per_anchor_prefixsum.size());
-
-            h_anchorContainsN.resize(d_anchorContainsN.size());
-            h_candidateContainsN.resize(d_candidateContainsN.size());
-
-            d_alignment_shifts2.resize(d_alignment_shifts.size());
-            d_candidate_sequences_lengths2.resize(d_candidate_sequences_lengths.size());
-            d_candidate_sequences_data2.resize(d_candidate_sequences_data.size());
-            d_alignment_best_alignment_flags2.resize(d_alignment_best_alignment_flags.size());
-
-            h_numSelected.resize(1);
-            h_indices.resize(d_indices.size());
-
-            h_decoded_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
-            d_decoded_candidates.resize(maxCandidates * decodedSequencePitchInBytes);
-            #if 0
-            //decode active candidates
-            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
-                [
-                    h_decoded_candidates = this->h_decoded_candidates.data(),
-                    d_candidate_sequences_data = this->d_candidate_sequences_data.data(),
-                    d_alignment_best_alignment_flags = this->d_alignment_best_alignment_flags.data(),
-                    d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data(),
-                    d_indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
-                    d_num_indices = this->d_num_indices.data(),
-                    d_anchorIndicesOfCandidates = this->d_anchorIndicesOfCandidates.data(),
-                    d_candidate_sequences_lengths = this->d_candidate_sequences_lengths.data(),
-                    encodedSequencePitchInInts = this->encodedSequencePitchInInts,
-                    decodedSequencePitchInBytes = this->decodedSequencePitchInBytes
-                ] __device__ (){
-
-                        auto decode = [](const std::uint8_t encoded){
-                            char decoded = 'F';
-                            if(encoded == std::uint8_t{0}){
-                                decoded = 'A';
-                            }else if(encoded == std::uint8_t{1}){
-                                decoded = 'C';
-                            }else if(encoded == std::uint8_t{2}){
-                                decoded = 'G';
-                            }else if(encoded == std::uint8_t{3}){
-                                decoded = 'T';
-                            }
-                            return decoded;
-                        };
-
-                        const int anchorIndex = blockIdx.x;
-                        const int globalOffset = d_candidates_per_anchor_prefixsum[anchorIndex];
-                        const int numCandidates = d_indices_per_anchor[anchorIndex];
-
-                        for(int c = 0; c < numCandidates; c++){
-                            const int localCandidateIndex = d_indices[globalOffset + c];
-                            const int globalCandidateIndex = globalOffset + localCandidateIndex;
-                            const int length = d_candidate_sequences_lengths[globalCandidateIndex];
-                            const BestAlignment_t alignmentFlag = d_alignment_best_alignment_flags[globalCandidateIndex];
-
-                            const unsigned int* encodedPtr = d_candidate_sequences_data
-                                + globalCandidateIndex * encodedSequencePitchInInts;
-
-                            char* decodedPtr = h_decoded_candidates + globalCandidateIndex * decodedSequencePitchInBytes;
-
-
-                            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
-                            const int fullInts = length / basesPerInt;   
-                            
-                            for(int i = 0; i < fullInts; i++){
-                                const unsigned int encodedDataInt = encodedPtr[i];
-
-                                for(int k = threadIdx.x; k < basesPerInt; k += blockDim.x){
-                                    const int posInInt = k;
-                                    const int posInSequence = i * basesPerInt + posInInt;
-                                    const std::uint8_t encodedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
-                                    const char decodedNuc = decode(encodedNuc);
-
-                                    if(alignmentFlag == BestAlignment_t::Forward){
-                                        decodedPtr[posInSequence] = decodedNuc;
-                                    }else{
-                                        decodedPtr[length - posInSequence - 1] = decodedNuc;
-                                    }
-                                }
-                            }
-
-                            const int remainingPositions = length - basesPerInt * fullInts;
-
-                            if(remainingPositions > 0){
-                                const unsigned int encodedDataInt = encodedPtr[fullInts];
-                                for(int posInInt = threadIdx.x; posInInt < remainingPositions; posInInt += blockDim.x){
-                                    const int posInSequence = fullInts * basesPerInt + posInInt;
-                                    const std::uint8_t encodedNuc = SequenceHelpers::getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
-                                    const char decodedNuc = decode(encodedNuc);
-
-                                    if(alignmentFlag == BestAlignment_t::Forward){
-                                        decodedPtr[posInSequence] = decodedNuc;
-                                    }else{
-                                        decodedPtr[length - posInSequence - 1] = decodedNuc;
-                                    }
-                                }
-                            }
-                        }
-                    }
-            ); CUERR;
-            #endif
-            //decode encoded device consensus and store on host. copy column properties to host
-            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
-                [
-                    msaColumnPitchInElements = this->msaColumnPitchInElements,
-                    d_consensus = this->d_consensus.data(),
-                    h_consensus = this->h_consensus.data(),
-                    h_msa_column_properties = this->h_msa_column_properties.data(),
-                    d_msa_column_properties = this->d_msa_column_properties.data(),
-                    currentNumAnchors = this->currentNumAnchors
-                ] __device__ (){
-
-                    auto decode = [](const std::uint8_t encoded){
-                        char decoded = 'F';
-                        if(encoded == std::uint8_t{0}){
-                            decoded = 'A';
-                        }else if(encoded == std::uint8_t{1}){
-                            decoded = 'C';
-                        }else if(encoded == std::uint8_t{2}){
-                            decoded = 'G';
-                        }else if(encoded == std::uint8_t{3}){
-                            decoded = 'T';
-                        }
-                        return decoded;
-                    };
-
-                    const std::uint8_t* inputConsensus = &d_consensus[blockIdx.x * msaColumnPitchInElements];
-                    char* outputConsensus = &h_consensus[blockIdx.x * msaColumnPitchInElements];
-
-                    const int numVecIters = msaColumnPitchInElements / sizeof(char4);
-
-                    for(int i = threadIdx.x; i < numVecIters; i += blockDim.x){
-                        char4 data = ((const char4*)inputConsensus)[i];
-
-                        char4 result;
-                        result.x = decode(data.x);
-                        result.y = decode(data.y);
-                        result.z = decode(data.z);
-                        result.w = decode(data.w);
-
-                        ((char4*)outputConsensus)[i] = result;
-                    }
-
-                    const int remaining = msaColumnPitchInElements - (numVecIters * sizeof(char4));
-                    
-                    for(int i = threadIdx.x; i < remaining; i += blockDim.x){
-                        std::uint8_t encoded = d_consensus[blockIdx.x * msaColumnPitchInElements + numVecIters * sizeof(char4) + i];
-
-                        char decoded = decode(encoded);
-
-                        h_consensus[blockIdx.x * msaColumnPitchInElements + numVecIters * sizeof(char4) + i] = decoded;
-                    }
-
-                    //copy column properties
-                    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < currentNumAnchors; i += blockDim.x * gridDim.x){
-                        h_msa_column_properties[i] = d_msa_column_properties[i];
-                    }
-                }
-            ); CUERR;
-
-
-            d_flagsCandidates.resize(currentNumCandidates);
-
-            cudaMemsetAsync(
-                d_flagsCandidates.data(),
-                0,
-                d_flagsCandidates.sizeInBytes(),
-                stream
-            ); CUERR;
-
-            //compute flags of active candidates
-            helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
-                [
-                    d_flagscandidates = this->d_flagsCandidates.data(),
-                    indices = this->d_indices.data(),
-                    d_indices_per_anchor = this->d_indices_per_anchor.data(),
-                    d_candidates_per_anchor_prefixsum = this->d_candidates_per_anchor_prefixsum.data()
-                ] __device__ (){
-
-                    const int num = d_indices_per_anchor[blockIdx.x];
-                    const int offset = d_candidates_per_anchor_prefixsum[blockIdx.x];
-                    
-                    for(int i = threadIdx.x; i < num; i += blockDim.x){
-                        const int globalIndex = indices[offset + i] + offset;
-                        d_flagscandidates[globalIndex] = true;
-                    }
-                }
-            ); CUERR;
-
-            //set up cub
-
-            auto d_zip = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    d_alignment_shifts.data(),
-                    d_candidate_sequences_lengths.data(),
-                    d_alignment_best_alignment_flags.data()
-                )
-            );
-
-            auto d_zip_out = thrust::make_zip_iterator(
-                thrust::make_tuple(
-                    d_alignment_shifts2.data(),
-                    d_candidate_sequences_lengths2.data(),
-                    d_alignment_best_alignment_flags2.data()
-                )
-            );
-
-            std::size_t cubBytes = 0;
-            std::size_t cubBytes2 = 0;
-
-            cudaError_t cubstatus = cudaSuccess;
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                nullptr, 
-                cubBytes2, 
-                d_zip, 
-                d_flagsCandidates.data(), 
-                d_zip_out, 
-                h_numSelected.data(), 
-                currentNumCandidates,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-            cubBytes = std::max(cubBytes, cubBytes2);
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                nullptr,
-                cubBytes2,
-                d_candidate_sequences_data.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_flagsCandidates.data(), int(encodedSequencePitchInInts)}
-                ),
-                d_candidate_sequences_data2.data(),
-                cub::DiscardOutputIterator<int>{},
-                currentNumCandidates * encodedSequencePitchInInts,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-            cubBytes = std::max(cubBytes, cubBytes2);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr,
-                cubBytes2,
-                d_indices_per_anchor.data(),
-                h_segmentOffsets.data(),
-                currentNumAnchors,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-            cubBytes = std::max(cubBytes, cubBytes2);
-
-            d_cubtemp2.resize(cubBytes);
-
-            //run cub
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                d_cubtemp2.data(), 
-                cubBytes,
-                d_indices_per_anchor.data(),
-                h_segmentOffsets.data(),
-                currentNumAnchors,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-
-            #if 1 // 1 full copy, 0 compact by active candidates and copy
-
-                cudaMemcpyAsync(
-                    h_candidate_sequences_data.data(),
-                    d_candidate_sequences_data.data(),
-                    sizeof(unsigned int) * encodedSequencePitchInInts * currentNumCandidates,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    currentOutput->h_alignment_shifts.data(),
-                    d_alignment_shifts.data(),
-                    sizeof(int) * currentNumCandidates,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    currentOutput->h_candidate_sequences_lengths.data(),
-                    d_candidate_sequences_lengths.data(),
-                    sizeof(int) * currentNumCandidates,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    h_alignment_best_alignment_flags.data(),
-                    d_alignment_best_alignment_flags.data(),
-                    sizeof(BestAlignment_t) * currentNumCandidates,
-                    D2H,
-                    stream
-                ); CUERR;
-
-            #else
-
-
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                d_cubtemp2.data(), 
-                cubBytes, 
-                d_zip, 
-                d_flagsCandidates.data(), 
-                d_zip_out, 
-                h_numSelected.data(), 
-                currentNumCandidates,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                d_cubtemp2.data(), 
-                cubBytes,
-                d_candidate_sequences_data.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_flagsCandidates.data(), int(encodedSequencePitchInInts)}
-                ),
-                d_candidate_sequences_data2.data(),
-                cub::DiscardOutputIterator<int>{},
-                currentNumCandidates * encodedSequencePitchInInts,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
-
-            cudaStreamSynchronize(stream); //wait for h_numSelected
-
-            cudaMemcpyAsync(
-                h_candidate_sequences_data.data(),
-                d_candidate_sequences_data2.data(),
-                sizeof(unsigned int) * encodedSequencePitchInInts * (*h_numSelected),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                currentOutput->h_alignment_shifts.data(),
-                d_alignment_shifts2.data(),
-                sizeof(int) * (*h_numSelected),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                currentOutput->h_candidate_sequences_lengths.data(),
-                d_candidate_sequences_lengths2.data(),
-                sizeof(int) * (*h_numSelected),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_alignment_best_alignment_flags.data(),
-                d_alignment_best_alignment_flags2.data(),
-                sizeof(BestAlignment_t) * (*h_numSelected),
-                D2H,
-                stream
-            ); CUERR;
-
-            #endif
-
-            //copy remaining data 
-
-            cudaMemcpyAsync(
-                h_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor_prefixsum.data(),
-                d_candidates_per_anchor_prefixsum.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;  
-
-            cudaMemcpyAsync(
-                h_anchorContainsN.data(),
-                d_anchorContainsN.data(),
-                d_anchorContainsN.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;     
-
-            cudaMemcpyAsync(
-                h_candidateContainsN.data(),
-                d_candidateContainsN.data(),
-                d_candidateContainsN.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;       
-
-            cudaMemcpyAsync(
-                h_coverage.data(),
-                d_coverage.data(),
-                d_coverage.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_support.data(),
-                d_support.data(),
-                d_support.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_counts.data(),
-                d_counts.data(),
-                d_counts.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_weights.data(),
-                d_weights.data(),
-                d_weights.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_anchor_sequences_data.data(),
-                d_anchor_sequences_data.data(),
-                d_anchor_sequences_data.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                currentOutput->h_anchor_sequences_lengths.data(),
-                d_anchor_sequences_lengths.data(),
-                d_anchor_sequences_lengths.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_segmentSizes.data(),
-                d_indices_per_anchor.data(),
-                d_indices_per_anchor.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;   
-
-            cudaMemcpyAsync(
-                h_indices.data(),
-                d_indices.data(),
-                d_indices.sizeInBytes(),
-                D2H,
-                stream
-            ); CUERR;      
-        };
-
         void correctAnchors(cudaStream_t stream){
             if(correctionOptions->correctionType == CorrectionType::Classic){
                 correctAnchorsClassic(stream);
             }else if(correctionOptions->correctionType == CorrectionType::Forest){
-                #ifdef GPUANCHORFOREST
                 correctAnchorsForestGpu(stream);
-                #else
-                correctAnchorsForest(stream);
-                #endif
             }else{
-                throw std::runtime_error("correctAnchors not implemented for this type");
+                throw std::runtime_error("correctAnchors not implemented for this correctionType");
             }
         }
 
@@ -2975,125 +2193,6 @@ namespace gpu{
             
         }
 
-        void correctAnchorsForest(cudaStream_t stream){
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            int numCorrectedAnchors = 0; //edit information is only stored for corrected anchors, and stored compact
-
-            for(int a = 0; a < currentNumAnchors; a++){
-                const int numCandidates = h_segmentSizes[a];
-
-                if(numCandidates == 0){
-                    //without candidates, no correction can be made
-                    currentOutput->h_anchor_is_corrected[a] = false;
-                    currentOutput->h_is_high_quality_anchor[a].hq(false);
-                }else{
-                    char* const myCorrection = currentOutput->h_corrected_anchors.data() + decodedSequencePitchInBytes * a;
-                    const char* const myConsensus = h_consensus.data() + msaColumnPitchInElements * a;
-
-                    const int anchorLength = currentOutput->h_anchor_sequences_lengths[a];
-
-                    const int subjectColumnsBegin_incl = h_msa_column_properties[a].subjectColumnsBegin_incl;
-                    const int subjectColumnsEnd_excl = h_msa_column_properties[a].subjectColumnsEnd_excl;
-
-                    assert(anchorLength == subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-
-                    std::copy(
-                        myConsensus + subjectColumnsBegin_incl,
-                        myConsensus + subjectColumnsEnd_excl,
-                        myCorrection
-                    );
-
-                    const int* const myCoverages = h_coverage.data() + msaColumnPitchInElements * a;
-                    const float* const mySupport = h_support.data() + msaColumnPitchInElements * a;
-
-                    MSAProperties anchorMsaProperties = getMSAProperties(
-                        mySupport,
-                        myCoverages,
-                        subjectColumnsBegin_incl,
-                        subjectColumnsEnd_excl, //exclusive
-                        correctionOptions->estimatedErrorrate, 
-                        correctionOptions->estimatedCoverage, 
-                        correctionOptions->m_coverage
-                    );
-
-                    std::vector<char> decodedAnchor(decodedSequencePitchInBytes);
-                    const unsigned int* const encodedAnchor = h_anchor_sequences_data.data() + a * encodedSequencePitchInInts;
-                    
-
-                    SequenceHelpers::decode2BitSequence(decodedAnchor.data(), encodedAnchor, anchorLength);
-
-                    if(!anchorMsaProperties.isHQ){
-
-                        const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
-                        const float* const myWeights = h_weights.data() + 4 * msaColumnPitchInElements * a;
-
-                        ClfAgentDecisionInputData clfInput{};
-
-                        clfInput.decodedAnchor = decodedAnchor.data();
-                        clfInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
-                        clfInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
-                        clfInput.alignmentShifts = nullptr; //unused for anchor correction
-                        clfInput.candidateSequencesLengths = nullptr; //unused for anchor correction
-                        clfInput.decodedCandidateSequences = nullptr; //unused for anchor correction
-                        clfInput.countsA = myCounts + 0 * msaColumnPitchInElements;
-                        clfInput.countsC = myCounts + 1 * msaColumnPitchInElements;
-                        clfInput.countsG = myCounts + 2 * msaColumnPitchInElements;
-                        clfInput.countsT = myCounts + 3 * msaColumnPitchInElements;
-                        clfInput.weightsA = myWeights + 0 * msaColumnPitchInElements;
-                        clfInput.weightsC = myWeights + 1 * msaColumnPitchInElements;
-                        clfInput.weightsG = myWeights + 2 * msaColumnPitchInElements;
-                        clfInput.weightsT = myWeights + 3 * msaColumnPitchInElements;
-                        clfInput.coverages = h_coverage.data() + msaColumnPitchInElements * a;
-                        clfInput.consensus = myConsensus;
-                        clfInput.getMSAProperties = nullptr; // unused for anchor correction
-                        clfInput.anchorMsaProperties = anchorMsaProperties;
-
-                        
-
-                        for (int i = 0; i < anchorLength; ++i) {
-                            if (decodedAnchor[i] != myConsensus[subjectColumnsBegin_incl+i] 
-                                && !clfAgent->decide_anchor(clfInput, i, *correctionOptions))
-                            {
-                                myCorrection[i] = decodedAnchor[i];
-                            }
-                        }
-                    }else{
-                        ;
-                    }
-
-                    currentOutput->h_anchor_is_corrected[a] = true;
-                    currentOutput->h_is_high_quality_anchor[a].hq(anchorMsaProperties.isHQ);
-
-                    auto* const edits = (TempCorrectedSequence::EncodedEdit*)(((char*)currentOutput->h_editsPerCorrectedanchor.data())
-                        + editsPitchInBytes * numCorrectedAnchors);
-                    int* const numEditsPtr = currentOutput->h_numEditsPerCorrectedanchor.data() + numCorrectedAnchors;
-
-                    const bool ambiguous = h_anchorContainsN[a];
-                    if(!ambiguous){
-                        const int maxEdits = anchorLength / 7;
-                        int numedits = 0;
-                        for(int i = 0; i < anchorLength && numedits <= maxEdits; i++){
-                            if(myCorrection[i] != decodedAnchor[i]){
-                                edits[numedits] = TempCorrectedSequence::EncodedEdit{i, myCorrection[i]};
-                                numedits++;
-                            }
-                        }
-                        if(numedits <= maxEdits){
-                            *numEditsPtr = numedits;
-                        }else{
-                            *numEditsPtr = getDoNotUseEditsValue();
-                        }
-                    }else{
-                        *numEditsPtr = getDoNotUseEditsValue();
-                    }
-
-                    numCorrectedAnchors++;
-                }
-            }
-        }
-
         void correctAnchorsForestGpu(cudaStream_t stream){
 
             const float avg_support_threshold = 1.0f - 1.0f * correctionOptions->estimatedErrorrate;
@@ -3174,21 +2273,15 @@ namespace gpu{
 
         }
         
-
         void correctCandidates(cudaStream_t stream){
             if(correctionOptions->correctionTypeCands == CorrectionType::Classic){
                 correctCandidatesClassic(stream);
             }else if(correctionOptions->correctionTypeCands == CorrectionType::Forest){
-                #ifdef GPUCANDIDATEFOREST
                 correctCandidatesForestGpu(stream);
-                #else
-                correctCandidatesForest(stream);
-                #endif
             }else{
-                std::cerr << "correctCandidates not implemented for this type\n";
+                throw std::runtime_error("correctCandidates not implemented for this correctionTypeCands");
             }
         }
-
 
         void correctCandidatesClassic(cudaStream_t stream){
 
@@ -3199,17 +2292,6 @@ namespace gpu{
             const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
 
             bool* const d_candidateCanBeCorrected = d_alignment_isValid.get(); //repurpose
-
-            if(correctionOptions->correctionType == CorrectionType::Forest){
-                //transfer flags of cpu forest anchor correction to gpu
-                cudaMemcpyAsync(
-                    d_is_high_quality_anchor.data(),
-                    currentOutput->h_is_high_quality_anchor.data(),
-                    sizeof(AnchorHighQualityFlag) * currentNumAnchors,
-                    H2D,
-                    stream
-                );
-            }
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor, IsHqAnchor{});
@@ -3349,190 +2431,6 @@ namespace gpu{
   
         }
 
-        void correctCandidatesForest(cudaStream_t stream){
-
-            nvtx::push_range("correctCandidatesForest", 4);
-            cudaStreamSynchronize(stream); CUERR;
-
-            int numCorrectedCandidates = 0; //edit information is only stored for corrected anchors, and stored compact
-            currentOutput->h_num_corrected_candidates_per_anchor_prefixsum[0] = 0;
-
-            for(int a = 0; a < currentNumAnchors; a++){
-                const int numCandidates = h_segmentSizes[a];
-                int numCorrectedCandidatesForAnchor = 0;
-
-                if(numCandidates > 0){
-                    const int globalOffset = h_candidates_per_anchor_prefixsum[a];
-                    const char* const myConsensus = h_consensus.data() + msaColumnPitchInElements * a;
-
-                    const int subjectColumnsBegin_incl = h_msa_column_properties[a].subjectColumnsBegin_incl;
-                    const int subjectColumnsEnd_excl = h_msa_column_properties[a].subjectColumnsEnd_excl;
-
-                    const int* const myCoverages = h_coverage.data() + msaColumnPitchInElements * a;
-                    const float* const mySupport = h_support.data() + msaColumnPitchInElements * a;
-                    
-                    MSAProperties anchorMsaProperties = getMSAProperties(
-                        mySupport,
-                        myCoverages,
-                        subjectColumnsBegin_incl,
-                        subjectColumnsEnd_excl, //exclusive
-                        correctionOptions->estimatedErrorrate, 
-                        correctionOptions->estimatedCoverage, 
-                        correctionOptions->m_coverage
-                    );
-
-                    if(anchorMsaProperties.isHQ){
-
-                        const int* const myShifts = currentOutput->h_alignment_shifts.data() + globalOffset;
-
-                        for(int c = 0; c < numCandidates; c++){
-                            const int candidateIndex = h_indices[globalOffset + c];
-                            const int cand_begin = subjectColumnsBegin_incl + myShifts[candidateIndex];
-                            const int cand_length = currentOutput->h_candidate_sequences_lengths[globalOffset + candidateIndex];
-                            const int cand_end = cand_begin + cand_length;
-                            const read_number candidateReadId = currentInput->h_candidate_read_ids[globalOffset + candidateIndex];
-
-                            if(correctionFlags->isCorrectedAsHQAnchor(candidateReadId)){
-                                continue;
-                            }
-
-                            if(cand_begin >= subjectColumnsBegin_incl - correctionOptions->new_columns_to_correct
-                                && cand_end <= subjectColumnsEnd_excl + correctionOptions->new_columns_to_correct){
-
-                                currentOutput->h_indices_of_corrected_candidates[numCorrectedCandidates] = globalOffset + candidateIndex;
-
-                                char* const myCorrection = currentOutput->h_corrected_candidates.data() 
-                                    + decodedSequencePitchInBytes * numCorrectedCandidates;
-                                std::copy(myConsensus + cand_begin, myConsensus + cand_end, myCorrection);
-
-                                //decode encoded candidate with proper orientation
-                                #if 1
-                                const unsigned int* const encodedCandidate = h_candidate_sequences_data.data() 
-                                    + (globalOffset + candidateIndex) * encodedSequencePitchInInts;
-                                
-
-                                std::vector<char> decodedCandidate(decodedSequencePitchInBytes);
-                                SequenceHelpers::decode2BitSequence(
-                                    decodedCandidate.data(), 
-                                    encodedCandidate, 
-                                    cand_length
-                                );
-
-                                const BestAlignment_t alignmentDirection = h_alignment_best_alignment_flags[globalOffset + candidateIndex];
-
-                                if(alignmentDirection == BestAlignment_t::ReverseComplement){
-                                    SequenceHelpers::reverseComplementSequenceDecodedInplace(decodedCandidate.data(), cand_length);
-                                }else{
-                                    assert(alignmentDirection == BestAlignment_t::Forward);
-                                }
-
-                                const char* const decodedCandidatePtr = decodedCandidate.data();
-
-                                #else 
-
-                                const char* const decodedCandidatePtr = h_decoded_candidates.data()
-                                    + (globalOffset + candidateIndex) * decodedSequencePitchInBytes;
-
-                                #endif
-
-                                const int* const myCounts = h_counts.data() + 4 * msaColumnPitchInElements * a;
-                                const float* const myWeights = h_weights.data() + 4 * msaColumnPitchInElements * a;
-
-                                ClfAgentDecisionInputData clfInput{};
-
-                                clfInput.decodedAnchor = nullptr; //unused for candidate correction
-                                clfInput.subjectColumnsBegin_incl = subjectColumnsBegin_incl;
-                                clfInput.subjectColumnsEnd_excl = subjectColumnsEnd_excl;
-                                clfInput.alignmentShifts = &myShifts[candidateIndex]; //treat as if only 1 candidate exists
-                                clfInput.candidateSequencesLengths = &cand_length; //treat as if only 1 candidate exists
-                                clfInput.decodedCandidateSequences = decodedCandidatePtr; //treat as if only 1 candidate exists
-                                clfInput.countsA = myCounts + 0 * msaColumnPitchInElements;
-                                clfInput.countsC = myCounts + 1 * msaColumnPitchInElements;
-                                clfInput.countsG = myCounts + 2 * msaColumnPitchInElements;
-                                clfInput.countsT = myCounts + 3 * msaColumnPitchInElements;
-                                clfInput.weightsA = myWeights + 0 * msaColumnPitchInElements;
-                                clfInput.weightsC = myWeights + 1 * msaColumnPitchInElements;
-                                clfInput.weightsG = myWeights + 2 * msaColumnPitchInElements;
-                                clfInput.weightsT = myWeights + 3 * msaColumnPitchInElements;
-                                clfInput.coverages = myCoverages;
-                                clfInput.consensus = myConsensus;
-                                clfInput.anchorMsaProperties = anchorMsaProperties;
-
-                                MSAProperties candidateMsaProperties = getMSAProperties(
-                                    mySupport,
-                                    myCoverages,
-                                    cand_begin,
-                                    cand_end, //exclusive
-                                    correctionOptions->estimatedErrorrate, 
-                                    correctionOptions->estimatedCoverage, 
-                                    correctionOptions->m_coverage
-                                );
-                                
-                                clfInput.getMSAProperties = [&](
-                                        int begin, int end, float est_err, float est_cov, float m_cov
-                                ){
-                                    return candidateMsaProperties; //cached for multiple calls for same candidate
-                                };
-
-
-                                for(int i = 0; i < cand_length; i++){
-                                    if(decodedCandidatePtr[i] != myConsensus[cand_begin + i]){
-
-                                        if(!clfAgent->decide_cand(clfInput, i, *correctionOptions, 0, 0)){
-                                            myCorrection[i] = decodedCandidatePtr[i];
-                                        }else{
-                                        }
-                                    }
-                                }
-
-                                auto* const edits = (TempCorrectedSequence::EncodedEdit*)(((char*)currentOutput->h_editsPerCorrectedCandidate.data())
-                                    + editsPitchInBytes * numCorrectedCandidates);
-                                int* const numEditsPtr = currentOutput->h_numEditsPerCorrectedCandidate.data() + numCorrectedCandidates;
-
-                                const bool ambiguous = h_anchorContainsN[a];
-                                if(!ambiguous){
-                                    const int maxEdits = cand_length / 7;
-                                    int numedits = 0;
-                                    for(int i = 0; i < cand_length && numedits <= maxEdits; i++){
-                                        if(myCorrection[i] != decodedCandidatePtr[i]){
-                                            //edits are applied to the forward sequence
-                                            if(alignmentDirection == BestAlignment_t::ReverseComplement){
-                                                edits[numedits] = TempCorrectedSequence::EncodedEdit{cand_length - i - 1, SequenceHelpers::reverseComplementBaseDecoded(myCorrection[i])};
-                                            }else{
-                                                edits[numedits] = TempCorrectedSequence::EncodedEdit{i, myCorrection[i]};
-                                            }
-                                            numedits++;
-                                        }
-                                    }
-                                    if(numedits <= maxEdits){
-                                        std::sort(edits, edits + numedits, [](auto l, auto r){return l.pos() < r.pos();});
-                                        *numEditsPtr = numedits;
-                                    }else{
-                                        *numEditsPtr = getDoNotUseEditsValue();
-                                    }
-                                }else{
-                                    *numEditsPtr = getDoNotUseEditsValue();
-                                }
-
-                                numCorrectedCandidates++;
-                                numCorrectedCandidatesForAnchor++;
-                            }
-                        }
-                    }
-                }
-
-                currentOutput->h_num_corrected_candidates_per_anchor[a] = numCorrectedCandidatesForAnchor;
-            
-                if(a < currentNumAnchors - 1){
-                    currentOutput->h_num_corrected_candidates_per_anchor_prefixsum[a+1]
-                        = currentOutput->h_num_corrected_candidates_per_anchor_prefixsum[a]
-                            + numCorrectedCandidatesForAnchor;
-                }
-            }
-        
-            nvtx::pop_range();
-        }
-
         void correctCandidatesForestGpu(cudaStream_t stream){
 
             const float min_support_threshold = 1.0f-3.0f*correctionOptions->estimatedErrorrate;
@@ -3542,19 +2440,6 @@ namespace gpu{
             const int new_columns_to_correct = correctionOptions->new_columns_to_correct;
 
             bool* const d_candidateCanBeCorrected = d_alignment_isValid.get(); //repurpose
-
-            #ifndef GPUANCHORFOREST
-            if(correctionOptions->correctionType == CorrectionType::Forest){
-                //transfer flags of cpu forest anchor correction to gpu
-                cudaMemcpyAsync(
-                    d_is_high_quality_anchor.data(),
-                    currentOutput->h_is_high_quality_anchor.data(),
-                    sizeof(AnchorHighQualityFlag) * currentNumAnchors,
-                    H2D,
-                    stream
-                );
-            }
-            #endif
 
             cub::TransformInputIterator<bool, IsHqAnchor, AnchorHighQualityFlag*>
                 d_isHqanchor(d_is_high_quality_anchor, IsHqAnchor{});
@@ -3771,7 +2656,6 @@ namespace gpu{
         ThreadPool::ParallelForHandle pforHandle;
         KernelLaunchHandle kernelLaunchHandle; 
 
-        ClfAgent* clfAgent{};
         const GpuForest* gpuForestAnchor{};
         const GpuForest* gpuForestCandidate{};
 

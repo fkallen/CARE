@@ -181,14 +181,12 @@ public:
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
-        ClfAgent* clfAgent_,
         const GpuForest* gpuForestAnchor_, 
         const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
         threadPool(threadPool_),
-        clfAgent(clfAgent_),
         gpuForestAnchor(gpuForestAnchor_),
         gpuForestCandidate(gpuForestCandidate_)
     {
@@ -348,7 +346,6 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent,
             gpuForestAnchor,
             gpuForestCandidate
         };
@@ -618,7 +615,6 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent,
             gpuForestAnchor,
             gpuForestCandidate
         };
@@ -756,7 +752,6 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
-    ClfAgent* clfAgent;
     const GpuForest* gpuForestAnchor;
     const GpuForest* gpuForestCandidate;
 };
@@ -776,14 +771,12 @@ public:
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
         ThreadPool* threadPool_,
-        ClfAgent* clfAgent_,
         const GpuForest* gpuForestAnchor_, 
         const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
         threadPool(threadPool_),
-        clfAgent(clfAgent_),
         gpuForestAnchor(gpuForestAnchor_),
         gpuForestCandidate(gpuForestCandidate_)
     {
@@ -1036,7 +1029,6 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent,
             gpuForestAnchor,
             gpuForestCandidate
         };
@@ -1133,7 +1125,6 @@ public:
             goodAlignmentProperties,
             correctionOptions.batchsize,
             threadPool,
-            clfAgent,
             gpuForestAnchor,
             gpuForestCandidate
         };
@@ -1385,7 +1376,6 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
-    ClfAgent* clfAgent;
     const GpuForest* gpuForestAnchor;
     const GpuForest* gpuForestCandidate;
 
@@ -1592,7 +1582,6 @@ correct_gpu_impl(
                 readStorage,
                 minhasher,
                 nullptr, //&threadPool
-                &clfAgent_,
                 gpuForestAnchor,
                 gpuForestCandidate
             );
@@ -1641,7 +1630,6 @@ correct_gpu_impl(
                 readStorage,
                 minhasher,
                 nullptr, //&threadPool
-                &clfAgent_,
                 &anchorForests[0],
                 &candidateForests[0]
             );
@@ -1691,8 +1679,7 @@ correct_gpu_impl(
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr, //&threadPool        
-                &clfAgent_,
+                nullptr, //&threadPool
                 gpuForestAnchor,
                 gpuForestCandidate
             );
@@ -1713,7 +1700,10 @@ correct_gpu_impl(
             const GpuForest* gpuForestCandidate
         ){
             
-            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr, &clfAgent_, 
+            ComplexGpuCorrectionPipeline<Minhasher> pipeline(
+                readStorage, 
+                minhasher, 
+                nullptr,
                 gpuForestAnchor,
                 gpuForestCandidate
             );
