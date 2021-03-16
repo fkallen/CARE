@@ -9,96 +9,6 @@ namespace care{
     
     namespace gpucorrectorkernels{
     
-        __global__
-        void copyCandidateCorrectionResultsKernel(
-            char* __restrict__ out_corrected_candidates,
-            TempCorrectedSequence::EncodedEdit* __restrict__ out_editsPerCorrectedCandidate,
-            int* __restrict__ out_numEditsPerCorrectedCandidate,
-            int decodedSequencePitchInBytes,
-            int editsPitchInBytes,
-            const int* __restrict__ numCorrectedCandidates,
-            const char* __restrict__ in_corrected_candidates,
-            const TempCorrectedSequence::EncodedEdit* __restrict__ in_editsPerCorrectedCandidate,
-            const int* __restrict__ in_numEditsPerCorrectedCandidate
-        ){
-            constexpr int numBlocksForNumEdits = 256;
-            constexpr int numBlocksForEdits = 1024;
-            constexpr int numBlocksForSequences = 1024;
-            assert(gridDim.x >= numBlocksForNumEdits + numBlocksForEdits + numBlocksForSequences);
-
-            const int numCand = *numCorrectedCandidates;
-
-            if(blockIdx.x < numBlocksForNumEdits){
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * numBlocksForNumEdits;
-
-                for(int i = tid; i < numCand; i += stride){
-                    out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
-                }
-            }else if(blockIdx.x < numBlocksForNumEdits + numBlocksForEdits){
-
-                const int tid = threadIdx.x + (blockIdx.x - numBlocksForNumEdits) * blockDim.x;
-                const int stride = blockDim.x * numBlocksForEdits;
-
-
-                const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
-                const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
-                for(int i = tid; i < copyInts; i += stride){
-                    ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
-                }
-                if(tid < remainingBytes){
-                    ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
-                        = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
-                }
-            }else{
-                const int tid = threadIdx.x + (blockIdx.x - numBlocksForNumEdits - numBlocksForEdits) * blockDim.x;
-                const int stride = blockDim.x * (gridDim.x - numBlocksForNumEdits - numBlocksForEdits);
-
-                const int copyInts = (numCand * decodedSequencePitchInBytes) / sizeof(int);
-                const int remainingBytes = (numCand * decodedSequencePitchInBytes) - copyInts * sizeof(int);
-                for(int i = tid; i < copyInts; i += stride){
-                    ((int*)out_corrected_candidates)[i] = ((const int*)in_corrected_candidates)[i];
-                }
-    
-                if(tid < remainingBytes){
-                    ((char*)(((int*)out_corrected_candidates) + copyInts))[tid]
-                        = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
-                }
-            }
-            // const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            // const int stride = blockDim.x * gridDim.x;
-    
-            // const int numCand = *numCorrectedCandidates;
-    
-            // {
-            //     const int copyInts = (numCand * decodedSequencePitchInBytes) / sizeof(int);
-            //     const int remainingBytes = (numCand * decodedSequencePitchInBytes) - copyInts * sizeof(int);
-            //     for(int i = tid; i < copyInts; i += stride){
-            //         ((int*)out_corrected_candidates)[i] = ((const int*)in_corrected_candidates)[i];
-            //     }
-    
-            //     if(tid < remainingBytes){
-            //         ((char*)(((int*)out_corrected_candidates) + copyInts))[tid]
-            //             = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
-            //     }
-            // }
-    
-            // for(int i = tid; i < numCand; i += stride){
-            //     out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
-            // }
-    
-            // {
-            //     const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
-            //     const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
-            //     for(int i = tid; i < copyInts; i += stride){
-            //         ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
-            //     }
-            //     if(tid < remainingBytes){
-            //         ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
-            //             = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
-            //     }
-            // }
-        }
         
         __global__
         void copyCorrectionInputDeviceData(
@@ -219,28 +129,7 @@ namespace care{
                 d_candidateCanBeCorrected[i] = 0;
             }
         }
-    
-        __global__
-        void copyShiftsAndCorrectedCandidateIndices(
-            int* __restrict__ output_alignment_shifts,
-            int* __restrict__ output_indices_of_corrected_candidates,
-            const int* __restrict__ d_numCandidates,
-            const int* __restrict__ input_alignment_shifts,
-            const int* __restrict__ input_indices_of_corrected_candidates
-        ){
-            using CopyType = int;
-    
-            const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-            const size_t stride = blockDim.x * gridDim.x;
-    
-            const int numElements = *d_numCandidates;
-    
-            for(int index = tid; index < numElements; index += stride){
-                output_alignment_shifts[index] = input_alignment_shifts[index];
-                output_indices_of_corrected_candidates[index] = input_indices_of_corrected_candidates[index];
-            } 
-        }
-    
+        
     } //namespace gpucorrectorkernels   
 
 } //namespace gpu
