@@ -1393,6 +1393,44 @@ namespace gpu{
                 stream
             ); CUERR;
 
+            auto flagsIter = thrust::make_transform_iterator(
+                thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    make_iterator_multiplier(d_numEditsPerCorrectedCandidate.data(), int(decodedSequencePitchInBytes) / sizeof(int))
+                ),
+                [usesequence = getDoNotUseEditsValue()] __device__ (const auto& num){ return num == usesequence;}
+            );
+            
+            auto srcIter = d_corrected_candidates.data();
+            auto destIter = (char*)d_candidate_sequences_data2.data();
+
+            cudaError_t cubstatus = cub::DeviceSelect::Flagged(
+                d_tempstorage.data(),
+                cubTempSize,
+                srcIter, 
+                flagsIter, 
+                destIter, 
+                d_num_indices.data(), 
+                currentNumCandidates,
+                stream
+            );
+            assert(cubstatus == cudaSuccess);
+
+            auto inputIter2 = thrust::make_transform_iterator(
+                d_numEditsPerCorrectedCandidate.data(),
+                [doNotUseEditsValue = getDoNotUseEditsValue()] __device__ (const auto& num){ return num == doNotUseEditsValue ? 0 : num;}
+            );
+
+            cubstatus = cub::DeviceScan::ExclusiveSum(
+                d_tempstorage.get(), 
+                cubTempSize, 
+                inputIter2, 
+                d_indices.data(), 
+                currentNumCandidates, 
+                stream
+            );
+            assert(cubstatus == cudaSuccess);
+
             gpucorrectorkernels::copyCandidateCorrectionResultsKernel<<<4096, 256, 0, stream>>>(
                 currentOutput->h_corrected_candidates.get(),
                 currentOutput->h_editsPerCorrectedCandidate.get(),
@@ -1480,7 +1518,7 @@ namespace gpu{
 
             if(correctionOptions->useQualityScores) {
 
-//#define COMPACT_GATHER
+#define COMPACT_GATHER
 
 #ifndef COMPACT_GATHER
 
@@ -1547,7 +1585,8 @@ namespace gpu{
                     }
                 ); CUERR;
 
-                cudaMemcpyAsync(h_num_indices, d_num_indices, sizeof(int), D2H, stream); CUERR;
+                // cudaMemcpyAsync(h_num_indices, d_num_indices, sizeof(int), D2H, stream); CUERR;
+                cudaEventRecord(events[1], stream); CUERR;
 
                 gpuReadStorage->gatherQualities(
                     readstorageHandle,
@@ -1559,7 +1598,8 @@ namespace gpu{
                     stream
                 );
 
-                cudaStreamSynchronize(stream); CUERR; //wait for h_indicesForGather and h_num_indices
+                //cudaStreamSynchronize(stream); CUERR; //wait for h_indicesForGather and h_num_indices
+                cudaEventSynchronize(events[1]); CUERR;
                 const int hNumIndices = h_num_indices[0];
 
                 nvtx::push_range("get compact qscores " + std::to_string(hNumIndices) + " " + std::to_string(currentNumCandidates), 6);
@@ -1725,15 +1765,15 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
-            // cudaMemcpyAsync(
-            //     h_num_indices.get(),
-            //     d_num_indices.get(),
-            //     sizeof(int),
-            //     D2H,
-            //     stream
-            // );
+            cudaMemcpyAsync(
+                h_num_indices.get(),
+                d_num_indices.get(),
+                sizeof(int),
+                D2H,
+                stream
+            );
 
-            //cudaEventRecord(events[1], stream); CUERR;
+            cudaEventRecord(events[1], stream); CUERR;
 
             #else
 

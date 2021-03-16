@@ -21,12 +21,39 @@ namespace care{
             const TempCorrectedSequence::EncodedEdit* __restrict__ in_editsPerCorrectedCandidate,
             const int* __restrict__ in_numEditsPerCorrectedCandidate
         ){
-            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            const int stride = blockDim.x * gridDim.x;
-    
+            constexpr int numBlocksForNumEdits = 256;
+            constexpr int numBlocksForEdits = 1024;
+            constexpr int numBlocksForSequences = 1024;
+            assert(gridDim.x >= numBlocksForNumEdits + numBlocksForEdits + numBlocksForSequences);
+
             const int numCand = *numCorrectedCandidates;
-    
-            {
+
+            if(blockIdx.x < numBlocksForNumEdits){
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * numBlocksForNumEdits;
+
+                for(int i = tid; i < numCand; i += stride){
+                    out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
+                }
+            }else if(blockIdx.x < numBlocksForNumEdits + numBlocksForEdits){
+
+                const int tid = threadIdx.x + (blockIdx.x - numBlocksForNumEdits) * blockDim.x;
+                const int stride = blockDim.x * numBlocksForEdits;
+
+
+                const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
+                const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
+                for(int i = tid; i < copyInts; i += stride){
+                    ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
+                }
+                if(tid < remainingBytes){
+                    ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
+                        = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
+                }
+            }else{
+                const int tid = threadIdx.x + (blockIdx.x - numBlocksForNumEdits - numBlocksForEdits) * blockDim.x;
+                const int stride = blockDim.x * (gridDim.x - numBlocksForNumEdits - numBlocksForEdits);
+
                 const int copyInts = (numCand * decodedSequencePitchInBytes) / sizeof(int);
                 const int remainingBytes = (numCand * decodedSequencePitchInBytes) - copyInts * sizeof(int);
                 for(int i = tid; i < copyInts; i += stride){
@@ -38,22 +65,39 @@ namespace care{
                         = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
                 }
             }
+            // const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            // const int stride = blockDim.x * gridDim.x;
     
-            for(int i = tid; i < numCand; i += stride){
-                out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
-            }
+            // const int numCand = *numCorrectedCandidates;
     
-            {
-                const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
-                const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
-                for(int i = tid; i < copyInts; i += stride){
-                    ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
-                }
-                if(tid < remainingBytes){
-                    ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
-                        = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
-                }
-            }
+            // {
+            //     const int copyInts = (numCand * decodedSequencePitchInBytes) / sizeof(int);
+            //     const int remainingBytes = (numCand * decodedSequencePitchInBytes) - copyInts * sizeof(int);
+            //     for(int i = tid; i < copyInts; i += stride){
+            //         ((int*)out_corrected_candidates)[i] = ((const int*)in_corrected_candidates)[i];
+            //     }
+    
+            //     if(tid < remainingBytes){
+            //         ((char*)(((int*)out_corrected_candidates) + copyInts))[tid]
+            //             = ((const char*)(((const int*)in_corrected_candidates) + copyInts))[tid];
+            //     }
+            // }
+    
+            // for(int i = tid; i < numCand; i += stride){
+            //     out_numEditsPerCorrectedCandidate[i] = in_numEditsPerCorrectedCandidate[i];
+            // }
+    
+            // {
+            //     const int copyInts = (numCand * editsPitchInBytes) / sizeof(int);
+            //     const int remainingBytes = (numCand * editsPitchInBytes) - copyInts * sizeof(int);
+            //     for(int i = tid; i < copyInts; i += stride){
+            //         ((int*)out_editsPerCorrectedCandidate)[i] = ((const int*)in_editsPerCorrectedCandidate)[i];
+            //     }
+            //     if(tid < remainingBytes){
+            //         ((char*)(((int*)out_editsPerCorrectedCandidate) + copyInts))[tid]
+            //             = ((const char*)(((const int*)in_editsPerCorrectedCandidate) + copyInts))[tid];
+            //     }
+            // }
         }
         
         __global__
