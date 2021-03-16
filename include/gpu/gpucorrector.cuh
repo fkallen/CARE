@@ -849,10 +849,14 @@ namespace gpu{
                 execute(stream);
             //}
 
+            nvtx::push_range("copyAnchorResultsFromDeviceToHost", 3);
             copyAnchorResultsFromDeviceToHost(stream);
+            nvtx::pop_range();
 
             if(correctionOptions->correctCandidates){
+                nvtx::push_range("copyCandidateResultsFromDeviceToHost", 4);
                 copyCandidateResultsFromDeviceToHost(stream);
+                nvtx::pop_range();
             }
 
             std::copy_n(currentInput->h_anchorReadIds.get(), currentNumAnchors, currentOutput->h_anchorReadIds.get());            
@@ -1305,6 +1309,7 @@ namespace gpu{
             cudaError_t cubstatus = cudaSuccess;
             std::size_t cubTempSize = d_tempstorage.sizeInBytes();
 
+            //num edits per anchor prefixsum
             cubstatus = cub::DeviceScan::InclusiveSum(
                 d_tempstorage.get(), 
                 cubTempSize, 
@@ -1351,14 +1356,16 @@ namespace gpu{
                 }
             ); CUERR;
 
+            //copy compacted edits to host
             helpers::call_copy_n_kernel(
-                d_editsPerCorrectedCandidate2.data(), 
-                d_totalNumberOfEdits, 
-                currentOutput->h_editsPerCorrectedanchor.data(), 
+                (const int*)d_editsPerCorrectedCandidate2.data(), 
+                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(TempCorrectedSequence::EncodedEdit), sizeof(int));}),//d_totalNumberOfEdits, 
+                (int*)currentOutput->h_editsPerCorrectedanchor.data(), 
                 currentNumAnchors, 
                 stream
             );
 
+            //copy other buffers to host
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
                     d_anchor_sequences_lengths.data(), 
@@ -1449,6 +1456,7 @@ namespace gpu{
 
             assert(decodedSequencePitchInBytes % sizeof(int) == 0);
 
+            //copy compacted anchor corrections to host
             helpers::call_copy_n_kernel(
                 (const int*)d_corrected_candidates2.data(), 
                 thrust::make_transform_iterator(d_totalCorrectedSequencesBytes, [] __device__ (const int num){return SDIV(num, sizeof(int));}),
@@ -1493,17 +1501,17 @@ namespace gpu{
         }
 
         void copyCandidateResultsFromDeviceToHostClassic(cudaStream_t stream){
-            cudaMemcpyAsync(
-                h_num_total_corrected_candidates.get(),
-                d_num_total_corrected_candidates.get(),
-                sizeof(int),
-                D2H,
+            helpers::call_copy_n_kernel(
+                d_num_total_corrected_candidates.data(),
+                1,
+                h_num_total_corrected_candidates.data(),
                 stream
-            ); CUERR;
+            );
 
+            cudaError_t cubstatus = cudaSuccess;
             size_t cubTempSize = d_tempstorage.sizeInBytes();
 
-            cub::DeviceScan::ExclusiveSum(
+            cubstatus = cub::DeviceScan::ExclusiveSum(
                 d_tempstorage.get(), 
                 cubTempSize, 
                 d_num_corrected_candidates_per_anchor.get(), 
@@ -1511,6 +1519,7 @@ namespace gpu{
                 maxAnchors, 
                 stream
             );
+            assert(cubstatus == cudaSuccess);
 
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
@@ -1525,7 +1534,7 @@ namespace gpu{
                 stream
             );
 
-            cudaError_t cubstatus = cudaSuccess;
+            
 
             cudaEventSynchronize(events[1]); CUERR; //wait for h_numRemainingCandidatesAfterAlignment
 
@@ -1542,7 +1551,7 @@ namespace gpu{
                 )),
                 d_indices_of_corrected_candidates.data(), 
                 d_num_total_corrected_candidates.data(), 
-                *h_numRemainingCandidatesAfterAlignment, //currentNumCandidates, 
+                *h_numRemainingCandidatesAfterAlignment,
                 stream
             );
 
@@ -1604,10 +1613,11 @@ namespace gpu{
                 }
             ); CUERR;
 
+            //copy compact edits to host
             helpers::call_copy_n_kernel(
-                d_editsPerCorrectedCandidate2.data(), 
-                d_totalNumberOfEdits, 
-                currentOutput->h_editsPerCorrectedCandidate.data(), 
+                (const int*)d_editsPerCorrectedCandidate2.data(), 
+                thrust::make_transform_iterator(d_totalNumberOfEdits, [] __device__ (const int num){return SDIV(num * sizeof(TempCorrectedSequence::EncodedEdit), sizeof(int));}),//d_totalNumberOfEdits, 
+                (int*)currentOutput->h_editsPerCorrectedCandidate.data(), 
                 (currentNumCandidates / 10), 
                 stream
             );
@@ -3243,11 +3253,10 @@ namespace gpu{
                     h_excludeFlags[i] = correctionFlags->isCorrectedAsHQAnchor(candidateReadId);
                 }
 
-                cudaMemcpyAsync(
-                    d_excludeFlags,
-                    h_excludeFlags,
-                    sizeof(bool) * currentNumCandidates,
-                    H2D,
+                helpers::call_copy_n_kernel(
+                    (const int*)h_excludeFlags,
+                    SDIV(currentNumCandidates, sizeof(int)),
+                    (int*)d_excludeFlags,
                     stream
                 );
 
