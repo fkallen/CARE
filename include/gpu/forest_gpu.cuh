@@ -4,6 +4,8 @@
 
 #include <hpc_helpers.cuh>
 #include <classification.hpp>
+#include <memorymanagement.hpp>
+
 #include <utility>
 
 //#include <forest.hpp>
@@ -83,6 +85,17 @@ public:
     int deviceId{};
     int numTrees{};
     Node** d_data{};
+    std::vector<std::size_t> numNodesPerTree{};
+
+    MemoryUsage getMemoryInfo() const noexcept{
+        MemoryUsage result{};
+
+        for(auto num : numNodesPerTree){
+            result.device[deviceId] += sizeof(Node) * num;
+        }
+
+        return result;
+    }
 
 
     GpuForest() = default;
@@ -101,6 +114,8 @@ public:
 
         for(int t = 0; t < numTrees; t++){
             const int numNodes = clf.forest_[t].size();
+
+            numNodesPerTree.emplace_back(numNodes);
 
             std::vector<Node> nodes(numNodes);
 
