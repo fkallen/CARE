@@ -1588,11 +1588,13 @@ namespace gpu{
                 }
             ); CUERR;
 
+            assert(decodedSequencePitchInBytes % sizeof(int) == 0);
+
             helpers::call_copy_n_kernel(
-                d_corrected_candidates2.data(), 
-                d_totalCorrectedSequencesBytes, 
-                currentOutput->h_corrected_candidates.data(), 
-                (*h_numRemainingCandidatesAfterAlignment) * decodedSequencePitchInBytes,
+                (const int*)d_corrected_candidates2.data(), 
+                thrust::make_transform_iterator(d_totalCorrectedSequencesBytes, [] __device__ (const int num){return SDIV(num, sizeof(int));}),
+                (int*)currentOutput->h_corrected_candidates.data(), 
+                (*h_numRemainingCandidatesAfterAlignment) * decodedSequencePitchInBytes / sizeof(int),
                 stream
             );
 
