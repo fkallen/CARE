@@ -1396,13 +1396,16 @@ private:
 template<class Minhasher>
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu_impl(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
-        Minhasher& minhasher,
-        GpuReadStorage& readStorage){
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    Minhasher& minhasher,
+    GpuReadStorage& readStorage,
+    const std::vector<GpuForest>& anchorForests,
+    const std::vector<GpuForest>& candidateForests
+){
 
     assert(runtimeOptions.canUseGpu);
     //assert(runtimeOptions.max_candidates > 0);
@@ -1520,23 +1523,6 @@ correct_gpu_impl(
     //ThreadPool threadPool(threadPoolSize);
 
     
-
-    ClfAgent clfAgent_(correctionOptions, fileOptions);
-
-    std::vector<GpuForest> anchorForests(deviceIds.size());
-    std::vector<GpuForest> candidateForests(deviceIds.size());
-
-    for(int i = 0; i < int(deviceIds.size()); i++){
-        cub::SwitchDevice sd{deviceIds[i]};
-        if(correctionOptions.correctionType == CorrectionType::Forest){
-            anchorForests[i] = std::move(GpuForest(*clfAgent_.classifier_anchor, deviceIds[i]));
-        }
-
-        if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
-            candidateForests[i] = std::move(GpuForest(*clfAgent_.classifier_cands, deviceIds[i]));
-        }
-    }
-
 
     cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(std::min(200000u, readStorage.getNumberOfReads()));
@@ -1958,13 +1944,16 @@ correct_gpu_impl(
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
-        GpuMinhasher& minhasher,
-        GpuReadStorage& readStorage){
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    GpuMinhasher& minhasher,
+    GpuReadStorage& readStorage,
+    const std::vector<GpuForest>& anchorForests,
+    const std::vector<GpuForest>& candidateForests
+){
 
     return correct_gpu_impl(
         goodAlignmentProperties,
@@ -1973,7 +1962,9 @@ correct_gpu(
         fileOptions,
         memoryOptions,
         minhasher,
-        readStorage
+        readStorage,
+        anchorForests,
+        candidateForests
     );
 }
 

@@ -8,6 +8,8 @@
 #include <memorymanagement.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
+#include <classification.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <gpu/multigpureadstorage.cuh>
 #include <chunkedreadstorageconstruction.hpp>
@@ -284,6 +286,25 @@ namespace care{
             0
         );
 
+        std::vector<gpu::GpuForest> anchorForests;
+        std::vector<gpu::GpuForest> candidateForests;
+
+        {
+            ClfAgent clfAgent_(correctionOptions, fileOptions);
+
+            for(int deviceId : runtimeOptions.deviceIds){
+                cub::SwitchDevice sd{deviceId};
+                if(correctionOptions.correctionType == CorrectionType::Forest){
+                    anchorForests.emplace_back(*clfAgent_.classifier_anchor, deviceId);
+                }
+
+                if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+                    candidateForests.emplace_back(*clfAgent_.classifier_cands, deviceId);
+                }
+            }
+
+        }
+
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
@@ -396,7 +417,9 @@ namespace care{
             fileOptions, 
             memoryOptions,
             *gpuMinhasher, 
-            gpuReadStorage            
+            gpuReadStorage,
+            anchorForests,
+            candidateForests
         );
 
         step2timer.print();
