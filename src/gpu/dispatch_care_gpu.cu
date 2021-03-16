@@ -186,6 +186,13 @@ namespace care{
             return;
         }
 
+        if(correctionOptions.correctionType == CorrectionType::Print 
+            || correctionOptions.correctionTypeCands == CorrectionType::Print){
+
+            std::cout << "CorrectionType Print is not supported in CARE GPU. Please use CARE CPU instead to print features. Abort!" << std::endl;
+            return;
+        }
+
         cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
