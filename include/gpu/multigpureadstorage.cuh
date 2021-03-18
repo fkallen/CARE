@@ -106,6 +106,7 @@ public:
         useQualityScores = cpuReadStorage->canUseQualityScores();
         sequenceLengthLowerBound = cpuReadStorage->getSequenceLengthLowerBound();
         sequenceLengthUpperBound = cpuReadStorage->getSequenceLengthUpperBound();
+        pairedEnd = cpuReadStorage->isPairedEnd();
 
         gpuLengthStorage = std::move(
             GPULengthStore3<std::uint32_t>(
@@ -1131,6 +1132,10 @@ public: //inherited GPUReadStorage interface
         return sequenceLengthUpperBound;
     }
 
+    bool isPairedEnd() const override{
+        return pairedEnd;
+    }
+
     void destroy() override{
         destroyReadData();
 
@@ -1324,6 +1329,7 @@ private:
         deallocVector(tempdataVector);
     }
     
+    bool pairedEnd{};
     bool useQualityScores{};
     int sequenceLengthLowerBound{};
     int sequenceLengthUpperBound{};

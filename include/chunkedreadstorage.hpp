@@ -30,7 +30,8 @@ namespace care{
 
 class ChunkedReadStorage : public CpuReadStorage{
 public:
-    ChunkedReadStorage(bool hasQualityScores_ = false) : hasQualityScores(hasQualityScores_){
+    ChunkedReadStorage(bool pairedEnd_, bool hasQualityScores_) 
+    : pairedEnd(pairedEnd_), hasQualityScores(hasQualityScores_){
         offsetsPrefixSum.emplace_back(0);
     }
 
@@ -633,6 +634,10 @@ public: //inherited interface
         return lengthStorage.getMaxLength();
     }
 
+    bool isPairedEnd() const override{
+        return pairedEnd;
+    }
+
     void destroy() override{
         auto deallocVector = [](auto& vec){
             using T = typename std::remove_reference<decltype(vec)>::type;
@@ -823,6 +828,8 @@ private:
         int numReads = 0;
         StoredQualities data;
     };
+
+    bool pairedEnd{};
 
     bool hasQualityScores{};
     std::size_t totalNumberOfReads{};

@@ -801,71 +801,6 @@ namespace gpu{
 
             resizeBuffers(currentNumAnchors, currentNumCandidates);
 
-            cudaMemcpyAsync(
-                h_candidates_per_anchor_prefixsum.data(),
-                currentInput->d_candidates_per_anchor_prefixsum.data(),
-                sizeof(int) * (currentNumAnchors + 1),
-                D2H,
-                stream
-            );
-
-            std::fill(h_isPairedCandidate.begin(), h_isPairedCandidate.end(), false);
-
-            // auto pairIds = thrust::make_transform_iterator(currentInput->h_candidate_read_ids.data(), [](const auto id){return id / 2;});
-            // auto positions = thrust::make_counting_iterator(0);
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            #if 1
-
-            std::vector<int> numPairedPerAnchor(currentNumAnchors, 0);            
-
-            for(int ap = 0; ap < currentNumAnchors / 2; ap++){
-                const int begin1 = h_candidates_per_anchor_prefixsum[2*ap + 0];
-                const int end1 = h_candidates_per_anchor_prefixsum[2*ap + 1];
-                const int begin2 = h_candidates_per_anchor_prefixsum[2*ap + 1];
-                const int end2 = h_candidates_per_anchor_prefixsum[2*ap + 2];
-
-                // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
-                // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
-
-                std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
-                std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
-
-                auto endIters = findPositionsOfPairedReadIds(
-                    currentInput->h_candidate_read_ids.data() + begin1,
-                    currentInput->h_candidate_read_ids.data() + end1,
-                    currentInput->h_candidate_read_ids.data() + begin2,
-                    currentInput->h_candidate_read_ids.data() + end2,
-                    pairedPositions.begin(),
-                    pairedPositions2.begin()
-                );
-
-                pairedPositions.erase(endIters.first, pairedPositions.end());
-                pairedPositions2.erase(endIters.second, pairedPositions2.end());
-                for(auto i : pairedPositions){
-                    h_isPairedCandidate[begin1 + i] = true;
-                }
-                for(auto i : pairedPositions2){
-                    h_isPairedCandidate[begin2 + i] = true;
-                }
-
-                numPairedPerAnchor[2*ap + 0] = pairedPositions.size();
-                numPairedPerAnchor[2*ap + 1] = pairedPositions2.size();                
-            }
-
-            #endif
-
-            cudaMemcpyAsync(
-                d_isPairedCandidate.data(),
-                h_isPairedCandidate.data(),
-                sizeof(bool) * currentNumCandidates,
-                H2D,
-                stream
-            ); CUERR;
-
-            //gpuMemsetZero(stream);
-
             gpucorrectorkernels::copyCorrectionInputDeviceData<<<32768,256, 0, stream>>>(
                 d_numAnchors,
                 d_numCandidates,
@@ -886,9 +821,10 @@ namespace gpu{
                 currentInput->d_candidates_per_anchor_prefixsum
             ); CUERR;
 
-
             //after gpu data has been copied to local working set, the gpu data of currentInput can be reused
             currentInput->event.record(stream);
+
+            flagPairedCandidates(stream);
 
             getAmbiguousFlagsOfAnchors(stream);
             getAmbiguousFlagsOfCandidates(stream);
@@ -1285,6 +1221,75 @@ namespace gpu{
                         }
                     );
                 }
+            }
+        }
+
+        void flagPairedCandidates(cudaStream_t stream){
+
+            if(gpuReadStorage->isPairedEnd()){
+
+                cudaMemcpyAsync(
+                    h_candidates_per_anchor_prefixsum.data(),
+                    d_candidates_per_anchor_prefixsum.data(),
+                    sizeof(int) * (currentNumAnchors + 1),
+                    D2H,
+                    stream
+                );
+
+                std::fill(h_isPairedCandidate.begin(), h_isPairedCandidate.end(), false);
+
+                cudaStreamSynchronize(stream); CUERR;
+
+                std::vector<int> numPairedPerAnchor(currentNumAnchors, 0);            
+
+                for(int ap = 0; ap < currentNumAnchors / 2; ap++){
+                    const int begin1 = h_candidates_per_anchor_prefixsum[2*ap + 0];
+                    const int end1 = h_candidates_per_anchor_prefixsum[2*ap + 1];
+                    const int begin2 = h_candidates_per_anchor_prefixsum[2*ap + 1];
+                    const int end2 = h_candidates_per_anchor_prefixsum[2*ap + 2];
+
+                    // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
+                    // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
+
+                    std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
+                    std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
+
+                    auto endIters = findPositionsOfPairedReadIds(
+                        currentInput->h_candidate_read_ids.data() + begin1,
+                        currentInput->h_candidate_read_ids.data() + end1,
+                        currentInput->h_candidate_read_ids.data() + begin2,
+                        currentInput->h_candidate_read_ids.data() + end2,
+                        pairedPositions.begin(),
+                        pairedPositions2.begin()
+                    );
+
+                    pairedPositions.erase(endIters.first, pairedPositions.end());
+                    pairedPositions2.erase(endIters.second, pairedPositions2.end());
+                    for(auto i : pairedPositions){
+                        h_isPairedCandidate[begin1 + i] = true;
+                    }
+                    for(auto i : pairedPositions2){
+                        h_isPairedCandidate[begin2 + i] = true;
+                    }
+
+                    numPairedPerAnchor[2*ap + 0] = pairedPositions.size();
+                    numPairedPerAnchor[2*ap + 1] = pairedPositions2.size();                
+                }
+
+                cudaMemcpyAsync(
+                    d_isPairedCandidate.data(),
+                    h_isPairedCandidate.data(),
+                    sizeof(bool) * currentNumCandidates,
+                    H2D,
+                    stream
+                ); CUERR;
+            }else{
+                cudaMemsetAsync(
+                    d_isPairedCandidate.data(),
+                    0,
+                    sizeof(bool) * currentNumCandidates,
+                    stream
+                );
             }
         }
 

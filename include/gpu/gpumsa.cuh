@@ -394,7 +394,7 @@ namespace gpu{
                             }
                         };
 
-                        const float weight = weightfuncIncreasedOverlapweightForPairedCandidate();
+                        const float weight = weightfuncIncreasedQualityweightForPairedCandidate();
 
                         assert(weight != 0);
                         const int rowOffset = encodedBaseAsInt * columnPitchInElements;
