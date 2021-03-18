@@ -26,10 +26,6 @@
 
 namespace care{
 
-
-
-
-
 std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
@@ -108,7 +104,10 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         constexpr int fileParserMaxBatchsize = 65536;
 
-        auto fileParserThreadFunction = [&](const std::string& filename, int fileId, std::size_t readIdOffset){
+        auto fileParserThreadFunction = [&](
+            const std::string& filename, 
+            std::size_t readIdOffset
+        ){
             int batchId = 0;
 
             BatchFromFile* sbatch = nullptr;
@@ -131,6 +130,62 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
             forEachReadInFile(
                 filename,
+                [&](auto readnum, auto& read){
+
+                    std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
+                    if(useQualityScores){
+                        std::swap(sbatch->qualities[sbatch->validItems], read.quality);
+                    }
+                    sbatch->validItems++;
+
+                    if(sbatch->validItems >= fileParserMaxBatchsize){
+                        unprocessedBatchFromFile.push(sbatch);
+
+                        readIdOffset += sbatch->validItems;
+
+                        initbatch();
+
+                        batchId++;
+                    }
+
+                    totalNumberOfReads++;
+                }
+            );        
+
+            sbatch->sequences.resize(sbatch->validItems);
+            sbatch->qualities.resize(sbatch->validItems);
+            unprocessedBatchFromFile.push(sbatch);
+
+            return totalNumberOfReads;
+        };
+
+        auto pairedfileParserThreadFunction = [&](
+            const std::string& filename1, 
+            const std::string& filename2,
+            std::size_t readIdOffset
+        ){
+            int batchId = 0;
+
+            BatchFromFile* sbatch = nullptr;
+
+            auto initbatch = [&](){
+                sbatch = freeBatchFromFile.pop();
+                sbatch->validItems = 0;
+                sbatch->firstReadId = readIdOffset;
+                sbatch->sequences.resize(fileParserMaxBatchsize);
+                if(useQualityScores){
+                    sbatch->qualities.resize(fileParserMaxBatchsize);
+                }
+            };
+
+            initbatch();
+
+            batchId++;
+
+            std::size_t totalNumberOfReads = 0;
+
+            forEachReadInPairedFiles(
+                filename1, filename2,
                 [&](auto readnum, auto& read){
 
                     std::swap(sbatch->sequences[sbatch->validItems], read.sequence);
@@ -295,7 +350,6 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
             freeEncodedBatches.push(&encodedBatches[i]);
         }
 
-        std::vector<std::size_t> numReadsPerFile;
         std::vector<std::future<void>> encoderFutures;
         std::vector<std::future<void>> inserterFutures;
         
@@ -319,21 +373,69 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 
         std::size_t totalNumReads = 0;
 
-        const int numInputFiles = fileOptions.inputfiles.size();
+        if(fileOptions.pairType == SequencePairType::SingleEnd){
 
-        for(int i = 0; i < numInputFiles; i++){
-            std::string inputfile = fileOptions.inputfiles[i];
+            const int numInputFiles = fileOptions.inputfiles.size();
 
-            std::future<std::size_t> future = std::async(
-                std::launch::async,
-                fileParserThreadFunction,
-                std::move(inputfile), i, totalNumReads
-            );
+            for(int i = 0; i < numInputFiles; i++){
+                std::string inputfile = fileOptions.inputfiles[i];
 
-            std::size_t numReads = future.get();
-            totalNumReads += numReads;
+                std::future<std::size_t> future = std::async(
+                    std::launch::async,
+                    fileParserThreadFunction,
+                    std::move(inputfile), totalNumReads
+                );
 
-            numReadsPerFile.emplace_back(numReads);
+                std::size_t numReads = future.get();
+                totalNumReads += numReads;
+            }
+
+        }else if(fileOptions.pairType == SequencePairType::PairedEnd){
+            //paired end may be one of the following. 1 file with interleaved reads,
+            //or two files with separate reads
+
+            const int numInputFiles = fileOptions.inputfiles.size();
+
+            assert(numInputFiles > 0);
+            assert(numInputFiles <= 2);
+
+            if(numInputFiles == 1){
+
+                std::string inputfile = fileOptions.inputfiles[0];
+
+                std::cout << "Converting paired reads of file " 
+                    << inputfile  << "\n";
+
+                std::future<std::size_t> future = std::async(
+                    std::launch::async,
+                    fileParserThreadFunction,
+                    std::move(inputfile), totalNumReads
+                );
+
+                std::size_t numReads = future.get();
+                totalNumReads += numReads;
+            
+            }else{
+                assert(numInputFiles == 2);
+
+                std::string filename1 = fileOptions.inputfiles[0];
+                std::string filename2 = fileOptions.inputfiles[1];
+
+                std::cout << "Converting paired reads of files " 
+                    << filename1 << " and " << filename2 << ", storing them in memory\n";
+
+                std::future<std::size_t> future = std::async(
+                    std::launch::async,
+                    pairedfileParserThreadFunction,
+                    std::move(filename1), std::move(filename2), totalNumReads
+                );
+
+                std::size_t numReads = future.get();
+                totalNumReads += numReads;
+            
+            }
+        }else{
+            throw std::runtime_error("invalid pair mode / number of input files");
         }
 
         //parsing done. flush queues to exit other threads
@@ -371,12 +473,6 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     }
     
 }
-
-
-
-
-
-
 
 } //namespace care
 

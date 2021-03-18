@@ -176,6 +176,12 @@ int main(int argc, char** argv){
 		("warpcore", "Enable warpcore hash tables. 0: Disabled, 1: Enabled. "
 			"Default: " + tostring(RuntimeOptions{}.warpcore),
 		cxxopts::value<int>())
+		("pairmode", 
+			"Type of input reads."
+			"SE / se : Single-end reads"
+			"PE / pe : Paired-end reads",
+			cxxopts::value<std::string>()->default_value("SE"))
+
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -274,9 +280,9 @@ int main(int argc, char** argv){
 	std::cout << "coveragefactortuning: " << correctionOptions.m_coverage << "\n";
 	std::cout << "Batch size: " << correctionOptions.batchsize << "\n";
 	std::cout << "Correction type (anchor): " << int(correctionOptions.correctionType) 
-		<< " (" << nameOfCorrectionType(correctionOptions.correctionType) << ")\n";
+		<< " (" << to_string(correctionOptions.correctionType) << ")\n";
 	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
-		<< " (" << nameOfCorrectionType(correctionOptions.correctionTypeCands) << ")\n";
+		<< " (" << to_string(correctionOptions.correctionTypeCands) << ")\n";
 
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
@@ -296,6 +302,7 @@ int main(int argc, char** argv){
 	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
 	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";
 	std::cout << "Maximum number of reads: " << fileOptions.nReads << "\n";
+	std::cout << "Paired mode: " << to_string(fileOptions.pairType) << "\n";
 	std::cout << "Output directory: " << fileOptions.outputdirectory << "\n";
 	std::cout << "Temporary directory: " << fileOptions.tempdirectory << "\n";
 	std::cout << "Save preprocessed reads to file: " << fileOptions.save_binary_reads_to << "\n";
