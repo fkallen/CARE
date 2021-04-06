@@ -609,6 +609,9 @@ public:
 
         //determine task ids with removed mates
 
+        assert(batchData.d_anchorIndicesWithRemovedMates.data() != nullptr);
+        assert(batchData.h_numAnchorsWithRemovedMates.data() != nullptr);
+
         cubstatus = cub::DeviceSelect::Flagged(
             cubtempstorage,
             cubBytes,
@@ -622,6 +625,9 @@ public:
         assert(cubstatus == cudaSuccess);
 
         //copy selected candidate ids
+
+        assert(batchData.d_candidateReadIds2.data() != nullptr);
+        assert(batchData.h_numCandidates.data() != nullptr);
 
         cubstatus = cub::DeviceSelect::Flagged(
             cubtempstorage,
@@ -661,6 +667,8 @@ public:
     
             void* cubtempstream2 = nullptr; cubAllocator->DeviceAllocate((void**)&cubtempstream2, cubtempstream2bytes, secondStream);
                 
+            assert(batchData.d_anchormatedata.data() != nullptr);
+
             cubstatus = cub::DeviceSelect::Flagged(
                 cubtempstream2,
                 cubtempstream2bytes,
@@ -814,11 +822,6 @@ public:
 
 
     void eraseDataOfRemovedMates(BatchData& batchData, cudaStream_t stream) const{
-
-
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
-            return vec.at(index);
-        };
 
         const int totalNumCandidates = batchData.totalNumCandidates;
 
@@ -1069,6 +1072,9 @@ public:
         batchData.d_alignment_shifts2.resize(batchData.totalNumCandidates);
         batchData.d_alignment_nOps2.resize(batchData.totalNumCandidates);
         batchData.d_alignment_best_alignment_flags2.resize(batchData.totalNumCandidates);
+        batchData.d_candidateSequencesLength2.resize(batchData.totalNumCandidates);
+        batchData.d_candidateSequencesData2.resize(encodedSequencePitchInInts * batchData.totalNumCandidates);
+        batchData.d_candidateReadIds2.resize(batchData.totalNumCandidates);
 
         helpers::call_fill_kernel_async(batchData.d_flagscandidates.data(), batchData.d_flagscandidates.size(), true, stream);
 
@@ -1196,6 +1202,13 @@ public:
             )
         );
 
+        assert(batchData.d_alignment_nOps2.data() != nullptr);
+        assert(batchData.d_alignment_overlaps2.data() != nullptr);
+        assert(batchData.d_alignment_shifts2.data() != nullptr);
+        assert(batchData.d_alignment_best_alignment_flags2.data() != nullptr);
+        assert(batchData.d_candidateReadIds2.data() != nullptr);
+        assert(batchData.d_candidateSequencesLength2.data() != nullptr);
+
         auto d_zip_output = thrust::make_zip_iterator(
             thrust::make_tuple(
                 batchData.d_alignment_nOps2.data(),
@@ -1251,6 +1264,7 @@ public:
         void* cubtemp; cubAllocator->DeviceAllocate((void**)&cubtemp, requiredCubSize, stream);
 
         //compact zip data
+        assert(batchData.d_numCandidates.data() != nullptr);
         cubstatus = cub::DeviceSelect::Flagged(
             cubtemp, 
             requiredCubSize, 
@@ -1265,6 +1279,7 @@ public:
 
         //compact sequence data.
 
+        assert(batchData.d_candidateSequencesData2.data() != nullptr);
         cubstatus = cub::DeviceSelect::Flagged(
             cubtemp,
             requiredCubSize,
@@ -1553,6 +1568,7 @@ public:
 
         //compact candidate sequences according to flags                
 
+        assert(batchData.d_candidateSequencesData2.data() != nullptr);
         cubstatus = cub::DeviceSelect::Flagged(
             cubtemp,
             cubBytes,
