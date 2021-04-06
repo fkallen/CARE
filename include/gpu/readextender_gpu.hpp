@@ -398,7 +398,7 @@ struct BatchData{
 
 
 struct GpuReadHasher{
-
+public:
     GpuReadHasher(
         const gpu::GpuMinhasher& mh
     ) : gpuMinhasher(&mh),
@@ -457,8 +457,9 @@ struct GpuReadHasher{
     mutable gpu::GpuMinhasher::QueryHandle minhashHandle;
 };
 
-struct GpuExtensionStepper{
 
+struct GpuExtensionStepper{
+public:
     int deviceId{};
     int insertSize{};
     int insertSizeStddev{};
@@ -470,6 +471,7 @@ struct GpuExtensionStepper{
     mutable ReadStorageHandle readStorageHandle{};
     mutable gpu::KernelLaunchHandle kernelLaunchHandle{};
     
+    GpuExtensionStepper() = default;
 
     GpuExtensionStepper(
         const gpu::GpuReadStorage& rs, 
@@ -495,6 +497,202 @@ struct GpuExtensionStepper{
 
     constexpr int getNumRefinementIterations() const noexcept{
         return 5;
+    }
+
+    void prepareStep(BatchData& batchData) const{
+        const int numActiveTasks = batchData.indicesOfActiveTasks.size();
+        batchData.numTasks = numActiveTasks;
+
+        batchData.h_numAnchors.resize(1);
+        batchData.d_numAnchors.resize(1);
+        batchData.h_numCandidates.resize(1);
+        batchData.d_numCandidates.resize(1);
+        batchData.d_numCandidates2.resize(1);
+        batchData.h_numAnchorsWithRemovedMates.resize(1);
+
+        batchData.h_anchorReadIds.resize(numActiveTasks);
+        batchData.d_anchorReadIds.resize(numActiveTasks);
+        batchData.h_mateReadIds.resize(numActiveTasks);
+        batchData.d_mateReadIds.resize(numActiveTasks);
+        
+        batchData.h_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
+        batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
+        batchData.h_anchorSequencesLength.resize(numActiveTasks);
+        batchData.d_anchorSequencesLength.resize(numActiveTasks);
+
+        batchData.h_anchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
+        batchData.d_anchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
+
+        batchData.h_inputanchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
+        batchData.d_inputanchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
+
+        batchData.h_numCandidatesPerAnchor.resize(numActiveTasks);
+        batchData.d_numCandidatesPerAnchor.resize(numActiveTasks);
+        batchData.h_numCandidatesPerAnchor2.resize(numActiveTasks);
+        batchData.d_numCandidatesPerAnchor2.resize(numActiveTasks);
+        batchData.h_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);
+        batchData.d_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);
+        batchData.d_numCandidatesPerAnchorPrefixSum2.resize(numActiveTasks+1);
+
+        batchData.d_anchorIndicesWithRemovedMates.resize(numActiveTasks);
+
+        batchData.h_numCandidatesPerAnchorPrefixSum[0] = 0;
+
+        batchData.totalNumberOfUsedIds = 0;
+
+        for(int t = 0; t < numActiveTasks; t++){
+            auto& task = batchData.tasks[batchData.indicesOfActiveTasks[t]];
+            task.dataIsAvailable = false;
+
+            batchData.h_anchorReadIds[t] = task.myReadId;
+            batchData.h_mateReadIds[t] = task.mateReadId;
+            batchData.totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
+
+            std::copy(
+                task.encodedMate.begin(),
+                task.encodedMate.end(),
+                batchData.h_inputanchormatedata.begin() + t * batchData.encodedSequencePitchInInts
+            );
+
+            //if(task.iteration >= 0){
+
+                batchData.h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+                std::copy(
+                    task.currentAnchor.begin(),
+                    task.currentAnchor.end(),
+                    batchData.h_subjectSequencesData.begin() + t * batchData.encodedSequencePitchInInts
+                );
+            // }else{
+            //     //only hash kmers which include extended positions
+
+            //     const int extendedPositionsPreviousIteration 
+            //         = task.totalAnchorBeginInExtendedRead.at(task.iteration) - task.totalAnchorBeginInExtendedRead.at(task.iteration-1);
+
+            //     const int lengthToHash = std::min(task.currentAnchorLength, kmerLength + extendedPositionsPreviousIteration - 1);
+            //     batchData.h_anchorSequencesLength[t] = lengthToHash;
+
+            //     //std::cerr << "lengthToHash = " << lengthToHash << "\n";
+
+            //     std::vector<char> buf(task.currentAnchorLength);
+            //     SequenceHelpers::decode2BitSequence(buf.data(), task.currentAnchor.data(), task.currentAnchorLength);
+            //     SequenceHelpers::encodeSequence2Bit(
+            //         batchData.h_subjectSequencesData.get() + t * batchData.encodedSequencePitchInInts, 
+            //         buf.data() + task.currentAnchorLength - lengthToHash, 
+            //         lengthToHash
+            //     );
+            // }
+        }
+
+        batchData.h_usedReadIds.resize(batchData.totalNumberOfUsedIds);
+        batchData.h_numUsedReadIdsPerAnchor.resize(batchData.numTasks);
+        batchData.h_numUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
+        batchData.d_usedReadIds.resize(batchData.totalNumberOfUsedIds);
+        batchData.d_numUsedReadIdsPerAnchor.resize(batchData.numTasks);
+        batchData.d_numUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
+
+        batchData.d_segmentIdsOfUsedReadIds.resize(batchData.totalNumberOfUsedIds);
+        batchData.h_segmentIdsOfUsedReadIds.resize(batchData.totalNumberOfUsedIds);
+
+        helpers::call_copy_n_kernel(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.h_inputanchormatedata.data(),
+                batchData.h_subjectSequencesData.data()
+            )),
+            batchData.numTasks * batchData.encodedSequencePitchInInts,
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.d_inputanchormatedata.data(),
+                batchData.d_subjectSequencesData.data()
+            )),
+            batchData.streams[0]
+        );
+
+        helpers::call_copy_n_kernel(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.h_anchorSequencesLength.data(),
+                batchData.h_anchorReadIds.data(),
+                batchData.h_mateReadIds.data()
+            )),
+            batchData.numTasks,
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.d_anchorSequencesLength.data(),
+                batchData.d_anchorReadIds.data(),
+                batchData.d_mateReadIds.data()
+            )),
+            batchData.streams[0]
+        );
+
+        {
+            batchData.h_numUsedReadIdsPerAnchorPrefixSum[0] = 0;
+
+            auto segmentIdsIter = batchData.h_segmentIdsOfUsedReadIds.begin();
+            auto h_usedReadIdsIter = batchData.h_usedReadIds.begin();
+
+            for(int i = 0; i < batchData.numTasks; i++){
+                auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
+
+                const int numUsedIds = task.allUsedCandidateReadIdPairs.size();
+
+                std::fill(segmentIdsIter, segmentIdsIter + numUsedIds, i);
+                segmentIdsIter += numUsedIds;
+
+                h_usedReadIdsIter = std::copy(
+                    task.allUsedCandidateReadIdPairs.begin(),
+                    task.allUsedCandidateReadIdPairs.end(),
+                    h_usedReadIdsIter
+                );
+                batchData.h_numUsedReadIdsPerAnchor[i] = numUsedIds;
+
+                if(i < batchData.numTasks - 1){
+                    batchData.h_numUsedReadIdsPerAnchorPrefixSum[i+1] 
+                        = batchData.h_numUsedReadIdsPerAnchorPrefixSum[i] + batchData.h_numUsedReadIdsPerAnchor[i];
+                }
+            }
+
+            assert(std::distance(batchData.h_usedReadIds.data(), h_usedReadIdsIter) == batchData.totalNumberOfUsedIds);
+
+            // cudaMemcpyAsync(
+            //     batchData.d_segmentIdsOfUsedReadIds.data(),
+            //     batchData.h_segmentIdsOfUsedReadIds.data(),
+            //     sizeof(int) * batchData.totalNumberOfUsedIds,
+            //     H2D,
+            //     batchData.streams[1]
+            // ); CUERR;
+
+            // cudaMemcpyAsync(
+            //     batchData.d_usedReadIds.data(),
+            //     batchData.h_usedReadIds.data(),
+            //     sizeof(read_number) * batchData.totalNumberOfUsedIds,
+            //     H2D,
+            //     batchData.streams[1]
+            // ); CUERR;
+
+            helpers::call_copy_n_kernel(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    batchData.h_segmentIdsOfUsedReadIds.data(),
+                    batchData.h_usedReadIds.data()
+                )),
+                batchData.totalNumberOfUsedIds,
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    batchData.d_segmentIdsOfUsedReadIds.data(),
+                    batchData.d_usedReadIds.data()
+                )),
+                batchData.streams[1]
+            );
+
+            helpers::call_copy_n_kernel(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    batchData.h_numUsedReadIdsPerAnchorPrefixSum.data(),
+                    batchData.h_numUsedReadIdsPerAnchor.data()
+                )),
+                batchData.numTasks,
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
+                    batchData.d_numUsedReadIdsPerAnchor.data()
+                )),
+                batchData.streams[1]
+            );
+        }
     }
 
     void step(BatchData& batchData) const{
@@ -2673,6 +2871,9 @@ public:
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
+    GpuReadHasher gpuReadHasher;
+    GpuExtensionStepper gpuExtensionStepper;
+
 
     ReadExtenderGpu(
         int insertSize,
@@ -2687,6 +2888,7 @@ public:
         cub::CachingDeviceAllocator& cubAllocator_
     ) 
     : ReadExtenderBase(insertSize, insertSizeStddev, maxextensionPerStep, maximumSequenceLength, coropts, gap),
+        gpuReadHasher(gmh),
         kmerLength(kmerLength_),
         gpuReadStorage(&rs),
         gpuMinhasher(&gmh),
@@ -2708,6 +2910,16 @@ public:
         const std::size_t msa_max_column_count = (3*gpuReadStorage->getSequenceLengthUpperBound() - 2*min_overlap);
         //round up to 32 elements
         msaColumnPitchInElements = SDIV(msa_max_column_count, 32) * 32;
+
+        gpuExtensionStepper = std::move(GpuExtensionStepper(
+            rs, 
+            coropts,
+            gap,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            cubAllocator_
+        ));
     }
 
     ~ReadExtenderGpu(){

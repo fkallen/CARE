@@ -210,7 +210,167 @@ namespace readextendergpukernels{
 
 
 
+#if 1
+std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTasks(
+    std::vector<ReadExtenderBase::Task> tasks_
+) {
 
+    if(tasks_.empty()) return {};
+
+    batchData.init(
+        std::move(tasks_), 
+        encodedSequencePitchInInts, 
+        decodedSequencePitchInBytes, 
+        msaColumnPitchInElements
+    );
+
+    do{
+        gpuExtensionStepper.prepareStep(batchData);
+
+        gpuReadHasher.getCandidateReadIds(batchData, batchData.streams[0]);
+
+        gpuExtensionStepper.step(batchData);
+    } while (!batchData.isEmpty());
+
+    //construct results
+
+    std::vector<ExtendResult> extendResults;
+
+    for(const auto& task : batchData.tasks){
+
+        ExtendResult extendResult;
+        extendResult.direction = task.direction;
+        extendResult.numIterations = task.iteration;
+        extendResult.aborted = task.abort;
+        extendResult.abortReason = task.abortReason;
+        extendResult.readId1 = task.myReadId;
+        extendResult.readId2 = task.mateReadId;
+        extendResult.originalLength = task.myLength;
+
+#if 0
+        //extendResult.extendedRead = std::move(task.resultsequence);
+        extendResult.success = true;
+        extendResult.mateHasBeenFound = task.mateHasBeenFound;
+
+#else
+        // if(abort){
+        //     ; //no read extension possible
+        // }else
+        {
+            //if(mateHasBeenFound){
+            {
+                //construct extended read
+                //build msa of all saved totalDecodedAnchors[0]
+
+                const int numsteps = task.totalDecodedAnchors.size();
+
+                // if(task.myReadId == 90 || task.mateReadId == 90){
+                //     std::cerr << "task.totalDecodedAnchors\n";
+                // }
+
+                int maxlen = 0;
+                for(const auto& s: task.totalDecodedAnchors){
+                    const int len = s.length();
+                    if(len > maxlen){
+                        maxlen = len;
+                    }
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << s << "\n";
+                    // }
+                }
+
+                // if(task.myReadId == 90 || task.mateReadId == 90){
+                //     std::cerr << "\n";
+                // }
+
+                const std::string& decodedAnchor = task.totalDecodedAnchors[0];
+
+                const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
+                std::vector<float> initialWeights(numsteps-1, 1.0f);
+
+
+                std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
+                std::vector<int> stepstringlengths(numsteps-1);
+                for(int c = 1; c < numsteps; c++){
+                    std::copy(
+                        task.totalDecodedAnchors[c].begin(),
+                        task.totalDecodedAnchors[c].end(),
+                        stepstrings.begin() + (c-1) * maxlen
+                    );
+                    stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
+                }
+
+                MultipleSequenceAlignment::InputData msaInput;
+                msaInput.useQualityScores = false;
+                msaInput.subjectLength = decodedAnchor.length();
+                msaInput.nCandidates = numsteps-1;
+                msaInput.candidatesPitch = maxlen;
+                msaInput.candidateQualitiesPitch = 0;
+                msaInput.subject = decodedAnchor.c_str();
+                msaInput.candidates = stepstrings.data();
+                msaInput.subjectQualities = nullptr;
+                msaInput.candidateQualities = nullptr;
+                msaInput.candidateLengths = stepstringlengths.data();
+                msaInput.candidateShifts = shifts.data();
+                msaInput.candidateDefaultWeightFactors = initialWeights.data();
+
+                MultipleSequenceAlignment msa;
+
+                msa.build(msaInput);
+
+                // if(task.myReadId == 90 || task.mateReadId == 90){
+                //     std::cerr << "Id " << task.myReadId << ", Final\n";
+                //     msa.print(std::cerr);
+                //     std::cerr << "\n";
+                // }
+
+                extendResult.success = true;
+
+                std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+                //std::cerr << "before: " << extendedRead << "\n";
+                std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
+                if(task.mateHasBeenFound){
+                    std::copy(
+                        task.decodedMateRevC.begin(),
+                        task.decodedMateRevC.end(),
+                        extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
+                    );
+                }
+                // extendedRead.replace(extendedRead.begin(), extendedRead.begin() + decodedAnchor, decodedAnchor.begin(), decodedAnchor.end());
+                // std::cerr << "after : " << extendedRead << "\n";
+                
+                // msa.print(std::cerr);
+                // std::cerr << "msa cons:\n";
+                // std::cerr << extendedRead << "\n";
+                // std::cerr << "new cons:\n";
+                // std::cerr << task.resultsequence << "\n";
+
+
+                extendResult.extendedRead = std::move(extendedRead);
+
+                extendResult.mateHasBeenFound = task.mateHasBeenFound;
+            }
+            // else{
+            //     ; //no read extension possible
+            // }
+        }
+
+        // if(extendResult.extendedRead.length() != task.resultsequence.length()){
+        //     std::cerr << task.myReadId << "\n";
+        //     std::cerr << extendResult.extendedRead << "\n";
+        //     std::cerr << task.resultsequence << "\n";
+        //     std::exit(0);
+        // }
+#endif
+        extendResults.emplace_back(std::move(extendResult));
+
+    }
+
+    return extendResults;
+}
+
+#else 
 
 
 
@@ -1204,7 +1364,7 @@ namespace readextendergpukernels{
 
         return extendResults;
     }
-
+#endif
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processSingleEndTasks(
         std::vector<ReadExtenderBase::Task> tasks
