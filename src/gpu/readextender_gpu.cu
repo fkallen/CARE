@@ -219,8 +219,12 @@ namespace readextendergpukernels{
     ) {
 
 
-        batchData.init(std::move(tasks_));
-
+        batchData.init(
+            std::move(tasks_), 
+            encodedSequencePitchInInts, 
+            decodedSequencePitchInBytes, 
+            msaColumnPitchInElements
+        );
 
 #if 1
         //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
