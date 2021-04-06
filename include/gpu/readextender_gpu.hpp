@@ -261,6 +261,37 @@ public:
     }
 
     struct BatchData{
+
+        void init(std::vector<ReadExtenderBase::Task> tasks_){
+            tasks = std::move(tasks_);
+
+            if(tasks.empty()) return;
+
+            indicesOfActiveTasks.resize(tasks.size());
+            std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
+
+            splitTracker.clear();
+            for(const auto& t : tasks){
+                splitTracker[t.myReadId] = 1;
+            }
+
+            //set input string as current anchor
+            for(auto& task : tasks){
+                std::string decodedAnchor(task.currentAnchorLength, '\0');
+
+                SequenceHelpers::decode2BitSequence(
+                    &decodedAnchor[0],
+                    task.currentAnchor.data(),
+                    task.currentAnchorLength
+                );
+
+                task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
+                task.totalAnchorBeginInExtendedRead.emplace_back(0);
+            }
+
+            pairedEnd = tasks[indicesOfActiveTasks[0]].pairedEnd;
+        }
+
         bool pairedEnd = false;
         int numTasks = 0;
         int numTasksWithMateRemoved = 0;
@@ -388,6 +419,10 @@ public:
         
         std::array<CudaEvent, 1> events{};
         std::array<CudaStream, 4> streams{};
+        std::vector<int> indicesOfActiveTasks{};
+        std::vector<ReadExtenderBase::Task> tasks;
+        std::map<read_number, int> splitTracker{}; //counts number of tasks per read id, which can change by splitting a task
+    
     };
 
     static constexpr int getNumRefinementIterations() noexcept{

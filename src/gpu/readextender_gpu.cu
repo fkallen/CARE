@@ -215,32 +215,11 @@ namespace readextendergpukernels{
 
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTasks(
-        std::vector<ReadExtenderBase::Task> tasks
+        std::vector<ReadExtenderBase::Task> tasks_
     ) {
- 
-        std::vector<ExtendResult> extendResults;
 
-        std::vector<int> indicesOfActiveTasks(tasks.size());
-        std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
-        std::map<read_number, int> splitTracker; //counts number of tasks per read id, which can change by splitting a task
-        for(const auto& t : tasks){
-            splitTracker[t.myReadId] = 1;
-        }
-
-        //set input string as current anchor
-        for(auto& task : tasks){
-            std::string decodedAnchor(task.currentAnchorLength, '\0');
-
-            SequenceHelpers::decode2BitSequence(
-                &decodedAnchor[0],
-                task.currentAnchor.data(),
-                task.currentAnchorLength
-            );
-
-            task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-            task.totalAnchorBeginInExtendedRead.emplace_back(0);
-        }
+        batchData.init(std::move(tasks_));
 
 
 #if 1
@@ -260,14 +239,13 @@ namespace readextendergpukernels{
         batchData.d_numCandidates.resize(1);
 
 
-        while(indicesOfActiveTasks.size() > 0){
+        while(batchData.indicesOfActiveTasks.size() > 0){
 
             //perform one extension iteration for active tasks
 
             //setup batchdata for active tasks
-            const int numActiveTasks = indicesOfActiveTasks.size();
+            const int numActiveTasks = batchData.indicesOfActiveTasks.size();
             batchData.numTasks = numActiveTasks;
-            batchData.pairedEnd = tasks[indicesOfActiveTasks[0]].pairedEnd;
 
             batchData.h_numAnchors.resize(1);
             batchData.d_numAnchors.resize(1);
@@ -307,7 +285,7 @@ namespace readextendergpukernels{
             batchData.totalNumberOfUsedIds = 0;
 
             for(int t = 0; t < numActiveTasks; t++){
-                auto& task = tasks[indicesOfActiveTasks[t]];
+                auto& task = batchData.tasks[batchData.indicesOfActiveTasks[t]];
                 task.dataIsAvailable = false;
 
                 batchData.h_anchorReadIds[t] = task.myReadId;
@@ -395,7 +373,7 @@ namespace readextendergpukernels{
                 auto h_usedReadIdsIter = batchData.h_usedReadIds.begin();
 
                 for(int i = 0; i < batchData.numTasks; i++){
-                    auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+                    auto& task = vecAccess(batchData.tasks, batchData.indicesOfActiveTasks[i]);
 
                     const int numUsedIds = task.allUsedCandidateReadIdPairs.size();
 
@@ -575,7 +553,7 @@ namespace readextendergpukernels{
             cudaStreamSynchronize(batchData.streams[1]); CUERR;
 
             for(int i = 0; i < numActiveTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+                auto& task = vecAccess(batchData.tasks, batchData.indicesOfActiveTasks[i]);
 
                 task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
 
@@ -829,8 +807,8 @@ namespace readextendergpukernels{
             msaTimer.start();
 
             for(int i = 0; i < numActiveTasks; i++){ 
-                const int indexOfActiveTask = indicesOfActiveTasks[i];
-                auto& task = vecAccess(tasks, indexOfActiveTask);
+                const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
+                auto& task = vecAccess(batchData.tasks, indexOfActiveTask);
 
                 if(task.numRemainingCandidates == 0){
                     continue;
@@ -848,7 +826,7 @@ namespace readextendergpukernels{
                 
 #if 1
                 //if(task.splitDepth == 0){
-                if(splitTracker[task.myReadId] <= 4 && batchData.h_numPossibleSplitColumnsPerAnchor[i] > 0){
+                if(batchData.splitTracker[task.myReadId] <= 4 && batchData.h_numPossibleSplitColumnsPerAnchor[i] > 0){
                     
                     const int numCandidates = task.numRemainingCandidates;
                     const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
@@ -891,7 +869,7 @@ namespace readextendergpukernels{
 
                     if(possibleSplits.splits.size() > 1){
                         //nvtx::push_range("split msa", 8);
-                        //auto& task = tasks[indexOfActiveTask];
+                        //auto& task = batchData.tasks[indexOfActiveTask];
                         #if 1
                         std::sort(
                             possibleSplits.splits.begin(), 
@@ -984,10 +962,10 @@ namespace readextendergpukernels{
                             task = std::move(taskCopy);
                         }else if(!taskCopy.abort){
                             //if extension was possible in both task and taskCopy, taskCopy will be added to tasks and list of active tasks
-                            newTaskIndices.emplace_back(tasks.size() + newTasksFromSplit.size());
+                            newTaskIndices.emplace_back(batchData.tasks.size() + newTasksFromSplit.size());
                             newTasksFromSplit.emplace_back(std::move(taskCopy));
 
-                            splitTracker[task.myReadId]++;
+                            batchData.splitTracker[task.myReadId]++;
 
 
                         }
@@ -1010,8 +988,16 @@ namespace readextendergpukernels{
 
             if(newTasksFromSplit.size() > 0){
                 //std::cerr << "Added " << newTasksFromSplit.size() << " tasks\n";
-                tasks.insert(tasks.end(), std::make_move_iterator(newTasksFromSplit.begin()), std::make_move_iterator(newTasksFromSplit.end()));
-                indicesOfActiveTasks.insert(indicesOfActiveTasks.end(), newTaskIndices.begin(), newTaskIndices.end());
+                batchData.tasks.insert(
+                    batchData.tasks.end(), 
+                    std::make_move_iterator(newTasksFromSplit.begin()), 
+                    std::make_move_iterator(newTasksFromSplit.end())
+                );
+                batchData.indicesOfActiveTasks.insert(
+                    batchData.indicesOfActiveTasks.end(), 
+                    newTaskIndices.begin(), 
+                    newTaskIndices.end()
+                );
             }           
 
             /*
@@ -1019,7 +1005,7 @@ namespace readextendergpukernels{
             */  
 
             for(int i = 0; i < numActiveTasks; i++){
-                auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
+                auto& task = vecAccess(batchData.tasks, batchData.indicesOfActiveTasks[i]);
 
                                       
                 {
@@ -1065,21 +1051,23 @@ namespace readextendergpukernels{
             
             //update list of active task indices
 
-            indicesOfActiveTasks.erase(
+            batchData.indicesOfActiveTasks.erase(
                 std::remove_if(
-                    indicesOfActiveTasks.begin(), 
-                    indicesOfActiveTasks.end(),
+                    batchData.indicesOfActiveTasks.begin(), 
+                    batchData.indicesOfActiveTasks.end(),
                     [&](int index){
-                        return !tasks[index].isActive(insertSize, insertSizeStddev);
+                        return !batchData.tasks[index].isActive(insertSize, insertSizeStddev);
                     }
                 ),
-                indicesOfActiveTasks.end()
+                batchData.indicesOfActiveTasks.end()
             );
         }
 
         //construct results
 
-        for(const auto& task : tasks){
+        std::vector<ExtendResult> extendResults;
+
+        for(const auto& task : batchData.tasks){
 
             ExtendResult extendResult;
             extendResult.direction = task.direction;
