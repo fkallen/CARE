@@ -215,13 +215,12 @@ namespace readextendergpukernels{
 
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTasks(
-        std::vector<ReadExtenderBase::Task>& tasks
+        std::vector<ReadExtenderBase::Task> tasks
     ) {
  
         std::vector<ExtendResult> extendResults;
 
         std::vector<int> indicesOfActiveTasks(tasks.size());
-        std::vector<int> indicesOfActiveTasksTmp(tasks.size());
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
         std::map<read_number, int> splitTracker; //counts number of tasks per read id, which can change by splitting a task
@@ -254,16 +253,6 @@ namespace readextendergpukernels{
             return vec.at(index);
         };
 #endif 
-
-        int deviceId = 0;
-        cudaGetDevice(&deviceId); CUERR;
-
-        
-
-        cudaStream_t firstStream = streams[0];
-        cudaStream_t secondStream = streams[1];
-        
-        const int numTasks = tasks.size();
 
         batchData.h_numAnchors.resize(1);
         batchData.h_numCandidates.resize(1);
@@ -381,7 +370,7 @@ namespace readextendergpukernels{
                     batchData.d_inputanchormatedata.data(),
                     batchData.d_subjectSequencesData.data()
                 )),
-                firstStream
+                batchData.streams[0]
             );
 
             helpers::call_copy_n_kernel(
@@ -396,7 +385,7 @@ namespace readextendergpukernels{
                     batchData.d_anchorReadIds.data(),
                     batchData.d_mateReadIds.data()
                 )),
-                firstStream
+                batchData.streams[0]
             );
 
             {
@@ -433,7 +422,7 @@ namespace readextendergpukernels{
                 //     batchData.h_segmentIdsOfUsedReadIds.data(),
                 //     sizeof(int) * batchData.totalNumberOfUsedIds,
                 //     H2D,
-                //     secondStream
+                //     batchData.streams[1]
                 // ); CUERR;
 
                 // cudaMemcpyAsync(
@@ -441,7 +430,7 @@ namespace readextendergpukernels{
                 //     batchData.h_usedReadIds.data(),
                 //     sizeof(read_number) * batchData.totalNumberOfUsedIds,
                 //     H2D,
-                //     secondStream
+                //     batchData.streams[1]
                 // ); CUERR;
 
                 helpers::call_copy_n_kernel(
@@ -454,7 +443,7 @@ namespace readextendergpukernels{
                         batchData.d_segmentIdsOfUsedReadIds.data(),
                         batchData.d_usedReadIds.data()
                     )),
-                    secondStream
+                    batchData.streams[1]
                 );
 
                 helpers::call_copy_n_kernel(
@@ -467,7 +456,7 @@ namespace readextendergpukernels{
                         batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
                         batchData.d_numUsedReadIdsPerAnchor.data()
                     )),
-                    secondStream
+                    batchData.streams[1]
                 );
             }
 
@@ -478,7 +467,7 @@ namespace readextendergpukernels{
             //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks
             nvtx::push_range("getCandidateReadIds", 0);
 
-            getCandidateReadIds(batchData, firstStream);
+            getCandidateReadIds(batchData, batchData.streams[0]);
 
             nvtx::pop_range();
 
@@ -493,10 +482,10 @@ namespace readextendergpukernels{
             //     batchData.d_numCandidatesPerAnchor.data(),
             //     sizeof(int) * batchData.numTasks,
             //     D2H,
-            //     firstStream
+            //     batchData.streams[0]
             // ); 
 
-            // cudaStreamSynchronize(firstStream); CUERR;
+            // cudaStreamSynchronize(batchData.streams[0]); CUERR;
 
 
             // for(int i = 0, sum = 0; i < batchData.numTasks; i++){
@@ -517,7 +506,7 @@ namespace readextendergpukernels{
             //Sets batchData.numTasksWithMateRemoved to the number of tasks whose mate read id appeared in its candidate ids.
             nvtx::push_range("removeUsedIdsAndMateIds", 1);
 
-            removeUsedIdsAndMateIds(batchData, firstStream, secondStream);        
+            removeUsedIdsAndMateIds(batchData, batchData.streams[0], batchData.streams[1]);        
 
             nvtx::pop_range();
 
@@ -526,7 +515,7 @@ namespace readextendergpukernels{
 
             nvtx::push_range("loadCandidateSequenceData", 2);
 
-            loadCandidateSequenceData(batchData, firstStream);
+            loadCandidateSequenceData(batchData, batchData.streams[0]);
 
             nvtx::pop_range();
             
@@ -537,7 +526,7 @@ namespace readextendergpukernels{
 
                 nvtx::push_range("eraseDataOfRemovedMates", 3);
 
-                eraseDataOfRemovedMates(batchData, firstStream);
+                eraseDataOfRemovedMates(batchData, batchData.streams[0]);
 
                 nvtx::pop_range();
 
@@ -553,7 +542,7 @@ namespace readextendergpukernels{
 
             nvtx::push_range("calculateAlignments", 4);
 
-            calculateAlignments(batchData, firstStream);
+            calculateAlignments(batchData, batchData.streams[0]);
 
             nvtx::pop_range();
 
@@ -562,14 +551,14 @@ namespace readextendergpukernels{
             nvtx::push_range("filterAlignments", 5);
        
             //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks.
-            filterAlignments(batchData, firstStream);
+            filterAlignments(batchData, batchData.streams[0]);
 
             nvtx::pop_range();
 
             nvtx::push_range("computeMSAs", 6);
 
             //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
-            computeMSAs(batchData, firstStream, secondStream);
+            computeMSAs(batchData, batchData.streams[0], batchData.streams[1]);
 
             nvtx::pop_range();
 
@@ -577,13 +566,13 @@ namespace readextendergpukernels{
                 
             nvtx::push_range("copyBuffersToHost", 7);
 
-            copyBuffersToHost(batchData, firstStream, secondStream);
+            copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[1]);
 
             nvtx::pop_range();
             
 
-            cudaStreamSynchronize(firstStream); CUERR;
-            cudaStreamSynchronize(secondStream); CUERR;
+            cudaStreamSynchronize(batchData.streams[0]); CUERR;
+            cudaStreamSynchronize(batchData.streams[1]); CUERR;
 
             for(int i = 0; i < numActiveTasks; i++){
                 auto& task = vecAccess(tasks, indicesOfActiveTasks[i]);
@@ -1023,8 +1012,6 @@ namespace readextendergpukernels{
                 //std::cerr << "Added " << newTasksFromSplit.size() << " tasks\n";
                 tasks.insert(tasks.end(), std::make_move_iterator(newTasksFromSplit.begin()), std::make_move_iterator(newTasksFromSplit.end()));
                 indicesOfActiveTasks.insert(indicesOfActiveTasks.end(), newTaskIndices.begin(), newTaskIndices.end());
-
-                indicesOfActiveTasksTmp.resize(indicesOfActiveTasks.size());
             }           
 
             /*
@@ -1228,9 +1215,9 @@ namespace readextendergpukernels{
 
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processSingleEndTasks(
-        std::vector<ReadExtenderBase::Task>& tasks
+        std::vector<ReadExtenderBase::Task> tasks
     ){
-        return processPairedEndTasks(tasks);
+        return processPairedEndTasks(std::move(tasks));
     }
 
 

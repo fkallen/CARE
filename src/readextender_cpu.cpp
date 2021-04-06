@@ -12,7 +12,7 @@
 namespace care{
 
         std::vector<ReadExtenderBase::ExtendResult> ReadExtenderCpu::processPairedEndTasks(
-        std::vector<ReadExtenderBase::Task>& tasks
+        std::vector<ReadExtenderBase::Task> tasks
     ){
  
         std::vector<ExtendResult> extendResults;
@@ -1031,9 +1031,9 @@ namespace care{
 
 
     std::vector<ReadExtenderBase::ExtendResult> ReadExtenderCpu::processSingleEndTasks(
-        std::vector<ReadExtenderBase::Task>& tasks
+        std::vector<ReadExtenderBase::Task> tasks
     ){
-        return processPairedEndTasks(tasks);
+        return processPairedEndTasks(std::move(tasks));
     }
 
 

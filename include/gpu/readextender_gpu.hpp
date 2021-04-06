@@ -386,6 +386,8 @@ public:
         DeviceBuffer<int> d_numPossibleSplitColumnsPerAnchor;
 
         
+        std::array<CudaEvent, 1> events{};
+        std::array<CudaStream, 4> streams{};
     };
 
     static constexpr int getNumRefinementIterations() noexcept{
@@ -394,9 +396,9 @@ public:
      
 public: //private:
 
-    std::vector<ExtendResult> processPairedEndTasks(std::vector<Task>& tasks) override;
+    std::vector<ExtendResult> processPairedEndTasks(std::vector<Task> tasks) override;
 
-    std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
+    std::vector<ExtendResult> processSingleEndTasks(std::vector<Task> tasks) override;
 
 
 public:
@@ -573,7 +575,7 @@ public:
         // );
         // assert(cubstatus == cudaSuccess);
 
-        //cudaEventRecord(events[0], secondStream); CUERR;
+        //cudaEventRecord(batchData.events[0], secondStream); CUERR;
         
     
         
@@ -594,8 +596,8 @@ public:
         );
         CUERR;
 
-        cudaEventRecord(events[0], firstStream);
-        cudaStreamWaitEvent(secondStream, events[0], 0); CUERR;
+        cudaEventRecord(batchData.events[0], firstStream);
+        cudaStreamWaitEvent(secondStream, batchData.events[0], 0); CUERR;
 
         cudaMemcpyAsync(
             batchData.h_numCandidatesPerAnchor.data(),
@@ -605,7 +607,7 @@ public:
             secondStream
         ); CUERR;
 
-        cudaEventRecord(events[0], secondStream);
+        cudaEventRecord(batchData.events[0], secondStream);
 
         //determine task ids with removed mates
 
@@ -687,7 +689,7 @@ public:
             cubAllocator->DeviceFree(cubtempstream2);
         }
 
-        cudaEventSynchronize(events[0]); CUERR;
+        cudaEventSynchronize(batchData.events[0]); CUERR;
 
         for(int i = 0, sum = 0; i < batchData.numTasks; i++){
             std::fill(
@@ -746,7 +748,7 @@ public:
 
         ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
 
-        //cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
+        //cudaStreamWaitEvent(firstStream, batchData.events[0], 0); CUERR;
 
         
         //compute segmented set difference between candidate read ids and used candidate read ids
@@ -786,8 +788,8 @@ public:
         assert(cubstatus == cudaSuccess);
 
         if(batchData.numTasksWithMateRemoved > 0){
-            cudaEventRecord(events[0], secondStream);
-            cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
+            cudaEventRecord(batchData.events[0], secondStream);
+            cudaStreamWaitEvent(firstStream, batchData.events[0], 0); CUERR;
         }
 
         cubAllocator->DeviceFree(cubtempstorage);
@@ -1439,8 +1441,8 @@ public:
             kernelLaunchHandle
         );
 
-        cudaEventRecord(events[0], firstStream); CUERR;
-        cudaStreamWaitEvent(secondStream, events[0], 0); CUERR;
+        cudaEventRecord(batchData.events[0], firstStream); CUERR;
+        cudaStreamWaitEvent(secondStream, batchData.events[0], 0); CUERR;
 
         cudaMemcpyAsync(
             batchData.h_numCandidates.data(),
@@ -1450,7 +1452,7 @@ public:
             secondStream
         ); CUERR;
 
-        cudaEventRecord(events[0], secondStream); CUERR;
+        cudaEventRecord(batchData.events[0], secondStream); CUERR;
 
         bool cubdebugsync = false;
         cudaError_t cubstatus = cudaSuccess;
@@ -1743,7 +1745,7 @@ public:
             }
         ); CUERR;
 
-        cudaEventSynchronize(events[0]); CUERR; //wait for h_numCandidates
+        cudaEventSynchronize(batchData.events[0]); CUERR; //wait for h_numCandidates
 
         batchData.totalNumCandidates = *batchData.h_numCandidates; 
 
@@ -2084,9 +2086,6 @@ private:
 
     thrust::device_new_allocator<char> thrustallocator{};
     cub::CachingDeviceAllocator* cubAllocator{};
-
-    std::array<CudaStream, 4> streams{};
-    std::array<CudaEvent, 1> events{};
 
     mutable gpu::KernelLaunchHandle kernelLaunchHandle;
 

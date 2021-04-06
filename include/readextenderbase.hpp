@@ -1367,6 +1367,10 @@ public:
 #endif
 
     std::vector<ExtendResult> combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& lr_and_rl
+    );
+
+    std::vector<ExtendResult> combinePairedEndDirectionResults(
         std::vector<ExtendResult>& lr,
         std::vector<ExtendResult>& rl
     );
@@ -1572,11 +1576,11 @@ public:
 
 
     virtual std::vector<ExtendResult> processPairedEndTasks(
-        std::vector<Task>& tasks
+        std::vector<Task> tasks
     ) = 0;
 
     virtual std::vector<ExtendResult> processSingleEndTasks(
-        std::vector<Task>& tasks
+        std::vector<Task> tasks
     ) = 0;
 
 

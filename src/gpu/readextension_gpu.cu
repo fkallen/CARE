@@ -96,8 +96,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
     //readIdGenerator.skip(4200000);
  
     BackgroundThread outputThread(true);

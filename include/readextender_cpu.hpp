@@ -34,9 +34,9 @@ public:
      
 private:
 
-    std::vector<ExtendResult> processPairedEndTasks(std::vector<Task>& tasks) override;
+    std::vector<ExtendResult> processPairedEndTasks(std::vector<Task> tasks) override;
 
-    std::vector<ExtendResult> processSingleEndTasks(std::vector<Task>& tasks) override;
+    std::vector<ExtendResult> processSingleEndTasks(std::vector<Task> tasks) override;
 
     void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
