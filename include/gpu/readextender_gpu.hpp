@@ -404,6 +404,54 @@ public:
     ) : gpuMinhasher(&mh),
         minhashHandle(gpuMinhasher->makeQueryHandle()) {
     }
+
+    void getCandidateReadIds(BatchData& batchData) const{
+
+        int totalNumValues = 0;
+
+        gpuMinhasher->determineNumValues(
+            minhashHandle,
+            batchData.d_subjectSequencesData.get(),
+            batchData.encodedSequencePitchInInts,
+            batchData.d_anchorSequencesLength.get(),
+            batchData.numTasks,
+            batchData.d_numCandidatesPerAnchor.get(),
+            totalNumValues,
+            batchData.streams[0]
+        );
+
+        cudaStreamSynchronize(batchData.streams[0]); CUERR;
+
+        batchData.d_candidateReadIds.resize(totalNumValues);        
+
+        if(totalNumValues == 0){
+            cudaMemsetAsync(batchData.d_numCandidatesPerAnchor.get(), 0, sizeof(int) * batchData.numTasks , batchData.streams[0]); CUERR;
+            cudaMemsetAsync(batchData.d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + batchData.numTasks), batchData.streams[0]); CUERR;
+            batchData.totalNumCandidates = 0;
+            return;
+        }
+
+        gpuMinhasher->retrieveValues(
+            minhashHandle,
+            nullptr,
+            batchData.numTasks,              
+            totalNumValues,
+            batchData.d_candidateReadIds.get(),
+            batchData.d_numCandidatesPerAnchor.get(),
+            batchData.d_numCandidatesPerAnchorPrefixSum.get(),
+            batchData.streams[0]
+        );
+
+        cudaMemcpyAsync(
+            &batchData.totalNumCandidates,
+            batchData.d_numCandidatesPerAnchorPrefixSum.data() + batchData.numTasks,
+            sizeof(int),
+            D2H,
+            batchData.streams[0]
+        ); CUERR;
+
+        cudaStreamSynchronize(batchData.streams[0]); CUERR;
+    }
     
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const{
 
@@ -786,7 +834,7 @@ public:
 
             if(task.numRemainingCandidates == 0){
                 task.abort = true;
-                task.abortReason = ReadExtenderBase::AbortReason::NoPairedCandidatesAfterAlignment;
+                task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
             }
         }
 
@@ -812,7 +860,7 @@ public:
             auto makeAnchorForNextIteration = [&](){
                 if(extendBy == 0){
                     task.abort = true;
-                    task.abortReason = ReadExtenderBase::AbortReason::MsaNotExtended;
+                    task.abortReason = AbortReason::MsaNotExtended;
                 }else{
                     task.accumExtensionLengths += extendBy;
 
@@ -1184,7 +1232,7 @@ public:
                     extendWithMsa(task, newMsa.consensus.data(), newMsa.consensus.size(), -1);
 
                     //if extension was not possible in task, replace task by task copy
-                    if(task.abort && task.abortReason == ReadExtenderBase::AbortReason::MsaNotExtended){
+                    if(task.abort && task.abortReason == AbortReason::MsaNotExtended){
                         //replace task by taskCopy
                         task = std::move(taskCopy);
                     }else if(!taskCopy.abort){
@@ -2697,7 +2745,7 @@ public:
 
         if(task.numRemainingCandidates == 0){
             task.abort = true;
-            task.abortReason = ReadExtenderBase::AbortReason::NoPairedCandidatesAfterAlignment;
+            task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
         }
     }
 
@@ -2856,6 +2904,11 @@ public:
         return msa;
     }
 };
+
+
+
+
+
 
 
 

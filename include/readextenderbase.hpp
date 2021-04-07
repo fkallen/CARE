@@ -36,70 +36,52 @@
 
 namespace care{
 
+enum class ExtensionDirection {LR, RL};
+
+enum class AbortReason{
+    MsaNotExtended, 
+    NoPairedCandidates, 
+    NoPairedCandidatesAfterAlignment, 
+    None
+};
+
+struct ExtendInput{
+    int readLength1{};
+    int readLength2{};
+    read_number readId1{};
+    read_number readId2{};
+    std::vector<unsigned int> encodedRead1{};
+    std::vector<unsigned int> encodedRead2{};
+};
+
+struct ExtendResult{
+    bool mateHasBeenFound = false;
+    bool success = false;
+    bool aborted = false;
+    int numIterations = 0;
+    int originalLength = 0;
+    ExtensionDirection direction = ExtensionDirection::LR;
+    AbortReason abortReason = AbortReason::None;
+
+    read_number readId1{}; //same as input ids
+    read_number readId2{}; //same as input ids
+
+    std::string extendedRead{};
+
+    read_number getReadPairId() const noexcept{
+        return readId1 / 2;
+    }
+};
 
 struct ReadExtenderBase{
 public:
 
-    enum class ExtensionDirection {LR, RL};
-
-    enum class AbortReason{
-        MsaNotExtended, 
-        NoPairedCandidates, 
-        NoPairedCandidatesAfterAlignment, 
-        None
-    };
+    
 
     struct ReadPairIds{
         read_number first;
         read_number second;
-    };
-
-    struct ExtendInput{
-        read_number readId1{};
-        const unsigned int* encodedRead1{};
-        int readLength1{};
-        int numInts1{};
-        read_number readId2{};
-        const unsigned int* encodedRead2{};
-        int readLength2{};
-        int numInts2{};
-        bool verbose{};
-        std::mutex* verboseMutex;
-    };
-
-    struct ExtendResult{
-        bool mateHasBeenFound = false;
-        bool success = false;
-        bool aborted = false;
-        int numIterations = 0;
-        int originalLength = 0;
-        ExtensionDirection direction = ExtensionDirection::LR;
-        AbortReason abortReason = AbortReason::None;
-
-        read_number readId1{}; //same as input ids
-        read_number readId2{}; //same as input ids
-
-        std::string extendedRead{};
-
-        read_number getReadPairId() const noexcept{
-            return readId1 / 2;
-        }
-    };
-
-    struct ExtendResultOld{
-        bool mateHasBeenFound = false;
-        bool success = false;
-        bool aborted = false;
-        int numIterations = 0;
-
-        AbortReason abortReason = AbortReason::None;
-        std::vector<int> extensionLengths;
-        // (read number of forward strand read, extended read for forward strand)
-        std::vector<std::pair<read_number, std::string>> extendedReads;
-
-    };
-
-    
+    };   
 
     ReadExtenderBase(
         int insertSize,
@@ -130,808 +112,6 @@ public:
 
     virtual ~ReadExtenderBase() {}
 
-#if 0
-    /*
-        Assumes read1 is on the forward strand, read2 is on the reverse strand
-    */
-    ExtendResultOld extendPairedRead(
-        const ExtendInput& input
-    ){
-
-        std::array<std::vector<unsigned int>, 2> currentAnchor;
-        std::array<int, 2> currentAnchorLength;
-        std::array<read_number, 2> currentAnchorReadId;
-        std::array<int, 2> accumExtensionLengths;        
-        
-        //for each iteration of the while-loop, saves the currentAnchor (decoded), 
-        //the current accumExtensionLength,
-        //the new candidate read ids
-        std::array<std::vector<std::string>, 2> totalDecodedAnchors;
-        std::array<std::vector<int>, 2> totalAnchorBeginInExtendedRead;
-        std::vector<std::vector<ReadPairIds>> usedCandidateReadIdsPerIteration;
-
-        std::vector<ReadPairIds> allUsedCandidateReadIdPairs; //sorted
-
-        auto readPairIdComparator = [](const auto& pair1, const auto& pair2){
-            if(pair1.first < pair2.first) return true;
-            if(pair1.first > pair2.first) return false;
-            if(pair1.second < pair2.second) return true;
-            return false;
-        };
-
-        bool abort = false;
-        AbortReason abortReason = AbortReason::None;
-        bool mateHasBeenFound = false;
-        std::vector<read_number>::iterator mateIdLocationIter;
-
-        //setup input of first loop iteration
-        currentAnchor[0].resize(input.numInts1);
-        std::copy_n(input.encodedRead1, input.numInts1, currentAnchor[0].begin());
-        currentAnchor[1].resize(input.numInts2);
-        std::copy_n(input.encodedRead2, input.numInts2, currentAnchor[1].begin());
-
-        currentAnchorLength[0] = input.readLength1;
-        currentAnchorLength[1] = input.readLength2;
-
-        currentAnchorReadId[0] = input.readId1;
-        currentAnchorReadId[1] = input.readId2;
-
-        accumExtensionLengths[0] = 0;
-        accumExtensionLengths[1] = 0;
-
-        std::stringstream verboseStream;
-
-        if(input.verbose){
-            verboseStream << "readId1 " << input.readId1 << ", readId2 " << input.readId2 << "\n";
-        }
-
-        int iter = 0;
-        while(iter < insertSize && accumExtensionLengths[0] < insertSize - input.readLength2 + insertSizeStddev && !abort && !mateHasBeenFound){
-
-            //update "total" arrays
-            for(int i = 0; i < 2; i++){
-                std::string decodedAnchor(currentAnchorLength[i], '\0');
-
-                decode2BitSequence(
-                    &decodedAnchor[0],
-                    currentAnchor[i].data(),
-                    currentAnchorLength[i]
-                );
-
-                totalDecodedAnchors[i].emplace_back(std::move(decodedAnchor));
-                totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
-            }
-            
-            if(input.verbose){
-                verboseStream << "Iteration " << iter << "\n";
-            }
-
-            if(input.verbose){    
-                verboseStream << "anchor0: " << totalDecodedAnchors[0].back() << ", anchor1: " << totalDecodedAnchors[1].back() << "\n";
-            }
-
-            if(input.verbose){    
-                for(int i = 0; i < 2; i++){
-                    verboseStream << "totalAnchorBeginInExtendedRead["<< i << "]: ";
-                    std::copy(
-                        totalAnchorBeginInExtendedRead[i].begin(),
-                        totalAnchorBeginInExtendedRead[i].end(),
-                        std::ostream_iterator<int>(verboseStream, ", ")
-                    );
-                    verboseStream << "\n";
-                }
-            }
-            
-
-            
-
-            std::array<std::vector<read_number>, 2> candidateReadIds;
-
-            getCandidateReadIdsSingle(
-                candidateReadIds[0], 
-                currentAnchor[0].data(), 
-                currentAnchorLength[0],
-                currentAnchorReadId[0]
-            );
-
-            getCandidateReadIdsSingle(
-                candidateReadIds[1], 
-                currentAnchor[1].data(), 
-                currentAnchorLength[1],
-                currentAnchorReadId[1]
-            );
-
-            if(iter == 0){
-                // remove self from candidate list
-                for(int i = 0; i < 2; i++){
-                    auto readIdPos = std::lower_bound(
-                        candidateReadIds[i].begin(),                                            
-                        candidateReadIds[i].end(),
-                        currentAnchorReadId[i]
-                    );
-
-                    if(readIdPos != candidateReadIds[i].end() && *readIdPos == currentAnchorReadId[i]){
-                        candidateReadIds[i].erase(readIdPos);
-                    }
-                }
-                
-            }
-
-            //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
-            if(input.readLength2 + accumExtensionLengths[0] < insertSize){
-                auto readIdPos = std::lower_bound(
-                    candidateReadIds[0].begin(),                                            
-                    candidateReadIds[0].end(),
-                    input.readId2
-                );
-
-                if(readIdPos != candidateReadIds[0].end() && *readIdPos == input.readId2){
-                    candidateReadIds[0].erase(readIdPos);
-                }
-            }
-
-            //remove mate of input from candidate list if it is not possible that mate could be reached at the current iteration
-            if(input.readLength1 + accumExtensionLengths[1] < insertSize){
-                auto readIdPos = std::lower_bound(
-                    candidateReadIds[1].begin(),                                            
-                    candidateReadIds[1].end(),
-                    input.readId1
-                );
-
-                if(readIdPos != candidateReadIds[1].end() && *readIdPos == input.readId1){
-                    candidateReadIds[1].erase(readIdPos);
-                }
-            }
-
-            if(input.verbose){    
-                verboseStream << "initial candidate read ids for anchor 0:\n";
-                std::copy(
-                    candidateReadIds[0].begin(),
-                    candidateReadIds[0].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-
-                verboseStream << "initial candidate read ids for anchor 1:\n";
-                std::copy(
-                    candidateReadIds[1].begin(),
-                    candidateReadIds[1].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-            }
-
-            /*
-                Remove candidates whose mates are not candidates of the other read.
-            */
-
-            std::vector<ReadPairIds> candidateIdsWithMate = removeCandidateIdsWithoutMate(
-                candidateReadIds[0],
-                candidateReadIds[1]      
-            );
-
-            std::sort(
-                candidateIdsWithMate.begin(),
-                candidateIdsWithMate.end(),
-                readPairIdComparator
-            );
-
-            /*
-                Remove candidate pairs which have already been used for extension
-            */
-
-            {
-                std::vector<ReadPairIds> tmp(candidateIdsWithMate.size());
-
-                auto end = std::set_difference(
-                    candidateIdsWithMate.begin(),
-                    candidateIdsWithMate.end(),
-                    allUsedCandidateReadIdPairs.begin(),
-                    allUsedCandidateReadIdPairs.end(),
-                    tmp.begin(),
-                    readPairIdComparator
-                );
-
-                tmp.erase(end, tmp.end());
-
-                std::swap(candidateIdsWithMate, tmp);
-            }
-
-            candidateReadIds[0].clear();
-            candidateReadIds[1].clear();
-
-            std::for_each(
-                candidateIdsWithMate.begin(),
-                candidateIdsWithMate.end(),
-                [&](const auto& pair){
-                    candidateReadIds[0].emplace_back(pair.first);
-                    candidateReadIds[1].emplace_back(pair.second);
-                }
-            );
-
-            
-
-            if(input.verbose){    
-                verboseStream << "new candidate read ids for anchor 0:\n";
-                std::copy(
-                    candidateReadIds[0].begin(),
-                    candidateReadIds[0].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-
-                verboseStream << "new candidate read ids for anchor 1:\n";
-                std::copy(
-                    candidateReadIds[1].begin(),
-                    candidateReadIds[1].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-            }
-
-            /*
-                Load candidate sequences and compute reverse complements
-            */
-
-            cpu::ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-
-            std::array<std::vector<int>, 2> candidateSequenceLengths;
-            std::array<std::vector<unsigned int>, 2> candidateSequencesFwdData;
-            std::array<std::vector<unsigned int>, 2> candidateSequencesRevcData;
-
-            for(int i = 0; i < 2; i++){
-                const int numCandidates = candidateReadIds[i].size();
-
-                candidateSequenceLengths[i].resize(numCandidates);
-                candidateSequencesFwdData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-                candidateSequencesRevcData[i].resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
-
-                readStorage->gatherSequenceLengths(
-                    readStorageGatherHandle,
-                    candidateReadIds[i].data(),
-                    candidateReadIds[i].size(),
-                    candidateSequenceLengths[i].data()
-                );
-
-                readStorage->gatherSequenceData(
-                    readStorageGatherHandle,
-                    candidateReadIds[i].data(),
-                    candidateReadIds[i].size(),
-                    candidateSequencesFwdData[i].data(),
-                    encodedSequencePitchInInts
-                );
-
-                for(int c = 0; c < numCandidates; c++){
-                    const unsigned int* const seqPtr = candidateSequencesFwdData[i].data() 
-                                                        + std::size_t(encodedSequencePitchInInts) * c;
-                    unsigned int* const seqrevcPtr = candidateSequencesRevcData[i].data() 
-                                                        + std::size_t(encodedSequencePitchInInts) * c;
-
-                    reverseComplement2Bit(
-                        seqrevcPtr,  
-                        seqPtr,
-                        candidateSequenceLengths[i][c]
-                    );
-                }
-            }
-
-
-            /*
-                Compute alignments
-            */
-
-            cpu::shd::CpuAlignmentHandle alignmentHandle;
-
-            std::array<std::vector<care::cpu::SHDResult>, 2> alignments;
-            std::array<std::vector<BestAlignment_t>, 2> alignmentFlags;
-
-            assert(candidateReadIds[0].size() == candidateReadIds[1].size());
-
-            for(int i = 0; i < 2; i++){
-
-                const int numCandidates = candidateReadIds[i].size();
-
-                std::vector<care::cpu::SHDResult> forwardAlignments;
-                std::vector<care::cpu::SHDResult> revcAlignments;
-
-                forwardAlignments.resize(numCandidates);
-                revcAlignments.resize(numCandidates);
-                alignmentFlags[i].resize(numCandidates);
-                alignments[i].resize(numCandidates);
-
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
-                    alignmentHandle,
-                    forwardAlignments.data(),
-                    currentAnchor[i].data(),
-                    currentAnchorLength[i],
-                    candidateSequencesFwdData[i].data(),
-                    encodedSequencePitchInInts,
-                    candidateSequenceLengths[i].data(),
-                    numCandidates,
-                    goodAlignmentProperties.min_overlap,
-                    goodAlignmentProperties.maxErrorRate,
-                    goodAlignmentProperties.min_overlap_ratio
-                );
-
-                care::cpu::shd::cpuShiftedHammingDistancePopcount2Bit<care::cpu::shd::ShiftDirection::LeftRight>(
-                    alignmentHandle,
-                    revcAlignments.data(),
-                    currentAnchor[i].data(),
-                    currentAnchorLength[i],
-                    candidateSequencesRevcData[i].data(),
-                    encodedSequencePitchInInts,
-                    candidateSequenceLengths[i].data(),
-                    numCandidates,
-                    goodAlignmentProperties.min_overlap,
-                    goodAlignmentProperties.maxErrorRate,
-                    goodAlignmentProperties.min_overlap_ratio
-                );
-
-                //decide whether to keep forward or reverse complement, and keep it
-
-                for(int c = 0; c < numCandidates; c++){
-                    const auto& forwardAlignment = forwardAlignments[c];
-                    const auto& revcAlignment = revcAlignments[c];
-                    const int candidateLength = candidateSequenceLengths[i][c];
-
-                    alignmentFlags[i][c] = care::choose_best_alignment(
-                        forwardAlignment,
-                        revcAlignment,
-                        currentAnchorLength[i],
-                        candidateLength,
-                        goodAlignmentProperties.min_overlap_ratio,
-                        goodAlignmentProperties.min_overlap,
-                        correctionOptions.estimatedErrorrate
-                    );
-
-                    if(alignmentFlags[i][c] == BestAlignment_t::Forward){
-                        alignments[i][c] = forwardAlignment;
-                    }else{
-                        alignments[i][c] = revcAlignment;
-                    }
-                }
-
-            }
-
-            /*
-                Remove bad alignments and the corresponding alignments of their mate
-            */        
-
-            assert(alignments[0].size() == alignments[1].size());
-            const int size = alignments[0].size();
-
-            // std::array<std::vector<care::cpu::SHDResult>, 2> alignmentsTmp;
-            // std::array<std::vector<BestAlignment_t>, 2> alignmentFlagsTmp;
-
-            // alignmentsTmp[0].resize(size);
-            // alignmentFlagsTmp[0].resize(size);
-
-            // alignmentsTmp[1].resize(size);
-            // alignmentFlagsTmp[1].resize(size);
-
-            std::vector<int> positionsOfCandidatesToKeep(size);
-            std::vector<int> tmpPositionsOfCandidatesToKeep(size);
-
-            int numRemainingCandidates = 0;
-            int numRemainingCandidatesTmp = 0;
-
-            //select remaining candidates by alignment flag
-            //if any of the mates aligns badly, remove both of them
-            for(int c = 0; c < size; c++){
-                const BestAlignment_t alignmentFlag0 = alignmentFlags[0][c];
-                const BestAlignment_t alignmentFlag1 = alignmentFlags[1][c];
-                
-                if(!(alignmentFlag0 == BestAlignment_t::None || alignmentFlag1 == BestAlignment_t::None)){
-                    positionsOfCandidatesToKeep[numRemainingCandidates] = c;
-                    numRemainingCandidates++;
-                }else{
-                    ; //if any of the mates aligns badly, remove both of them
-                }
-            }
-
-            //remove candidates whose mate aligns with a conflicting shift direction
-            for(int c = 0; c < numRemainingCandidates; c++){
-                const int index = positionsOfCandidatesToKeep[c];
-                const auto& alignmentresult0 = alignments[0][index];
-                const auto& alignmentresult1 = alignments[1][index];
-                
-                //only keep candidates for both read0 and read1 
-                //which align "to the right" relative to the forward strand
-                // => positive shift on forward strand, negative shift on reverse strand
-                if(alignmentresult0.shift >= 0 && alignmentresult1.shift <= 0){
-                    //keep
-                    tmpPositionsOfCandidatesToKeep[numRemainingCandidatesTmp] = index;
-                    numRemainingCandidatesTmp++;
-                }else{
-                    ;
-                }
-            }
-
-            std::swap(tmpPositionsOfCandidatesToKeep, positionsOfCandidatesToKeep);
-            std::swap(numRemainingCandidates, numRemainingCandidatesTmp);
-
-            if(numRemainingCandidates == 0){
-                abort = true;
-                abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
-                break; //terminate while loop
-            }
-
-            //compact selected candidates inplace
-            for(int c = 0; c < numRemainingCandidates; c++){
-                const int index = positionsOfCandidatesToKeep[c];
-                candidateIdsWithMate[c] = candidateIdsWithMate[index];
-            }
-
-            candidateIdsWithMate.erase(
-                candidateIdsWithMate.begin() + numRemainingCandidates, 
-                candidateIdsWithMate.end()
-            );
-
-            std::array<std::vector<unsigned int>, 2> candidateSequenceData;
-
-            for(int i = 0; i < 2; i++){
-                candidateSequenceData[i].resize(numRemainingCandidates * encodedSequencePitchInInts);
-
-                for(int c = 0; c < numRemainingCandidates; c++){
-                    const int index = positionsOfCandidatesToKeep[c];
-
-                    alignments[i][c] = alignments[i][index];
-                    alignmentFlags[i][c] = alignmentFlags[i][index];
-                    candidateReadIds[i][c] = candidateReadIds[i][index];
-                    candidateSequenceLengths[i][c] = candidateSequenceLengths[i][index];
-                    
-                    assert(alignmentFlags[i][index] != BestAlignment_t::None);
-
-                    if(alignmentFlags[i][index] == BestAlignment_t::Forward){
-                        std::copy_n(
-                            candidateSequencesFwdData[i].data() + index * encodedSequencePitchInInts,
-                            encodedSequencePitchInInts,
-                            candidateSequenceData[i].data() + c * encodedSequencePitchInInts
-                        );
-                    }else{
-                        //BestAlignment_t::ReverseComplement
-
-                        std::copy_n(
-                            candidateSequencesRevcData[i].data() + index * encodedSequencePitchInInts,
-                            encodedSequencePitchInInts,
-                            candidateSequenceData[i].data() + c * encodedSequencePitchInInts
-                        );
-                    }
-
-                    //not sure if these 2 arrays will be required further on
-                    std::copy_n(
-                        candidateSequencesFwdData[i].data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        candidateSequencesFwdData[i].data() + c * encodedSequencePitchInInts
-                    );
-
-                    std::copy_n(
-                        candidateSequencesRevcData[i].data() + index * encodedSequencePitchInInts,
-                        encodedSequencePitchInInts,
-                        candidateSequencesRevcData[i].data() + c * encodedSequencePitchInInts
-                    );
-                    
-                }
-
-                //erase past-end elements
-                alignments[i].erase(
-                    alignments[i].begin() + numRemainingCandidates, 
-                    alignments[i].end()
-                );
-                alignmentFlags[i].erase(
-                    alignmentFlags[i].begin() + numRemainingCandidates, 
-                    alignmentFlags[i].end()
-                );
-                candidateReadIds[i].erase(
-                    candidateReadIds[i].begin() + numRemainingCandidates, 
-                    candidateReadIds[i].end()
-                );
-                candidateSequenceLengths[i].erase(
-                    candidateSequenceLengths[i].begin() + numRemainingCandidates, 
-                    candidateSequenceLengths[i].end()
-                );
-                //not sure if these 2 arrays will be required further on
-                candidateSequencesFwdData[i].erase(
-                    candidateSequencesFwdData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    candidateSequencesFwdData[i].end()
-                );
-                candidateSequencesRevcData[i].erase(
-                    candidateSequencesRevcData[i].begin() + numRemainingCandidates * encodedSequencePitchInInts, 
-                    candidateSequencesRevcData[i].end()
-                );
-                
-            }
-
-            if(input.verbose){    
-                verboseStream << "new candidate read ids for anchor 0 after alignments:\n";
-                std::copy(
-                    candidateReadIds[0].begin(),
-                    candidateReadIds[0].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-
-                verboseStream << "new candidate read ids for anchor 1 after alignments:\n";
-                std::copy(
-                    candidateReadIds[1].begin(),
-                    candidateReadIds[1].end(),
-                    std::ostream_iterator<read_number>(verboseStream, ",")
-                );
-                verboseStream << "\n";
-            }
-
-            //check if mate has been reached
-            mateIdLocationIter = std::lower_bound(
-                candidateReadIds[0].begin(),
-                candidateReadIds[0].end(),
-                input.readId2
-            );
-
-            mateHasBeenFound = (mateIdLocationIter != candidateReadIds[0].end() && *mateIdLocationIter == input.readId2);
-
-            if(input.verbose){    
-                verboseStream << "mate has been found ? " << (mateHasBeenFound ? "yes":"no") << "\n";
-            }
-
-            /*
-                Construct MSAs
-            */
-
-            for(int i = 0; i < 2; i++){
-                const std::string& decodedAnchor = totalDecodedAnchors[i].back();
-
-                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
-                    constexpr float maxErrorPercentInOverlap = 0.2f;
-
-                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
-                };
-
-                std::vector<int> candidateShifts(numRemainingCandidates);
-                std::vector<float> candidateOverlapWeights(numRemainingCandidates);
-
-                for(int c = 0; c < numRemainingCandidates; c++){
-                    candidateShifts[c] = alignments[i][c].shift;
-
-                    candidateOverlapWeights[c] = calculateOverlapWeight(
-                        currentAnchorLength[i], 
-                        alignments[i][c].nOps,
-                        alignments[i][c].overlap
-                    );
-                }
-
-                std::vector<char> candidateStrings(decodedSequencePitchInBytes * numRemainingCandidates, '\0');
-
-                for(int c = 0; c < numRemainingCandidates; c++){
-                    decode2BitSequence(
-                        candidateStrings.data() + c * decodedSequencePitchInBytes,
-                        candidateSequenceData[i].data() + c * encodedSequencePitchInInts,
-                        candidateSequenceLengths[i][c]
-                    );
-                }
-
-                MultipleSequenceAlignment::InputData msaInput;
-                msaInput.useQualityScores = false;
-                msaInput.subjectLength = currentAnchorLength[i];
-                msaInput.nCandidates = numRemainingCandidates;
-                msaInput.candidatesPitch = decodedSequencePitchInBytes;
-                msaInput.candidateQualitiesPitch = 0;
-                msaInput.subject = decodedAnchor.c_str();
-                msaInput.candidates = candidateStrings.data();
-                msaInput.subjectQualities = nullptr;
-                msaInput.candidateQualities = nullptr;
-                msaInput.candidateLengths = candidateSequenceLengths[i].data();
-                msaInput.candidateShifts = candidateShifts.data();
-                msaInput.candidateDefaultWeightFactors = candidateOverlapWeights.data();
-
-                MultipleSequenceAlignment msa;
-
-                msa.build(msaInput);
-
-                if(input.verbose){    
-                    verboseStream << "msa for anchor " << i << "\n";
-                    msa.print(verboseStream);
-                    verboseStream << "\n";
-                }
-
-
-                if(!mateHasBeenFound){
-                    //mate not found. prepare next while-loop iteration
-                    int consensusLength = msa.consensus.size();
-
-                    //the first currentAnchorLength[i] columns are occupied by anchor. try to extend read 
-                    //by at most maxextensionPerStep bp. In case consensuslength == anchorlength, abort
-
-                    if(consensusLength == currentAnchorLength[i]){
-                        abort = true;
-                        abortReason = AbortReason::MsaNotExtended;                        
-                    }else{
-                        assert(consensusLength > currentAnchorLength[i]);
-                        
-
-                        const int extendBy = std::min(consensusLength - currentAnchorLength[i], maxextensionPerStep);
-                        accumExtensionLengths[i] += extendBy;
-
-                        if(input.verbose){
-                            verboseStream << "extended by " << extendBy << ", total extension length " << accumExtensionLengths[i] << "\n";
-                        }
-
-                        //update data for next iteration of outer while loop
-                        if(i == 0){
-                            const std::string nextDecodedAnchor(msa.consensus.data() + extendBy, currentAnchorLength[i]);
-                            const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
-
-                            currentAnchor[i].resize(numInts);
-                            encodeSequence2Bit(
-                                currentAnchor[i].data(), 
-                                nextDecodedAnchor.c_str(), 
-                                nextDecodedAnchor.size()
-                            );
-                            currentAnchorLength[i] = nextDecodedAnchor.size();
-
-                            if(input.verbose){
-                                verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
-                            }
-                        }else{
-                            //i == 1
-                            const char* const data = msa.consensus.data() 
-                                + consensusLength - currentAnchorLength[i] - extendBy;
-                            const std::string nextDecodedAnchor(data, currentAnchorLength[i]);
-                            const int numInts = getEncodedNumInts2Bit(nextDecodedAnchor.size());
-
-                            currentAnchor[i].resize(numInts);
-                            encodeSequence2Bit(
-                                currentAnchor[i].data(), 
-                                nextDecodedAnchor.c_str(), 
-                                nextDecodedAnchor.size()
-                            );
-                            currentAnchorLength[i] = nextDecodedAnchor.size();
-
-                            if(input.verbose){
-                                verboseStream << "next anchor: " << nextDecodedAnchor << "\n";
-                            }
-                        }
-                    }
-                }else{
-                    if(i == 0){
-                        //find end of mate in msa
-                        const int index = std::distance(candidateReadIds[i].begin(), mateIdLocationIter);
-                        const int shift = alignments[i][index].shift;
-                        const int clength = candidateSequenceLengths[i][index];
-                        assert(shift >= 0);
-                        const int endcolumn = shift + clength;
-
-                        const int extendby = shift;
-                        assert(extendby >= 0);
-                        accumExtensionLengths[i] += extendby;
-
-                        std::string decodedAnchor(msa.consensus.data() + extendby, endcolumn - extendby);
-
-                        if(input.verbose){
-                            verboseStream << "consensus until end of mate: " << decodedAnchor << "\n";
-                        }
-
-                        totalDecodedAnchors[i].emplace_back(std::move(decodedAnchor));
-                        totalAnchorBeginInExtendedRead[i].emplace_back(accumExtensionLengths[i]);
-                    }
-                }
-
-            }
-
-            /*
-                update book-keeping of used candidates
-            */                        
-            {
-                std::vector<ReadPairIds> tmp(allUsedCandidateReadIdPairs.size() + candidateIdsWithMate.size());
-                auto tmp_end = std::merge(
-                    allUsedCandidateReadIdPairs.begin(),
-                    allUsedCandidateReadIdPairs.end(),
-                    candidateIdsWithMate.begin(),
-                    candidateIdsWithMate.end(),
-                    tmp.begin(),
-                    readPairIdComparator
-                );
-
-                tmp.erase(tmp_end, tmp.end());
-
-                std::swap(allUsedCandidateReadIdPairs, tmp);
-            }
-
-            usedCandidateReadIdsPerIteration.emplace_back(std::move(candidateIdsWithMate));
-
-            iter++; //control outer while-loop
-        }
-
-        ExtendResult extendResult;
-        extendResult.numIterations = iter;
-        extendResult.aborted = abort;
-        extendResult.abortReason = abortReason;
-        extendResult.extensionLengths.emplace_back(totalAnchorBeginInExtendedRead[0].back());
-
-        if(abort){
-            ; //no read extension possible
-        }else{
-            if(mateHasBeenFound){
-                //construct extended read
-                //build msa of all saved totalDecodedAnchors[0]
-
-                const int numsteps = totalDecodedAnchors[0].size();
-                int maxlen = 0;
-                for(const auto& s: totalDecodedAnchors[0]){
-                    const int len = s.length();
-                    if(len > maxlen){
-                        maxlen = len;
-                    }
-                }
-                const std::string& decodedAnchor = totalDecodedAnchors[0][0];
-
-                const std::vector<int> shifts(totalAnchorBeginInExtendedRead[0].begin() + 1, totalAnchorBeginInExtendedRead[0].end());
-                std::vector<float> initialWeights(numsteps-1, 1.0f);
-
-
-                std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
-                std::vector<int> stepstringlengths(numsteps-1);
-                for(int c = 1; c < numsteps; c++){
-                    std::copy(
-                        totalDecodedAnchors[0][c].begin(),
-                        totalDecodedAnchors[0][c].end(),
-                        stepstrings.begin() + (c-1) * maxlen
-                    );
-                    stepstringlengths[c-1] = totalDecodedAnchors[0][c].size();
-                }
-
-                MultipleSequenceAlignment::InputData msaInput;
-                msaInput.useQualityScores = false;
-                msaInput.subjectLength = decodedAnchor.length();
-                msaInput.nCandidates = numsteps-1;
-                msaInput.candidatesPitch = maxlen;
-                msaInput.candidateQualitiesPitch = 0;
-                msaInput.subject = decodedAnchor.c_str();
-                msaInput.candidates = stepstrings.data();
-                msaInput.subjectQualities = nullptr;
-                msaInput.candidateQualities = nullptr;
-                msaInput.candidateLengths = stepstringlengths.data();
-                msaInput.candidateShifts = shifts.data();
-                msaInput.candidateDefaultWeightFactors = initialWeights.data();
-
-                MultipleSequenceAlignment msa;
-
-                msa.build(msaInput);
-
-                if(input.verbose){    
-                    verboseStream << "msa of partial results \n";
-                    msa.print(verboseStream);
-                    verboseStream << "\n";
-                }
-
-                extendResult.success = true;
-
-                std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
-
-                if(input.verbose){    
-                    verboseStream << "extended read: " << extendedRead << "\n";
-                }
-
-                extendResult.extendedReads.emplace_back(input.readId1, std::move(extendedRead));
-
-                
-
-                if(input.verbose){
-                    if(input.verboseMutex != nullptr){
-                        std::lock_guard<std::mutex> lg(*input.verboseMutex);
-
-                        std::cerr << verboseStream.rdbuf();
-                    }else{
-                        std::cerr << verboseStream.rdbuf();
-                    }
-                }
-            }else{
-                ; //no read extension possible
-            }
-        }
-
-        return extendResult;
-    }
-#endif
 
     
 
@@ -1135,17 +315,14 @@ public:
         }
     };
 
-    Task makePairedEndTask(const ExtendInput& input, ExtensionDirection direction){
+    static Task makePairedEndTask(ExtendInput input, ExtensionDirection direction){
         if(direction == ExtensionDirection::LR){
             Task task;
             task.pairedEnd = true;
             task.direction = direction;
 
-            task.currentAnchor.resize(input.numInts1);
-            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
-
-            task.encodedMate.resize(input.numInts2);
-            std::copy_n(input.encodedRead2, input.numInts2, task.encodedMate.begin());
+            task.currentAnchor = std::move(input.encodedRead1);
+            task.encodedMate = std::move(input.encodedRead2);
 
             task.currentAnchorLength = input.readLength1;
             task.currentAnchorReadId = input.readId1;
@@ -1158,20 +335,20 @@ public:
             task.mateLength = input.readLength2;
             task.mateReadId = input.readId2;
 
-            task.decodedMate.resize(input.readLength2);
+            task.decodedMate.resize(task.mateLength);
             SequenceHelpers::decode2BitSequence(
                 task.decodedMate.data(),
-                input.encodedRead2,
-                input.readLength2
+                task.encodedMate.data(),
+                task.mateLength
             );
 
-            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), input.readLength2);
+            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), task.mateLength);
 
             task.resultsequence.resize(input.readLength1);
             SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
-                input.encodedRead1,
-                input.readLength1
+                task.currentAnchor.data(),
+                task.myLength
             );
 
             return task;
@@ -1180,11 +357,8 @@ public:
             task.pairedEnd = true;
             task.direction = direction;
 
-            task.currentAnchor.resize(input.numInts2);
-            std::copy_n(input.encodedRead2, input.numInts2, task.currentAnchor.begin());
-
-            task.encodedMate.resize(input.numInts1);
-            std::copy_n(input.encodedRead1, input.numInts1, task.encodedMate.begin());
+            task.currentAnchor = std::move(input.encodedRead2);
+            task.encodedMate = std::move(input.encodedRead1);
 
             task.currentAnchorLength = input.readLength2;
             task.currentAnchorReadId = input.readId2;
@@ -1200,16 +374,16 @@ public:
             task.decodedMate.resize(input.readLength1);
             SequenceHelpers::decode2BitSequence(
                 task.decodedMate.data(),
-                input.encodedRead1,
-                input.readLength1
+                task.encodedMate.data(),
+                task.mateLength
             );
-            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), input.readLength1);
+            task.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(task.decodedMate.data(), task.mateLength);
 
             task.resultsequence.resize(input.readLength2);
             SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
-                input.encodedRead2,
-                input.readLength2
+                task.currentAnchor.data(),
+                task.myLength
             );
 
             return task;
@@ -1220,14 +394,13 @@ public:
     }
 
 
-    Task makeSingleEndTask(const ExtendInput& input, ExtensionDirection direction){
+    static Task makeSingleEndTask(ExtendInput input, ExtensionDirection direction){
         if(direction == ExtensionDirection::LR){
             Task task;
             task.pairedEnd = false;
             task.direction = direction;
 
-            task.currentAnchor.resize(input.numInts1);
-            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+            task.currentAnchor = std::move(input.encodedRead1);
 
             task.currentAnchorLength = input.readLength1;
             task.currentAnchorReadId = input.readId1;
@@ -1243,8 +416,8 @@ public:
             task.resultsequence.resize(input.readLength1);
             SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
-                input.encodedRead1,
-                input.readLength1
+                task.currentAnchor.data(),
+                task.myLength
             );
 
             return task;
@@ -1254,8 +427,7 @@ public:
             task.pairedEnd = false;
             task.direction = direction;
 
-            task.currentAnchor.resize(input.numInts1);
-            std::copy_n(input.encodedRead1, input.numInts1, task.currentAnchor.begin());
+            task.currentAnchor = std::move(input.encodedRead1);
 
             //to extend a single-end read to the left, its reverse complement will be extended to the right
             SequenceHelpers::reverseComplementSequenceInplace2Bit(task.currentAnchor.data(), input.readLength1);
@@ -1274,8 +446,8 @@ public:
             task.resultsequence.resize(input.readLength1);
             SequenceHelpers::decode2BitSequence(
                 task.resultsequence.data(),
-                input.encodedRead1,
-                input.readLength1
+                task.currentAnchor.data(),
+                task.myLength
             );
 
             return task;
@@ -1365,6 +537,12 @@ public:
         return task;
     }
 #endif
+
+    static std::vector<ExtendResult> combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& lr_and_rl,
+        int insertSize,
+        int insertSizeStddev
+    );
 
     std::vector<ExtendResult> combinePairedEndDirectionResults(
         std::vector<ExtendResult>& lr_and_rl
@@ -1613,8 +791,8 @@ using ReadExtender = ReadExtenderBase;
 
 
 __inline__
-std::string to_string(ReadExtenderBase::AbortReason r){
-    using ar = ReadExtenderBase::AbortReason;
+std::string to_string(AbortReason r){
+    using ar = AbortReason;
 
     switch(r){
         case ar::MsaNotExtended: return "MsaNotExtended";
@@ -1625,8 +803,8 @@ std::string to_string(ReadExtenderBase::AbortReason r){
 }
 
 __inline__
-std::string to_string(ReadExtenderBase::ExtensionDirection r){
-    using ar = ReadExtenderBase::ExtensionDirection;
+std::string to_string(ExtensionDirection r){
+    using ar = ExtensionDirection;
 
     switch(r){
         case ar::LR: return "LR";

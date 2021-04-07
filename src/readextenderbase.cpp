@@ -12,13 +12,15 @@
 
 namespace care{
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResult>& pairedEndDirectionResults
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& pairedEndDirectionResults,
+        int insertSize,
+        int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
-        std::vector<ReadExtenderBase::ExtendResult>& combinedResults = pairedEndDirectionResults;
+        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
 
         std::sort(
             combinedResults.begin(), 
@@ -56,7 +58,7 @@ namespace care{
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
-            //std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
             std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
@@ -233,10 +235,16 @@ namespace care{
         return combinedResults;
     }
 
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& pairedEndDirectionResults
+    ){
+        return combinePairedEndDirectionResults(pairedEndDirectionResults, insertSize, insertSizeStddev);
+    }
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResult>& resultsRL
+
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& resultsLR,
+        std::vector<ExtendResult>& resultsRL
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
@@ -247,7 +255,7 @@ namespace care{
 
         std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
 
-        std::vector<ReadExtenderBase::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
 
         std::merge(
             resultsLR.begin(), resultsLR.end(), 
@@ -257,7 +265,7 @@ namespace care{
         );
 
         #else
-        std::vector<ReadExtenderBase::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
         auto itertmp = std::copy(
             std::make_move_iterator(resultsLR.begin()), std::make_move_iterator(resultsLR.end()), 
             combinedResults.begin()
@@ -303,7 +311,7 @@ namespace care{
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
-            //std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
             std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
@@ -482,7 +490,7 @@ namespace care{
 
     //int batchId = 0;
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
+    std::vector<ExtendResult> ReadExtenderBase::extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
@@ -491,7 +499,7 @@ namespace care{
 
         //std::cerr << "Transform LR " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::LR);});
 
         //std::cerr << "Process LR " << batchId << "\n";
         std::vector<ExtendResult> extendResultsLR = processPairedEndTasks(std::move(tasks));
@@ -500,7 +508,7 @@ namespace care{
 
         //std::cerr << "Transform RL " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::RL);});
 
         //std::cerr << "Process RL " << batchId << "\n";
         std::vector<ExtendResult> extendResultsRL = processPairedEndTasks(std::move(tasks2));
@@ -516,10 +524,10 @@ namespace care{
 
         //std::cerr << "Transform LR " << batchId << "\n";
         auto itertmp = std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::LR);});
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::LR);});
 
         std::transform(inputs.begin(), inputs.end(), itertmp, 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::RL);});
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::RL);});
 
         //std::cerr << "Process LR " << batchId << "\n";
         std::vector<ExtendResult> extendResults = processPairedEndTasks(std::move(tasks));
@@ -595,9 +603,9 @@ namespace care{
 
 
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResult>& resultsRL,
+    std::vector<ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
+        std::vector<ExtendResult>& resultsLR,
+        std::vector<ExtendResult>& resultsRL,
         const std::vector<ReadExtenderBase::Task>& tasks
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.readId1 < r.readId1;};
@@ -637,7 +645,7 @@ namespace care{
 
         assert(remainingLR == remainingRL);
 
-        std::vector<ReadExtenderBase::ExtendResult> combinedResults(remainingRL);
+        std::vector<ExtendResult> combinedResults(remainingRL);
 
         for(int i = 0; i < remainingRL; i++){
             auto& comb = combinedResults[i];
@@ -668,20 +676,20 @@ namespace care{
         return combinedResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
+    std::vector<ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
         std::vector<Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::LR);});
 
         std::vector<ExtendResult> extendResultsLR = processSingleEndTasks(tasks);
 
         std::vector<Task> tasks2(inputs.size());
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::RL);});
 
         //make sure candidates which were used in LR direction cannot be used again in RL direction
 
