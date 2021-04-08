@@ -64,6 +64,98 @@ void initializePairedEndExtensionBatchData(
     );
 }
 
+void initializePairedEndExtensionBatchData2(
+    BatchData& batchData,
+    const std::vector<ExtendInput>& inputs,
+    std::size_t encodedSequencePitchInInts, 
+    std::size_t decodedSequencePitchInBytes, 
+    std::size_t msaColumnPitchInElements
+){
+    const int batchsizePairs = inputs.size();
+    if(batchsizePairs == 0){
+        batchData.tasks.clear();
+        return;
+    }
+
+    batchData.tasks.resize(batchsizePairs * 2);
+
+    for(int i = 0; i < batchsizePairs; i++){
+        const auto& input = inputs[i];
+
+        auto& taskl = batchData.tasks[2*i];
+        taskl.reset();
+
+        taskl.pairedEnd = true;
+        taskl.direction = ExtensionDirection::LR;      
+        taskl.currentAnchor = std::move(input.encodedRead1);
+        taskl.encodedMate = std::move(input.encodedRead2);
+        taskl.currentAnchorLength = input.readLength1;
+        taskl.currentAnchorReadId = input.readId1;
+        taskl.accumExtensionLengths = 0;
+        taskl.iteration = 0;
+        taskl.myLength = input.readLength1;
+        taskl.myReadId = input.readId1;
+        taskl.mateLength = input.readLength2;
+        taskl.mateReadId = input.readId2;
+        taskl.decodedMate.resize(taskl.mateLength);
+        SequenceHelpers::decode2BitSequence(
+            taskl.decodedMate.data(),
+            taskl.encodedMate.data(),
+            taskl.mateLength
+        );
+        taskl.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskl.decodedMate.data(), taskl.mateLength);
+        taskl.resultsequence.resize(input.readLength1);
+        SequenceHelpers::decode2BitSequence(
+            taskl.resultsequence.data(),
+            taskl.currentAnchor.data(),
+            taskl.myLength
+        );
+
+        taskl.totalDecodedAnchors.emplace_back(taskl.resultsequence);
+        taskl.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        auto& taskr = batchData.tasks[2*i + 1];
+        taskr.reset();
+
+        taskr.pairedEnd = true;
+        taskr.direction = ExtensionDirection::RL;
+        taskr.currentAnchor = taskl.encodedMate;
+        taskr.encodedMate = taskl.currentAnchor;
+
+        taskr.currentAnchorLength = input.readLength2;
+        taskr.currentAnchorReadId = input.readId2;
+        taskr.accumExtensionLengths = 0;
+        taskr.iteration = 0;
+
+        taskr.myLength = input.readLength2;
+        taskr.myReadId = input.readId2;
+
+        taskr.mateLength = input.readLength1;
+        taskr.mateReadId = input.readId1;
+
+        taskr.decodedMate = taskl.resultsequence;        
+        taskr.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskr.decodedMate.data(), taskr.mateLength);
+
+        taskr.resultsequence = taskl.decodedMate;
+        taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
+        taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
+    }
+
+    batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
+    batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
+    batchData.msaColumnPitchInElements = msaColumnPitchInElements;
+
+    batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
+    std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
+
+    batchData.splitTracker.clear();
+    for(const auto& t : batchData.tasks){
+        batchData.splitTracker[t.myReadId] = 1;
+    }
+
+    batchData.pairedEnd = batchData.tasks[0].pairedEnd;
+}
+
 
 MemoryFileFixedSize<ExtendedRead> 
 //std::vector<ExtendedRead>
@@ -119,8 +211,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
     //readIdGenerator.skip(4200000);
  
     BackgroundThread outputThread(true);
@@ -188,14 +280,14 @@ extend_gpu_pairedend(
     const int batchsizePairs = correctionOptions.batchsize;
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
-    #if 0
+    #if 1
 
     #if 1
 
     constexpr int numparallelbatches = 16;
 
     int numInitializerThreads = 1;
-    int numCpuWorkerThreads = 12;
+    int numCpuWorkerThreads = 14;
     int numGpuWorkerThreads = 2;
 
     std::vector<BatchData> batches(numparallelbatches);
@@ -287,7 +379,7 @@ extend_gpu_pairedend(
             assert(batchData != nullptr);
 
             
-            initializePairedEndExtensionBatchData(
+            initializePairedEndExtensionBatchData2(
                 *batchData,
                 inputs,
                 encodedSequencePitchInInts, 

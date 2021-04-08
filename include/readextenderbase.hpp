@@ -289,7 +289,7 @@ public:
             currentAnchorReadId = 0;
             numRemainingCandidates = 0;
             splitDepth = 0;
-            
+
             clear(decodedMate);
             clear(decodedMateRevC);
             clear(resultsequence);
