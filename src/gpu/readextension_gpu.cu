@@ -189,7 +189,429 @@ extend_gpu_pairedend(
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
     #if 0
-    
+
+    #if 1
+
+    constexpr int numparallelbatches = 16;
+
+    int numInitializerThreads = 1;
+    int numCpuWorkerThreads = 12;
+    int numGpuWorkerThreads = 2;
+
+    std::vector<BatchData> batches(numparallelbatches);
+    SimpleConcurrentQueue<BatchData*> freeBatchesQueue;
+    SimpleConcurrentQueue<BatchData*> cpuWorkBatchesQueue;
+    SimpleConcurrentQueue<BatchData*> gpuWorkBatchesQueue;
+
+    for(int i = 0; i < numparallelbatches; i++){
+        batches[i].someId = i;
+    }
+
+    for(auto& batch : batches){
+        freeBatchesQueue.push(&batch);
+    }
+
+    std::mutex processedMutex{};
+    std::atomic<int> numProcessedBatchesByCpuWorkerThreads = 0;
+
+    auto initializerThreadFunc = [&](){
+
+        cub::CachingDeviceAllocator cubAllocator;
+
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
+
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
+
+        CudaStream stream;
+
+        while(!(readIdGenerator.empty())){
+
+            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                batchsizePairs * 2, 
+                currentIds.get()
+            );
+
+            const int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
+
+            if(numReadsInBatch % 2 == 1){
+                throw std::runtime_error("Input files not properly paired. Aborting read extension.");
+            }
+            
+            if(numReadsInBatch == 0){
+                continue; //this should only happen if all reads have been processed
+            }
+
+            nvtx::push_range("init", 2);
+
+            gpuReadStorage.gatherSequences(
+                readStorageHandle,
+                currentEncodedReads.get(),
+                encodedSequencePitchInInts,
+                currentIds.get(),
+                currentIds.get(), //device accessible
+                numReadsInBatch,
+                stream
+            );
+
+            gpuReadStorage.gatherSequenceLengths(
+                readStorageHandle,
+                currentReadLengths.get(),
+                currentIds.get(),
+                numReadsInBatch,
+                stream
+            );
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            const int numReadPairsInBatch = numReadsInBatch / 2;
+
+            std::vector<ExtendInput> inputs(numReadPairsInBatch); 
+
+            for(int i = 0; i < numReadPairsInBatch; i++){
+                auto& input = inputs[i];
+
+                input.readLength1 = currentReadLengths[2*i];
+                input.readLength2 = currentReadLengths[2*i+1];
+                input.readId1 = currentIds[2*i];
+                input.readId2 = currentIds[2*i+1];
+                input.encodedRead1.resize(encodedSequencePitchInInts);
+                input.encodedRead2.resize(encodedSequencePitchInInts);
+                std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
+                std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
+            }
+
+            //std::cerr << "initializer freeBatchesQueue.pop()\n";
+            BatchData* batchData = freeBatchesQueue.pop();
+            assert(batchData != nullptr);
+
+            
+            initializePairedEndExtensionBatchData(
+                *batchData,
+                inputs,
+                encodedSequencePitchInInts, 
+                decodedSequencePitchInBytes, 
+                msaColumnPitchInElements
+            );
+
+            batchData->setState(BatchData::State::BeforePrepare);
+
+            nvtx::pop_range();
+
+            //std::cerr << "initializer firstIterationBatchesQueue.push()\n";
+            cpuWorkBatchesQueue.push(batchData);
+        }
+
+        // std::lock_guard<std::mutex> lg(flushMutex);
+        // numRemainingFirstIterationBatchesQueueProducers--;
+        // if(numRemainingFirstIterationBatchesQueueProducers == 0){
+        //     //std::cerr << "initializer thread flushes firstIterationBatchesQueue by " << numHasherThreads << "\n";
+        //     // for(int i = 0; i < numHasherThreads; i++){
+        //     //     firstIterationBatchesQueue.push(nullptr);
+        //     // }
+        //     //firstIterationBatchesQueue.enableDefaultElement(nullptr);
+        // }
+
+        gpuReadStorage.destroyHandle(readStorageHandle);
+
+        std::cerr << "initializerThreadFunc finished\n";
+    };
+
+    auto cpuWorkerThreadFunc = [&](){
+        std::int64_t numSuccessRead = 0;
+
+        cub::CachingDeviceAllocator cubAllocator;
+
+        GpuReadHasher gpuReadHasher(minhasher);
+
+        GpuExtensionStepper gpuExtensionStepper(
+            gpuReadStorage, 
+            correctionOptions,
+            goodAlignmentProperties,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            cubAllocator
+        );
+
+        BatchData* batchData = cpuWorkBatchesQueue.pop();
+
+        auto prepare = [&](){
+            nvtx::push_range("prepare", 0);
+            gpuExtensionStepper.prepareStep(*batchData);
+            batchData->setState(BatchData::State::BeforeHash);
+            nvtx::pop_range();
+        };
+
+        auto hash = [&](){
+            nvtx::push_range("hash", 1);
+            gpuReadHasher.getCandidateReadIds(*batchData);
+            batchData->setState(BatchData::State::BeforeStep);
+            nvtx::pop_range();
+        };
+
+        auto step = [&](){
+            throw std::runtime_error("Error. Observed state BeforeStep in cpuWorkerThread");
+        };
+
+        auto extend = [&](){
+            nvtx::push_range("extend", 3);
+            gpuExtensionStepper.extendAfterStep(*batchData);
+            if(!batchData->isEmpty()){
+                batchData->setState(BatchData::State::BeforePrepare);
+            }else{
+                batchData->setState(BatchData::State::BeforeOutput);
+            }
+            nvtx::pop_range();
+        };
+
+        auto output = [&](){
+            nvtx::push_range("output", 5);
+            std::vector<ExtendResult> extendResults;
+
+            for(const auto& task : batchData->tasks){
+
+                ExtendResult extendResult;
+                extendResult.direction = task.direction;
+                extendResult.numIterations = task.iteration;
+                extendResult.aborted = task.abort;
+                extendResult.abortReason = task.abortReason;
+                extendResult.readId1 = task.myReadId;
+                extendResult.readId2 = task.mateReadId;
+                extendResult.originalLength = task.myLength;
+                //construct extended read
+                //build msa of all saved totalDecodedAnchors[0]
+
+                const int numsteps = task.totalDecodedAnchors.size();
+
+                // if(task.myReadId == 90 || task.mateReadId == 90){
+                //     std::cerr << "task.totalDecodedAnchors\n";
+                // }
+
+                int maxlen = 0;
+                for(const auto& s: task.totalDecodedAnchors){
+                    const int len = s.length();
+                    if(len > maxlen){
+                        maxlen = len;
+                    }
+
+                    // if(task.myReadId == 90 || task.mateReadId == 90){
+                    //     std::cerr << s << "\n";
+                    // }
+                }
+
+                // if(task.myReadId == 90 || task.mateReadId == 90){
+                //     std::cerr << "\n";
+                // }
+
+                const std::string& decodedAnchor = task.totalDecodedAnchors[0];
+
+                const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
+                std::vector<float> initialWeights(numsteps-1, 1.0f);
+
+
+                std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
+                std::vector<int> stepstringlengths(numsteps-1);
+                for(int c = 1; c < numsteps; c++){
+                    std::copy(
+                        task.totalDecodedAnchors[c].begin(),
+                        task.totalDecodedAnchors[c].end(),
+                        stepstrings.begin() + (c-1) * maxlen
+                    );
+                    stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
+                }
+
+                MultipleSequenceAlignment::InputData msaInput;
+                msaInput.useQualityScores = false;
+                msaInput.subjectLength = decodedAnchor.length();
+                msaInput.nCandidates = numsteps-1;
+                msaInput.candidatesPitch = maxlen;
+                msaInput.candidateQualitiesPitch = 0;
+                msaInput.subject = decodedAnchor.c_str();
+                msaInput.candidates = stepstrings.data();
+                msaInput.subjectQualities = nullptr;
+                msaInput.candidateQualities = nullptr;
+                msaInput.candidateLengths = stepstringlengths.data();
+                msaInput.candidateShifts = shifts.data();
+                msaInput.candidateDefaultWeightFactors = initialWeights.data();
+
+                MultipleSequenceAlignment msa;
+
+                msa.build(msaInput);
+
+                extendResult.success = true;
+
+                std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+
+                std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
+                if(task.mateHasBeenFound){
+                    std::copy(
+                        task.decodedMateRevC.begin(),
+                        task.decodedMateRevC.end(),
+                        extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
+                    );
+                }
+
+                extendResult.extendedRead = std::move(extendedRead);
+
+                extendResult.mateHasBeenFound = task.mateHasBeenFound;
+
+                extendResults.emplace_back(std::move(extendResult));
+            }
+
+            std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
+                extendResults,
+                insertSize,
+                insertSizeStddev
+            );
+
+            std::vector<ExtendedRead> resultvector(extendResultsCombined.size());
+
+            const int numReadPairsInBatch = resultvector.size();
+            
+            for(int i = 0; i < numReadPairsInBatch; i++){
+                auto& extensionOutput = extendResultsCombined[i];
+                ExtendedRead& er = resultvector[i];
+
+                er.readId = extensionOutput.readId1;
+                er.extendedSequence = std::move(extensionOutput.extendedRead);
+                assert(er.extendedSequence.size() < 500);
+
+                if(extensionOutput.mateHasBeenFound){
+                    er.status = ExtendedReadStatus::FoundMate;
+                }else{
+                    if(extensionOutput.aborted){
+                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+
+                            er.status = ExtendedReadStatus::CandidateAbort;
+                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
+                            er.status = ExtendedReadStatus::MSANoExtension;
+                        }
+                    }else{
+                        er.status = ExtendedReadStatus::LengthAbort;
+                    }
+                }  
+                
+                if(extensionOutput.success){
+                    numSuccessRead++;
+                }                
+            }
+
+            auto outputfunc = [&, vec = std::move(resultvector)](){
+                for(const auto& er : vec){
+                    partialResults.storeElement(&er);
+                }
+            };
+
+            outputThread.enqueue(
+                std::move(outputfunc)
+            );
+
+            batchData->setState(BatchData::State::None);
+
+            nvtx::pop_range();
+
+            progressThread.addProgress(numReadPairsInBatch);
+        };
+        
+        while(batchData != nullptr){
+
+            switch(batchData->state){
+            case BatchData::State::BeforePrepare:
+                    prepare();
+                    hash();
+                    gpuWorkBatchesQueue.push(batchData);
+                    break;
+            case BatchData::State::BeforeHash:
+                    hash();
+                    gpuWorkBatchesQueue.push(batchData);
+                    break;
+            case BatchData::State::BeforeStep:
+                    step();
+                    break;
+            case BatchData::State::BeforeExtend:
+                    extend();
+                    cpuWorkBatchesQueue.push(batchData);
+                    break;
+            case BatchData::State::BeforeOutput:
+                    output();
+                    freeBatchesQueue.push(batchData);
+
+                    numProcessedBatchesByCpuWorkerThreads++;
+
+                    if(numProcessedBatchesByCpuWorkerThreads == numBatchesToProcess){
+                        freeBatchesQueue.enableDefaultElement(nullptr);
+                        cpuWorkBatchesQueue.enableDefaultElement(nullptr);
+                        gpuWorkBatchesQueue.enableDefaultElement(nullptr);
+                    }
+                    break;
+            default:
+                    throw std::runtime_error("Error: Did not implement case");
+                    break;
+            };
+
+            batchData = cpuWorkBatchesQueue.pop();
+        }
+
+        std::cerr << "cpuWorkerThreadFunc finished\n";
+    };
+
+    auto gpuWorkerThreadFunc = [&](){
+        cub::CachingDeviceAllocator cubAllocator;
+
+        GpuExtensionStepper gpuExtensionStepper(
+            gpuReadStorage, 
+            correctionOptions,
+            goodAlignmentProperties,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            cubAllocator
+        );        
+
+        BatchData* batchData = gpuWorkBatchesQueue.pop();
+
+        while(batchData != nullptr){
+
+            assert(batchData->state == BatchData::State::BeforeStep);
+
+            nvtx::push_range("step", 4);
+
+            gpuExtensionStepper.step(*batchData);
+
+            batchData->setState(BatchData::State::BeforeExtend);
+
+            nvtx::pop_range();
+
+            cpuWorkBatchesQueue.push(batchData);
+
+            batchData = gpuWorkBatchesQueue.pop();
+        }
+
+        std::cerr << "gpuWorkerThreadFunc finished\n";
+    };
+
+    std::vector<std::future<void>> futures;
+
+    for(int i = 0; i < numInitializerThreads; i++){
+        futures.emplace_back(std::async(std::launch::async, initializerThreadFunc));
+    }
+
+    for(int i = 0; i < numCpuWorkerThreads; i++){
+        futures.emplace_back(std::async(std::launch::async, cpuWorkerThreadFunc));
+    }
+
+    for(int i = 0; i < numGpuWorkerThreads; i++){
+        futures.emplace_back(std::async(std::launch::async, gpuWorkerThreadFunc));
+    }
+
+    for(auto& f : futures){
+        f.wait();
+    }
+
+    #else
 
     constexpr int numparallelbatches = 16;
 
@@ -314,6 +736,7 @@ extend_gpu_pairedend(
             );
 
             gpuExtensionStepper.prepareStep(*batchData);
+            batchData->needPrepareStep = false;
             nvtx::pop_range();
 
             //std::cerr << "initializer firstIterationBatchesQueue.push()\n";
@@ -340,7 +763,19 @@ extend_gpu_pairedend(
     };
 
     auto hasherThreadFunc = [&](){
+        cub::CachingDeviceAllocator cubAllocator;
+
         GpuReadHasher gpuReadHasher(minhasher);
+
+        GpuExtensionStepper gpuExtensionStepper(
+            gpuReadStorage, 
+            correctionOptions,
+            goodAlignmentProperties,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            cubAllocator
+        );
 
         bool firstIterationQueueClosed = false;
         bool advancedIterationQueueClosed = false;
@@ -367,6 +802,11 @@ extend_gpu_pairedend(
         while(batchData != nullptr){
 
             nvtx::push_range("hash", 3);
+
+            if(batchData->needPrepareStep){
+                gpuExtensionStepper.prepareStep(*batchData);
+                batchData->needPrepareStep = false;
+            }
 
             gpuReadHasher.getCandidateReadIds(*batchData);
 
@@ -427,18 +867,6 @@ extend_gpu_pairedend(
 
         auto popNext = [&](){
             return ongoingBatchesQueue.pop();
-            // return ongoingBatchesQueue.popOrDefault(
-            //     [&](){
-            //         return myNumProcessed + numProcessedBatchesByStepperThreads < numBatchesToProcess;
-            //     }
-            //     nullptr
-            // );
-            // std::lock_guard<std::mutex> lg(processedMutex);
-            // if(myNumProcessed + numProcessedBatchesByStepperThreads < numBatchesToProcess){
-            //     return ongoingBatchesQueue.pop();
-            // }else{
-            //     return (BatchData*)nullptr;
-            // }
         };
         
 
@@ -449,6 +877,7 @@ extend_gpu_pairedend(
             nvtx::push_range("step", 4);
 
             gpuExtensionStepper.step(*batchData);
+            gpuExtensionStepper.extendAfterStep(*batchData);
 
             nvtx::pop_range();
             
@@ -463,7 +892,8 @@ extend_gpu_pairedend(
                     ongoingBatchesQueue.enableDefaultElement(nullptr);
                 }
             }else{
-                gpuExtensionStepper.prepareStep(*batchData);
+                batchData->needPrepareStep = true;
+                
                 //std::cerr << "stepper firstIterationBatchesQueue.push()\n";
                 firstIterationBatchesQueue.push(batchData);
             }
@@ -690,6 +1120,8 @@ extend_gpu_pairedend(
         << numRemainingOngoingBatchesQueueProducers << ", " 
         << numRemainingFinishedBatchesQueueProducers << "\n";
     }
+
+    #endif
 
     #else
 

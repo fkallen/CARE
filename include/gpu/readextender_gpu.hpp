@@ -214,6 +214,27 @@ struct BatchData{
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
+    enum class State{
+        BeforePrepare,
+        BeforeHash,
+        BeforeStep,
+        BeforeExtend,
+        BeforeOutput,
+        None
+    };
+
+    std::string to_string(State s) const{
+        switch(s){
+            case State::BeforePrepare: return "BeforePrepare";
+            case State::BeforeHash: return "BeforeHash";
+            case State::BeforeStep: return "BeforeStep";
+            case State::BeforeExtend: return "BeforeExtend";
+            case State::BeforeOutput: return "BeforeOutput";
+            case State::None: return "None";
+            default: return "Missing case BatchData::to_string(State)\n";
+        };
+    }
+
     void init(std::vector<ReadExtenderBase::Task> tasks_,
         std::size_t encodedSequencePitchInInts_,
         std::size_t decodedSequencePitchInBytes_,
@@ -256,9 +277,21 @@ struct BatchData{
         return indicesOfActiveTasks.empty();
     }
 
+    void setState(State newstate){      
+        #if 0
+        std::cerr << "batchdata " << someId << " statechange " << to_string(state) << " -> " << to_string(newstate) << "\n";
+        #endif
+
+        state = newstate;
+    }
+
+
+    bool needPrepareStep = false;
     bool pairedEnd = false;
+    State state = State::None;
     int numTasks = 0;
     int numTasksWithMateRemoved = 0;
+    int someId = 0;
 
     int totalNumCandidates = 0;
     int totalNumberOfUsedIds = 0;
@@ -839,8 +872,25 @@ public:
         }
 
 
+        
+    }
+
+    void extendAfterStep(BatchData& batchData) const{
+        #if 1
+        //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
+            return vec[index];
+        };
+        #else 
+        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
+            return vec.at(index);
+        };
+        #endif 
+
+        const int numActiveTasks = batchData.indicesOfActiveTasks.size();
+
         std::vector<ReadExtenderBase::Task> newTasksFromSplit;
-        std::vector<int> newTaskIndices;
+        std::vector<int> newTaskIndices;        
 
         auto constructMsa = [&](auto& task, int taskindex){
             assert(task.dataIsAvailable);
@@ -1280,7 +1330,7 @@ public:
         */  
 
         for(int i = 0; i < numActiveTasks; i++){
-            auto& task = vecAccess(batchData.tasks, batchData.indicesOfActiveTasks[i]);
+            auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
 
                                     
             {
@@ -1339,6 +1389,8 @@ public:
     }
 
     void removeUsedIdsAndMateIds(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{
+        //std::cerr << "\n" << batchData.totalNumCandidates << "\n";
+        
         batchData.d_anchorIndicesOfCandidates.resize(batchData.totalNumCandidates);
         batchData.d_anchorIndicesOfCandidates2.resize(batchData.totalNumCandidates);
         batchData.d_flagscandidates.resize(batchData.totalNumCandidates);

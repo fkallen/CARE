@@ -211,7 +211,7 @@ namespace readextendergpukernels{
 
 
 #if 1
-std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTasks(
+std::vector<ExtendResult> ReadExtenderGpu::processPairedEndTasks(
     std::vector<ReadExtenderBase::Task> tasks_
 ) {
 
@@ -230,6 +230,8 @@ std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTas
         gpuReadHasher.getCandidateReadIds(batchData, batchData.streams[0]);
 
         gpuExtensionStepper.step(batchData);
+
+        gpuExtensionStepper.extendAfterStep(batchData);
     } while (!batchData.isEmpty());
 
     //construct results
@@ -1366,7 +1368,7 @@ std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processPairedEndTas
     }
 #endif
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderGpu::processSingleEndTasks(
+    std::vector<ExtendResult> ReadExtenderGpu::processSingleEndTasks(
         std::vector<ReadExtenderBase::Task> tasks
     ){
         return processPairedEndTasks(std::move(tasks));
