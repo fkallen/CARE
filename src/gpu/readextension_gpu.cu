@@ -284,16 +284,16 @@ extend_gpu_pairedend(
 
     #if 1
 
-    constexpr int numparallelbatches = 1;
+    int numparallelbatches = runtimeOptions.threads;
 
     int numInitializerThreads = 0;
-    int numCpuWorkerThreads = 1;
-    int numGpuWorkerThreads = 1;
+    int numCpuWorkerThreads = runtimeOptions.threads - 2;
+    int numGpuWorkerThreads = 2;
 
     std::vector<BatchData> batches(numparallelbatches);
-    SimpleConcurrentQueue<BatchData*> freeBatchesQueue;
-    SimpleConcurrentQueue<BatchData*> cpuWorkBatchesQueue;
-    SimpleConcurrentQueue<BatchData*> gpuWorkBatchesQueue;
+    MultiProducerMultiConsumerQueue<BatchData*> freeBatchesQueue;
+    MultiProducerMultiConsumerQueue<BatchData*> cpuWorkBatchesQueue;
+    MultiProducerMultiConsumerQueue<BatchData*> gpuWorkBatchesQueue;
 
     for(int i = 0; i < numparallelbatches; i++){
         batches[i].someId = i;
@@ -719,9 +719,14 @@ extend_gpu_pairedend(
                     numProcessedBatchesByCpuWorkerThreads++;
 
                     if(numProcessedBatchesByCpuWorkerThreads == numBatchesToProcess){
-                        freeBatchesQueue.enableDefaultElement(nullptr);
-                        cpuWorkBatchesQueue.enableDefaultElement(nullptr);
-                        gpuWorkBatchesQueue.enableDefaultElement(nullptr);
+                        for(int i = 0; i < runtimeOptions.threads; i++){
+                            freeBatchesQueue.push(nullptr);
+                            cpuWorkBatchesQueue.push(nullptr);
+                            gpuWorkBatchesQueue.push(nullptr);
+                        }
+                        // freeBatchesQueue.enableDefaultElement(nullptr);
+                        // cpuWorkBatchesQueue.enableDefaultElement(nullptr);
+                        // gpuWorkBatchesQueue.enableDefaultElement(nullptr);
                     }
                     break;
             default:

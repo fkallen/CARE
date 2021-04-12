@@ -8,6 +8,7 @@
 #include <cassert>
 
 #include <moodycamel/readerwriterqueue/readerwriterqueue.h>
+#include <moodycamel/concurrentqueue/blockingconcurrentqueue.h>
 
 namespace care{
 
@@ -236,8 +237,26 @@ struct SingleProducerSingleConsumerQueue{
     }
 };
 
+
 template<class T>
-using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
+struct MultiProducerMultiConsumerQueue{
+    moodycamel::BlockingConcurrentQueue<T> queue;
+
+    void push(T item){
+        queue.enqueue(item); 
+    }
+
+    //wait until queue is not empty, then remove first element from queue and return it
+    T pop(){
+        T item;
+        queue.wait_dequeue(item);
+        return item;
+    }
+};
+
+template<class T>
+//using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
+using SimpleConcurrentQueue = SingleProducerSingleConsumerQueue<T>;
 
 
 }
