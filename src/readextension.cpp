@@ -197,21 +197,19 @@ extend_cpu_pairedend(
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
-            std::vector<ReadExtenderCpu::ExtendInput> inputs(numReadPairsInBatch);
+            std::vector<ExtendInput> inputs(numReadPairsInBatch);
 
             for(int i = 0; i < numReadPairsInBatch; i++){
                 auto& input = inputs[i];
 
                 input.readId1 = currentIds[2*i];
                 input.readId2 = currentIds[2*i+1];
-                input.encodedRead1 = currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts;
-                input.encodedRead2 = currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts;
                 input.readLength1 = currentReadLengths[2*i];
                 input.readLength2 = currentReadLengths[2*i+1];
-                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i]);
-                input.numInts2 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i+1]);
-                input.verbose = false;
-                input.verboseMutex = &verboseMutex;
+                input.encodedRead1.resize(encodedSequencePitchInInts);
+                input.encodedRead2.resize(encodedSequencePitchInInts);
+                std::copy_n(currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
+                std::copy_n(currentEncodedReads.data() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
             }
 
             auto extensionResultsBatch = readExtender.extendPairedReadBatch(inputs);
@@ -230,11 +228,11 @@ extend_cpu_pairedend(
                     er.status = ExtendedReadStatus::FoundMate;
                 }else{
                     if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
 
                             er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
                             er.status = ExtendedReadStatus::MSANoExtension;
                         }
                     }else{
@@ -472,21 +470,18 @@ extend_cpu_singleend(
                 currentIds.size()
             );
 
-            std::vector<ReadExtenderCpu::ExtendInput> inputs(numReadsInBatch);
+            std::vector<ExtendInput> inputs(numReadsInBatch);
 
             for(int i = 0; i < numReadsInBatch; i++){
                 auto& input = inputs[i];
 
                 input.readId1 = currentIds[i];
                 input.readId2 = std::numeric_limits<read_number>::max();
-                input.encodedRead1 = currentEncodedReads.data() + i * encodedSequencePitchInInts;
-                input.encodedRead2 = nullptr;
                 input.readLength1 = currentReadLengths[i];
                 input.readLength2 = 0;
-                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[i]);
-                input.numInts2 = 0;
-                input.verbose = false;
-                input.verboseMutex = &verboseMutex;
+                input.encodedRead1.resize(encodedSequencePitchInInts);
+                input.encodedRead2.resize(0);
+                std::copy_n(currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
             }
 
             auto extensionResultsBatch = readExtender.extendSingleEndReadBatch(inputs);
@@ -505,11 +500,11 @@ extend_cpu_singleend(
                     er.status = ExtendedReadStatus::FoundMate;
                 }else{
                     if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
 
                             er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
                             er.status = ExtendedReadStatus::MSANoExtension;
                         }
                     }else{

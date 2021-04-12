@@ -245,7 +245,7 @@ std::vector<ExtendResult> ReadExtenderGpu::processPairedEndTasks(
         extendResult.numIterations = task.iteration;
         extendResult.aborted = task.abort;
         extendResult.abortReason = task.abortReason;
-        extendResult.readId1 = task.myReadId;
+        extendResult.readId1 = task.myReadId; 
         extendResult.readId2 = task.mateReadId;
         extendResult.originalLength = task.myLength;
 

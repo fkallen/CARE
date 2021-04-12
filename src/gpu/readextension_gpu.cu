@@ -211,8 +211,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
     //readIdGenerator.skip(4200000);
  
     BackgroundThread outputThread(true);
@@ -280,15 +280,15 @@ extend_gpu_pairedend(
     const int batchsizePairs = correctionOptions.batchsize;
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
-    #if 1
+    #if 0
 
     #if 1
 
-    constexpr int numparallelbatches = 16;
+    constexpr int numparallelbatches = 1;
 
-    int numInitializerThreads = 1;
-    int numCpuWorkerThreads = 14;
-    int numGpuWorkerThreads = 2;
+    int numInitializerThreads = 0;
+    int numCpuWorkerThreads = 1;
+    int numGpuWorkerThreads = 1;
 
     std::vector<BatchData> batches(numparallelbatches);
     SimpleConcurrentQueue<BatchData*> freeBatchesQueue;
@@ -297,18 +297,18 @@ extend_gpu_pairedend(
 
     for(int i = 0; i < numparallelbatches; i++){
         batches[i].someId = i;
+        batches[i].setState(BatchData::State::None);
     }
 
     for(auto& batch : batches){
-        freeBatchesQueue.push(&batch);
+        //freeBatchesQueue.push(&batch);
+        cpuWorkBatchesQueue.push(&batch);
     }
 
     std::mutex processedMutex{};
     std::atomic<int> numProcessedBatchesByCpuWorkerThreads = 0;
 
     auto initializerThreadFunc = [&](){
-
-        cub::CachingDeviceAllocator cubAllocator;
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
@@ -427,7 +427,84 @@ extend_gpu_pairedend(
             cubAllocator
         );
 
+        ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
+
+        helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
+
+        CudaStream stream;
+
         BatchData* batchData = cpuWorkBatchesQueue.pop();
+
+        auto init = [&](){
+            nvtx::push_range("init", 2);
+
+            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                batchsizePairs * 2, 
+                currentIds.get()
+            );
+
+            const int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
+
+            if(numReadsInBatch % 2 == 1){
+                throw std::runtime_error("Input files not properly paired. Aborting read extension.");
+            }
+            
+            if(numReadsInBatch > 0){
+                
+                gpuReadStorage.gatherSequences(
+                    readStorageHandle,
+                    currentEncodedReads.get(),
+                    encodedSequencePitchInInts,
+                    currentIds.get(),
+                    currentIds.get(), //device accessible
+                    numReadsInBatch,
+                    stream
+                );
+
+                gpuReadStorage.gatherSequenceLengths(
+                    readStorageHandle,
+                    currentReadLengths.get(),
+                    currentIds.get(),
+                    numReadsInBatch,
+                    stream
+                );
+
+                cudaStreamSynchronize(stream); CUERR;
+
+                const int numReadPairsInBatch = numReadsInBatch / 2;
+
+                std::vector<ExtendInput> inputs(numReadPairsInBatch); 
+
+                for(int i = 0; i < numReadPairsInBatch; i++){
+                    auto& input = inputs[i];
+
+                    input.readLength1 = currentReadLengths[2*i];
+                    input.readLength2 = currentReadLengths[2*i+1];
+                    input.readId1 = currentIds[2*i];
+                    input.readId2 = currentIds[2*i+1];
+                    input.encodedRead1.resize(encodedSequencePitchInInts);
+                    input.encodedRead2.resize(encodedSequencePitchInInts);
+                    std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
+                    std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
+                }
+            
+                initializePairedEndExtensionBatchData2(
+                    *batchData,
+                    inputs,
+                    encodedSequencePitchInInts, 
+                    decodedSequencePitchInBytes, 
+                    msaColumnPitchInElements
+                );
+
+                batchData->setState(BatchData::State::BeforePrepare);
+            }else{
+                batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
+            }
+
+            nvtx::pop_range();
+        };
 
         auto prepare = [&](){
             nvtx::push_range("prepare", 0);
@@ -611,6 +688,14 @@ extend_gpu_pairedend(
         while(batchData != nullptr){
 
             switch(batchData->state){
+            case BatchData::State::None:
+                    init();
+                    if(batchData->state == BatchData::State::BeforePrepare){
+                        prepare();
+                        hash();
+                        gpuWorkBatchesQueue.push(batchData);
+                    }
+                    break;
             case BatchData::State::BeforePrepare:
                     prepare();
                     hash();
@@ -629,7 +714,7 @@ extend_gpu_pairedend(
                     break;
             case BatchData::State::BeforeOutput:
                     output();
-                    freeBatchesQueue.push(batchData);
+                    cpuWorkBatchesQueue.push(batchData);
 
                     numProcessedBatchesByCpuWorkerThreads++;
 
