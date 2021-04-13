@@ -14,7 +14,7 @@
 #include <hostdevicefunctions.cuh>
 
 //#define SINGLEBLOCKPREFIXSUM
-
+#if 0
 namespace care{
 
     template<int blocksize, int itemsPerThread, bool inclusive, class T>
@@ -1381,3 +1381,5 @@ std::vector<ExtendResult> ReadExtenderGpu::processPairedEndTasks(
 
 
 }
+
+#endif
