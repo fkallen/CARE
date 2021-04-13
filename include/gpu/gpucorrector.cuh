@@ -1302,7 +1302,7 @@ namespace gpu{
                     stream
                 ); CUERR;
 
-                #if 1
+                #if 0
                     // cudaDeviceSynchronize(); CUERR;
 
                     // std::cerr << "currentNumCandidates = " << currentNumCandidates << "\n";

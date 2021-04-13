@@ -344,6 +344,33 @@ namespace gpu{
             bool isPairedCandidate
         ){
 
+            auto defaultweightfunc = [&](char q){
+                return canUseQualityScores ? getQualityWeight(q) * overlapweight : overlapweight;
+            };
+
+            auto weightfuncIncreasedOverlapweightForPairedCandidate = [&](char q){
+                constexpr float increasefactor = 2.0f;
+
+                const float newoverlapweight = isPairedCandidate ? min(1.0f, overlapweight * increasefactor) : overlapweight;
+                return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            };
+
+            auto weightfuncIncreasedQualityweightForPairedCandidate = [&](char q){
+                constexpr float increasefactor = 2.0f;
+
+                if(canUseQualityScores){
+                    if(isPairedCandidate){
+                        return min(1.0f, getQualityWeight(q) * increasefactor) * overlapweight;
+                    }else{
+                        return getQualityWeight(q) * overlapweight;
+                    }
+                }else{
+                    return overlapweight;
+                }
+            };
+
+            auto weightfunc = defaultweightfunc;
+
             constexpr int nucleotidesPerInt2Bit = SequenceHelpers::basesPerInt2Bit();
             const int fullInts = sequenceLength / nucleotidesPerInt2Bit;
 
@@ -369,32 +396,7 @@ namespace gpu{
                             encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                         }
 
-                        auto defaultweightfunc = [&](){
-                            return canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
-                        };
-
-                        auto weightfuncIncreasedOverlapweightForPairedCandidate = [&](){
-                            constexpr float increasefactor = 2.0f;
-
-                            const float newoverlapweight = isPairedCandidate ? min(1.0f, overlapweight * increasefactor) : overlapweight;
-                            return canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * newoverlapweight : newoverlapweight;
-                        };
-
-                        auto weightfuncIncreasedQualityweightForPairedCandidate = [&](){
-                            constexpr float increasefactor = 2.0f;
-
-                            if(canUseQualityScores){
-                                if(isPairedCandidate){
-                                    return min(1.0f, getQualityWeight(currentFourQualities[l]) * increasefactor) * overlapweight;
-                                }else{
-                                    return getQualityWeight(currentFourQualities[l]) * overlapweight;
-                                }
-                            }else{
-                                return overlapweight;
-                            }
-                        };
-
-                        const float weight = defaultweightfunc();
+                        const float weight = weightfunc(currentFourQualities[l]);
 
                         assert(weight != 0);
                         const int rowOffset = encodedBaseAsInt * columnPitchInElements;
@@ -419,7 +421,7 @@ namespace gpu{
                         //reverse complement
                         encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                     }
-                    const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * nucleotidesPerInt2Bit + posInInt]) * overlapweight : overlapweight;
+                    const float weight = weightfunc(quality[fullInts * nucleotidesPerInt2Bit + posInInt]);
 
                     assert(weight != 0);
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;
