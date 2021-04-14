@@ -1550,6 +1550,7 @@ public:
 
             std::vector<read_number> tmp(task.candidateReadIds.size());
 
+            #if 0
             auto end = std::set_difference(
                 myIds,
                 myIds + num,
@@ -1557,6 +1558,10 @@ public:
                 task.allUsedCandidateReadIdPairs.end(),
                 destids
             );
+            #else
+            //remove none
+            auto end = std::copy(myIds, myIds + num, destids);
+            #endif
 
             batchData.h_numCandidatesPerAnchor[k] = std::distance(destids, end);
             destids = end;
