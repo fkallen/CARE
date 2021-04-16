@@ -138,6 +138,10 @@ namespace args{
             result.sampleRateCands = t>1.0?t/100:t;
         }
 
+        if(pr.count("pairedthreshold1")){
+            result.pairedthreshold1 = pr["pairedthreshold1"].as<float>();
+        }
+
         return result;
 	}
 

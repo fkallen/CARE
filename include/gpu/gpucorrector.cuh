@@ -1302,6 +1302,7 @@ namespace gpu{
                     stream
                 ); CUERR;
 
+
                 #if 0
                     // cudaDeviceSynchronize(); CUERR;
 
@@ -2214,20 +2215,161 @@ namespace gpu{
                 kernelLaunchHandle
             );
 
-            call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-                d_alignment_best_alignment_flags.get(),
-                d_alignment_nOps.get(),
-                d_alignment_overlaps.get(),
-                d_candidates_per_anchor_prefixsum.get(),
-                d_numAnchors.get(),
-                d_numCandidates.get(),
-                maxAnchors,
-                maxCandidates,
-                correctionOptions->estimatedErrorrate,
-                correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
-                stream,
-                kernelLaunchHandle
-            );
+            #if 1
+            if(false && !gpuReadStorage->isPairedEnd()){
+                //default kernel
+                call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                    d_alignment_best_alignment_flags.get(),
+                    d_alignment_nOps.get(),
+                    d_alignment_overlaps.get(),
+                    d_candidates_per_anchor_prefixsum.get(),
+                    d_numAnchors.get(),
+                    d_numCandidates.get(),
+                    maxAnchors,
+                    maxCandidates,
+                    correctionOptions->estimatedErrorrate,
+                    correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                    stream,
+                    kernelLaunchHandle
+                );
+            }else{
+                helpers::lambda_kernel<<<currentNumAnchors, 128, 0, stream>>>(
+                    [
+                        bestAlignmentFlags = d_alignment_best_alignment_flags.data(),
+                        nOps = d_alignment_nOps.data(),
+                        overlaps = d_alignment_overlaps.data(),
+                        d_candidates_per_subject_prefixsum = d_candidates_per_anchor_prefixsum.data(),
+                        n_subjects = currentNumAnchors,
+                        mismatchratioBaseFactor = correctionOptions->estimatedErrorrate,
+                        goodAlignmentsCountThreshold = correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                        d_isPairedCandidate = d_isPairedCandidate.data(),
+                        pairedthreshold1 = correctionOptions->pairedthreshold1
+                    ] __device__(){
+                        using BlockReduceInt = cub::BlockReduce<int, 128>;
+
+                        __shared__ union {
+                            typename BlockReduceInt::TempStorage intreduce;
+                            int broadcast[3];
+                        } temp_storage;
+
+                        for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x) {
+
+                            const int candidatesForSubject = d_candidates_per_subject_prefixsum[subjectindex+1]
+                                                            - d_candidates_per_subject_prefixsum[subjectindex];
+
+                            const int firstIndex = d_candidates_per_subject_prefixsum[subjectindex];
+
+                            //printf("subjectindex %d\n", subjectindex);
+
+                            int counts[3]{0,0,0};
+
+                            //if(threadIdx.x == 0){
+                            //    printf("my_n_indices %d\n", my_n_indices);
+                            //}
+
+                            for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
+
+                                const int candidate_index = firstIndex + index;
+                                if(!d_isPairedCandidate[candidate_index]){
+                                    if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+
+                                        const int alignment_overlap = overlaps[candidate_index];
+                                        const int alignment_nops = nOps[candidate_index];
+
+                                        const float mismatchratio = float(alignment_nops) / alignment_overlap;
+
+                                        //if(mismatchratio >= 1 * mismatchratioBaseFactor) {
+                                        if(mismatchratio >= pairedthreshold1) {
+                                            bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                                        }else{
+
+                                            // #pragma unroll
+                                            // for(int i = 2; i <= 2; i++) {
+                                            //     counts[i-2] += (mismatchratio < i * mismatchratioBaseFactor);
+                                            // }
+                                        }
+
+                                    }
+                                }
+                            }
+
+                            // //accumulate counts over block
+                            //     #pragma unroll
+                            // for(int i = 0; i < 3; i++) {
+                            //     counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
+                            //     __syncthreads();
+                            // }
+
+                            // //broadcast accumulated counts to block
+                            // if(threadIdx.x == 0) {
+                            //     #pragma unroll
+                            //     for(int i = 0; i < 3; i++) {
+                            //         temp_storage.broadcast[i] = counts[i];
+                            //         //printf("count[%d] = %d\n", i, counts[i]);
+                            //     }
+                            //     //printf("mismatchratioBaseFactor %f, goodAlignmentsCountThreshold %f\n", mismatchratioBaseFactor, goodAlignmentsCountThreshold);
+                            // }
+
+                            // __syncthreads();
+
+                            // #pragma unroll
+                            // for(int i = 0; i < 3; i++) {
+                            //     counts[i] = temp_storage.broadcast[i];
+                            // }
+
+                            // float mismatchratioThreshold = 0;
+                            // if (counts[0] >= goodAlignmentsCountThreshold) {
+                            //     mismatchratioThreshold = 2 * mismatchratioBaseFactor;
+                            // } else if (counts[1] >= goodAlignmentsCountThreshold) {
+                            //     mismatchratioThreshold = 3 * mismatchratioBaseFactor;
+                            // } else if (counts[2] >= goodAlignmentsCountThreshold) {
+                            //     mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+                            // } else {
+                            //     mismatchratioThreshold = -1.0f;                         //this will invalidate all alignments for subject
+                            //     //mismatchratioThreshold = 4 * mismatchratioBaseFactor; //use alignments from every bin
+                            //     //mismatchratioThreshold = 1.1f;
+                            // }
+
+                            // // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold which are not paired end
+                            // for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
+                            //     const int candidate_index = firstIndex + index;
+
+                            //     if(!d_isPairedCandidate[candidate_index]){
+                            //         if(bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
+
+                            //             const int alignment_overlap = overlaps[candidate_index];
+                            //             const int alignment_nops = nOps[candidate_index];
+
+                            //             const float mismatchratio = float(alignment_nops) / alignment_overlap;
+
+                            //             const bool doRemove = mismatchratio >= mismatchratioThreshold;
+                            //             if(doRemove){
+                            //                 bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                            //             }
+                            //         }
+                            //     }
+                            // }
+                        }
+                    }
+                );
+            }
+            #else
+                //default kernel
+                call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                    d_alignment_best_alignment_flags.get(),
+                    d_alignment_nOps.get(),
+                    d_alignment_overlaps.get(),
+                    d_candidates_per_anchor_prefixsum.get(),
+                    d_numAnchors.get(),
+                    d_numCandidates.get(),
+                    maxAnchors,
+                    maxCandidates,
+                    correctionOptions->estimatedErrorrate,
+                    correctionOptions->estimatedCoverage * correctionOptions->m_coverage,
+                    stream,
+                    kernelLaunchHandle
+                );
+            #endif
 
             callSelectIndicesOfGoodCandidatesKernelAsync(
                 d_indices.get(),

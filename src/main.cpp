@@ -181,6 +181,7 @@ int main(int argc, char** argv){
 			"SE / se : Single-end reads"
 			"PE / pe : Paired-end reads",
 			cxxopts::value<std::string>()->default_value("SE"))
+		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
 
 	;
 
@@ -284,6 +285,7 @@ int main(int argc, char** argv){
 	std::cout << "Correction type (cands): " << int(correctionOptions.correctionTypeCands) 
 		<< " (" << to_string(correctionOptions.correctionTypeCands) << ")\n";
 
+	std::cout << "pairedthreshold1 " << correctionOptions.pairedthreshold1 << "\n";
 	std::cout << "Threads: " << runtimeOptions.threads << "\n";
 	std::cout << "Show progress bar: " << runtimeOptions.showProgress << "\n";
 	std::cout << "Can use GPU(s): " << runtimeOptions.canUseGpu << "\n";

@@ -355,6 +355,12 @@ namespace gpu{
                 return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
             };
 
+            auto weightfuncOverlap1ForPairedCandidate = [&](char q){
+
+                const float newoverlapweight = isPairedCandidate ? 1.0f : overlapweight;
+                return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            };
+
             auto weightfuncIncreasedQualityweightForPairedCandidate = [&](char q){
                 constexpr float increasefactor = 2.0f;
 
@@ -366,6 +372,27 @@ namespace gpu{
                     }
                 }else{
                     return overlapweight;
+                }
+            };
+
+            auto weightfuncQuality1ForPairedCandidate = [&](char q){
+   
+                if(canUseQualityScores){
+                    if(isPairedCandidate){
+                        return 1.0f * overlapweight;
+                    }else{
+                        return getQualityWeight(q) * overlapweight;
+                    }
+                }else{
+                    return overlapweight;
+                }
+            };
+
+            auto perfectWeightForPairedCandidate = [&](char q){
+                if(isPairedCandidate){
+                    return 1.0f;
+                }else{
+                    return defaultweightfunc(q);
                 }
             };
 

@@ -66,6 +66,7 @@ namespace care{
         float thresholdCands = .5f; // threshold for cands classifier
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
+        float pairedthreshold1 = 0.06f;
     };
 
 
