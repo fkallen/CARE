@@ -187,7 +187,7 @@ namespace care{
 
             if(std::distance(begin, partitionPoint) > 0){
 
-                return combineWithSameIdFoundMate(begin, partitionPoint);
+                return std::make_optional(combineWithSameIdFoundMate(begin, partitionPoint));
                 //MismatchRatioGlueDecider decider(40, 0.01f);
                 // MatchLengthGlueDecider decider(insertSize - insertSizeStddev, 50);
                 // WeightedGapGluer gluer(begin->originalLength);
@@ -198,19 +198,23 @@ namespace care{
                 // return combineWithSameIdNoMate(begin, partitionPoint, func);
 
             }else{
-#if 1                
-                MismatchRatioGlueDecider decider(40, 0.05f);
-                //NaiveGluer gluer{};
-                WeightedGapGluer gluer(begin->originalLength);
-                auto func = [&](const auto& lr, const auto& rl){
-                    return glue(lr, rl, decider, gluer);
-                };
+                #if 0
+                    return std::optional<ExtendResult>{std::nullopt};
+                #else
+                    #if 1                
+                        MismatchRatioGlueDecider decider(40, 0.05f);
+                        //NaiveGluer gluer{};
+                        WeightedGapGluer gluer(begin->originalLength);
+                        auto func = [&](const auto& lr, const auto& rl){
+                            return glue(lr, rl, decider, gluer);
+                        };
 
-                return combineWithSameIdNoMate(partitionPoint, end, func);
-#else
-                //from results which did not find mate, choose longest
-                return *std::max_element(partitionPoint, end, lengthcomp);
-#endif                
+                        return std::make_optional(combineWithSameIdNoMate(partitionPoint, end, func));
+                    #else
+                        //from results which did not find mate, choose longest
+                        return std::make_optional(*std::max_element(partitionPoint, end, lengthcomp));
+                    #endif   
+                #endif             
             }
         };
 
@@ -224,9 +228,14 @@ namespace care{
             }
 
             //elements in range [iter1, iter2) have same read pair id
-            *dest = combineWithSameId(iter1, iter2);
+            auto optionalresult = combineWithSameId(iter1, iter2);
+            if(optionalresult.has_value()){
+                //*dest = combineWithSameId(iter1, iter2);
+                *dest = *optionalresult;
+                ++dest;
+            }
 
-            ++dest;
+            
             iter1 = iter2;
         }
 

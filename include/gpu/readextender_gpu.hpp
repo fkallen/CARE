@@ -1550,6 +1550,7 @@ public:
 
             std::vector<read_number> tmp(task.candidateReadIds.size());
 
+            #if 0
             auto end = std::set_difference(
                 myIds,
                 myIds + num,
@@ -1557,6 +1558,9 @@ public:
                 task.allUsedCandidateReadIdPairs.end(),
                 destids
             );
+            #else
+            auto end = std::copy(myIds, myIds + num, destids);
+            #endif
 
             batchData.h_numCandidatesPerAnchor[k] = std::distance(destids, end);
             destids = end;
@@ -2158,6 +2162,16 @@ public:
 
     void calculateAlignments(BatchData& batchData, cudaStream_t stream) const{
 
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // std::vector<int> vec1(batchData.d_numCandidatesPerAnchor.size());
+        // cudaMemcpyAsync(vec1.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // std::cerr << "Iteration: " << batchData.tasks[0].iteration << "\n";
+        // for(int i = 0; i < batchData.numTasks; i++){
+        //     std::cerr << vec1[i] << " ";
+        // }
+        // std::cerr << "\n";
+
         batchData.d_alignment_overlaps.resize(batchData.totalNumCandidates);
         batchData.d_alignment_shifts.resize(batchData.totalNumCandidates);
         batchData.d_alignment_nOps.resize(batchData.totalNumCandidates);
@@ -2172,7 +2186,7 @@ public:
         const bool removeAmbiguousCandidates = false;
         const int maxNumAnchors = batchData.numTasks;
         const int maxNumCandidates = batchData.totalNumCandidates; //this does not need to be exact, but it must be >= batchData.d_numCandidatesPerAnchorPrefixSum[batchData.numTasks]
-        const int maximumSequenceLength = 100; //encodedSequencePitchInInts * 16;
+        const int maximumSequenceLength = batchData.encodedSequencePitchInInts * 16;
         const int encodedSequencePitchInInts2Bit = batchData.encodedSequencePitchInInts;
         const int min_overlap = goodAlignmentProperties->min_overlap;
         const float maxErrorRate = goodAlignmentProperties->maxErrorRate;
@@ -2354,6 +2368,35 @@ public:
             }
         ); CUERR;
 
+        // cudaDeviceSynchronize(); CUERR; //DEBUG
+
+        // std::vector<BestAlignment_t> vec3(batchData.d_alignment_best_alignment_flags.size());
+        // std::vector<int> vec4(batchData.d_alignment_shifts.size());
+        // std::vector<int> vec5(batchData.d_alignment_best_alignment_flags.size());
+
+        // cudaMemcpyAsync(vec3.data(), batchData.d_alignment_best_alignment_flags.data(), batchData.d_alignment_best_alignment_flags.sizeInBytes(), D2H, stream); CUERR;
+        // cudaMemcpyAsync(vec4.data(), batchData.d_alignment_shifts.data(), batchData.d_alignment_shifts.sizeInBytes(), D2H, stream); CUERR;
+        // cudaMemcpyAsync(vec5.data(), batchData.d_alignment_overlaps.data(), batchData.d_alignment_overlaps.sizeInBytes(), D2H, stream); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR; //DEBUG
+
+        // for(int k = 0; k < batchData.totalNumCandidates; k++){
+        //     std::cerr << int(vec3[k]) << " " << vec4[k] << " " << vec5[k] << "\n";
+        // }
+        // std::cerr << "\n";
+
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // std::vector<int> vec2(batchData.d_numCandidatesPerAnchor2.size());
+        // cudaMemcpyAsync(vec2.data(), batchData.d_numCandidatesPerAnchor2.data(), batchData.d_numCandidatesPerAnchor2.sizeInBytes(), D2H, stream); CUERR;
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // for(int i = 0; i < batchData.numTasks; i++){
+        //     std::cerr << vec2[i] << " ";
+        // }
+        // std::cerr << "\n";
+
+        // std::exit(0);
+
+
         //setup cub 
         auto d_zip_input = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -2491,6 +2534,15 @@ public:
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
+
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // std::vector<int> vec1(batchData.d_numCandidatesPerAnchor.size());
+        // cudaMemcpyAsync(vec1.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+        // for(int i = 0; i < batchData.numTasks; i++){
+        //     std::cerr << vec1[i] << " ";
+        // }
+        // std::cerr << "\n";
     }
 
     void computeMSAs(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{
@@ -2911,6 +2963,16 @@ public:
         batchData.totalNumCandidates = *batchData.h_numCandidates; 
 
         cubAllocator->DeviceFree(cubtemp);
+
+        // cudaStreamSynchronize(firstStream); CUERR; //DEBUG
+        // cudaDeviceSynchronize(); CUERR; //DEBUG
+        // std::vector<int> vec1(batchData.d_numCandidatesPerAnchor.size());
+        // cudaMemcpyAsync(vec1.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, firstStream); CUERR;
+        // cudaStreamSynchronize(firstStream); CUERR; //DEBUG
+        // for(int i = 0; i < batchData.numTasks; i++){
+        //     std::cerr << vec1[i] << " ";
+        // }
+        // std::cerr << "\n";
     }
 
     void copyBuffersToHost(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{

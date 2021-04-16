@@ -107,15 +107,18 @@ bool combineExtendedReadWithOriginalRead(
     std::string& extendedSequence
 ){
     if(tmpresults.size() == 0){
-        std::cerr << "read id " << readWithId.globalReadId << " no tmpresults!\n";
+        //std::cerr << "read id " << readWithId.globalReadId << " no tmpresults!\n";
+        //assert(tmpresults.size() > 0);
+        extendedSequence = std::move(readWithId.read.sequence);
+        return false;
+    }else{
+
+        bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
+        //readWithId.read.sequence = std::move(tmpresults[0].extendedSequence);
+        extendedSequence = std::move(tmpresults[0].extendedSequence);
+
+        return extended;
     }
-    assert(tmpresults.size() > 0);
-
-    bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
-    //readWithId.read.sequence = std::move(tmpresults[0].extendedSequence);
-    extendedSequence = std::move(tmpresults[0].extendedSequence);
-
-    return extended;
 }
 
 
@@ -179,7 +182,7 @@ void constructOutputFileFromExtensionResults(
         std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
         auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId, ReadWithId* mate, std::string& extendedSequence){
-            statusHistogram[tmpresults[0].status]++;
+            //statusHistogram[tmpresults[0].status]++;
 
             return combineExtendedReadWithOriginalRead(tmpresults, readWithId, extendedSequence);
         };

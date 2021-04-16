@@ -280,7 +280,7 @@ extend_gpu_pairedend(
     const int batchsizePairs = correctionOptions.batchsize;
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
-    #if 0
+    #if 1
 
     #if 1
 
@@ -645,7 +645,6 @@ extend_gpu_pairedend(
 
                 er.readId = extensionOutput.readId1;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
-                assert(er.extendedSequence.size() < 500);
 
                 if(extensionOutput.mateHasBeenFound){
                     er.status = ExtendedReadStatus::FoundMate;
@@ -1565,7 +1564,6 @@ extend_gpu_pairedend(
 
                 er.readId = extensionOutput.readId1;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
-                assert(er.extendedSequence.size() < 500);
 
                 if(extensionOutput.mateHasBeenFound){
                     er.status = ExtendedReadStatus::FoundMate;

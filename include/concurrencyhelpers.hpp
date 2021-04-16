@@ -255,8 +255,8 @@ struct MultiProducerMultiConsumerQueue{
 };
 
 template<class T>
-//using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
-using SimpleConcurrentQueue = SingleProducerSingleConsumerQueue<T>;
+using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
+//using SimpleConcurrentQueue = SingleProducerSingleConsumerQueue<T>;
 
 
 }
