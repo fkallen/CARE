@@ -1,3 +1,4 @@
+#if 0
 #include <gpu/readextender_gpu.hpp>
 #include <readextenderbase.hpp>
 
@@ -14,7 +15,7 @@
 #include <hostdevicefunctions.cuh>
 
 //#define SINGLEBLOCKPREFIXSUM
-#if 0
+
 namespace care{
 
     template<int blocksize, int itemsPerThread, bool inclusive, class T>

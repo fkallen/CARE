@@ -280,14 +280,14 @@ extend_gpu_pairedend(
     const int batchsizePairs = correctionOptions.batchsize;
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
-    #if 1
+    #if 0
 
     #if 1
 
     int numparallelbatches = runtimeOptions.threads;
 
     int numInitializerThreads = 0;
-    int numCpuWorkerThreads = runtimeOptions.threads - 2;
+    int numCpuWorkerThreads = std::max(1, runtimeOptions.threads - 2);
     int numGpuWorkerThreads = 2;
 
     std::vector<BatchData> batches(numparallelbatches);

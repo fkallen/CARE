@@ -1462,6 +1462,7 @@ public:
         );
 
         batchData.h_isPairedCandidate.resize(batchData.totalNumCandidates);
+        batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
 
         std::fill(batchData.h_isPairedCandidate.begin(), batchData.h_isPairedCandidate.end(), false);
 
@@ -2350,6 +2351,83 @@ public:
         dim3 block(128,1,1);
         dim3 grid(numAnchors, 1, 1);
 
+        #if 0
+            //filter alignments of candidates. d_keepflags[i] will be set to false if candidate[i] should be removed
+        //batchData.d_numCandidatesPerAnchor2[i] contains new number of candidates for anchor i
+        helpers::lambda_kernel<<<grid, block, 0, stream>>>(
+            [
+                d_alignment_best_alignment_flags = batchData.d_alignment_best_alignment_flags.data(),
+                d_alignment_shifts = batchData.d_alignment_shifts.data(),
+                d_alignment_overlaps = batchData.d_alignment_overlaps.data(),
+                d_alignment_nOps = batchData.d_alignment_nOps.data(),
+                d_anchorSequencesLength = batchData.d_anchorSequencesLength.data(),
+                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                d_numCandidatesPerAnchor2 = batchData.d_numCandidatesPerAnchor2.data(),
+                d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                d_isPairedCandidate = batchData.d_isPairedCandidate.data(),
+                d_keepflags,
+                min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
+                numAnchors
+            ] __device__ (){
+
+                using BlockReduceFloat = cub::BlockReduce<float, 128>;
+                using BlockReduceInt = cub::BlockReduce<int, 128>;
+
+                __shared__ union {
+                    typename BlockReduceFloat::TempStorage floatreduce;
+                    typename BlockReduceInt::TempStorage intreduce;
+                } cubtemp;
+
+                __shared__ int intbroadcast;
+                __shared__ float floatbroadcast;
+
+                for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+                    const int num = d_numCandidatesPerAnchor[a];
+                    const int offset = d_numCandidatesPerAnchorPrefixSum[a];
+                    const float anchorLength = d_anchorSequencesLength[a];
+                    int removed = 0;
+
+                    //loop over candidates to compute relative overlap threshold
+
+                    for(int c = threadIdx.x; c < num; c += blockDim.x){
+                        
+                        const auto alignmentflag = d_alignment_best_alignment_flags[offset + c];
+                        const int shift = d_alignment_shifts[offset + c];
+
+                        if(alignmentflag != BestAlignment_t::None && shift >= 0){
+                            if(d_isPairedCandidate[offset+c]){
+                                d_keepflags[offset + c] = true; //paired candidates always pass
+                            }else{
+                                const float overlap = d_alignment_overlaps[offset + c];
+                                const float numMismatches = d_alignment_nOps[offset + c];                          
+                                const float relativeOverlap = overlap / anchorLength;
+                                const float errorrate = numMismatches / overlap;
+
+                                if(fgeq(errorrate, 0.06f)){
+                                    d_keepflags[offset + c] = true;
+                                }else{
+                                    d_keepflags[offset + c] = false;
+                                    removed++;
+                                }
+                            }
+                        }else{
+                            //remove alignment with negative shift or bad alignments
+                            d_keepflags[offset + c] = false;
+                            removed++;
+                        }                  
+                    }
+
+                    removed = BlockReduceInt(cubtemp.intreduce).Sum(removed);
+
+                    if(threadIdx.x == 0){
+                        d_numCandidatesPerAnchor2[a] = num - removed;
+                    }
+                    __syncthreads();
+                }
+            }
+        ); CUERR;
+        #else
+
         //filter alignments of candidates. d_keepflags[i] will be set to false if candidate[i] should be removed
         //batchData.d_numCandidatesPerAnchor2[i] contains new number of candidates for anchor i
         helpers::lambda_kernel<<<grid, block, 0, stream>>>(
@@ -2361,6 +2439,7 @@ public:
                 d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchor2 = batchData.d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                d_isPairedCandidate = batchData.d_isPairedCandidate.data(),
                 d_keepflags,
                 min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
                 numAnchors
@@ -2393,13 +2472,15 @@ public:
                         const int shift = d_alignment_shifts[offset + c];
 
                         if(alignmentflag != BestAlignment_t::None && shift >= 0){
-                            const float overlap = d_alignment_overlaps[offset + c];                            
-                            const float relativeOverlap = overlap / anchorLength;
-                            
-                            if(relativeOverlap < 1.0f && fgeq(relativeOverlap, min_overlap_ratio)){
-                                threadReducedGoodAlignmentExists = 1;
-                                const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
-                                threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
+                            if(!d_isPairedCandidate[offset+c]){
+                                const float overlap = d_alignment_overlaps[offset + c];                            
+                                const float relativeOverlap = overlap / anchorLength;
+                                
+                                if(relativeOverlap < 1.0f && fgeq(relativeOverlap, min_overlap_ratio)){
+                                    threadReducedGoodAlignmentExists = 1;
+                                    const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
+                                    threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
+                                }
                             }
                         }else{
                             //remove alignment with negative shift or bad alignments
@@ -2431,14 +2512,15 @@ public:
 
                         // loop over candidates and remove those with an alignment overlap threshold smaller than the computed threshold
                         for(int c = threadIdx.x; c < num; c += blockDim.x){
-    
-                            if(d_keepflags[offset + c]){
-                                const float overlap = d_alignment_overlaps[offset + c];                            
-                                const float relativeOverlap = overlap / anchorLength;                 
-    
-                                if(!fgeq(relativeOverlap, blockreducedRelativeOverlapThreshold)){
-                                    d_keepflags[offset + c] = false;
-                                    removed++;
+                            if(!d_isPairedCandidate[offset+c]){
+                                if(d_keepflags[offset + c]){
+                                    const float overlap = d_alignment_overlaps[offset + c];                            
+                                    const float relativeOverlap = overlap / anchorLength;                 
+        
+                                    if(!fgeq(relativeOverlap, blockreducedRelativeOverlapThreshold)){
+                                        d_keepflags[offset + c] = false;
+                                        removed++;
+                                    }
                                 }
                             }
                         }
@@ -2456,6 +2538,7 @@ public:
                 }
             }
         ); CUERR;
+        #endif
 
         // cudaDeviceSynchronize(); CUERR; //DEBUG
 
@@ -2494,7 +2577,8 @@ public:
                 batchData.d_alignment_shifts.data(),
                 batchData.d_alignment_best_alignment_flags.data(),
                 batchData.d_candidateReadIds.data(),
-                batchData.d_candidateSequencesLength.data()
+                batchData.d_candidateSequencesLength.data(),
+                batchData.d_isPairedCandidate.data()
             )
         );
 
@@ -2512,7 +2596,8 @@ public:
                 batchData.d_alignment_shifts2.data(),
                 batchData.d_alignment_best_alignment_flags2.data(),
                 batchData.d_candidateReadIds2.data(),
-                batchData.d_candidateSequencesLength2.data()
+                batchData.d_candidateSequencesLength2.data(),
+                batchData.d_isPairedCandidate2.data()
             )
         );
 
@@ -2613,6 +2698,7 @@ public:
         std::swap(batchData.d_candidateSequencesLength2, batchData.d_candidateSequencesLength);
         std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
+        std::swap(batchData.d_isPairedCandidate2, batchData.d_isPairedCandidate);
 
         cudaMemcpyAsync(
             &batchData.totalNumCandidates,
@@ -2780,7 +2866,8 @@ public:
                 batchData.d_alignment_overlaps.data(),
                 batchData.d_alignment_shifts.data(),
                 batchData.d_alignment_nOps.data(),
-                batchData.d_alignment_best_alignment_flags.data()
+                batchData.d_alignment_best_alignment_flags.data(),
+                batchData.d_isPairedCandidate.data()
             )
         );
 
@@ -2791,7 +2878,8 @@ public:
                 batchData.d_alignment_overlaps2.data(),
                 batchData.d_alignment_shifts2.data(),
                 batchData.d_alignment_nOps2.data(),
-                batchData.d_alignment_best_alignment_flags2.data()
+                batchData.d_alignment_best_alignment_flags2.data(),
+                batchData.d_isPairedCandidate2.data()
             )
         );
 
@@ -2915,6 +3003,7 @@ public:
         std::swap(batchData.d_alignment_shifts, batchData.d_alignment_shifts2);
         std::swap(batchData.d_alignment_nOps, batchData.d_alignment_nOps2);
         std::swap(batchData.d_alignment_best_alignment_flags, batchData.d_alignment_best_alignment_flags2);
+        std::swap(batchData.d_isPairedCandidate, batchData.d_isPairedCandidate2);
 
         //compute possible msa splits
         batchData.d_possibleSplitColumns.resize(32 * batchData.numTasks);
