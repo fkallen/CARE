@@ -48,7 +48,6 @@ extend_cpu_pairedend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -67,20 +66,6 @@ extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
@@ -94,13 +79,13 @@ extend_cpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(100000);
 
     BackgroundThread outputThread(true);
 
     
-    const std::uint64_t totalNumReadPairs = sequenceFileProperties.nReads / 2;
+    const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
@@ -127,7 +112,7 @@ extend_cpu_pairedend(
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -212,21 +197,19 @@ extend_cpu_pairedend(
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
-            std::vector<ReadExtenderCpu::ExtendInput> inputs(numReadPairsInBatch);
+            std::vector<ExtendInput> inputs(numReadPairsInBatch);
 
             for(int i = 0; i < numReadPairsInBatch; i++){
                 auto& input = inputs[i];
 
                 input.readId1 = currentIds[2*i];
                 input.readId2 = currentIds[2*i+1];
-                input.encodedRead1 = currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts;
-                input.encodedRead2 = currentEncodedReads.data() + (2*i+1) * encodedSequencePitchInInts;
                 input.readLength1 = currentReadLengths[2*i];
                 input.readLength2 = currentReadLengths[2*i+1];
-                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i]);
-                input.numInts2 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[2*i+1]);
-                input.verbose = false;
-                input.verboseMutex = &verboseMutex;
+                input.encodedRead1.resize(encodedSequencePitchInInts);
+                input.encodedRead2.resize(encodedSequencePitchInInts);
+                std::copy_n(currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
+                std::copy_n(currentEncodedReads.data() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
             }
 
             auto extensionResultsBatch = readExtender.extendPairedReadBatch(inputs);
@@ -245,11 +228,11 @@ extend_cpu_pairedend(
                     er.status = ExtendedReadStatus::FoundMate;
                 }else{
                     if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
 
                             er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
                             er.status = ExtendedReadStatus::MSANoExtension;
                         }
                     }else{
@@ -344,7 +327,6 @@ extend_cpu_singleend(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -365,21 +347,6 @@ extend_cpu_singleend(
         memoryAvailableBytesHost = 0;
     }
 
-    std::unique_ptr<std::uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::uint8_t[]>(sequenceFileProperties.nReads);
-
-    #pragma omp parallel for
-    for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
-        correctionStatusFlagsPerRead[i] = 0;
-    }
-
-    std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
-
-    if(memoryAvailableBytesHost > sizeof(std::uint8_t) * sequenceFileProperties.nReads){
-        memoryAvailableBytesHost -= sizeof(std::uint8_t) * sequenceFileProperties.nReads;
-    }else{
-        memoryAvailableBytesHost = 0;
-    }
-
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
 
@@ -392,23 +359,25 @@ extend_cpu_singleend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 
     BackgroundThread outputThread(true);
+
+    const std::uint64_t totalNumReadPairs = readStorage.getNumberOfReads() / 2;
 
     auto showProgress = [&](auto totalCount, auto seconds){
         if(runtimeOptions.showProgress){
 
             printf("Processed %10u of %10lu read pairs (Runtime: %03d:%02d:%02d)\r",
-                    totalCount, sequenceFileProperties.nReads,
+                    totalCount, totalNumReadPairs,
                     int(seconds / 3600),
                     int(seconds / 60) % 60,
                     int(seconds) % 60);
             std::cout.flush();
         }
 
-        if(totalCount == sequenceFileProperties.nReads){
+        if(totalCount == totalNumReadPairs){
             std::cerr << '\n';
         }
     };
@@ -417,12 +386,12 @@ extend_cpu_singleend(
         return duration;
     };
 
-    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+    ProgressThread<read_number> progressThread(readStorage.getNumberOfReads(), showProgress, updateShowProgressInterval);
 
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
-    const int maximumSequenceLength = sequenceFileProperties.maxSequenceLength;
+    const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
 
     std::mutex verboseMutex;
@@ -501,21 +470,18 @@ extend_cpu_singleend(
                 currentIds.size()
             );
 
-            std::vector<ReadExtenderCpu::ExtendInput> inputs(numReadsInBatch);
+            std::vector<ExtendInput> inputs(numReadsInBatch);
 
             for(int i = 0; i < numReadsInBatch; i++){
                 auto& input = inputs[i];
 
                 input.readId1 = currentIds[i];
                 input.readId2 = std::numeric_limits<read_number>::max();
-                input.encodedRead1 = currentEncodedReads.data() + i * encodedSequencePitchInInts;
-                input.encodedRead2 = nullptr;
                 input.readLength1 = currentReadLengths[i];
                 input.readLength2 = 0;
-                input.numInts1 = SequenceHelpers::getEncodedNumInts2Bit(currentReadLengths[i]);
-                input.numInts2 = 0;
-                input.verbose = false;
-                input.verboseMutex = &verboseMutex;
+                input.encodedRead1.resize(encodedSequencePitchInInts);
+                input.encodedRead2.resize(0);
+                std::copy_n(currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
             }
 
             auto extensionResultsBatch = readExtender.extendSingleEndReadBatch(inputs);
@@ -534,11 +500,11 @@ extend_cpu_singleend(
                     er.status = ExtendedReadStatus::FoundMate;
                 }else{
                     if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == ReadExtender::AbortReason::NoPairedCandidatesAfterAlignment){
+                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
 
                             er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == ReadExtender::AbortReason::MsaNotExtended){
+                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
                             er.status = ExtendedReadStatus::MSANoExtension;
                         }
                     }else{
@@ -632,7 +598,6 @@ extend_cpu(
     const RuntimeOptions& runtimeOptions,
     const FileOptions& fileOptions,
     const MemoryOptions& memoryOptions,
-    const SequenceFileProperties& sequenceFileProperties,
     const CpuMinhasher& minhasher,
     const CpuReadStorage& readStorage
 ){
@@ -644,7 +609,6 @@ extend_cpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             minhasher,
             readStorage
         );
@@ -656,7 +620,6 @@ extend_cpu(
             runtimeOptions,
             fileOptions,
             memoryOptions,
-            sequenceFileProperties,
             minhasher,
             readStorage
         );

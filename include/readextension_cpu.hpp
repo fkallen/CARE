@@ -22,7 +22,6 @@ namespace care{
         const RuntimeOptions& runtimeOptions,
         const FileOptions& fileOptions,
         const MemoryOptions& memoryOptions,
-        const SequenceFileProperties& sequenceFileProperties,
         const CpuMinhasher& minhasher,
         const CpuReadStorage& readStorage
     );

@@ -1815,6 +1815,27 @@ namespace gpu{
         KernelLaunchHandle& handle){
 
         const int intsPerSequence2BitHiLo = SequenceHelpers::getEncodedNumInts2BitHiLo(maximumSequenceLength);
+
+        // cudaDeviceSynchronize(); CUERR;
+        // int h_numAnchors = 0;
+        // cudaMemcpyAsync(&h_numAnchors, d_numAnchors, sizeof(int), D2H, stream); CUERR;
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::cerr << "call_popcount_rightshifted_hamming_distance_reg_kernel_async\n";
+        // std::cerr << "h_numAnchors = " << h_numAnchors << "\n";
+        // std::cerr << "maximumSequenceLength = " << maximumSequenceLength << "\n";
+        // std::cerr << "encodedSequencePitchInInts2Bit = " << encodedSequencePitchInInts2Bit << "\n";
+        // std::cerr << "intsPerSequence2BitHiLo = " << intsPerSequence2BitHiLo << "\n";
+
+        // std::vector<unsigned int> h_anchors(maxNumAnchors * encodedSequencePitchInInts2Bit);
+        // cudaMemcpyAsync(h_anchors.data(), d_subjectSequencesData, maxNumAnchors * encodedSequencePitchInInts2Bit, D2H, stream); CUERR;
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+
+        // std::cerr << "first anchor 2bit\n";
+        // for(int i = 0; i < encodedSequencePitchInInts2Bit; i++){
+        //     std::cerr << h_anchors[i] << " ";
+        // }
+        // std::cerr << "\n";
         
         
         const std::size_t d_candidateDataHiLoTransposedBytes = SDIV(sizeof(unsigned int) * intsPerSequence2BitHiLo * maxNumCandidates, 512) * 512;
@@ -1865,6 +1886,16 @@ namespace gpu{
             stream,
             handle
         );
+
+        // std::vector<unsigned int> h_anchorshilotransposed(maxNumAnchors * intsPerSequence2BitHiLo);
+        // cudaMemcpyAsync(h_anchorshilotransposed.data(), d_subjectSequencesData, maxNumAnchors * intsPerSequence2BitHiLo, D2H, stream); CUERR;
+        // cudaStreamSynchronize(stream); CUERR; //DEBUG
+
+        // std::cerr << "first anchor hilo transposed\n";
+        // for(int i = 0; i < intsPerSequence2BitHiLo; i++){
+        //     std::cerr << h_anchorshilotransposed[i * h_numAnchors] << " ";
+        // }
+        // std::cerr << "\n";
         
 
         constexpr int blocksize = 128;
@@ -2720,6 +2751,40 @@ namespace gpu{
             };
             
             auto run = [&](){
+                #if 0
+                call_popcount_rightshifted_hamming_distance_smem_kernel_async(
+                    d_tempstorage,
+                    tempstoragebytes,
+                    d_alignment_overlaps,
+                    d_alignment_shifts,
+                    d_alignment_nOps,
+                    d_alignment_isValid,
+                    d_alignment_best_alignment_flags,
+                    d_subjectSequencesData,
+                    d_candidateSequencesData,
+                    d_subjectSequencesLength,
+                    d_candidateSequencesLength,
+                    d_candidates_per_subject_prefixsum,
+                    d_candidates_per_subject,
+                    d_anchorIndicesOfCandidates,
+                    d_numAnchors,
+                    d_numCandidates,
+                    d_anchorContainsN,
+                    removeAmbiguousAnchors,
+                    d_candidateContainsN,
+                    removeAmbiguousCandidates,
+                    maxNumAnchors,
+                    maxNumCandidates,
+                    maximumSequenceLength,
+                    encodedSequencePitchInInts2Bit,
+                    min_overlap,
+                    maxErrorRate,
+                    min_overlap_ratio,
+                    estimatedNucleotideErrorRate,
+                    stream,
+                    handle
+                );
+                #else
                 if(1 <= maximumSequenceLength && maximumSequenceLength <= 32){
                     
                     constexpr int maxValidIntsPerSequence = 2;
@@ -2795,6 +2860,7 @@ namespace gpu{
                         handle
                     );
                 }
+                #endif
             };
             
             if(d_tempstorage == nullptr){

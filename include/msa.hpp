@@ -79,9 +79,19 @@ public:
     };
 
     struct PossibleSplitColumn{
-        char letter = 'F';
-        int column = -1;
-        float ratio = 0.0f;
+        char letter;
+        int column;
+        float ratio;
+
+        bool operator==(const PossibleSplitColumn& rhs) const{
+            return letter == rhs.letter
+                && column == rhs.column
+                && ratio == rhs.ratio;
+        }
+
+        bool operator!=(const PossibleSplitColumn& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct MsaSplit{
@@ -91,10 +101,27 @@ public:
             
         std::vector<PossibleSplitColumn> columnInfo;
         std::vector<int> listOfCandidates;
+
+        bool operator==(const MsaSplit& rhs) const{
+            return columnInfo == rhs.columnInfo
+                && listOfCandidates == rhs.listOfCandidates;
+        }
+
+        bool operator!=(const MsaSplit& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     struct PossibleMsaSplits{
         std::vector<MsaSplit> splits;
+
+        bool operator==(const PossibleMsaSplits& rhs) const{
+            return splits == rhs.splits;
+        }
+
+        bool operator!=(const PossibleMsaSplits& rhs) const{
+            return (!operator==(rhs));
+        }
     };
 
     std::vector<char> consensus;
@@ -183,6 +210,30 @@ public:
         int dataset_coverage
     ) const;
 };
+
+
+std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(
+    int firstColumn, 
+    int lastColumnExcl,
+    const int* countsA,
+    const int* countsC,
+    const int* countsG,
+    const int* countsT,
+    const int* coverages
+);
+
+MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
+    const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
+    int numPossibleColumns,
+    int firstColumn, 
+    int lastColumnExcl,
+    int subjectColumnsBegin_incl,
+    int numCandidates,
+    const char* candidates,
+    int decodedSequencePitchBytes,
+    const int* candidateShifts,
+    const int* candidateLengths
+);
 
 
 

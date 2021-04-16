@@ -12,24 +12,19 @@
 
 namespace care{
 
-
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResult>& resultsRL
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& pairedEndDirectionResults,
+        int insertSize,
+        int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
-        std::sort(resultsLR.begin(), resultsLR.end(), idcomp);
+        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
 
-        std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
-
-        std::vector<ReadExtenderBase::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
-
-        std::merge(
-            resultsLR.begin(), resultsLR.end(), 
-            resultsRL.begin(), resultsRL.end(), 
-            combinedResults.begin(),
+        std::sort(
+            combinedResults.begin(), 
+            combinedResults.end(),
             idcomp
         );
 
@@ -63,7 +58,269 @@ namespace care{
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
-            //std::vector<std::pair<ReadExtenderBase::ExtendResult, ReadExtenderBase::ExtendResult>> pairsToCheck;
+            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
+            std::vector<std::pair<int, int>> pairPositionsToCheck;
+
+            constexpr int minimumOverlap = 40;
+
+            //try to find a pair of extensions with opposite directions which could be overlapped to produce an extension which reached the mate
+            for(auto x = begin; x != end; ++x){
+                for(auto y = std::next(x); y != end; ++y){
+                    const int xl = x->extendedRead.length();
+                    const int yl = y->extendedRead.length();
+
+                    if((x->direction == ExtensionDirection::LR && y->direction == ExtensionDirection::RL)
+                            || (x->direction == ExtensionDirection::RL && y->direction == ExtensionDirection::LR)){
+                        if(xl + yl >= insertSize - insertSizeStddev + minimumOverlap){
+
+                            //put direction LR first
+                            if(x->direction == ExtensionDirection::LR){
+                                //pairsToCheck.emplace_back(*x, *y);
+                                pairPositionsToCheck.emplace_back(std::distance(begin, x), std::distance(begin,y));
+                            }else{
+                                //pairsToCheck.emplace_back(*y, *x);
+                                pairPositionsToCheck.emplace_back(std::distance(begin, y), std::distance(begin,x));
+                            }
+                        }
+                    }
+                }
+            }
+
+            std::vector<std::string> possibleResults;
+
+            //for(const auto& pair : pairsToCheck){
+            for(const auto& pair : pairPositionsToCheck){
+                auto iteratorLR = std::next(begin, pair.first);
+                auto iteratorRL = std::next(begin, pair.second);
+
+                //const auto& lr = pair.first;
+                //const auto& rl = pair.second;
+
+                const auto& lr = *iteratorLR;
+                const auto& rl = *iteratorRL;
+                assert(lr.direction == ExtensionDirection::LR);
+                assert(rl.direction == ExtensionDirection::RL);
+
+                std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
+                SequenceHelpers::reverseComplementSequenceDecodedInplace(revcRLSeq.data(), revcRLSeq.size());
+
+                //  std::stringstream sstream;
+
+                //  sstream << to_string(lr.abortReason) << " " << to_string(rl.abortReason) << " - " << lr.readId1 << "\n";
+                //  sstream << lr.extendedRead << "\n";
+                //  sstream << revcRLSeq << "\n\n";
+
+                // std::cerr << sstream.rdbuf();
+
+                auto strings = func(lr.extendedRead, revcRLSeq);
+                possibleResults.insert(possibleResults.end(), std::make_move_iterator(strings.begin()), std::make_move_iterator(strings.end()));
+            }
+
+            if(possibleResults.size() > 0){
+                
+                std::map<std::string, int> histogram;
+                for(const auto& r : possibleResults){
+                    histogram[r]++;
+                }
+
+                //find sequence with highest frequency and return it;
+                auto maxIter = std::max_element(
+                    histogram.begin(), histogram.end(),
+                    [](const auto& p1, const auto& p2){
+                        return p1.second < p2.second;
+                    }
+                );
+
+                // if(histogram.size() >= 1){
+                //     std::cerr << "Possible results:\n";
+
+                //     for(const auto& pair : histogram){
+                //         std::cerr << pair.second << " : " << pair.first << "\n";
+                //     }
+                // }
+
+                ExtendResult er;
+                er.mateHasBeenFound = true;
+                er.success = true;
+                er.aborted = false;
+                er.numIterations = -1;
+
+                er.direction = ExtensionDirection::LR;
+                er.abortReason = AbortReason::None;
+
+                auto iteratorLR = std::next(begin, pairPositionsToCheck[0].first);
+                
+                //er.readId1 = pairsToCheck[0].first.readId1;
+                //er.readId2 = pairsToCheck[0].first.readId2;
+                er.readId1 = iteratorLR->readId1;
+                er.readId2 = iteratorLR->readId2;
+                er.extendedRead = std::move(maxIter->first);
+
+                return er;
+            }else{
+                //from results which did not find mate, choose longest
+                // std::cerr << "Could not merge the following extensions:\n";
+
+                // for(auto it = begin; it != end; ++it){
+                //     std::cerr << "id: " << it->readId1;
+                //     std::cerr << ", aborted: " << it->aborted;
+                //     std::cerr << ", reason: " << to_string(it->abortReason);
+                //     std::cerr << ", direction: " << to_string(it->direction) << "\n";
+                //     std::cerr << it->extendedRead << "\n";
+                // }
+                // std::cerr << "\n";
+                return *std::max_element(begin, end, lengthcomp);    
+            }
+        };
+
+        auto combineWithSameIdFoundMate = [&](auto begin, auto end){
+            assert(std::distance(begin, end) > 0);
+
+            //return longest read
+            return *std::max_element(begin, end, lengthcomp);
+        };
+
+        auto combineWithSameId = [&](auto begin, auto end){
+            assert(std::distance(begin, end) > 0);
+
+            auto partitionPoint = std::partition(begin, end, [](const auto& x){ return x.mateHasBeenFound;});
+
+            if(std::distance(begin, partitionPoint) > 0){
+
+                return std::make_optional(combineWithSameIdFoundMate(begin, partitionPoint));
+                //MismatchRatioGlueDecider decider(40, 0.01f);
+                // MatchLengthGlueDecider decider(insertSize - insertSizeStddev, 50);
+                // WeightedGapGluer gluer(begin->originalLength);
+                // auto func = [&](const auto& lr, const auto& rl){
+                //     return glue(lr, rl, decider, gluer);
+                // };
+
+                // return combineWithSameIdNoMate(begin, partitionPoint, func);
+
+            }else{
+                #if 0
+                    return std::optional<ExtendResult>{std::nullopt};
+                #else
+                    #if 1                
+                        MismatchRatioGlueDecider decider(40, 0.05f);
+                        //NaiveGluer gluer{};
+                        WeightedGapGluer gluer(begin->originalLength);
+                        auto func = [&](const auto& lr, const auto& rl){
+                            return glue(lr, rl, decider, gluer);
+                        };
+
+                        return std::make_optional(combineWithSameIdNoMate(partitionPoint, end, func));
+                    #else
+                        //from results which did not find mate, choose longest
+                        return std::make_optional(*std::max_element(partitionPoint, end, lengthcomp));
+                    #endif   
+                #endif             
+            }
+        };
+
+        auto iter1 = combinedResults.begin();
+        auto iter2 = combinedResults.begin();
+        auto dest = combinedResults.begin();
+
+        while(iter1 != combinedResults.end()){
+            while(iter2 != combinedResults.end() && iter1->getReadPairId() == iter2->getReadPairId()){
+                ++iter2;
+            }
+
+            //elements in range [iter1, iter2) have same read pair id
+            auto optionalresult = combineWithSameId(iter1, iter2);
+            if(optionalresult.has_value()){
+                //*dest = combineWithSameId(iter1, iter2);
+                *dest = *optionalresult;
+                ++dest;
+            }
+
+            
+            iter1 = iter2;
+        }
+
+        combinedResults.erase(dest, combinedResults.end());
+
+        return combinedResults;
+    }
+
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& pairedEndDirectionResults
+    ){
+        return combinePairedEndDirectionResults(pairedEndDirectionResults, insertSize, insertSizeStddev);
+    }
+
+
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& resultsLR,
+        std::vector<ExtendResult>& resultsRL
+    ){
+        auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
+        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+
+        #if 1
+
+        std::sort(resultsLR.begin(), resultsLR.end(), idcomp);
+
+        std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
+
+        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+
+        std::merge(
+            resultsLR.begin(), resultsLR.end(), 
+            resultsRL.begin(), resultsRL.end(), 
+            combinedResults.begin(),
+            idcomp
+        );
+
+        #else
+        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+        auto itertmp = std::copy(
+            std::make_move_iterator(resultsLR.begin()), std::make_move_iterator(resultsLR.end()), 
+            combinedResults.begin()
+        );
+        std::copy(
+            std::make_move_iterator(resultsRL.begin()), std::make_move_iterator(resultsRL.end()), 
+            itertmp
+        );
+        std::sort(
+            combinedResults.begin(), 
+            combinedResults.end(),
+            idcomp
+        );
+        #endif
+
+        auto glue = [&](const std::string& lrString, const std::string& rlString, const auto& decider, const auto& gluer){
+            std::vector<std::string> possibleResults;
+
+            const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+
+            for(int p = 0; p < maxNumberOfPossibilities; p++){
+                auto decision = decider(
+                    lrString, 
+                    rlString, 
+                    insertSize - insertSizeStddev + p
+                );
+
+                if(decision.has_value()){
+                    // auto aaa = gluer(*decision);
+                    // auto bbb = wgluer(*decision);
+                    // if(aaa != bbb){
+                    //     std::cerr << "glue\n" << lrString << " and\n" << rlString << "\n";
+                    //     std::cerr << aaa << "\n" << bbb << "\n\n";
+                    // }
+                    possibleResults.emplace_back(gluer(*decision));
+                }
+            }
+
+            return possibleResults;
+        };
+
+        auto combineWithSameIdNoMate = [&](auto begin, auto end, auto func){
+            assert(std::distance(begin, end) > 0);
+
+            //TODO optimization: store pairs of indices to results
+            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
             std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
@@ -242,33 +499,53 @@ namespace care{
 
     //int batchId = 0;
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
+    std::vector<ExtendResult> ReadExtenderBase::extendPairedReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
+        #if 0
         std::vector<Task> tasks(inputs.size());
 
         //std::cerr << "Transform LR " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::LR);});
 
         //std::cerr << "Process LR " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsLR = processPairedEndTasks(tasks);
+        std::vector<ExtendResult> extendResultsLR = processPairedEndTasks(std::move(tasks));
 
         std::vector<Task> tasks2(inputs.size());
 
         //std::cerr << "Transform RL " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return makePairedEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::RL);});
 
         //std::cerr << "Process RL " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsRL = processPairedEndTasks(tasks2);
+        std::vector<ExtendResult> extendResultsRL = processPairedEndTasks(std::move(tasks2));
 
         //std::cerr << "Combine " << batchId << "\n";
         std::vector<ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
             extendResultsLR,
             extendResultsRL
         );
+
+        #else
+        std::vector<Task> tasks(inputs.size() * 2);
+
+        //std::cerr << "Transform LR " << batchId << "\n";
+        auto itertmp = std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::LR);});
+
+        std::transform(inputs.begin(), inputs.end(), itertmp, 
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::RL);});
+
+        //std::cerr << "Process LR " << batchId << "\n";
+        std::vector<ExtendResult> extendResults = processPairedEndTasks(std::move(tasks));
+
+        //std::cerr << "Combine " << batchId << "\n";
+        std::vector<ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
+            extendResults
+        );
+        #endif
 
         //std::cerr << "replace " << batchId << "\n";
         //replace original positions in extend read by original sequences
@@ -335,9 +612,9 @@ namespace care{
 
 
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
-        std::vector<ReadExtenderBase::ExtendResult>& resultsLR,
-        std::vector<ReadExtenderBase::ExtendResult>& resultsRL,
+    std::vector<ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
+        std::vector<ExtendResult>& resultsLR,
+        std::vector<ExtendResult>& resultsRL,
         const std::vector<ReadExtenderBase::Task>& tasks
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.readId1 < r.readId1;};
@@ -377,7 +654,7 @@ namespace care{
 
         assert(remainingLR == remainingRL);
 
-        std::vector<ReadExtenderBase::ExtendResult> combinedResults(remainingRL);
+        std::vector<ExtendResult> combinedResults(remainingRL);
 
         for(int i = 0; i < remainingRL; i++){
             auto& comb = combinedResults[i];
@@ -408,20 +685,20 @@ namespace care{
         return combinedResults;
     }
 
-    std::vector<ReadExtenderBase::ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
+    std::vector<ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
         const std::vector<ExtendInput>& inputs
     ){
 
         std::vector<Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::LR);});
 
         std::vector<ExtendResult> extendResultsLR = processSingleEndTasks(tasks);
 
         std::vector<Task> tasks2(inputs.size());
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return makeSingleEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::RL);});
 
         //make sure candidates which were used in LR direction cannot be used again in RL direction
 
@@ -429,7 +706,7 @@ namespace care{
             tasks2[i].allUsedCandidateReadIdPairs = std::move(tasks[i].allUsedCandidateReadIdPairs);
         }
 
-        std::vector<ExtendResult> extendResultsRL = processSingleEndTasks(tasks2);
+        std::vector<ExtendResult> extendResultsRL = processSingleEndTasks(std::move(tasks2));
 
         std::vector<ExtendResult> extendResultsCombined = combineSingleEndDirectionResults(
             extendResultsLR,
