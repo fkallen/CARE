@@ -13,6 +13,7 @@
 #include <gpu/cachingallocator.cuh>
 #include <sequencehelpers.hpp>
 #include <hostdevicefunctions.cuh>
+#include <util.hpp>
 
 #include <algorithm>
 #include <vector>
@@ -314,6 +315,10 @@ struct BatchData{
 
     PinnedBuffer<int> h_segmentIds2{};
     PinnedBuffer<int> h_segmentIds4{};
+
+    PinnedBuffer<bool> h_isPairedCandidate{};
+    DeviceBuffer<bool> d_isPairedCandidate{};
+    DeviceBuffer<bool> d_isPairedCandidate2{};
 
     DeviceBuffer<int> d_anchorIndicesOfCandidates{};
     DeviceBuffer<int> d_anchorIndicesOfCandidates2{};
@@ -839,6 +844,12 @@ public:
         nvtx::pop_range();
 
         //std::exit(0);
+
+        nvtx::push_range("flagpairs", 7);
+
+        computePairFlagsCpu(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
 
 
         //collectTimer.start();
@@ -1431,6 +1442,77 @@ public:
             batchData.indicesOfActiveTasks.end()
         );
     }
+
+
+    void computePairFlagsCpu(BatchData& batchData, cudaStream_t stream) const{
+        cudaMemcpyAsync(
+            batchData.h_numCandidatesPerAnchorPrefixSum.data(),
+            batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+            sizeof(int) * (batchData.numTasks + 1),
+            D2H,
+            stream
+        );
+
+        cudaMemcpyAsync(
+            batchData.h_candidateReadIds.data(),
+            batchData.d_candidateReadIds.data(),
+            sizeof(read_number) * batchData.totalNumCandidates,
+            D2H,
+            stream
+        );
+
+        batchData.h_isPairedCandidate.resize(batchData.totalNumCandidates);
+
+        std::fill(batchData.h_isPairedCandidate.begin(), batchData.h_isPairedCandidate.end(), false);
+
+        std::vector<int> numPairedPerAnchor(batchData.numTasks, 0);
+
+        cudaStreamSynchronize(stream); CUERR;
+
+
+        for(int ap = 0; ap < batchData.numTasks / 2; ap++){
+            const int begin1 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 0];
+            const int end1 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 1];
+            const int begin2 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 1];
+            const int end2 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 2];
+
+            // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
+            // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
+
+            std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
+            std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
+
+            auto endIters = findPositionsOfPairedReadIds(
+                batchData.h_candidateReadIds.data() + begin1,
+                batchData.h_candidateReadIds.data() + end1,
+                batchData.h_candidateReadIds.data() + begin2,
+                batchData.h_candidateReadIds.data() + end2,
+                pairedPositions.begin(),
+                pairedPositions2.begin()
+            );
+
+            pairedPositions.erase(endIters.first, pairedPositions.end());
+            pairedPositions2.erase(endIters.second, pairedPositions2.end());
+            for(auto i : pairedPositions){
+                batchData.h_isPairedCandidate[begin1 + i] = true;
+            }
+            for(auto i : pairedPositions2){
+                batchData.h_isPairedCandidate[begin2 + i] = true;
+            }
+
+            numPairedPerAnchor[2*ap + 0] = pairedPositions.size();
+            numPairedPerAnchor[2*ap + 1] = pairedPositions2.size();                
+        }
+
+        cudaMemcpyAsync(
+            batchData.d_isPairedCandidate.data(),
+            batchData.h_isPairedCandidate.data(),
+            sizeof(bool) * batchData.totalNumCandidates,
+            H2D,
+            stream
+        ); CUERR;
+    }
+
 
     void removeUsedIdsAndMateIdsCPU(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{
         batchData.h_candidateReadIds.resize(batchData.totalNumCandidates);
@@ -2065,6 +2147,8 @@ public:
         );
         assert(cudaSuccess == cubstatus);
 
+        batchData.d_isPairedCandidate2.resize(batchData.d_isPairedCandidate.size());
+
         helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
             [
                 numTasks = batchData.numTasks,
@@ -2077,10 +2161,12 @@ public:
                 d_candidateSequencesLength = batchData.d_candidateSequencesLength.data(),
                 d_candidateSequencesData = batchData.d_candidateSequencesData.data(),
                 d_anchorIndicesOfCandidates = batchData.d_anchorIndicesOfCandidates.data(),
+                d_isPairedCandidate = batchData.d_isPairedCandidate.data(),
                 d_candidateReadIdsOut = batchData.d_candidateReadIds2.data(),
                 d_candidateSequencesLengthOut = batchData.d_candidateSequencesLength2.data(),
                 d_candidateSequencesDataOut = batchData.d_candidateSequencesData2.data(),
-                d_anchorIndicesOfCandidatesOut = batchData.d_anchorIndicesOfCandidates2.data()
+                d_anchorIndicesOfCandidatesOut = batchData.d_anchorIndicesOfCandidates2.data(),
+                d_isPairedCandidateOut = batchData.d_isPairedCandidate2.data()
             ] __device__ (){
 
                 constexpr int elementsPerIteration = 128;
@@ -2101,6 +2187,7 @@ public:
                             d_candidateReadIdsOut[outputLocation] = d_candidateReadIds[inputOffset + i];
                             d_candidateSequencesLengthOut[outputLocation] = d_candidateSequencesLength[inputOffset + i];
                             d_anchorIndicesOfCandidatesOut[outputLocation] = d_anchorIndicesOfCandidates[inputOffset + i];
+                            d_isPairedCandidateOut[outputLocation] = d_isPairedCandidate[inputOffset + i];
 
                             numSelected++;
                         }
@@ -2148,6 +2235,7 @@ public:
         std::swap(batchData.d_candidateSequencesLength2, batchData.d_candidateSequencesLength);
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
         std::swap(batchData.d_anchorIndicesOfCandidates2, batchData.d_anchorIndicesOfCandidates);
+        std::swap(batchData.d_isPairedCandidate2, batchData.d_isPairedCandidate);
 
         cudaMemcpyAsync(
             &batchData.totalNumCandidates,

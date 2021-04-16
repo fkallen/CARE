@@ -962,6 +962,245 @@ OutputIt set_intersection_n_or_empty(InputIt1 first1, InputIt1 last1,
 }
 
 
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2,
+         class CompareOther, class CompareSame1, class CompareSame2,
+         class LessThan12, class LessThan21>
+std::pair<OutputIt1, OutputIt2> flagPairedCandidates(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2, 
+    CompareOther isSameReadPairInOtherRange,
+    CompareSame1 isSameReadPairInSameRange1,
+    CompareSame2 isSameReadPairInSameRange2,
+    LessThan12 lessThan12,
+    LessThan21 lessThan21
+){
+    auto outputbegin1 = d_first1;
+    auto outputbegin2 = d_first2;
+
+    while (first1 != last1 && first2 != last2) {
+        const auto nextfirst1 = std::next(first1);
+        const auto nextfirst2 = std::next(first2);
+
+        int elems1 = 1;
+        if(nextfirst1 != last1){
+            if(isSameReadPairInSameRange1(*first1, *nextfirst1)){
+                elems1 = 2;
+            }
+        }
+
+        int elems2 = 1;
+        if(nextfirst2 != last2){
+            if(isSameReadPairInSameRange2(*first2, *nextfirst2)){
+                elems2 = 2;
+            }
+        }
+
+        if(elems1 == 1 && elems2 == 1){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 != *first2
+                if(lessThan12(*first1,*first2) || lessThan21(*first2, *first1)){
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{
+                    ++first1;
+                    ++first2;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                }else{
+                    ++first2;
+                }
+            }
+        }else if (elems1 == 2 && elems2 == 2){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                *d_first1++ = *first1++;
+                *d_first2++ = *first2++;
+                *d_first1++ = *first1++;
+                *d_first2++ = *first2++;
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                    ++first1;
+                }else{
+                    ++first2;
+                    ++first2;
+                }
+            }
+
+        }else if (elems1 == 2 && elems2 == 1){
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 == *first2 , e.g (4,5) , (4)
+                if(!lessThan12(*first1,*first2) && !lessThan21(*first2, *first1)){
+                    //discard first entry of first range, keep rest
+                    ++first1;
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{ // e.g (4,5) , (5)
+                    //keep first entry of first range, discard second entry
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                    ++first1;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                    ++first1;
+                }else{
+                    ++first2;
+                }
+            }
+            
+        }else {
+            //(elems1 == 1 && elems2 == 2)
+
+            if(isSameReadPairInOtherRange(*first1, *first2)){
+                //if *first1 == *first2 , e.g (4) , (4,5)
+                if(!lessThan12(*first1,*first2) && !lessThan21(*first2, *first1)){
+                    //discard first entry of second range, keep rest
+                    ++first2;
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                }else{
+                    //keep first entry of second range, discard second entry of second range
+                    *d_first1++ = *first1++;
+                    *d_first2++ = *first2++;
+                    ++first2;
+                }
+            }else{
+                if(lessThan12(*first1,*first2)){
+                    ++first1;
+                }else{
+                    ++first2;
+                    ++first2;
+                }
+            }            
+        }
+    }
+    
+    assert(std::distance(outputbegin1, d_first1) == std::distance(outputbegin2, d_first2));
+
+    return std::make_pair(d_first1, d_first2);
+}
+
+
+/*
+    Input: Two sorted ranges of read ids.
+    Two read ids x,y form a pair if x / 2 == y / 2
+
+    Output ranges will contain positions of those read ids for which its pair id exists in the respective other range
+*/
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2>
+std::pair<OutputIt1, OutputIt2> findPositionsOfPairedReadIds(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2
+){
+    std::vector<int> indexlist1(std::distance(first1, last1));
+    std::iota(indexlist1.begin(), indexlist1.end(), 0);
+
+    std::vector<int> indexlist2(std::distance(first2, last2));
+    std::iota(indexlist2.begin(), indexlist2.end(), 0);
+
+    auto isSameReadPairInOtherRange = [&](int l, int r){
+        return *(first1 + l) / 2 == *(first2 + r) / 2;
+    };
+
+    auto isSameReadPairInSameRange1 = [&](int l, int r){
+        return*(first1 + l)  / 2 == *(first1 + r) / 2;
+    };
+
+    auto isSameReadPairInSameRange2 = [&](int l, int r){
+        return *(first2 + l) / 2 == *(first2 + r) / 2;
+    };
+
+    auto lessThan12 = [&](int l, int r){
+        return *(first1 + l) < *(first2 + r);
+    };
+
+    auto lessThan21 = [&](int l, int r){
+        return *(first2 + l) < *(first1 + r);
+    };
+
+    return flagPairedCandidates(
+        indexlist1.begin(), 
+        indexlist1.end(),
+        indexlist2.begin(), 
+        indexlist2.end(),
+        d_first1, 
+        d_first2, 
+        isSameReadPairInOtherRange,
+        isSameReadPairInSameRange1,
+        isSameReadPairInSameRange2,
+        lessThan12,
+        lessThan21
+    );
+}
+
+
+
+/*
+    Input: Two sorted ranges of read ids.
+    Two read ids x,y form a pair if x / 2 == y / 2
+
+    Output ranges will contain read ids for which its pair id exists in the respective other range
+*/
+template<class InputIt1, class InputIt2,
+         class OutputIt1, class OutputIt2>
+std::pair<OutputIt1, OutputIt2> findPairedReadIds(
+    InputIt1 first1, 
+    InputIt1 last1,
+    InputIt2 first2, 
+    InputIt2 last2,
+    OutputIt1 d_first1, 
+    OutputIt2 d_first2
+){
+
+    auto isSameReadPairInOtherRange = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto isSameReadPairInSameRange1 = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto isSameReadPairInSameRange2 = [](const auto& l, const auto& r){
+        return l / 2 == r / 2;
+    };
+
+    auto lessThan12 = [](const auto& l, const auto& r){
+        return l < r;
+    };
+
+    auto lessThan21 = [](const auto& l, const auto& r){
+        return l < r;
+    };
+
+    return flagPairedCandidates(
+        first1, 
+        last1,
+        first2, 
+        last2,
+        d_first1, 
+        d_first2, 
+        isSameReadPairInOtherRange,
+        isSameReadPairInSameRange1,
+        isSameReadPairInSameRange2,
+        lessThan12,
+        lessThan21
+    );
+}
+
+
 
 
 #endif
