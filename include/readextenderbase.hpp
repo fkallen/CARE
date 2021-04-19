@@ -42,6 +42,7 @@ enum class AbortReason{
     MsaNotExtended, 
     NoPairedCandidates, 
     NoPairedCandidatesAfterAlignment, 
+    PairedAnchorFinished,
     None
 };
 
@@ -60,6 +61,7 @@ struct ExtendResult{
     bool aborted = false;
     int numIterations = 0;
     int originalLength = 0;
+    int originalMateLength = 0;
     ExtensionDirection direction = ExtensionDirection::LR;
     AbortReason abortReason = AbortReason::None;
 
@@ -140,6 +142,7 @@ public:
         bool mateHasBeenFound = false;
         bool mateRemovedFromCandidates = false;
         AbortReason abortReason = AbortReason::None;
+        int id = 0;
         int myLength = 0;
         int currentAnchorLength = 0;
         int accumExtensionLengths = 0;
@@ -181,6 +184,7 @@ public:
                 if(mateHasBeenFound != rhs.mateHasBeenFound) std::cerr << "mateHasBeenFound differs\n";
                 if(mateRemovedFromCandidates != rhs.mateRemovedFromCandidates) std::cerr << "mateRemovedFromCandidates differs\n";
                 if(abortReason != rhs.abortReason) std::cerr << "abortReason differs\n";
+                if(id != rhs.id) std::cerr << "id differs\n";
                 if(myLength != rhs.myLength) std::cerr << "myLength differs\n";
                 if(currentAnchorLength != rhs.currentAnchorLength) std::cerr << "currentAnchorLength differs\n";
                 if(accumExtensionLengths != rhs.accumExtensionLengths) std::cerr << "accumExtensionLengths differs\n";
@@ -220,6 +224,7 @@ public:
             if(mateHasBeenFound != rhs.mateHasBeenFound) return false;
             if(mateRemovedFromCandidates != rhs.mateRemovedFromCandidates) return false;
             if(abortReason != rhs.abortReason) return false;
+            if(id != rhs.id) return false;
             if(myLength != rhs.myLength) return false;
             if(currentAnchorLength != rhs.currentAnchorLength) return false;
             if(accumExtensionLengths != rhs.accumExtensionLengths) return false;
@@ -278,6 +283,7 @@ public:
             mateHasBeenFound = false;
             mateRemovedFromCandidates = false;
             abortReason = AbortReason::None;
+            id = 0;
             myLength = 0;
             currentAnchorLength = 0;
             accumExtensionLengths = 0;
@@ -539,6 +545,18 @@ public:
 #endif
 
     static std::vector<ExtendResult> combinePairedEndDirectionResults(
+        std::vector<ExtendResult>& lr_and_rl,
+        int insertSize,
+        int insertSizeStddev
+    );
+
+    static std::vector<ExtendResult> combinePairedEndDirectionResults2(
+        std::vector<ExtendResult>& lr_and_rl,
+        int insertSize,
+        int insertSizeStddev
+    );
+
+    static std::vector<ExtendResult> combinePairedEndDirectionResults4(
         std::vector<ExtendResult>& lr_and_rl,
         int insertSize,
         int insertSizeStddev

@@ -46,7 +46,7 @@ namespace care{
     public:
 
         HOSTDEVICEQUALIFIER INLINEQUALIFIER
-        static constexpr char reverseComplementBaseDecoded(char in) noexcept{
+        static constexpr char complementBaseDecoded(char in) noexcept{
             switch(in){
                 case 'A': return 'T';
                 case 'C': return 'G';
@@ -84,15 +84,15 @@ namespace care{
         static constexpr void reverseComplementSequenceDecodedInplace(char* sequence, int sequencelength) noexcept{
 
             for(int i = 0; i < sequencelength/2; i++){
-                const char front = reverseComplementBaseDecoded(sequence[i]);
-                const char back = reverseComplementBaseDecoded(sequence[sequencelength - 1 - i]);
+                const char front = complementBaseDecoded(sequence[i]);
+                const char back = complementBaseDecoded(sequence[sequencelength - 1 - i]);
                 sequence[i] = back;
                 sequence[sequencelength - 1 - i] = front;
             }
 
             if(sequencelength % 2 == 1){
                 const int middleindex = sequencelength/2;
-                sequence[middleindex] = reverseComplementBaseDecoded(sequence[middleindex]);
+                sequence[middleindex] = complementBaseDecoded(sequence[middleindex]);
             }
         }
 

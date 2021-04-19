@@ -244,6 +244,182 @@ namespace care{
         return combinedResults;
     }
 
+
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults2(
+        std::vector<ExtendResult>& pairedEndDirectionResults,
+        int insertSize,
+        int insertSizeStddev
+    ){
+        auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
+        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+
+        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
+
+        bool isSorted = std::is_sorted(
+            combinedResults.begin(), 
+            combinedResults.end(),
+            idcomp
+        );
+
+        if(!isSorted){
+            throw std::runtime_error("Error not sorted");
+        }
+
+        const int numinputs = combinedResults.size();
+        assert(numinputs % 2 == 0);
+
+        auto dest = combinedResults.begin();
+
+        for(int i = 0; i < numinputs; i += 2){
+            auto& leftresult = combinedResults[i];
+            auto& rightresult = combinedResults[i+1];
+
+            assert(leftresult.readId2 == rightresult.readId1);
+
+            if(leftresult.mateHasBeenFound){
+                // for(char& c : rightresult.extendedRead){
+                //     c = SequenceHelpers::complementBaseDecoded(c);
+                // }
+                // auto revcomplrightresultsequence = SequenceHelpers::reverseComplementSequenceDecoded(rightresult.extendedRead.data(), rightresult.extendedRead.size());
+
+                auto overlapstart = leftresult.extendedRead.size() - leftresult.originalMateLength;
+                leftresult.extendedRead.resize(overlapstart + rightresult.extendedRead.size());
+                std::copy(rightresult.extendedRead.begin(), rightresult.extendedRead.end(), leftresult.extendedRead.begin() + overlapstart);
+
+                // std::cerr << "left: " << leftresult.extendedRead << "\n";
+                // std::cerr << leftresult.readId1 << " " << leftresult.readId2 << "\n";
+                // std::cerr << "right: " << rightresult.extendedRead << "\n";
+                // std::cerr << rightresult.readId1 << " " << rightresult.readId2 << "\n";
+
+                // std::exit(1);
+
+                *dest = std::move(leftresult);
+                ++dest;
+            }
+        }
+
+        combinedResults.erase(dest, combinedResults.end());
+
+        return combinedResults;
+    }
+
+
+
+    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults4(
+        std::vector<ExtendResult>& pairedEndDirectionResults,
+        int insertSize,
+        int insertSizeStddev
+    ){
+        auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
+        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+
+        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
+
+        bool isSorted = std::is_sorted(
+            combinedResults.begin(), 
+            combinedResults.end(),
+            idcomp
+        );
+
+        if(!isSorted){
+            throw std::runtime_error("Error not sorted");
+        }
+
+        const int numinputs = combinedResults.size();
+        assert(numinputs % 4 == 0);
+
+        auto dest = combinedResults.begin();
+
+        //std::cerr << "first pass\n";
+        
+
+        for(int i = 0; i < numinputs; i += 2){
+            auto& leftresult = combinedResults[i];
+            auto& rightresult = combinedResults[i+1];
+
+            assert(leftresult.readId2 == rightresult.readId1);
+
+            if(leftresult.mateHasBeenFound){
+                // for(char& c : rightresult.extendedRead){
+                //     c = SequenceHelpers::complementBaseDecoded(c);
+                // }
+                // auto revcomplrightresultsequence = SequenceHelpers::reverseComplementSequenceDecoded(rightresult.extendedRead.data(), rightresult.extendedRead.size());
+
+                auto overlapstart = leftresult.extendedRead.size() - leftresult.originalMateLength;
+                leftresult.extendedRead.resize(overlapstart + rightresult.extendedRead.size());
+                std::copy(rightresult.extendedRead.begin(), rightresult.extendedRead.end(), leftresult.extendedRead.begin() + overlapstart);
+
+                // std::cerr << "left: " << leftresult.extendedRead << "\n";
+                // std::cerr << leftresult.readId1 << " " << leftresult.readId2 << "\n";
+                // std::cerr << "right: " << rightresult.extendedRead << "\n";
+                // std::cerr << rightresult.readId1 << " " << rightresult.readId2 << "\n";
+
+                // std::exit(1);
+
+                *dest = std::move(leftresult);
+                ++dest;
+            }
+        }
+
+        combinedResults.erase(dest, combinedResults.end());
+
+        //std::cerr << "second pass\n";
+
+        const int numinputs2 = combinedResults.size();
+        //
+
+        dest = combinedResults.begin();
+
+        for(int i = 0; i < numinputs2;){
+            auto& leftresult = combinedResults[i];
+
+            auto useleft = [&](){
+                if(leftresult.mateHasBeenFound){
+                    *dest = std::move(leftresult);
+                    ++dest;
+                }
+                i += 1;
+            };
+
+            if(i < numinputs2 - 1){
+                auto& rightresult = combinedResults[i+1];
+
+                if(leftresult.readId2 != rightresult.readId1){
+                    useleft();
+                }else{
+
+                    // std::cerr << leftresult.readId1 << " " << leftresult.readId2 << "\n";
+                    // std::cerr << rightresult.readId1 << " " << rightresult.readId2 << "\n";
+                    if(leftresult.mateHasBeenFound && rightresult.mateHasBeenFound){
+                        //??? choose best? which is best ?
+                        *dest = std::move(leftresult);
+                        ++dest;
+                    }else if(leftresult.mateHasBeenFound && !rightresult.mateHasBeenFound){
+                        *dest = std::move(leftresult);
+                        ++dest;
+                    }else if(!leftresult.mateHasBeenFound && rightresult.mateHasBeenFound){
+                        //SequenceHelpers::reverseComplementSequenceDecodedInplace(rightresult.extendedRead.data(), rightresult.extendedRead.size()):
+                        *dest = std::move(rightresult);
+                        ++dest;
+                    }else if(!leftresult.mateHasBeenFound && !rightresult.mateHasBeenFound){
+                        //???
+                    }
+
+                    i += 2;
+                }
+            }else{
+                useleft();
+            }
+        }
+
+        combinedResults.erase(dest, combinedResults.end());
+
+        return combinedResults;
+    }
+
+
+
+
     std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
         std::vector<ExtendResult>& pairedEndDirectionResults
     ){

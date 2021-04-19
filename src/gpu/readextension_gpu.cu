@@ -79,6 +79,7 @@ void initializePairedEndExtensionBatchData2(
 
     batchData.tasks.resize(batchsizePairs * 2);
 
+    #if 0
     for(int i = 0; i < batchsizePairs; i++){
         const auto& input = inputs[i];
 
@@ -140,6 +141,76 @@ void initializePairedEndExtensionBatchData2(
         taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
         taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
     }
+    #endif 
+
+    for(int i = 0; i < batchsizePairs; i++){
+        const auto& input = inputs[i];
+
+        auto& taskl = batchData.tasks[2*i];
+        taskl.reset();
+
+        taskl.pairedEnd = true;
+        taskl.direction = ExtensionDirection::LR;      
+        taskl.currentAnchor = std::move(input.encodedRead1);
+        taskl.encodedMate = std::move(input.encodedRead2);
+        taskl.currentAnchorLength = input.readLength1;
+        taskl.currentAnchorReadId = input.readId1;
+        taskl.accumExtensionLengths = 0;
+        taskl.iteration = 0;
+        taskl.myLength = input.readLength1;
+        taskl.myReadId = input.readId1;
+        taskl.mateLength = input.readLength2;
+        taskl.mateReadId = input.readId2;
+        taskl.decodedMate.resize(taskl.mateLength);
+        SequenceHelpers::decode2BitSequence(
+            taskl.decodedMate.data(),
+            taskl.encodedMate.data(),
+            taskl.mateLength
+        );
+        taskl.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskl.decodedMate.data(), taskl.mateLength);
+        taskl.resultsequence.resize(input.readLength1);
+        SequenceHelpers::decode2BitSequence(
+            taskl.resultsequence.data(),
+            taskl.currentAnchor.data(),
+            taskl.myLength
+        );
+
+        taskl.totalDecodedAnchors.emplace_back(taskl.resultsequence);
+        taskl.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        auto& taskr = batchData.tasks[2*i + 1];
+        taskr.reset();
+
+        taskr.pairedEnd = false;
+        taskr.direction = ExtensionDirection::LR;
+        taskr.currentAnchor = taskl.encodedMate;
+        taskr.encodedMate = taskl.currentAnchor;
+
+        taskr.currentAnchorLength = input.readLength2;
+        taskr.currentAnchorReadId = input.readId2;
+        taskr.accumExtensionLengths = 0;
+        taskr.iteration = 0;
+
+        SequenceHelpers::reverseComplementSequenceInplace2Bit(taskr.currentAnchor.data(), taskr.currentAnchorLength);
+
+        taskr.myLength = input.readLength2;
+        taskr.myReadId = input.readId2;
+
+        taskr.mateLength = input.readLength1;
+        taskr.mateReadId = input.readId1;
+
+        taskr.decodedMate = taskl.resultsequence;        
+        taskr.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskr.decodedMate.data(), taskr.mateLength);
+
+        taskr.resultsequence.resize(taskr.currentAnchorLength);
+        SequenceHelpers::decode2BitSequence(
+            taskr.resultsequence.data(),
+            taskr.currentAnchor.data(),
+            taskr.currentAnchorLength
+        );
+        taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
+        taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
+    }
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
@@ -153,7 +224,139 @@ void initializePairedEndExtensionBatchData2(
         batchData.splitTracker[t.myReadId] = 1;
     }
 
-    batchData.pairedEnd = batchData.tasks[0].pairedEnd;
+    batchData.pairedEnd = true;
+}
+
+
+void initializePairedEndExtensionBatchData4(
+    BatchData& batchData,
+    const std::vector<ExtendInput>& inputs,
+    std::size_t encodedSequencePitchInInts, 
+    std::size_t decodedSequencePitchInBytes, 
+    std::size_t msaColumnPitchInElements
+){
+    const int batchsizePairs = inputs.size();
+    if(batchsizePairs == 0){
+        batchData.tasks.clear();
+        return;
+    }
+
+    batchData.tasks.resize(batchsizePairs * 4);
+
+    for(int i = 0; i < batchsizePairs; i++){
+        const auto& input = inputs[i];
+
+        /*
+            5-3 input.encodedRead1 --->
+            3-5                           <--- input.encodedRead2
+        */
+
+        std::vector<unsigned int> enc1_53 = std::move(input.encodedRead1);
+        std::vector<unsigned int> enc2_35 = std::move(input.encodedRead2);
+
+        std::vector<unsigned int> enc1_35(enc1_53);
+        SequenceHelpers::reverseComplementSequenceInplace2Bit(enc1_35.data(), input.readLength1);
+        std::vector<unsigned int> enc2_53(enc2_35);
+        SequenceHelpers::reverseComplementSequenceInplace2Bit(enc2_53.data(), input.readLength2);
+
+        std::string dec1_53 = SequenceHelpers::get2BitString(enc1_53.data(), input.readLength1);
+        std::string dec1_35 = SequenceHelpers::get2BitString(enc1_35.data(), input.readLength1);
+        std::string dec2_53 = SequenceHelpers::get2BitString(enc2_53.data(), input.readLength2);
+        std::string dec2_35 = SequenceHelpers::get2BitString(enc2_35.data(), input.readLength2);
+
+
+        //task1, extend encodedRead1 to the right on 5-3 strand
+        auto& task1 = batchData.tasks[4*i + 0];
+        task1.reset();
+
+        task1.pairedEnd = true;
+        task1.direction = ExtensionDirection::LR;      
+        task1.currentAnchor = enc1_53;
+        task1.encodedMate = enc2_35;
+        task1.currentAnchorLength = input.readLength1;
+        task1.currentAnchorReadId = input.readId1;
+        task1.myLength = input.readLength1;
+        task1.myReadId = input.readId1;
+        task1.mateLength = input.readLength2;
+        task1.mateReadId = input.readId2;
+        task1.decodedMate = dec2_35;
+        task1.decodedMateRevC = dec2_53;
+        task1.resultsequence = dec1_53;
+        task1.totalDecodedAnchors.emplace_back(task1.resultsequence);
+        task1.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        auto& task2 = batchData.tasks[4*i + 1];
+        task2.reset();
+
+        task2.pairedEnd = false;
+        task2.direction = ExtensionDirection::LR;      
+        task2.currentAnchor = enc2_53;
+        //task2.encodedMate
+        task2.currentAnchorLength = input.readLength2;
+        task2.currentAnchorReadId = input.readId2;
+        task2.myLength = input.readLength2;
+        task2.myReadId = input.readId2;
+        task2.mateLength = 0;
+        task2.mateReadId = std::numeric_limits<read_number>::max();
+        //task2.decodedMate
+        //task2.decodedMateRevC
+        task2.resultsequence = dec2_53;
+        task2.totalDecodedAnchors.emplace_back(task2.resultsequence);
+        task2.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+
+        auto& task3 = batchData.tasks[4*i + 2];
+        task3.reset();
+
+        task3.pairedEnd = true;
+        task3.direction = ExtensionDirection::RL;      
+        task3.currentAnchor = enc2_35;
+        task3.encodedMate = enc1_53;
+        task3.currentAnchorLength = input.readLength2;
+        task3.currentAnchorReadId = input.readId2;
+        task3.myLength = input.readLength2;
+        task3.myReadId = input.readId2;
+        task3.mateLength = input.readLength1;
+        task3.mateReadId = input.readId1;
+        task3.decodedMate = dec1_53;
+        task3.decodedMateRevC = dec1_35;
+        task3.resultsequence = dec2_35;
+        task3.totalDecodedAnchors.emplace_back(task3.resultsequence);
+        task3.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        auto& task4 = batchData.tasks[4*i + 3];
+        task4.reset();
+
+        task4.pairedEnd = false;
+        task4.direction = ExtensionDirection::RL;      
+        task4.currentAnchor = enc1_35;
+        //task4.encodedMate
+        task4.currentAnchorLength = input.readLength1;
+        task4.currentAnchorReadId = input.readId1;
+        task4.myLength = input.readLength1;
+        task4.myReadId = input.readId1;
+        task4.mateLength = 0;
+        task4.mateReadId = std::numeric_limits<read_number>::max();
+        //task4.decodedMate = dec1_53;
+        //task4.decodedMateRevC = dec1_35;
+        task4.resultsequence = dec1_35;
+        task4.totalDecodedAnchors.emplace_back(task4.resultsequence);
+        task4.totalAnchorBeginInExtendedRead.emplace_back(0);
+    }
+
+    batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
+    batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
+    batchData.msaColumnPitchInElements = msaColumnPitchInElements;
+
+    batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
+    std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
+
+    batchData.splitTracker.clear();
+    for(const auto& t : batchData.tasks){
+        batchData.splitTracker[t.myReadId] = 1;
+    }
+
+    batchData.pairedEnd = true;
 }
 
 
@@ -549,6 +752,7 @@ extend_gpu_pairedend(
                 extendResult.readId1 = task.myReadId;
                 extendResult.readId2 = task.mateReadId;
                 extendResult.originalLength = task.myLength;
+                extendResult.originalMateLength = task.mateLength;
                 //construct extended read
                 //build msa of all saved totalDecodedAnchors[0]
 
@@ -1125,6 +1329,7 @@ extend_gpu_pairedend(
                 extendResult.readId1 = task.myReadId;
                 extendResult.readId2 = task.mateReadId;
                 extendResult.originalLength = task.myLength;
+                extendResult.originalMateLength = task.mateLength;
                 //construct extended read
                 //build msa of all saved totalDecodedAnchors[0]
 
@@ -1403,7 +1608,7 @@ extend_gpu_pairedend(
                     std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
                 }
             
-                initializePairedEndExtensionBatchData2(
+                initializePairedEndExtensionBatchData4(
                     *batchData,
                     inputs,
                     encodedSequencePitchInInts, 
@@ -1468,6 +1673,7 @@ extend_gpu_pairedend(
                 extendResult.readId1 = task.myReadId;
                 extendResult.readId2 = task.mateReadId;
                 extendResult.originalLength = task.myLength;
+                extendResult.originalMateLength = task.mateLength;
                 //construct extended read
                 //build msa of all saved totalDecodedAnchors[0]
 
@@ -1528,12 +1734,15 @@ extend_gpu_pairedend(
 
                 msa.build(msaInput);
 
+                //msa.print(std::cerr);
+
                 extendResult.success = true;
 
                 std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
 
                 std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
                 if(task.mateHasBeenFound){
+                    //std::cerr << "copy " << task.decodedMateRevC << " to end of consensus " << task.myReadId << "\n";
                     std::copy(
                         task.decodedMateRevC.begin(),
                         task.decodedMateRevC.end(),
@@ -1548,7 +1757,7 @@ extend_gpu_pairedend(
                 extendResults.emplace_back(std::move(extendResult));
             }
 
-            std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
+            std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults4(
                 extendResults,
                 insertSize,
                 insertSizeStddev
