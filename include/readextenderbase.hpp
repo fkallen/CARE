@@ -62,6 +62,8 @@ struct ExtendResult{
     int numIterations = 0;
     int originalLength = 0;
     int originalMateLength = 0;
+    int read1begin = 0;
+    int read2begin = 0;
     ExtensionDirection direction = ExtensionDirection::LR;
     AbortReason abortReason = AbortReason::None;
 
@@ -69,6 +71,7 @@ struct ExtendResult{
     read_number readId2{}; //same as input ids
 
     std::string extendedRead{};
+    
 
     read_number getReadPairId() const noexcept{
         return readId1 / 2;

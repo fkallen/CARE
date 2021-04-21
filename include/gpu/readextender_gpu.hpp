@@ -236,6 +236,7 @@ struct BatchData{
         };
     }
 
+    #if 0
     void init(std::vector<ReadExtenderBase::Task> tasks_,
         std::size_t encodedSequencePitchInInts_,
         std::size_t decodedSequencePitchInBytes_,
@@ -275,11 +276,11 @@ struct BatchData{
         }
 
         pairedEnd = tasks[indicesOfActiveTasks[0]].pairedEnd;
-
         if(pairedEnd){
 
         }
     }
+    #endif
 
     bool isEmpty() const noexcept{
         return indicesOfActiveTasks.empty();
@@ -302,6 +303,7 @@ struct BatchData{
     int numTasks = 0;
     int numTasksWithMateRemoved = 0;
     int someId = 0;
+    int numReadPairs = 0;
 
     int totalNumCandidates = 0;
     int totalNumberOfUsedIds = 0;
@@ -1457,6 +1459,22 @@ public:
         
         //update list of active task indices
 
+        std::vector<int> newEnabledTaskIndices;
+        for(int i = 0; i < numActiveTasks; i++){
+            auto index = batchData.indicesOfActiveTasks[i];
+            const auto& task = batchData.tasks[index];
+
+            // if task is the first LR task of the respective read pair
+            if(index % 4 == 0){
+                //if mate has not been found on lr direction and task is finished, enable RL direction
+
+                if(!task.mateHasBeenFound && !task.isActive(insertSize, insertSizeStddev)){
+                    newEnabledTaskIndices.emplace_back(index + 2);
+                    newEnabledTaskIndices.emplace_back(index + 3);
+                }
+            }
+        }
+
         batchData.indicesOfActiveTasks.erase(
             std::remove_if(
                 batchData.indicesOfActiveTasks.begin(), 
@@ -1467,25 +1485,140 @@ public:
             ),
             batchData.indicesOfActiveTasks.end()
         );
+
+        std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
+        auto iterator = std::merge(
+            batchData.indicesOfActiveTasks.begin(),
+            batchData.indicesOfActiveTasks.end(),
+            newEnabledTaskIndices.begin(),
+            newEnabledTaskIndices.end(),
+            tmp.begin()
+        );
+        assert(iterator == tmp.end()); //there should be no duplicates
+        std::swap(batchData.indicesOfActiveTasks, tmp);
+    }
+
+
+    std::vector<ExtendResult> constructResults(BatchData& batchData) const{
+        std::vector<ExtendResult> extendResults;
+        extendResults.reserve(batchData.tasks.size());
+
+        for(const auto& task : batchData.tasks){
+
+            ExtendResult extendResult;
+            extendResult.direction = task.direction;
+            extendResult.numIterations = task.iteration;
+            extendResult.aborted = task.abort;
+            extendResult.abortReason = task.abortReason;
+            extendResult.readId1 = task.myReadId;
+            extendResult.readId2 = task.mateReadId;
+            extendResult.originalLength = task.myLength;
+            extendResult.originalMateLength = task.mateLength;
+            extendResult.read1begin = 0;
+
+            //construct extended read
+            //build msa of all saved totalDecodedAnchors[0]
+
+            const int numsteps = task.totalDecodedAnchors.size();
+
+            int maxlen = 0;
+            for(const auto& s: task.totalDecodedAnchors){
+                const int len = s.length();
+                if(len > maxlen){
+                    maxlen = len;
+                }
+            }
+
+            const std::string& decodedAnchor = task.totalDecodedAnchors[0];
+
+            const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
+            std::vector<float> initialWeights(numsteps-1, 1.0f);
+
+
+            std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
+            std::vector<int> stepstringlengths(numsteps-1);
+            for(int c = 1; c < numsteps; c++){
+                std::copy(
+                    task.totalDecodedAnchors[c].begin(),
+                    task.totalDecodedAnchors[c].end(),
+                    stepstrings.begin() + (c-1) * maxlen
+                );
+                stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
+            }
+
+            MultipleSequenceAlignment::InputData msaInput;
+            msaInput.useQualityScores = false;
+            msaInput.subjectLength = decodedAnchor.length();
+            msaInput.nCandidates = numsteps-1;
+            msaInput.candidatesPitch = maxlen;
+            msaInput.candidateQualitiesPitch = 0;
+            msaInput.subject = decodedAnchor.c_str();
+            msaInput.candidates = stepstrings.data();
+            msaInput.subjectQualities = nullptr;
+            msaInput.candidateQualities = nullptr;
+            msaInput.candidateLengths = stepstringlengths.data();
+            msaInput.candidateShifts = shifts.data();
+            msaInput.candidateDefaultWeightFactors = initialWeights.data();
+
+            MultipleSequenceAlignment msa;
+
+            msa.build(msaInput);
+
+            //msa.print(std::cerr);
+
+            extendResult.success = true;
+
+            std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+
+            std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
+            if(task.mateHasBeenFound){
+                //std::cerr << "copy " << task.decodedMateRevC << " to end of consensus " << task.myReadId << "\n";
+                std::copy(
+                    task.decodedMateRevC.begin(),
+                    task.decodedMateRevC.end(),
+                    extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
+                );
+
+                extendResult.read2begin = extendedRead.length() - task.decodedMateRevC.length();
+            }else{
+                extendResult.read2begin = -1;
+            }
+
+            extendResult.extendedRead = std::move(extendedRead);
+
+            extendResult.mateHasBeenFound = task.mateHasBeenFound;
+
+            extendResults.emplace_back(std::move(extendResult));
+        }
+
+        std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults4(
+            extendResults,
+            insertSize,
+            insertSizeStddev
+        );
+
+        return extendResultsCombined;
     }
 
 
     void computePairFlagsCpu(BatchData& batchData, cudaStream_t stream) const{
-        cudaMemcpyAsync(
-            batchData.h_numCandidatesPerAnchorPrefixSum.data(),
-            batchData.d_numCandidatesPerAnchorPrefixSum.data(),
-            sizeof(int) * (batchData.numTasks + 1),
-            D2H,
-            stream
-        );
+        //computed in removeUsedIdsAndMateIdsCPU
+        
+        // cudaMemcpyAsync(
+        //     batchData.h_numCandidatesPerAnchorPrefixSum.data(),
+        //     batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //     sizeof(int) * (batchData.numTasks + 1),
+        //     D2H,
+        //     stream
+        // );
 
-        cudaMemcpyAsync(
-            batchData.h_candidateReadIds.data(),
-            batchData.d_candidateReadIds.data(),
-            sizeof(read_number) * batchData.totalNumCandidates,
-            D2H,
-            stream
-        );
+        // cudaMemcpyAsync(
+        //     batchData.h_candidateReadIds.data(),
+        //     batchData.d_candidateReadIds.data(),
+        //     sizeof(read_number) * batchData.totalNumCandidates,
+        //     D2H,
+        //     stream
+        // );
 
         batchData.h_isPairedCandidate.resize(batchData.totalNumCandidates);
         batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
@@ -1494,7 +1627,7 @@ public:
 
         std::vector<int> numPairedPerAnchor(batchData.numTasks, 0);
 
-        cudaStreamSynchronize(stream); CUERR;
+        //cudaStreamSynchronize(stream); CUERR;
 
         #if 0 //this assumes all active tasks are paired
         for(int ap = 0; ap < batchData.numTasks / 2; ap++){

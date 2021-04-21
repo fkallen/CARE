@@ -237,10 +237,15 @@ namespace care{
 
         ExtendedReadStatus status;
         read_number readId;
+        int read1begin = 0;
+        int read1end = 0;
+        int read2begin = 0;
+        int read2end = 0;
         std::string extendedSequence;
 
         ExtendedRead() = default;
 
+        #if 0
         ExtendedRead(const ExtendedReadDebug& rhs){
             *this = rhs;            
         }
@@ -282,11 +287,13 @@ namespace care{
 
             return *this;
         }
+        #endif
 
         std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
-            const std::size_t requiredBytes = sizeof(read_number)
-                + sizeof(ExtendedReadStatus)
-                + sizeof(int) + extendedSequence.length();
+            const std::size_t requiredBytes = sizeof(read_number) //readid
+                + sizeof(ExtendedReadStatus) //status
+                + sizeof(int) * 4  //original ranges
+                + sizeof(int) + extendedSequence.length(); //sequence
 
             const std::size_t availableBytes = std::distance(ptr, endPtr);
 
@@ -295,6 +302,15 @@ namespace care{
                 ptr += sizeof(read_number);
                 std::memcpy(ptr, &status, sizeof(ExtendedReadStatus));
                 ptr += sizeof(ExtendedReadStatus);
+
+                std::memcpy(ptr, &read1begin, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read1end, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read2begin, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read2end, sizeof(int));
+                ptr += sizeof(int);
 
                 int l = 0;
                 l = extendedSequence.length();
@@ -313,7 +329,16 @@ namespace care{
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
             std::memcpy(&status, ptr, sizeof(ExtendedReadStatus));
-            ptr += sizeof(ExtendedReadStatus);    
+            ptr += sizeof(ExtendedReadStatus);
+
+            std::memcpy(&read1begin, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read1end, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read2begin, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read2end, ptr, sizeof(int));
+            ptr += sizeof(int);
 
             int l = 0;
             std::memcpy(&l, ptr, sizeof(int));
@@ -327,6 +352,11 @@ namespace care{
             os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
             os.write(reinterpret_cast<const char*>(&status), sizeof(ExtendedReadStatus));
 
+            os.write(reinterpret_cast<const char*>(&read1begin), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read1end), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read2begin), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read2end), sizeof(int));
+
             int l = 0;
             l = extendedSequence.length();
             os.write(reinterpret_cast<const char*>(&l), sizeof(int));
@@ -338,6 +368,11 @@ namespace care{
         bool readFromBinaryStream(std::istream& is){
             is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
             is.read(reinterpret_cast<char*>(&status), sizeof(ExtendedReadStatus));
+
+            is.read(reinterpret_cast<char*>(&read1begin), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read1end), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read2begin), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read2end), sizeof(int));
 
             int l = 0;
             is.read(reinterpret_cast<char*>(&l), sizeof(int));

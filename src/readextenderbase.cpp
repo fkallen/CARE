@@ -331,6 +331,65 @@ namespace care{
         auto dest = combinedResults.begin();
 
         //std::cerr << "first pass\n";
+
+        #if 1
+
+            const int reads = numinputs / 4;
+
+            auto merge = [&](auto& l, auto& r){
+                auto overlapstart = l.read2begin;
+                l.extendedRead.resize(overlapstart + r.extendedRead.size());
+                std::copy(r.extendedRead.begin(), r.extendedRead.end(), l.extendedRead.begin() + overlapstart);
+            };
+
+            for(int i = 0; i < reads; i += 1){
+                auto& r1 = combinedResults[4 * i + 0];
+                auto& r2 = combinedResults[4 * i + 1];
+                auto& r3 = combinedResults[4 * i + 2];
+                auto& r4 = combinedResults[4 * i + 3];
+
+                if(r1.mateHasBeenFound){
+                    merge(r1,r2);
+
+                    //avoid self move
+                    if(&(*dest) != &r1){
+                        *dest = std::move(r1);
+                    }
+                    
+                    ++dest;
+                }else if(r3.mateHasBeenFound){
+                        merge(r3,r4);
+
+                        int extlength = r3.extendedRead.size();
+
+                        SequenceHelpers::reverseComplementSequenceDecodedInplace(r3.extendedRead.data(), extlength);
+                        int newread1begin = extlength - (r3.read2begin + r3.originalMateLength);
+                        int newread1length = r3.originalMateLength;
+                        int newread2begin = extlength - (r3.read1begin + r3.originalLength);
+                        int newread2length = r3.originalLength;
+
+                        r3.read1begin = newread1begin;
+                        r3.read2begin = newread2begin;
+                        r3.originalLength = newread1length;
+                        r3.originalMateLength = newread2length;
+
+                        if(&(*dest) != &r3){
+                            *dest = std::move(r3);
+                        }
+                        ++dest;
+                }else{
+                    assert(int(r1.extendedRead.size()) >= r1.originalLength);
+                    r1.extendedRead.erase(r1.extendedRead.begin() + r1.originalLength, r1.extendedRead.end());
+
+                    if(&(*dest) != &r1){
+                        *dest = std::move(r1);
+                    }
+                    ++dest;
+                }
+            }
+
+
+        #else
         
 
         for(int i = 0; i < numinputs; i += 2){
@@ -338,6 +397,11 @@ namespace care{
             auto& rightresult = combinedResults[i+1];
 
             assert(leftresult.readId2 == rightresult.readId1);
+
+            std::cerr << "left: " << leftresult.extendedRead << "\n";
+            std::cerr << leftresult.readId1 << " " << leftresult.readId2 << "\n";
+            std::cerr << "right: " << rightresult.extendedRead << "\n";
+            std::cerr << rightresult.readId1 << " " << rightresult.readId2 << "\n";
 
             if(leftresult.mateHasBeenFound){
                 // for(char& c : rightresult.extendedRead){
@@ -411,6 +475,8 @@ namespace care{
                 useleft();
             }
         }
+
+        #endif
 
         combinedResults.erase(dest, combinedResults.end());
 

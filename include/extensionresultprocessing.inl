@@ -69,15 +69,16 @@ void writeExtensionResultsToFile(
 
         std::stringstream sstream;
         sstream << extendedRead.readId;
-        sstream << ' ' << (extendedRead.status == ExtendedReadStatus::FoundMate ? "reachedmate:1" : "reachedmate:0");
+        sstream << ' ' << (extendedRead.status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
         sstream << ' ';
-        if(extendedRead.status == ExtendedReadStatus::LengthAbort){
-            sstream << "exceeded_length";
-        }else if(extendedRead.status == ExtendedReadStatus::CandidateAbort){
-            sstream << "0_candidates";
-        }else if(extendedRead.status == ExtendedReadStatus::MSANoExtension){
-            sstream << "msa_stop";
-        }
+        sstream << "lens:" << extendedRead.read1begin << ',' << extendedRead.read1end << ',' << extendedRead.read2begin << ',' << extendedRead.read2end;
+        // if(extendedRead.status == ExtendedReadStatus::LengthAbort){
+        //     sstream << "exceeded_length";
+        // }else if(extendedRead.status == ExtendedReadStatus::CandidateAbort){
+        //     sstream << "0_candidates";
+        // }else if(extendedRead.status == ExtendedReadStatus::MSANoExtension){
+        //     sstream << "msa_stop";
+        // }
 
         Read res;
         res.header = sstream.str();
@@ -93,9 +94,9 @@ void writeExtensionResultsToFile(
     for(const auto& pair : statusHistogram){
         switch(pair.first){
             case ExtendedReadStatus::FoundMate: std::cout << "Found Mate: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
-            case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
+            // case ExtendedReadStatus::LengthAbort: std::cout << "Too long: " << pair.second << "\n"; break;
+            // case ExtendedReadStatus::CandidateAbort: std::cout << "Empty candidate list: " << pair.second << "\n"; break;
+            // case ExtendedReadStatus::MSANoExtension: std::cout << "Did not grow: " << pair.second << "\n"; break;
         }
     }
 }
