@@ -280,7 +280,7 @@ extend_gpu_pairedend(
     const int batchsizePairs = correctionOptions.batchsize;
     const int numBatchesToProcess = SDIV(readIdGenerator.getEnd(), batchsizePairs * 2);
 
-    #if 1
+    #if 0
 
     #if 1
 
