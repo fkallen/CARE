@@ -80,7 +80,7 @@ void initializePairedEndExtensionBatchData2(
 
     batchData.tasks.resize(batchsizePairs * 2);
 
-    #if 0
+    #if 1
     for(int i = 0; i < batchsizePairs; i++){
         const auto& input = inputs[i];
 
@@ -142,7 +142,7 @@ void initializePairedEndExtensionBatchData2(
         taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
         taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
     }
-    #endif 
+    #else
 
     for(int i = 0; i < batchsizePairs; i++){
         const auto& input = inputs[i];
@@ -212,6 +212,8 @@ void initializePairedEndExtensionBatchData2(
         taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
         taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
     }
+
+    #endif
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
