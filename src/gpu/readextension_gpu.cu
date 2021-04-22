@@ -73,6 +73,7 @@ void initializePairedEndExtensionBatchData2(
     std::size_t msaColumnPitchInElements
 ){
     const int batchsizePairs = inputs.size();
+    batchData.numReadPairs = batchsizePairs;
     if(batchsizePairs == 0){
         batchData.tasks.clear();
         return;
@@ -239,7 +240,7 @@ void initializePairedEndExtensionBatchData4(
     std::size_t msaColumnPitchInElements
 ){
     const int batchsizePairs = inputs.size();
-    batchData.numReadPairs = batchsizePairs / 4;
+    batchData.numReadPairs = batchsizePairs ;
     if(batchsizePairs == 0){
         batchData.tasks.clear();
         return;
@@ -1624,7 +1625,15 @@ extend_gpu_pairedend(
                     std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
                 }
             
-                initializePairedEndExtensionBatchData4(
+                // initializePairedEndExtensionBatchData4(
+                //     *batchData,
+                //     inputs,
+                //     encodedSequencePitchInInts, 
+                //     decodedSequencePitchInBytes, 
+                //     msaColumnPitchInElements
+                // );
+
+                initializePairedEndExtensionBatchData2(
                     *batchData,
                     inputs,
                     encodedSequencePitchInInts, 

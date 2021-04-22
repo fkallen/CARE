@@ -1459,21 +1459,21 @@ public:
         
         //update list of active task indices
 
-        std::vector<int> newEnabledTaskIndices;
-        for(int i = 0; i < numActiveTasks; i++){
-            auto index = batchData.indicesOfActiveTasks[i];
-            const auto& task = batchData.tasks[index];
+        // std::vector<int> newEnabledTaskIndices;
+        // for(int i = 0; i < numActiveTasks; i++){
+        //     auto index = batchData.indicesOfActiveTasks[i];
+        //     const auto& task = batchData.tasks[index];
 
-            // if task is the first LR task of the respective read pair
-            if(index % 4 == 0){
-                //if mate has not been found on lr direction and task is finished, enable RL direction
+        //     // if task is the first LR task of the respective read pair
+        //     if(index % 4 == 0){
+        //         //if mate has not been found on lr direction and task is finished, enable RL direction
 
-                if(!task.mateHasBeenFound && !task.isActive(insertSize, insertSizeStddev)){
-                    newEnabledTaskIndices.emplace_back(index + 2);
-                    newEnabledTaskIndices.emplace_back(index + 3);
-                }
-            }
-        }
+        //         if(!task.mateHasBeenFound && !task.isActive(insertSize, insertSizeStddev)){
+        //             newEnabledTaskIndices.emplace_back(index + 2);
+        //             newEnabledTaskIndices.emplace_back(index + 3);
+        //         }
+        //     }
+        // }
 
         batchData.indicesOfActiveTasks.erase(
             std::remove_if(
@@ -1486,16 +1486,16 @@ public:
             batchData.indicesOfActiveTasks.end()
         );
 
-        std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
-        auto iterator = std::merge(
-            batchData.indicesOfActiveTasks.begin(),
-            batchData.indicesOfActiveTasks.end(),
-            newEnabledTaskIndices.begin(),
-            newEnabledTaskIndices.end(),
-            tmp.begin()
-        );
-        assert(iterator == tmp.end()); //there should be no duplicates
-        std::swap(batchData.indicesOfActiveTasks, tmp);
+        // std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
+        // auto iterator = std::merge(
+        //     batchData.indicesOfActiveTasks.begin(),
+        //     batchData.indicesOfActiveTasks.end(),
+        //     newEnabledTaskIndices.begin(),
+        //     newEnabledTaskIndices.end(),
+        //     tmp.begin()
+        // );
+        // assert(iterator == tmp.end()); //there should be no duplicates
+        // std::swap(batchData.indicesOfActiveTasks, tmp);
     }
 
 
@@ -1591,11 +1591,23 @@ public:
             extendResults.emplace_back(std::move(extendResult));
         }
 
+        #if 1
+
+        std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
+            extendResults,
+            insertSize,
+            insertSizeStddev
+        );
+
+        #else
+
         std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults4(
             extendResults,
             insertSize,
             insertSizeStddev
         );
+
+        #endif
 
         return extendResultsCombined;
     }
@@ -1624,6 +1636,15 @@ public:
         batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
 
         std::fill(batchData.h_isPairedCandidate.begin(), batchData.h_isPairedCandidate.end(), false);
+        cudaMemcpyAsync(
+            batchData.d_isPairedCandidate.data(),
+            batchData.h_isPairedCandidate.data(),
+            sizeof(bool) * batchData.totalNumCandidates,
+            H2D,
+            stream
+        ); CUERR;
+
+        return;
 
         std::vector<int> numPairedPerAnchor(batchData.numTasks, 0);
 

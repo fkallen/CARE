@@ -57,8 +57,6 @@ namespace care{
         auto combineWithSameIdNoMate = [&](auto begin, auto end, auto func){
             assert(std::distance(begin, end) > 0);
 
-            //TODO optimization: store pairs of indices to results
-            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
             std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
@@ -85,6 +83,11 @@ namespace care{
                     }
                 }
             }
+
+            struct PossibleResult{
+                int gaplength = 0;
+                std::string sequence;
+            };
 
             std::vector<std::string> possibleResults;
 
@@ -113,6 +116,9 @@ namespace care{
                 // std::cerr << sstream.rdbuf();
 
                 auto strings = func(lr.extendedRead, revcRLSeq);
+
+                possibleResults.reserve(possibleResults.size() + strings.size());
+
                 possibleResults.insert(possibleResults.end(), std::make_move_iterator(strings.begin()), std::make_move_iterator(strings.end()));
             }
 
@@ -139,24 +145,23 @@ namespace care{
                 //     }
                 // }
 
-                ExtendResult er;
-                er.mateHasBeenFound = true;
-                er.success = true;
-                er.aborted = false;
-                er.numIterations = -1;
-
-                er.direction = ExtensionDirection::LR;
-                er.abortReason = AbortReason::None;
-
                 auto iteratorLR = std::next(begin, pairPositionsToCheck[0].first);
-                
-                //er.readId1 = pairsToCheck[0].first.readId1;
-                //er.readId2 = pairsToCheck[0].first.readId2;
-                er.readId1 = iteratorLR->readId1;
-                er.readId2 = iteratorLR->readId2;
-                er.extendedRead = std::move(maxIter->first);
 
-                return er;
+                ExtendResult extendResult;
+                extendResult.direction = ExtensionDirection::LR;
+                extendResult.mateHasBeenFound = true;
+                extendResult.numIterations = -1;
+                extendResult.aborted = false;
+                extendResult.abortReason = AbortReason::None;
+                extendResult.readId1 = iteratorLR->readId1;;
+                extendResult.readId2 = iteratorLR->readId2;
+                extendResult.originalLength = iteratorLR->originalLength;
+                extendResult.originalMateLength = iteratorLR->originalMateLength;
+                extendResult.extendedRead = std::move(maxIter->first);
+                extendResult.read1begin = 0;
+                extendResult.read2begin = extendResult.extendedRead.size() - extendResult.originalMateLength;
+
+                return extendResult;
             }else{
                 //from results which did not find mate, choose longest
                 // std::cerr << "Could not merge the following extensions:\n";
@@ -169,15 +174,63 @@ namespace care{
                 //     std::cerr << it->extendedRead << "\n";
                 // }
                 // std::cerr << "\n";
-                return *std::max_element(begin, end, lengthcomp);    
+
+
+
+
+                // auto longestResult = std::max_element(begin, end, lengthcomp);
+
+                // if(longestResult->direction == ExtensionDirection::RL){
+
+                //     int extlength = longestResult->extendedRead.size();
+
+                //     SequenceHelpers::reverseComplementSequenceDecodedInplace(longestResult->extendedRead.data(), extlength);
+                //     int newread1begin = -1;
+                //     int newread1length = -1;
+                //     int newread2begin = extlength - (longestResult->read1begin + longestResult->originalLength);
+                //     int newread2length = longestResult->originalLength;
+
+                //     longestResult->read1begin = newread1begin;
+                //     longestResult->read2begin = newread2begin;
+                //     longestResult->originalLength = newread1length;
+                //     longestResult->originalMateLength = newread2length;
+                // }
+
+                // return *longestResult;
+
+                // do return original read
+                assert(int(begin->extendedRead.size()) >= begin->originalLength);
+                begin->extendedRead.erase(begin->extendedRead.begin() + begin->originalLength, begin->extendedRead.end());
+
+                return *begin;
             }
         };
 
         auto combineWithSameIdFoundMate = [&](auto begin, auto end){
             assert(std::distance(begin, end) > 0);
 
+
+
             //return longest read
-            return *std::max_element(begin, end, lengthcomp);
+            auto longestResult = std::max_element(begin, end, lengthcomp);
+
+            if(longestResult->direction == ExtensionDirection::RL){
+
+                int extlength = longestResult->extendedRead.size();
+
+                SequenceHelpers::reverseComplementSequenceDecodedInplace(longestResult->extendedRead.data(), extlength);
+                int newread1begin = extlength - (longestResult->read2begin + longestResult->originalMateLength);
+                int newread1length = longestResult->originalMateLength;
+                int newread2begin = extlength - (longestResult->read1begin + longestResult->originalLength);
+                int newread2length = longestResult->originalLength;
+
+                longestResult->read1begin = newread1begin;
+                longestResult->read2begin = newread2begin;
+                longestResult->originalLength = newread1length;
+                longestResult->originalMateLength = newread2length;
+            }
+
+            return *longestResult;
         };
 
         auto combineWithSameId = [&](auto begin, auto end){
