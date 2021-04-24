@@ -223,6 +223,10 @@ void initializePairedEndExtensionBatchData2(
     batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
     std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
 
+    for(int i = 0; i < batchsizePairs * 2; i++){
+        batchData.tasks[i].id = i;
+    }
+
     batchData.splitTracker.clear();
     for(const auto& t : batchData.tasks){
         batchData.splitTracker[t.myReadId] = 1;
@@ -353,7 +357,7 @@ void initializePairedEndExtensionBatchData4(
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
 
-    #if 0
+    #if 1
     batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
     std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
     #else
@@ -367,6 +371,10 @@ void initializePairedEndExtensionBatchData4(
         batchData.indicesOfActiveTasks[k++] = 4 * i + 1;
     }
     #endif
+
+    for(int i = 0; i < batchsizePairs * 4; i++){
+        batchData.tasks[i].id = i;
+    }
 
     batchData.splitTracker.clear();
     for(const auto& t : batchData.tasks){
@@ -432,8 +440,8 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(20);
-    //readIdGenerator.skip(4200000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(200000);
+    //readIdGenerator.skip(199700);
  
     BackgroundThread outputThread(true);
 
@@ -1625,13 +1633,17 @@ extend_gpu_pairedend(
                     std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
                 }
             
-                // initializePairedEndExtensionBatchData4(
-                //     *batchData,
-                //     inputs,
-                //     encodedSequencePitchInInts, 
-                //     decodedSequencePitchInBytes, 
-                //     msaColumnPitchInElements
-                // );
+                #if 1
+                
+                initializePairedEndExtensionBatchData4(
+                    *batchData,
+                    inputs,
+                    encodedSequencePitchInInts, 
+                    decodedSequencePitchInBytes, 
+                    msaColumnPitchInElements
+                );
+
+                #else
 
                 initializePairedEndExtensionBatchData2(
                     *batchData,
@@ -1640,6 +1652,7 @@ extend_gpu_pairedend(
                     decodedSequencePitchInBytes, 
                     msaColumnPitchInElements
                 );
+                #endif
 
                 batchData->setState(BatchData::State::BeforePrepare);
             }else{

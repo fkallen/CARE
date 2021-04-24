@@ -1019,7 +1019,12 @@ public:
             };
 
             constexpr int requiredOverlapMate = 70; //TODO relative overlap 
-            constexpr int numMismatchesUpperBound = 2;
+            constexpr float maxRelativeMismatchesInOverlap = 0.06f;
+            constexpr int maxAbsoluteMismatchesInOverlap = 10;
+
+            const int maxNumMismatches = std::min(int(task.mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
+
+            
 
             if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + task.mateLength >= insertSize - insertSizeStddev){
                 //check if mate can be overlapped with consensus 
@@ -1037,6 +1042,16 @@ public:
                     std::max(0, insertSize + insertSizeStddev - task.accumExtensionLengths - task.mateLength) + 1,
                     consensusLength - requiredOverlapMate
                 );
+
+                // if(task.myReadId == 199726){
+                //     std::cerr << task.iteration << "in if\n";
+                //     std::cerr << "accumExtensionLengths = " << task.accumExtensionLengths << "\n";
+                //     std::string tmp(consensus, consensus + consensusLength);
+                //     std::cerr << "consensus\n";
+                //     std::cerr << tmp << "\n";
+                //     std::cerr << "mate revc\n";
+                //     std::cerr << task.decodedMateRevC << "\n";
+                // }
 
                 for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
                     //compute metrics of overlap
@@ -1065,7 +1080,12 @@ public:
                 //std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
 
                 //if there exists an overlap between msa consensus and mate which would end the merge, use the best one
-                if(flatMap.size() > 0 && flatMap[0].first <= numMismatchesUpperBound){
+                if(flatMap.size() > 0 && flatMap[0].first <= maxNumMismatches){
+                    // if(task.myReadId == 199726){
+
+                    //     std::cerr << "mate found\n";
+
+                    // }
                 //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
                     const int mateStartposInConsensus = flatMap[0].second.front();
                     const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
@@ -1101,6 +1121,15 @@ public:
                     // );
 
                 }else{
+                    // if(task.myReadId == 199726){
+
+                    //     std::cerr << "mate not found\n";
+                    //     std::cerr << "flatmapsize: " << flatMap.size() << "\n";
+                    //     if(flatMap.size() > 0){
+                    //         std::cerr << "first flatmap mismatches\n";
+                    //         std::cerr << flatMap[0].first << "\n";
+                    //     }
+                    // }
                     makeAnchorForNextIteration();
                 }
             }else{
@@ -1373,22 +1402,77 @@ public:
 
         }
 
-        for(int i = 0; i < numActiveTasks-1; i++){ 
+        // for(int i = 0; i < numActiveTasks-1; i++){ 
+        //     const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
+        //     const auto& task = batchData.tasks[indexOfActiveTask];
+        //     auto& othertask = batchData.tasks[batchData.indicesOfActiveTasks[i+1]];
+
+        //     //if tasks are paired
+        //     if(task.id + 1 == othertask.id){
+        //         //if left anchor is finished
+        //         if(task.abort || task.mateHasBeenFound){
+        //             if(!othertask.abort){
+        //                 othertask.abort = true;
+        //                 othertask.abortReason = AbortReason::PairedAnchorFinished;
+        //             }
+        //         }
+        //         i++;
+        //     }
+        // }
+
+        assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
+
+        for(int i = 0; i < numActiveTasks; i++){ 
             const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
             const auto& task = batchData.tasks[indexOfActiveTask];
-            auto& othertask = batchData.tasks[batchData.indicesOfActiveTasks[i+1]];
 
-            //if tasks are paired
-            if(task.id + 1 == othertask.id){
-                //if left anchor is finished
-                if(task.abort || task.mateHasBeenFound){
-                    if(!othertask.abort){
-                        othertask.abort = true;
-                        othertask.abortReason = AbortReason::PairedAnchorFinished;
-                    }
+            const int whichtype = task.id % 4;
+
+            if(indexOfActiveTask % 4 != whichtype){
+                std::cerr << "indexOfActiveTask = " << indexOfActiveTask << ", whichtype= " << whichtype << "task.id = " << task.id << "\n";
+
+                for(int k = 0; k < 10 ; k++){
+                    std::cerr << batchData.tasks[k].id << " " << batchData.tasks[k].myReadId << "\n";
+                }
+            }
+            assert(indexOfActiveTask % 4 == whichtype);
+
+            if(whichtype == 0){
+                assert(task.direction == ExtensionDirection::LR);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){                    
+                    batchData.tasks[indexOfActiveTask + 1].abort = true;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                    // batchData.tasks[indexOfActiveTask + 2].abort = true;
+                    // batchData.tasks[indexOfActiveTask + 2].abortReason = AbortReason::OtherStrandFoundMate;
+                    batchData.tasks[indexOfActiveTask + 3].abort = true;
+                    batchData.tasks[indexOfActiveTask + 3].abortReason = AbortReason::OtherStrandFoundMate;
+                }else if(task.abort){
+                    batchData.tasks[indexOfActiveTask + 1].abort = true;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                }
+            }else if(whichtype == 2){
+                assert(task.direction == ExtensionDirection::RL);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){                    
+                    // batchData.tasks[indexOfActiveTask - 2].abort = true;
+                    // batchData.tasks[indexOfActiveTask - 2].abortReason = AbortReason::OtherStrandFoundMate;
+                    batchData.tasks[indexOfActiveTask - 1].abort = true;
+                    batchData.tasks[indexOfActiveTask - 1].abortReason = AbortReason::OtherStrandFoundMate;
+                    batchData.tasks[indexOfActiveTask + 1].abort = true;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                }else if(task.abort){
+                    batchData.tasks[indexOfActiveTask + 1].abort = true;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
                 }
             }
         }
+
+
+
+
 
         //msaTimer.stop();
 
@@ -1459,7 +1543,7 @@ public:
         
         //update list of active task indices
 
-        // std::vector<int> newEnabledTaskIndices;
+        std::vector<int> newEnabledTaskIndices;
         // for(int i = 0; i < numActiveTasks; i++){
         //     auto index = batchData.indicesOfActiveTasks[i];
         //     const auto& task = batchData.tasks[index];
@@ -1486,16 +1570,16 @@ public:
             batchData.indicesOfActiveTasks.end()
         );
 
-        // std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
-        // auto iterator = std::merge(
-        //     batchData.indicesOfActiveTasks.begin(),
-        //     batchData.indicesOfActiveTasks.end(),
-        //     newEnabledTaskIndices.begin(),
-        //     newEnabledTaskIndices.end(),
-        //     tmp.begin()
-        // );
-        // assert(iterator == tmp.end()); //there should be no duplicates
-        // std::swap(batchData.indicesOfActiveTasks, tmp);
+        std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
+        auto iterator = std::merge(
+            batchData.indicesOfActiveTasks.begin(),
+            batchData.indicesOfActiveTasks.end(),
+            newEnabledTaskIndices.begin(),
+            newEnabledTaskIndices.end(),
+            tmp.begin()
+        );
+        assert(iterator == tmp.end()); //there should be no duplicates
+        std::swap(batchData.indicesOfActiveTasks, tmp);
     }
 
 
@@ -1591,7 +1675,7 @@ public:
             extendResults.emplace_back(std::move(extendResult));
         }
 
-        #if 1
+        #if 0
 
         std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
             extendResults,
@@ -1636,15 +1720,15 @@ public:
         batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
 
         std::fill(batchData.h_isPairedCandidate.begin(), batchData.h_isPairedCandidate.end(), false);
-        cudaMemcpyAsync(
-            batchData.d_isPairedCandidate.data(),
-            batchData.h_isPairedCandidate.data(),
-            sizeof(bool) * batchData.totalNumCandidates,
-            H2D,
-            stream
-        ); CUERR;
+        // cudaMemcpyAsync(
+        //     batchData.d_isPairedCandidate.data(),
+        //     batchData.h_isPairedCandidate.data(),
+        //     sizeof(bool) * batchData.totalNumCandidates,
+        //     H2D,
+        //     stream
+        // ); CUERR;
 
-        return;
+        // return;
 
         std::vector<int> numPairedPerAnchor(batchData.numTasks, 0);
 
@@ -1690,7 +1774,10 @@ public:
             const int taskindex1 = batchData.indicesOfActiveTasks[first];
             const int taskindex2 = batchData.indicesOfActiveTasks[second];
 
-            if(batchData.tasks[taskindex1].id + 1 == batchData.tasks[taskindex2].id){
+            const bool areConsecutiveTasks = batchData.tasks[taskindex1].id + 1 == batchData.tasks[taskindex2].id;
+            const bool arePairedTasks = (batchData.tasks[taskindex1].id % 2) + 1 == (batchData.tasks[taskindex2].id % 2);
+
+            if(areConsecutiveTasks && arePairedTasks){
                 const int begin1 = batchData.h_numCandidatesPerAnchorPrefixSum[first];
                 const int end1 = batchData.h_numCandidatesPerAnchorPrefixSum[second];
                 const int begin2 = batchData.h_numCandidatesPerAnchorPrefixSum[second];

@@ -43,6 +43,7 @@ enum class AbortReason{
     NoPairedCandidates, 
     NoPairedCandidatesAfterAlignment, 
     PairedAnchorFinished,
+    OtherStrandFoundMate,
     None
 };
 
