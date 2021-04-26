@@ -275,6 +275,103 @@ private:
 
 
 
+
+
+/*
+    result string will begin with prefix s1[0 : min(s1length, originalReadLength)]
+    result string will end with suffix s2[max(0, s2length - originalReadLength) : min(s2length, originalReadLength)]
+    Gap is filled with either s1 or s2, depending on the weight of the position
+*/
+struct QualityWeightedGapGluer{
+public:
+    QualityWeightedGapGluer(int origLength1, int origLength2) : originalReadLength1(origLength1), originalReadLength2(origLength2){}
+
+    std::pair<std::string, std::string> operator()(const GlueDecision& g, const std::string& q1, const std::string& q2) const{
+        assert(g.s1FirstResultIndex == 0);
+        assert(int(g.s1.size()) <= g.resultlength);
+        assert(int(g.s2.size()) <= g.resultlength);
+
+        std::string result(g.resultlength, '#');
+        std::string resultquality(g.resultlength, '!');
+
+        const int numToCopys1 = std::min(
+            g.resultlength,
+            std::min(int(g.s1.size()), originalReadLength1)
+        );
+        const int numToCopys2 = std::min(
+            g.resultlength,
+            std::min(int(g.s2.size()), originalReadLength2)
+        );
+
+        const auto gapbegin = std::copy_n(g.s1.begin(), numToCopys1, result.begin());      
+        const auto gapend = result.begin() + result.size() - numToCopys2;
+        std::copy_n(g.s2.begin() + g.s2.size() - numToCopys2, numToCopys2, gapend);
+
+        const auto gapbeginq = std::copy_n(q1.begin(), numToCopys1, resultquality.begin());      
+        const auto gapendq = resultquality.begin() + resultquality.size() - numToCopys2;
+        std::copy_n(q2.begin() + q2.size() - numToCopys2, numToCopys2, gapendq);
+
+
+        //fill the gap
+        if(std::distance(result.begin(), gapbegin) < std::distance(result.begin(), gapend)){
+
+            auto getweight = [&](const auto& sequence, int origlength, const auto& quality, int pos){
+                if(pos < 0 || pos >= int(sequence.size())){
+                    return 0.0f;
+                }else{
+                    // original positions have weight 1
+                    if(pos < origlength){
+                        return 1.0f;
+                    }else{
+                        return getQualityWeight(quality[pos]);
+                    }
+                }
+            };
+
+            const int gapsize = std::distance(gapbegin, gapend);
+            const int firstGapPos = std::distance(result.begin(), gapbegin);
+
+            auto iter = gapbegin;
+            auto iterq = gapbeginq;
+
+            for(int i = 0; i < gapsize; i++){
+                const int positionInS1 = firstGapPos + i;
+                const int positionInS2 = firstGapPos + i - g.s2FirstResultIndex;
+
+                const float w1 = getweight(g.s1, originalReadLength1, q1, positionInS1);
+                const float w2 = getweight(g.s2, originalReadLength2, q2, positionInS2);
+                assert((w1 != 0.0f) || (w2 != 0.0f));
+
+                if(fgeq(w1, w2)){
+                    assert(positionInS1 < int(g.s1.size()));
+                    *iter = g.s1[positionInS1];
+                    *iterq = q1[positionInS1];
+                }else{
+                    assert(positionInS2 < int(g.s2.size()));
+                    *iter = g.s2[positionInS2];
+                    *iterq = q2[positionInS2];
+                }
+
+                ++iter;
+                ++iterq;
+            }
+        }
+
+
+        return std::make_pair(std::move(result), std::move(resultquality));
+    }
+private:
+    int originalReadLength1{};
+    int originalReadLength2{};
+};
+
+
+
+
+
+
+
+
 } //namespace care
 
 #endif

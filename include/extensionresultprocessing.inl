@@ -83,8 +83,12 @@ void writeExtensionResultsToFile(
         Read res;
         res.header = sstream.str();
         res.sequence = std::move(extendedRead.extendedSequence);
-        res.quality.resize(res.sequence.length());
-        std::fill(res.quality.begin(), res.quality.end(), 'F');
+        if(extendedRead.qualityScores.size() != res.sequence.size()){
+            res.quality.resize(res.sequence.length());
+            std::fill(res.quality.begin(), res.quality.end(), 'F');
+        }else{
+            res.quality = std::move(extendedRead.qualityScores);
+        }
 
         writer->writeRead(res.header, res.sequence, res.quality);
 

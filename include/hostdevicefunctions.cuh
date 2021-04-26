@@ -69,10 +69,12 @@ namespace care{
             #endif
         };
 
-        const float errorprob = -(qualityweight - 1.0);
-        const char q = roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
-
-        return q;        
+        const float errorprob = std::max(-(qualityweight - 1.0f), 0.0f);
+        if(feq(0.0f, errorprob)){
+            return 'K';
+        }else{
+            return roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+        }
     }
 
     HOSTDEVICEQUALIFIER

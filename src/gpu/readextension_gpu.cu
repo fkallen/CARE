@@ -70,7 +70,8 @@ void initializePairedEndExtensionBatchData2(
     const std::vector<ExtendInput>& inputs,
     std::size_t encodedSequencePitchInInts, 
     std::size_t decodedSequencePitchInBytes, 
-    std::size_t msaColumnPitchInElements
+    std::size_t msaColumnPitchInElements,
+    std::size_t qualityPitchInBytes
 ){
     const int batchsizePairs = inputs.size();
     batchData.numReadPairs = batchsizePairs;
@@ -81,7 +82,6 @@ void initializePairedEndExtensionBatchData2(
 
     batchData.tasks.resize(batchsizePairs * 2);
 
-    #if 1
     for(int i = 0; i < batchsizePairs; i++){
         const auto& input = inputs[i];
 
@@ -116,6 +116,10 @@ void initializePairedEndExtensionBatchData2(
 
         taskl.totalDecodedAnchors.emplace_back(taskl.resultsequence);
         taskl.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        taskl.currentQualityScores.insert(taskl.currentQualityScores.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
+        taskl.resultQualityScores = taskl.currentQualityScores;
+        taskl.totalAnchorQualityScores.emplace_back(taskl.currentQualityScores);
 
         auto& taskr = batchData.tasks[2*i + 1];
         taskr.reset();
@@ -142,83 +146,16 @@ void initializePairedEndExtensionBatchData2(
         taskr.resultsequence = taskl.decodedMate;
         taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
         taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        taskr.currentQualityScores.insert(taskr.currentQualityScores.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
+        taskr.resultQualityScores = taskr.currentQualityScores;
+        taskr.totalAnchorQualityScores.emplace_back(taskr.currentQualityScores);
     }
-    #else
-
-    for(int i = 0; i < batchsizePairs; i++){
-        const auto& input = inputs[i];
-
-        auto& taskl = batchData.tasks[2*i];
-        taskl.reset();
-
-        taskl.pairedEnd = true;
-        taskl.direction = ExtensionDirection::LR;      
-        taskl.currentAnchor = std::move(input.encodedRead1);
-        taskl.encodedMate = std::move(input.encodedRead2);
-        taskl.currentAnchorLength = input.readLength1;
-        taskl.currentAnchorReadId = input.readId1;
-        taskl.accumExtensionLengths = 0;
-        taskl.iteration = 0;
-        taskl.myLength = input.readLength1;
-        taskl.myReadId = input.readId1;
-        taskl.mateLength = input.readLength2;
-        taskl.mateReadId = input.readId2;
-        taskl.decodedMate.resize(taskl.mateLength);
-        SequenceHelpers::decode2BitSequence(
-            taskl.decodedMate.data(),
-            taskl.encodedMate.data(),
-            taskl.mateLength
-        );
-        taskl.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskl.decodedMate.data(), taskl.mateLength);
-        taskl.resultsequence.resize(input.readLength1);
-        SequenceHelpers::decode2BitSequence(
-            taskl.resultsequence.data(),
-            taskl.currentAnchor.data(),
-            taskl.myLength
-        );
-
-        taskl.totalDecodedAnchors.emplace_back(taskl.resultsequence);
-        taskl.totalAnchorBeginInExtendedRead.emplace_back(0);
-
-        auto& taskr = batchData.tasks[2*i + 1];
-        taskr.reset();
-
-        taskr.pairedEnd = false;
-        taskr.direction = ExtensionDirection::LR;
-        taskr.currentAnchor = taskl.encodedMate;
-        taskr.encodedMate = taskl.currentAnchor;
-
-        taskr.currentAnchorLength = input.readLength2;
-        taskr.currentAnchorReadId = input.readId2;
-        taskr.accumExtensionLengths = 0;
-        taskr.iteration = 0;
-
-        SequenceHelpers::reverseComplementSequenceInplace2Bit(taskr.currentAnchor.data(), taskr.currentAnchorLength);
-
-        taskr.myLength = input.readLength2;
-        taskr.myReadId = input.readId2;
-
-        taskr.mateLength = input.readLength1;
-        taskr.mateReadId = input.readId1;
-
-        taskr.decodedMate = taskl.resultsequence;        
-        taskr.decodedMateRevC = SequenceHelpers::reverseComplementSequenceDecoded(taskr.decodedMate.data(), taskr.mateLength);
-
-        taskr.resultsequence.resize(taskr.currentAnchorLength);
-        SequenceHelpers::decode2BitSequence(
-            taskr.resultsequence.data(),
-            taskr.currentAnchor.data(),
-            taskr.currentAnchorLength
-        );
-        taskr.totalDecodedAnchors.emplace_back(taskr.resultsequence);
-        taskr.totalAnchorBeginInExtendedRead.emplace_back(0);
-    }
-
-    #endif
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
+    batchData.qualityPitchInBytes = qualityPitchInBytes;
 
     batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
     std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
@@ -241,7 +178,8 @@ void initializePairedEndExtensionBatchData4(
     const std::vector<ExtendInput>& inputs,
     std::size_t encodedSequencePitchInInts, 
     std::size_t decodedSequencePitchInBytes, 
-    std::size_t msaColumnPitchInElements
+    std::size_t msaColumnPitchInElements,
+    std::size_t qualityPitchInBytes
 ){
     const int batchsizePairs = inputs.size();
     batchData.numReadPairs = batchsizePairs ;
@@ -294,6 +232,13 @@ void initializePairedEndExtensionBatchData4(
         task1.totalDecodedAnchors.emplace_back(task1.resultsequence);
         task1.totalAnchorBeginInExtendedRead.emplace_back(0);
 
+        task1.currentQualityScores.insert(task1.currentQualityScores.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
+        task1.resultQualityScores = task1.currentQualityScores;
+        task1.totalAnchorQualityScores.emplace_back(task1.currentQualityScores);
+
+        task1.mateQualityScoresReversed.insert(task1.mateQualityScoresReversed.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
+        std::reverse(task1.mateQualityScoresReversed.begin(), task1.mateQualityScoresReversed.end());
+
         auto& task2 = batchData.tasks[4*i + 1];
         task2.reset();
 
@@ -312,6 +257,11 @@ void initializePairedEndExtensionBatchData4(
         task2.resultsequence = dec2_53;
         task2.totalDecodedAnchors.emplace_back(task2.resultsequence);
         task2.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        task2.currentQualityScores.insert(task2.currentQualityScores.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
+        std::reverse(task2.currentQualityScores.begin(), task2.currentQualityScores.end());
+        task2.resultQualityScores = task2.currentQualityScores;
+        task2.totalAnchorQualityScores.emplace_back(task2.currentQualityScores);
 
 
         auto& task3 = batchData.tasks[4*i + 2];
@@ -333,6 +283,13 @@ void initializePairedEndExtensionBatchData4(
         task3.totalDecodedAnchors.emplace_back(task3.resultsequence);
         task3.totalAnchorBeginInExtendedRead.emplace_back(0);
 
+        task3.currentQualityScores.insert(task3.currentQualityScores.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
+        task3.resultQualityScores = task3.currentQualityScores;
+        task3.totalAnchorQualityScores.emplace_back(task3.currentQualityScores);
+
+        task3.mateQualityScoresReversed.insert(task3.mateQualityScoresReversed.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
+        std::reverse(task3.mateQualityScoresReversed.begin(), task3.mateQualityScoresReversed.end());
+
         auto& task4 = batchData.tasks[4*i + 3];
         task4.reset();
 
@@ -351,11 +308,17 @@ void initializePairedEndExtensionBatchData4(
         task4.resultsequence = dec1_35;
         task4.totalDecodedAnchors.emplace_back(task4.resultsequence);
         task4.totalAnchorBeginInExtendedRead.emplace_back(0);
+
+        task4.currentQualityScores.insert(task4.currentQualityScores.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
+        std::reverse(task4.currentQualityScores.begin(), task4.currentQualityScores.end());
+        task4.resultQualityScores = task4.currentQualityScores;
+        task4.totalAnchorQualityScores.emplace_back(task4.currentQualityScores);
     }
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
+    batchData.qualityPitchInBytes = qualityPitchInBytes;
 
     #if 1
     batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
@@ -440,7 +403,7 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(200000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(4);
     //readIdGenerator.skip(199700);
  
     BackgroundThread outputThread(true);
@@ -469,13 +432,15 @@ extend_gpu_pairedend(
 
     ProgressThread<read_number> progressThread(totalNumReadPairs, showProgress, updateShowProgressInterval);
 
+    cpu::QualityScoreConversion qualityConversion{};
+
     
     const int insertSize = extensionOptions.insertSize;
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
     const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
-    const std::size_t qualityPitchInBytes = maximumSequenceLength;
+    const std::size_t qualityPitchInBytes = 4 * SDIV(maximumSequenceLength, 4);
 
     const std::size_t min_overlap = std::max(
         1, 
@@ -612,7 +577,8 @@ extend_gpu_pairedend(
                 inputs,
                 encodedSequencePitchInInts, 
                 decodedSequencePitchInBytes, 
-                msaColumnPitchInElements
+                msaColumnPitchInElements,
+                qualityPitchInBytes
             );
 
             batchData->setState(BatchData::State::BeforePrepare);
@@ -723,7 +689,8 @@ extend_gpu_pairedend(
                     inputs,
                     encodedSequencePitchInInts, 
                     decodedSequencePitchInBytes, 
-                    msaColumnPitchInElements
+                    msaColumnPitchInElements,
+                    qualityPitchInBytes
                 );
 
                 batchData->setState(BatchData::State::BeforePrepare);
@@ -1566,6 +1533,7 @@ extend_gpu_pairedend(
             gpuReadStorage, 
             correctionOptions,
             goodAlignmentProperties,
+            qualityConversion,
             insertSize,
             insertSizeStddev,
             maxextensionPerStep,
@@ -1575,6 +1543,11 @@ extend_gpu_pairedend(
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
         helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
         helpers::SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
+        helpers::SimpleAllocationPinnedHost<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
+
+        if(!correctionOptions.useQualityScores){
+            std::fill(currentQualityScores.begin(), currentQualityScores.end(), 'I');
+        }
 
         CudaStream stream;
 
@@ -1614,6 +1587,18 @@ extend_gpu_pairedend(
                     stream
                 );
 
+                if(correctionOptions.useQualityScores){
+                    gpuReadStorage.gatherQualities(
+                        readStorageHandle,
+                        currentQualityScores.get(),
+                        qualityPitchInBytes,
+                        currentIds.get(),
+                        currentIds.get(), //device accessible
+                        numReadsInBatch,
+                        stream
+                    );
+                }
+
                 cudaStreamSynchronize(stream); CUERR;
 
                 const int numReadPairsInBatch = numReadsInBatch / 2;
@@ -1631,6 +1616,11 @@ extend_gpu_pairedend(
                     input.encodedRead2.resize(encodedSequencePitchInInts);
                     std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
                     std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
+
+                    input.qualityScores1.resize(qualityPitchInBytes);
+                    input.qualityScores2.resize(qualityPitchInBytes);
+                    std::copy_n(currentQualityScores.get() + (2*i) * qualityPitchInBytes, qualityPitchInBytes, input.qualityScores1.begin());
+                    std::copy_n(currentQualityScores.get() + (2*i + 1) * qualityPitchInBytes, qualityPitchInBytes, input.qualityScores2.begin());
                 }
             
                 #if 1
@@ -1640,7 +1630,8 @@ extend_gpu_pairedend(
                     inputs,
                     encodedSequencePitchInInts, 
                     decodedSequencePitchInBytes, 
-                    msaColumnPitchInElements
+                    msaColumnPitchInElements,
+                    qualityPitchInBytes
                 );
 
                 #else
@@ -1650,7 +1641,8 @@ extend_gpu_pairedend(
                     inputs,
                     encodedSequencePitchInInts, 
                     decodedSequencePitchInBytes, 
-                    msaColumnPitchInElements
+                    msaColumnPitchInElements,
+                    qualityPitchInBytes
                 );
                 #endif
 
@@ -1711,6 +1703,7 @@ extend_gpu_pairedend(
 
                 er.readId = extensionOutput.readId1;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
+                er.qualityScores = std::move(extensionOutput.qualityScores);
                 er.read1begin = extensionOutput.read1begin;
                 er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                 er.read2begin = extensionOutput.read2begin;

@@ -392,8 +392,10 @@ namespace care{
 
             auto overlapstart = l.read2begin;
             l.extendedRead.resize(overlapstart + r.extendedRead.size());
+            l.qualityScores.resize(overlapstart + r.extendedRead.size());
 
             std::copy(r.extendedRead.begin() + r.originalLength, r.extendedRead.end(), l.extendedRead.begin() + beginOfNewPositions);
+            std::copy(r.qualityScores.begin() + r.originalLength, r.qualityScores.end(), l.qualityScores.begin() + beginOfNewPositions);
         };
 
         for(int i = 0; i < reads; i += 1){
@@ -409,8 +411,11 @@ namespace care{
                     //insert extensions of reverse complement of r4 at beginning of r1
 
                     std::string r4revcNewPositions = SequenceHelpers::reverseComplementSequenceDecoded(r4.extendedRead.data() + r4.originalLength, r4.extendedRead.size() - r4.originalLength);
+                    std::string r4revNewQualities(r4.qualityScores.data() + r4.originalLength, r4.qualityScores.size() - r4.originalLength);
+                    std::reverse(r4revNewQualities.begin(), r4revNewQualities.end());
 
                     r1.extendedRead.insert(r1.extendedRead.begin(), r4revcNewPositions.begin(), r4revcNewPositions.end());
+                    r1.qualityScores.insert(r1.qualityScores.begin(), r4revNewQualities.begin(), r4revNewQualities.end());
 
                     r1.read1begin += r4revcNewPositions.size();
                     r1.read2begin += r4revcNewPositions.size();
@@ -423,28 +428,15 @@ namespace care{
                 
                 ++dest;
             }else if(r3.mateHasBeenFound){
-                const bool debug = false && (r3.readId1 == 11914531 || r4.readId1 == 11914531);
-                if(debug){
-                    std::cerr << "r3\n";
-                    std::cerr << r3.read1begin << " " << r3.read2begin << "\n";
-                    std::cerr << r3.extendedRead << "\n";
-                    std::cerr << r3.extendedRead.size() << "\n";
 
-                    std::cerr << "r4\n";
-                    std::cerr << r4.read1begin << " " << r4.read2begin << "\n";
-                    std::cerr << r4.extendedRead << "\n";
-                    std::cerr << r4.extendedRead.size() << "\n";
-                }
                 merge(r3,r4);
 
                 int extlength = r3.extendedRead.size();
 
-                if(debug){
-                std::cerr << "orignal extended\n";
-                std::cerr << r3.extendedRead << "\n";
-                }
 
                 SequenceHelpers::reverseComplementSequenceDecodedInplace(r3.extendedRead.data(), extlength);
+                std::reverse(r3.qualityScores.begin(), r3.qualityScores.end());
+
                 const int sizeOfGap = r3.read2begin - (r3.read1begin + r3.originalLength);
                 const int sizeOfRightExtension = extlength - (r3.read2begin + r3.originalMateLength);
 
@@ -458,16 +450,6 @@ namespace care{
                 assert(newread1begin + newread1length <= extlength);
                 assert(newread2begin + newread2length <= extlength);
 
-                if(debug){
-                    std::cerr << "sizeOfGap = " << sizeOfGap << "\n";
-                    std::cerr << "sizeOfRightExtension = " << sizeOfRightExtension << "\n";
-                std::cerr << "extlength: " << extlength << ", old:" << r3.read1begin << " " << r3.originalLength << " " << r3.read2begin << " " << r3.originalMateLength
-                    << "new:" << newread1begin << " " << newread1length << " " << newread2begin << " " << newread2length << "\n";
-
-                std::cerr << "mew extended\n";
-                std::cerr << r3.extendedRead << "\n";
-                }
-
                 r3.read1begin = newread1begin;
                 r3.read2begin = newread2begin;
                 r3.originalLength = newread1length;
@@ -476,13 +458,14 @@ namespace care{
                 if(int(r2.extendedRead.size()) > r2.originalLength){
                     //insert extensions of r2 at end of r3
                     r3.extendedRead.insert(r3.extendedRead.end(), r2.extendedRead.begin() + r2.originalLength, r2.extendedRead.end());
+                    r3.qualityScores.insert(r3.qualityScores.end(), r2.qualityScores.begin() + r2.originalLength, r2.qualityScores.end());
                 }                       
 
                 if(&(*dest) != &r3){
                     *dest = std::move(r3);
                 }
                 ++dest;
-            }else if(r1.mateHasBeenFound && r3.mateHasBeenFound){
+            }else if(false /*r1.mateHasBeenFound && r3.mateHasBeenFound*/){
                 merge(r1,r2);
 
                 //avoid self move
@@ -511,9 +494,10 @@ namespace care{
                     std::string r3revc = SequenceHelpers::reverseComplementSequenceDecoded(r3.extendedRead.data(), r3.extendedRead.size());
 
                     MismatchRatioGlueDecider decider(minimumOverlap, maxRelativeErrorInOverlap);
-                    WeightedGapGluer gluer(r1.originalLength);
+                    //WeightedGapGluer gluer(r1.originalLength);
+                    QualityWeightedGapGluer gluer(r1.originalLength, r3.originalLength);
 
-                    std::vector<std::string> possibleResults;
+                    std::vector<std::pair<std::string, std::string>> possibleResults;
 
                     const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
 
@@ -525,7 +509,7 @@ namespace care{
                         );
 
                         if(decision.has_value()){
-                            possibleResults.emplace_back(gluer(*decision));
+                            possibleResults.emplace_back(gluer(*decision, r1.qualityScores, r3.qualityScores));
                             break;
                         }
                     }
@@ -536,7 +520,8 @@ namespace care{
 
                         auto& mergeresult = possibleResults.front();
 
-                        r1.extendedRead = std::move(mergeresult);
+                        r1.extendedRead = std::move(mergeresult.first);
+                        r1.qualityScores = std::move(mergeresult.second);
                         r1.read2begin = r1.extendedRead.size() - r3.originalLength;
                         r1.originalMateLength = r3.originalLength;
                         r1.mateHasBeenFound = true;
@@ -548,14 +533,18 @@ namespace care{
                 if(didMergeDifferentStrands && int(r2.extendedRead.size()) > r2.originalLength){
                     //insert extensions of r2 at end of r3
                     r1.extendedRead.insert(r1.extendedRead.end(), r2.extendedRead.begin() + r2.originalLength, r2.extendedRead.end());
+                    r1.qualityScores.insert(r1.qualityScores.end(), r2.qualityScores.begin() + r2.originalLength, r2.qualityScores.end());
                 } 
 
                 if(int(r4.extendedRead.size()) > r4.originalLength){
                     //insert extensions of reverse complement of r4 at beginning of r1
 
                     std::string r4revcNewPositions = SequenceHelpers::reverseComplementSequenceDecoded(r4.extendedRead.data() + r4.originalLength, r4.extendedRead.size() - r4.originalLength);
+                    std::string r4revNewQualities(r4.qualityScores.data() + r4.originalLength, r4.qualityScores.size() - r4.originalLength);
+                    std::reverse(r4revNewQualities.begin(), r4revNewQualities.end());
 
                     r1.extendedRead.insert(r1.extendedRead.begin(), r4revcNewPositions.begin(), r4revcNewPositions.end());
+                    r1.qualityScores.insert(r1.qualityScores.begin(), r4revNewQualities.begin(), r4revNewQualities.end());
 
                     r1.read1begin += r4revcNewPositions.size();
                     if(r1.mateHasBeenFound){

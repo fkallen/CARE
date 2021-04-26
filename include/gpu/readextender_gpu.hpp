@@ -400,6 +400,12 @@ struct BatchData{
     DeviceBuffer<unsigned int> d_candidateSequencesData{};
     DeviceBuffer<unsigned int> d_candidateSequencesRevcData{};
 
+    PinnedBuffer<char> h_anchorQualityScores{};
+    DeviceBuffer<char> d_anchorQualityScores{};
+    PinnedBuffer<char> h_candidateQualityScores{};
+    DeviceBuffer<char> d_candidateQualityScores{};
+    DeviceBuffer<char> d_candidateQualityScores2{};
+
     DeviceBuffer<int> d_activeTaskIndices{};
     PinnedBuffer<int> h_activeTaskIndices{};
 
@@ -430,6 +436,9 @@ struct BatchData{
     DeviceBuffer<gpu::MSAColumnProperties> d_msa_column_properties;
     DeviceBuffer<int> d_counts;
     DeviceBuffer<float> d_weights;
+
+    PinnedBuffer<char> h_consensusQuality;
+    DeviceBuffer<char> d_consensusQuality;
 
     PinnedBuffer<MultipleSequenceAlignment::PossibleSplitColumn> h_possibleSplitColumns;
     PinnedBuffer<int> h_numPossibleSplitColumnsPerAnchor;
@@ -567,6 +576,7 @@ public:
     const gpu::GpuReadStorage* gpuReadStorage{};
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
+    const cpu::QualityScoreConversion* qualityConversion{};
     mutable ReadStorageHandle readStorageHandle{};
     mutable gpu::KernelLaunchHandle kernelLaunchHandle{};
     
@@ -576,6 +586,7 @@ public:
         const gpu::GpuReadStorage& rs, 
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap,
+        const cpu::QualityScoreConversion& qualityConversion_,
         int insertSize_,
         int insertSizeStddev_,
         int maxextensionPerStep_,
@@ -587,6 +598,7 @@ public:
         gpuReadStorage(&rs),
         correctionOptions(&coropts),
         goodAlignmentProperties(&gap),
+        qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()){
 
         cudaGetDevice(&deviceId); CUERR;
@@ -618,6 +630,9 @@ public:
         batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
         batchData.h_anchorSequencesLength.resize(numActiveTasks);
         batchData.d_anchorSequencesLength.resize(numActiveTasks);
+
+        batchData.h_anchorQualityScores.resize(batchData.qualityPitchInBytes * numActiveTasks);
+        batchData.d_anchorQualityScores.resize(batchData.qualityPitchInBytes * numActiveTasks);
 
         batchData.h_anchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
         batchData.d_anchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
@@ -681,6 +696,12 @@ public:
             //         lengthToHash
             //     );
             // }
+
+            std::copy(
+                task.currentQualityScores.begin(),
+                task.currentQualityScores.end(),
+                batchData.h_anchorQualityScores.begin() + t * batchData.qualityPitchInBytes
+            );
         }
 
         helpers::call_copy_n_kernel(
@@ -692,6 +713,19 @@ public:
             thrust::make_zip_iterator(thrust::make_tuple(
                 //batchData.d_inputanchormatedata.data(),
                 batchData.d_subjectSequencesData.data()
+            )),
+            batchData.streams[0]
+        );
+
+        helpers::call_copy_n_kernel(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                //batchData.h_inputanchormatedata.data(),
+                batchData.h_anchorQualityScores.data()
+            )),
+            batchData.numTasks * batchData.qualityPitchInBytes,
+            thrust::make_zip_iterator(thrust::make_tuple(
+                //batchData.d_inputanchormatedata.data(),
+                batchData.d_anchorQualityScores.data()
             )),
             batchData.streams[0]
         );
@@ -907,6 +941,8 @@ public:
 
         nvtx::pop_range();
 
+        loadQualityScores(batchData, batchData.streams[0]);
+
         nvtx::push_range("computeMSAs", 6);
 
         //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
@@ -963,7 +999,7 @@ public:
             return constructMsaWithDataFromTask(task, batchData);
         };
 
-        auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, int taskIndex){
+        auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, const char* consensusquality, int taskIndex){
 
             //can extend by at most maxextensionPerStep bps
             int extendBy = std::min(
@@ -996,6 +1032,13 @@ public:
 
                     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                    std::string decodedAnchorQuality(consensusquality + extendBy, task.currentAnchorLength);
+
+                    task.currentQualityScores.resize(decodedAnchorQuality.size());
+                    std::copy(decodedAnchorQuality.begin(), decodedAnchorQuality.end(), task.currentQualityScores.begin());
+
+                    task.totalAnchorQualityScores.emplace_back(std::move(decodedAnchorQuality));
 
                     // task.resultsequence.insert(
                     //     task.resultsequence.end(), 
@@ -1097,6 +1140,11 @@ public:
                             consensus + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
                         );
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths + missingPositionsBetweenAnchorEndAndMateBegin);
+
+                        task.totalAnchorQualityScores.emplace_back(
+                            consensusquality + missingPositionsBetweenAnchorEndAndMateBegin,
+                            consensusquality + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
+                        );
                     }
 
 
@@ -1109,6 +1157,8 @@ public:
 
                     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
+
+                    task.totalAnchorQualityScores.emplace_back(task.mateQualityScoresReversed);
 
                     // const int startpos = mateStartposInConsensus;
                     // task.resultsequence.resize(currentAccumExtensionLengths + startpos + task.decodedMateRevC.length());
@@ -1242,7 +1292,7 @@ public:
 
             const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
             const char* const consensus = batchData.h_consensus.data() + i * batchData.msaColumnPitchInElements;
-
+            const char* const consensusQuality = batchData.h_consensusQuality.data() + i * batchData.msaColumnPitchInElements;
             
 #if 0
             //if(task.splitDepth == 0){
@@ -1397,7 +1447,7 @@ public:
                 extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
             }
 #else 
-            extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
+            extendWithMsa(task, consensus, consensusLength, consensusQuality, indexOfActiveTask);
 #endif
 
         }
@@ -1428,13 +1478,6 @@ public:
 
             const int whichtype = task.id % 4;
 
-            if(indexOfActiveTask % 4 != whichtype){
-                std::cerr << "indexOfActiveTask = " << indexOfActiveTask << ", whichtype= " << whichtype << "task.id = " << task.id << "\n";
-
-                for(int k = 0; k < 10 ; k++){
-                    std::cerr << batchData.tasks[k].id << " " << batchData.tasks[k].myReadId << "\n";
-                }
-            }
             assert(indexOfActiveTask % 4 == whichtype);
 
             if(whichtype == 0){
@@ -1614,12 +1657,14 @@ public:
             }
 
             const std::string& decodedAnchor = task.totalDecodedAnchors[0];
+            const std::string& anchorQuality = task.totalAnchorQualityScores[0];
 
             const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
             std::vector<float> initialWeights(numsteps-1, 1.0f);
 
 
             std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
+            std::vector<char> stepqualities(maxlen * (numsteps-1), '\0');
             std::vector<int> stepstringlengths(numsteps-1);
             for(int c = 1; c < numsteps; c++){
                 std::copy(
@@ -1627,24 +1672,29 @@ public:
                     task.totalDecodedAnchors[c].end(),
                     stepstrings.begin() + (c-1) * maxlen
                 );
+                std::copy(
+                    task.totalAnchorQualityScores[c].begin(),
+                    task.totalAnchorQualityScores[c].end(),
+                    stepqualities.begin() + (c-1) * maxlen
+                );
                 stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
             }
 
             MultipleSequenceAlignment::InputData msaInput;
-            msaInput.useQualityScores = false;
+            msaInput.useQualityScores = true;
             msaInput.subjectLength = decodedAnchor.length();
             msaInput.nCandidates = numsteps-1;
             msaInput.candidatesPitch = maxlen;
-            msaInput.candidateQualitiesPitch = 0;
+            msaInput.candidateQualitiesPitch = batchData.qualityPitchInBytes;
             msaInput.subject = decodedAnchor.c_str();
             msaInput.candidates = stepstrings.data();
-            msaInput.subjectQualities = nullptr;
-            msaInput.candidateQualities = nullptr;
+            msaInput.subjectQualities = anchorQuality.data();
+            msaInput.candidateQualities = stepqualities.data();
             msaInput.candidateLengths = stepstringlengths.data();
             msaInput.candidateShifts = shifts.data();
             msaInput.candidateDefaultWeightFactors = initialWeights.data();
 
-            MultipleSequenceAlignment msa;
+            MultipleSequenceAlignment msa(qualityConversion);
 
             msa.build(msaInput);
 
@@ -1653,8 +1703,16 @@ public:
             extendResult.success = true;
 
             std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
+            std::string extendedReadQuality(msa.consensus.size(), '\0');
+            std::transform(msa.support.begin(), msa.support.end(), extendedReadQuality.begin(),
+                [](const float f){
+                    return getQualityChar(f);
+                }
+            );
 
             std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
+            std::copy(anchorQuality.begin(), anchorQuality.end(), extendedReadQuality.begin());
+
             if(task.mateHasBeenFound){
                 //std::cerr << "copy " << task.decodedMateRevC << " to end of consensus " << task.myReadId << "\n";
                 std::copy(
@@ -1663,12 +1721,19 @@ public:
                     extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
                 );
 
+                std::copy(
+                    task.mateQualityScoresReversed.begin(),
+                    task.mateQualityScoresReversed.end(),
+                    extendedReadQuality.begin() + extendedReadQuality.length() - task.decodedMateRevC.length()
+                );
+
                 extendResult.read2begin = extendedRead.length() - task.decodedMateRevC.length();
             }else{
                 extendResult.read2begin = -1;
             }
 
             extendResult.extendedRead = std::move(extendedRead);
+            extendResult.qualityScores = std::move(extendedReadQuality);
 
             extendResult.mateHasBeenFound = task.mateHasBeenFound;
 
@@ -3037,6 +3102,45 @@ public:
         // std::cerr << "\n";
     }
 
+    void loadQualityScores(BatchData& batchData, cudaStream_t stream) const{
+        if(correctionOptions->useQualityScores){
+            batchData.h_candidateReadIds.resize(batchData.totalNumCandidates);
+            
+
+            cudaMemcpyAsync(
+                batchData.h_candidateReadIds.data(),
+                batchData.d_candidateReadIds.data(),
+                sizeof(read_number) * batchData.totalNumCandidates,
+                D2H,
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            batchData.d_candidateQualityScores.resize(batchData.qualityPitchInBytes * batchData.totalNumCandidates);
+
+            gpuReadStorage->gatherQualities(
+                readStorageHandle,
+                batchData.d_candidateQualityScores.data(),
+                batchData.qualityPitchInBytes,
+                batchData.h_candidateReadIds.data(),
+                batchData.d_candidateReadIds.data(),
+                batchData.totalNumCandidates,
+                stream
+            );
+
+        }else{
+            helpers::call_fill_kernel_async(
+                batchData.d_candidateQualityScores.data(),
+                batchData.qualityPitchInBytes * batchData.totalNumCandidates,
+                'I',
+                stream
+            ); CUERR;
+        }
+        
+    }
+
+
     void computeMSAs(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{
         batchData.d_consensus.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
         batchData.d_support.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
@@ -3046,6 +3150,8 @@ public:
         batchData.d_msa_column_properties.resize(batchData.numTasks);
         batchData.d_counts.resize(batchData.numTasks * 4 * batchData.msaColumnPitchInElements);
         batchData.d_weights.resize(batchData.numTasks * 4 * batchData.msaColumnPitchInElements);
+
+        batchData.d_consensusQuality.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
 
         batchData.d_intbuffercandidates.resize(batchData.totalNumCandidates);
         batchData.d_indexlist1.resize(batchData.totalNumCandidates);
@@ -3098,13 +3204,13 @@ public:
             batchData.d_numCandidatesPerAnchorPrefixSum.get(),
             batchData.d_subjectSequencesData.get(),
             batchData.d_candidateSequencesData.get(),
-            nullptr, //d_anchor_qualities.get(),
-            nullptr, //d_candidate_qualities.get(),
+            batchData.d_anchorQualityScores.get(), //d_anchor_qualities.get(),
+            batchData.d_candidateQualityScores.get(), //d_candidate_qualities.get(),
             batchData.h_numAnchors.get(), //d_numAnchors
             goodAlignmentProperties->maxErrorRate,
             batchData.numTasks,
             batchData.totalNumCandidates,
-            false, //correctionOptions->useQualityScores,
+            true, //correctionOptions->useQualityScores,
             batchData.encodedSequencePitchInInts,
             batchData.qualityPitchInBytes,
             firstStream,
@@ -3127,15 +3233,15 @@ public:
             batchData.d_candidateSequencesData.get(),
             batchData.d_anchorSequencesLength.get(),
             batchData.d_candidateSequencesLength.get(),
-            nullptr, //d_anchor_qualities.get(),
-            nullptr, //d_candidate_qualities.get(),
+            batchData.d_anchorQualityScores.get(), //d_anchor_qualities.get(),
+            batchData.d_candidateQualityScores.get(), //d_candidate_qualities.get(),
             d_shouldBeKept,
             batchData.d_numCandidatesPerAnchorPrefixSum.get(),
             batchData.h_numAnchors.get(),
             goodAlignmentProperties->maxErrorRate,
             batchData.numTasks,
             batchData.totalNumCandidates,
-            false, //correctionOptions->useQualityScores,
+            true, //correctionOptions->useQualityScores,
             batchData.encodedSequencePitchInInts,
             batchData.qualityPitchInBytes,
             indices1, //d_indices,
@@ -3158,6 +3264,45 @@ public:
         ); CUERR;
 
         cudaEventRecord(batchData.events[0], secondStream); CUERR;
+
+
+
+        //compute quality of consensus
+        helpers::lambda_kernel<<<batchData.numTasks, 256, 0, firstStream>>>(
+            [
+                consensusQuality = batchData.d_consensusQuality.data(),
+                support = batchData.d_support.data(),
+                msa_column_properties = batchData.d_msa_column_properties.data(),
+                d_numCandidatesInMsa = batchData.d_numCandidatesPerAnchor2.data(),
+                columnPitchInElements = batchData.msaColumnPitchInElements,
+                numTasks = batchData.numTasks
+            ] __device__ (){
+
+                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+                    if(d_numCandidatesInMsa[t] > 0){
+                        const float* const taskSupport = support + t * columnPitchInElements;
+                        char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
+                        const int begin = msa_column_properties[t].firstColumn_incl;
+                        const int end = msa_column_properties[t].lastColumn_excl;
+
+                        // if(threadIdx.x == 0){
+                        //     printf("t %d, begin %d end %d\n", t, begin, end);
+                        // }
+                        // __syncthreads();
+
+                        assert(begin >= 0);
+                        assert(end < columnPitchInElements);
+
+                        for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
+                            taskConsensusQuality[i] = getQualityChar(taskSupport[i]);
+                        }
+                    }
+                }
+            }
+        ); CUERR;
+
+
+
 
         bool cubdebugsync = false;
         cudaError_t cubstatus = cudaSuccess;
@@ -3233,6 +3378,28 @@ public:
         assert(cubstatus == cudaSuccess);
         cubBytes = std::max(cubBytes, cubBytes2);
 
+        assert(batchData.qualityPitchInBytes % sizeof(int) == 0);
+
+        batchData.d_candidateQualityScores2.resize(batchData.d_candidateQualityScores.size());
+
+        cubstatus = cub::DeviceSelect::Flagged(
+            nullptr,
+            cubBytes2,
+            (int*)batchData.d_candidateQualityScores.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{batchData.d_flagscandidates.data(), int((batchData.qualityPitchInBytes / sizeof(int)))}
+            ),
+            (int*)batchData.d_candidateQualityScores2.data(),
+            thrust::make_discard_iterator(),
+            batchData.totalNumCandidates * (batchData.qualityPitchInBytes / sizeof(int)),
+            firstStream,
+            cubdebugsync
+        );
+
+        assert(cubstatus == cudaSuccess);
+        cubBytes = std::max(cubBytes, cubBytes2);
+
         void* cubtemp; cubAllocator->DeviceAllocate((void**)&cubtemp, cubBytes, firstStream);
 
         cubstatus = cub::DeviceScan::InclusiveSum(
@@ -3295,6 +3462,21 @@ public:
 
         assert(cubstatus == cudaSuccess);
 
+        cubstatus = cub::DeviceSelect::Flagged(
+            cubtemp,
+            cubBytes,
+            (int*)batchData.d_candidateQualityScores.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{batchData.d_flagscandidates.data(), int((batchData.qualityPitchInBytes / sizeof(int)))}
+            ),
+            (int*)batchData.d_candidateQualityScores2.data(),
+            thrust::make_discard_iterator(),
+            batchData.totalNumCandidates * (batchData.qualityPitchInBytes / sizeof(int)),
+            firstStream,
+            cubdebugsync
+        );
+
         //compact other candidate buffers according to flags
 
         cubstatus = cub::DeviceSelect::Flagged(
@@ -3321,6 +3503,7 @@ public:
         std::swap(batchData.d_alignment_nOps, batchData.d_alignment_nOps2);
         std::swap(batchData.d_alignment_best_alignment_flags, batchData.d_alignment_best_alignment_flags2);
         std::swap(batchData.d_isPairedCandidate, batchData.d_isPairedCandidate2);
+        std::swap(batchData.d_candidateQualityScores, batchData.d_candidateQualityScores2);
 
         //compute possible msa splits
         batchData.d_possibleSplitColumns.resize(32 * batchData.numTasks);
@@ -3485,6 +3668,9 @@ public:
         batchData.h_numPossibleSplitColumnsPerAnchor.resize(batchData.numTasks);
         batchData.h_consensus.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
         batchData.h_msa_column_properties.resize(batchData.numTasks);
+        batchData.h_consensusQuality.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
+
+        batchData.h_candidateQualityScores.resize(batchData.totalNumCandidates * batchData.qualityPitchInBytes);
 
         //convert encoded consensus to characters and copy to host
         //copy column properties to host
@@ -3554,6 +3740,14 @@ public:
             firstStream
         ); CUERR;
 
+        cudaMemcpyAsync(
+            batchData.h_consensusQuality.data(),
+            batchData.d_consensusQuality.data(),
+            sizeof(char) * batchData.numTasks * batchData.msaColumnPitchInElements,
+            D2H,
+            firstStream
+        );
+
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
                 batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
@@ -3573,6 +3767,14 @@ public:
             batchData.h_candidateSequencesData.get(),
             batchData.d_candidateSequencesData.get(),
             sizeof(unsigned int) * batchData.totalNumCandidates * batchData.encodedSequencePitchInInts,
+            D2H,
+            firstStream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            batchData.h_candidateQualityScores.data(),
+            batchData.d_candidateQualityScores.data(),
+            sizeof(char) * batchData.totalNumCandidates * batchData.qualityPitchInBytes,
             D2H,
             firstStream
         ); CUERR;

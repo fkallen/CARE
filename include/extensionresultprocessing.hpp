@@ -242,6 +242,7 @@ namespace care{
         int read2begin = 0;
         int read2end = 0;
         std::string extendedSequence;
+        std::string qualityScores;
 
         ExtendedRead() = default;
 
@@ -319,6 +320,13 @@ namespace care{
                 std::memcpy(ptr, extendedSequence.c_str(), sizeof(char) * l);
                 ptr += sizeof(char) * l;
 
+                int m = 0;
+                m = qualityScores.length();
+                std::memcpy(ptr, &m, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, qualityScores.c_str(), sizeof(char) * m);
+                ptr += sizeof(char) * m;
+
                 return ptr;
             }else{
                 return nullptr;
@@ -346,6 +354,13 @@ namespace care{
             extendedSequence.resize(l);
             std::memcpy(&extendedSequence[0], ptr, sizeof(char) * l);
             ptr += l;
+
+            int m = 0;
+            std::memcpy(&m, ptr, sizeof(int));
+            ptr += sizeof(int);
+            qualityScores.resize(m);
+            std::memcpy(&qualityScores[0], ptr, sizeof(char) * m);
+            ptr += m;
         }
 
         bool writeToBinaryStream(std::ostream& os) const{
@@ -361,6 +376,11 @@ namespace care{
             l = extendedSequence.length();
             os.write(reinterpret_cast<const char*>(&l), sizeof(int));
             os.write(reinterpret_cast<const char*>(extendedSequence.c_str()), sizeof(char) * l);
+
+            int m = 0;
+            m = qualityScores.length();
+            os.write(reinterpret_cast<const char*>(&m), sizeof(int));
+            os.write(reinterpret_cast<const char*>(qualityScores.c_str()), sizeof(char) * m);
 
             return bool(os);
         }
@@ -378,6 +398,11 @@ namespace care{
             is.read(reinterpret_cast<char*>(&l), sizeof(int));
             extendedSequence.resize(l);
             is.read(reinterpret_cast<char*>(&extendedSequence[0]), sizeof(char) * l);
+
+            int m = 0;
+            is.read(reinterpret_cast<char*>(&m), sizeof(int));
+            qualityScores.resize(m);
+            is.read(reinterpret_cast<char*>(&qualityScores[0]), sizeof(char) * m);
 
             return bool(is);
         }

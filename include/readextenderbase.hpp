@@ -54,6 +54,8 @@ struct ExtendInput{
     read_number readId2{};
     std::vector<unsigned int> encodedRead1{};
     std::vector<unsigned int> encodedRead2{};
+    std::vector<char> qualityScores1{};
+    std::vector<char> qualityScores2{};
 };
 
 struct ExtendResult{
@@ -72,6 +74,7 @@ struct ExtendResult{
     read_number readId2{}; //same as input ids
 
     std::string extendedRead{};
+    std::string qualityScores{};
     
 
     read_number getReadPairId() const noexcept{
@@ -161,6 +164,9 @@ public:
         std::string decodedMate;
         std::string decodedMateRevC;
         std::string resultsequence;
+        std::string resultQualityScores;
+        std::string currentQualityScores;
+        std::string mateQualityScoresReversed;
         std::vector<read_number> candidateReadIds;
         std::vector<read_number>::iterator mateIdLocationIter{};
         std::vector<unsigned int> currentAnchor;
@@ -172,6 +178,7 @@ public:
         std::vector<care::cpu::SHDResult> alignments;
         std::vector<BestAlignment_t> alignmentFlags;
         std::vector<std::string> totalDecodedAnchors;
+        std::vector<std::string> totalAnchorQualityScores;
         std::vector<int> totalAnchorBeginInExtendedRead;
         std::vector<std::vector<read_number>> usedCandidateReadIdsPerIteration;
         std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
@@ -203,6 +210,9 @@ public:
                 if(decodedMate != rhs.decodedMate) std::cerr << "decodedMate differs\n";
                 if(decodedMateRevC != rhs.decodedMateRevC) std::cerr << "decodedMateRevC differs\n";
                 if(resultsequence != rhs.resultsequence) std::cerr << "resultsequence differs\n";
+                if(resultQualityScores != rhs.resultQualityScores) std::cerr << "resultQualityScores differs\n";
+                if(currentQualityScores != rhs.currentQualityScores) std::cerr << "currentQualityScores differs\n";
+                if(mateQualityScoresReversed != rhs.mateQualityScoresReversed) std::cerr << "mateQualityScoresReversed differs\n";                
                 if(candidateReadIds != rhs.candidateReadIds) std::cerr << "candidateReadIds differs\n";
                 if(mateIdLocationIter != rhs.mateIdLocationIter) std::cerr << "mateIdLocationIter differs\n";
                 if(currentAnchor != rhs.currentAnchor) std::cerr << "currentAnchor differs\n";
@@ -214,6 +224,7 @@ public:
                 if(alignments != rhs.alignments) std::cerr << "alignments differs\n";
                 if(alignmentFlags != rhs.alignmentFlags) std::cerr << "alignmentFlags differs\n";
                 if(totalDecodedAnchors != rhs.totalDecodedAnchors) std::cerr << "totalDecodedAnchors differs\n";
+                if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) std::cerr << "totalAnchorQualityScores differs\n";                
                 if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) std::cerr << "totalAnchorBeginInExtendedRead differs\n";
                 if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) std::cerr << "usedCandidateReadIdsPerIteration differs\n";
                 if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) std::cerr << "usedAlignmentsPerIteration differs\n";
@@ -243,6 +254,9 @@ public:
             if(decodedMate != rhs.decodedMate) return false;
             if(decodedMateRevC != rhs.decodedMateRevC) return false;
             if(resultsequence != rhs.resultsequence) return false;
+            if(resultQualityScores != rhs.resultQualityScores) return false;
+            if(currentQualityScores != rhs.currentQualityScores) return false;
+            if(mateQualityScoresReversed != rhs.mateQualityScoresReversed) return false;
             if(candidateReadIds != rhs.candidateReadIds) return false;
             if(mateIdLocationIter != rhs.mateIdLocationIter) return false;
             if(currentAnchor != rhs.currentAnchor) return false;
@@ -254,6 +268,7 @@ public:
             if(alignments != rhs.alignments) return false;
             if(alignmentFlags != rhs.alignmentFlags) return false;
             if(totalDecodedAnchors != rhs.totalDecodedAnchors) return false;
+            if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) return false;            
             if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) return false;
             if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) return false;
             if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) return false;
@@ -303,6 +318,9 @@ public:
             clear(decodedMate);
             clear(decodedMateRevC);
             clear(resultsequence);
+            clear(resultQualityScores);
+            clear(currentQualityScores);
+            clear(mateQualityScoresReversed);
             clear(candidateReadIds);
             mateIdLocationIter = candidateReadIds.end();
             clear(currentAnchor);
@@ -314,6 +332,7 @@ public:
             clear(alignments);
             clear(alignmentFlags);
             clear(totalDecodedAnchors);
+            clear(totalAnchorQualityScores);
             clear(totalAnchorBeginInExtendedRead);
             clear(usedCandidateReadIdsPerIteration);
             clear(usedAlignmentsPerIteration);
