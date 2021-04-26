@@ -50,6 +50,33 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
+    char getQualityChar(float qualityweight){
+        constexpr int ascii_base = 33;
+
+        auto base10logf = [](float f){
+            #ifdef __CUDA_ARCH__
+            return log10f(f);
+            #else
+            return std::log10(f);
+            #endif
+        };
+
+        auto roundToNearestInt = [](float f){
+            #ifdef __CUDA_ARCH__
+            return rintf(f);
+            #else
+            return std::round(f);
+            #endif
+        };
+
+        const float errorprob = -(qualityweight - 1.0);
+        const char q = roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+
+        return q;        
+    }
+
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
     float calculateOverlapWeightnew(int anchorlength, int nOps, int overlapsize){
         constexpr float maxErrorPercentInOverlap = 0.2f;
 
