@@ -106,23 +106,37 @@ void writeExtensionResultsToFile(
 }
 
 
-bool combineExtendedReadWithOriginalRead(
+std::optional<Read> combineExtendedReadWithOriginalRead(
     std::vector<ExtendedRead>& tmpresults, 
-    ReadWithId& readWithId,
-    std::string& extendedSequence
+    const ReadWithId& readWithId
 ){
     if(tmpresults.size() == 0){
-        //std::cerr << "read id " << readWithId.globalReadId << " no tmpresults!\n";
-        //assert(tmpresults.size() > 0);
-        extendedSequence = std::move(readWithId.read.sequence);
-        return false;
+        return std::nullopt;
+    }
+
+    bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
+
+    if(extended){
+        Read extendedReadOut{};
+
+        extendedReadOut.sequence = std::move(tmpresults[0].extendedSequence);
+        extendedReadOut.quality = std::move(tmpresults[0].qualityScores);
+        if(extendedReadOut.quality.size() != extendedReadOut.sequence.size()){
+            extendedReadOut.quality.resize(extendedReadOut.sequence.size());
+            std::fill(extendedReadOut.quality.begin(), extendedReadOut.quality.end(), 'A');
+        }
+        
+        std::stringstream sstream;
+        sstream << readWithId.globalReadId << ' ';
+        sstream << (tmpresults[0].status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
+        sstream << ' ';
+        sstream << "lens:" << tmpresults[0].read1begin << ',' << tmpresults[0].read1end << ',' << tmpresults[0].read2begin << ',' << tmpresults[0].read2end;
+
+        extendedReadOut.header = sstream.str();
+
+        return std::make_optional(std::move(extendedReadOut));
     }else{
-
-        bool extended = readWithId.read.sequence.length() < tmpresults[0].extendedSequence.length();
-        //readWithId.read.sequence = std::move(tmpresults[0].extendedSequence);
-        extendedSequence = std::move(tmpresults[0].extendedSequence);
-
-        return extended;
+        return std::nullopt;
     }
 }
 
@@ -186,10 +200,10 @@ void constructOutputFileFromExtensionResults(
 
         std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-        auto combine = [&](std::vector<ExtendedRead>& tmpresults, ReadWithId& readWithId, ReadWithId* mate, std::string& extendedSequence){
+        auto combine = [&](std::vector<ExtendedRead>& tmpresults, const ReadWithId& readWithId, ReadWithId* mate){
             //statusHistogram[tmpresults[0].status]++;
 
-            return combineExtendedReadWithOriginalRead(tmpresults, readWithId, extendedSequence);
+            return combineExtendedReadWithOriginalRead(tmpresults, readWithId);
         };
 
         mergeExtensionResultsWithOriginalReads_multithreaded<ExtendedRead>(
