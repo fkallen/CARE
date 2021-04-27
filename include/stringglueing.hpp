@@ -26,6 +26,21 @@ struct GlueDecision{
     std::string_view s2{};
 };
 
+struct GlueDecisionWithQuality{
+    /*
+        strings s1 and s2 will be combined to produce a string of length resultlength
+        in the resulting string, s1[0] will be at index s1FirstResultIndex, 
+        and s2[0] will be at index s2FirstResultIndex
+    */
+    int s1FirstResultIndex{};
+    int s2FirstResultIndex{};
+    int resultlength{};
+    std::string_view s1{};
+    std::string_view s2{};
+    std::string_view q1{};
+    std::string_view q2{};
+};
+
 
 struct MismatchRatioGlueDecider{
 public:
@@ -39,6 +54,33 @@ public:
     //Overlap must have a length of at least overlapLowerBound, and must contain at most mismatchRatioUpperBound * length mismatches
     // If this is not possible, the result is empty
     std::optional<GlueDecision> operator()(std::string_view s1, std::string_view s2, int resultlength) const{
+        std::optional<GlueDecisionWithQuality> qresult = compute(s1, s2, resultlength, std::nullopt, std::nullopt);
+
+        if(qresult.has_value()){
+            GlueDecision result;
+            result.s1FirstResultIndex = qresult->s1FirstResultIndex;
+            result.s2FirstResultIndex = qresult->s2FirstResultIndex;
+            result.resultlength = qresult->resultlength;
+            result.s1 = qresult->s1;
+            result.s2 = qresult->s2;
+
+            return result;
+        }else{
+            return std::nullopt;
+        }
+    }
+
+    std::optional<GlueDecisionWithQuality> operator()(std::string_view s1, std::string_view s2, int resultlength, std::string_view q1, std::string_view q2) const{
+        assert(s1.size() == q1.size());
+        assert(s2.size() == q2.size());
+
+        std::optional<GlueDecisionWithQuality> qresult = compute(s1, s2, resultlength, q1, q2);
+
+        return qresult;
+    }
+
+private:
+    std::optional<GlueDecisionWithQuality> compute(std::string_view s1, std::string_view s2, int resultlength, std::optional<std::string_view> q1, std::optional<std::string_view> q2) const{
         const auto s1begin = s1.begin();
         const auto s1end = s1.end();
         const auto s2begin = s2.begin();
@@ -69,7 +111,7 @@ public:
             const float mismatchRatio = float(ham) / float(overlapSize);
 
             if(fleq(mismatchRatio, mismatchRatioUpperBound)){
-                GlueDecision decision;
+                GlueDecisionWithQuality decision;
 
                 decision.s1FirstResultIndex = 0;
                 decision.s2FirstResultIndex = s2BeginInCombined >= 0 ? s2BeginInCombined : 0;
@@ -80,6 +122,18 @@ public:
                 assert(s2Start <= int(decision.s2.size()));
                 decision.s2.remove_prefix(s2Start);
 
+                if(q1.has_value()){
+                    assert(q1->size() == s1.size());
+                    decision.q1 = *q1;
+                    decision.q1.remove_suffix(s1length - (s1EndInCombined + 1));
+                }
+
+                if(q2.has_value()){
+                    assert(q2->size() == s2.size());
+                    decision.q2 = *q2;
+                    decision.q2.remove_prefix(s2Start);
+                }
+
                 return decision;
             }else{
                 return {}; //no result
@@ -88,7 +142,7 @@ public:
             return {}; //no result
         }
     }
-private:
+
     int overlapLowerBound;
     float mismatchRatioUpperBound;
 };
@@ -286,7 +340,7 @@ struct QualityWeightedGapGluer{
 public:
     QualityWeightedGapGluer(int origLength1, int origLength2) : originalReadLength1(origLength1), originalReadLength2(origLength2){}
 
-    std::pair<std::string, std::string> operator()(const GlueDecision& g, const std::string& q1, const std::string& q2) const{
+    std::pair<std::string, std::string> operator()(const GlueDecisionWithQuality& g) const{
         assert(g.s1FirstResultIndex == 0);
         assert(int(g.s1.size()) <= g.resultlength);
         assert(int(g.s2.size()) <= g.resultlength);
@@ -307,15 +361,17 @@ public:
         const auto gapend = result.begin() + result.size() - numToCopys2;
         std::copy_n(g.s2.begin() + g.s2.size() - numToCopys2, numToCopys2, gapend);
 
-        const auto gapbeginq = std::copy_n(q1.begin(), numToCopys1, resultquality.begin());      
+        assert(g.q1.size() >= numToCopys1);
+        const auto gapbeginq = std::copy_n(g.q1.begin(), numToCopys1, resultquality.begin());      
         const auto gapendq = resultquality.begin() + resultquality.size() - numToCopys2;
-        std::copy_n(q2.begin() + q2.size() - numToCopys2, numToCopys2, gapendq);
+        std::copy_n(g.q2.begin() + g.q2.size() - numToCopys2, numToCopys2, gapendq);
 
 
         //fill the gap
         if(std::distance(result.begin(), gapbegin) < std::distance(result.begin(), gapend)){
 
             auto getweight = [&](const auto& sequence, int origlength, const auto& quality, int pos){
+                assert(sequence.size() == quality.size());
                 if(pos < 0 || pos >= int(sequence.size())){
                     return 0.0f;
                 }else{
@@ -338,18 +394,18 @@ public:
                 const int positionInS1 = firstGapPos + i;
                 const int positionInS2 = firstGapPos + i - g.s2FirstResultIndex;
 
-                const float w1 = getweight(g.s1, originalReadLength1, q1, positionInS1);
-                const float w2 = getweight(g.s2, originalReadLength2, q2, positionInS2);
+                const float w1 = getweight(g.s1, originalReadLength1, g.q1, positionInS1);
+                const float w2 = getweight(g.s2, originalReadLength2, g.q2, positionInS2);
                 assert((w1 != 0.0f) || (w2 != 0.0f));
 
                 if(fgeq(w1, w2)){
                     assert(positionInS1 < int(g.s1.size()));
                     *iter = g.s1[positionInS1];
-                    *iterq = q1[positionInS1];
+                    *iterq = g.q1[positionInS1];
                 }else{
                     assert(positionInS2 < int(g.s2.size()));
                     *iter = g.s2[positionInS2];
-                    *iterq = q2[positionInS2];
+                    *iterq = g.q2[positionInS2];
                 }
 
                 ++iter;

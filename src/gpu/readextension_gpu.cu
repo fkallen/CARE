@@ -404,8 +404,8 @@ extend_gpu_pairedend(
 
     cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
     //cpu::RangeGenerator<read_number> readIdGenerator(100000);
-    //readIdGenerator.skip(199700);
- 
+    //readIdGenerator.skip(2);
+
     BackgroundThread outputThread(true);
 
     const std::uint64_t totalNumReadPairs = gpuReadStorage.getNumberOfReads() / 2;
@@ -1587,6 +1587,8 @@ extend_gpu_pairedend(
                     stream
                 );
 
+                assert(currentQualityScores.size() >= numReadsInBatch * qualityPitchInBytes);
+
                 if(correctionOptions.useQualityScores){
                     gpuReadStorage.gatherQualities(
                         readStorageHandle,
@@ -1617,10 +1619,10 @@ extend_gpu_pairedend(
                     std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
                     std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
 
-                    input.qualityScores1.resize(qualityPitchInBytes);
-                    input.qualityScores2.resize(qualityPitchInBytes);
-                    std::copy_n(currentQualityScores.get() + (2*i) * qualityPitchInBytes, qualityPitchInBytes, input.qualityScores1.begin());
-                    std::copy_n(currentQualityScores.get() + (2*i + 1) * qualityPitchInBytes, qualityPitchInBytes, input.qualityScores2.begin());
+                    input.qualityScores1.resize(input.readLength1);
+                    input.qualityScores2.resize(input.readLength2);
+                    std::copy_n(currentQualityScores.get() + (2*i) * input.readLength1, qualityPitchInBytes, input.qualityScores1.begin());
+                    std::copy_n(currentQualityScores.get() + (2*i + 1) * input.readLength2, qualityPitchInBytes, input.qualityScores2.begin());
                 }
             
                 #if 1

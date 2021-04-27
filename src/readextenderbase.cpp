@@ -394,6 +394,8 @@ namespace care{
             l.extendedRead.resize(overlapstart + r.extendedRead.size());
             l.qualityScores.resize(overlapstart + r.extendedRead.size());
 
+            assert(std::distance(r.qualityScores.begin() + r.originalLength, r.qualityScores.end()) <= l.qualityScores.size() - beginOfNewPositions);
+
             std::copy(r.extendedRead.begin() + r.originalLength, r.extendedRead.end(), l.extendedRead.begin() + beginOfNewPositions);
             std::copy(r.qualityScores.begin() + r.originalLength, r.qualityScores.end(), l.qualityScores.begin() + beginOfNewPositions);
         };
@@ -505,11 +507,13 @@ namespace care{
                         auto decision = decider(
                             r1.extendedRead, 
                             r3revc, 
-                            insertSize - insertSizeStddev + p
+                            insertSize - insertSizeStddev + p,
+                            r1.qualityScores, 
+                            r3.qualityScores
                         );
 
                         if(decision.has_value()){
-                            possibleResults.emplace_back(gluer(*decision, r1.qualityScores, r3.qualityScores));
+                            possibleResults.emplace_back(gluer(*decision));
                             break;
                         }
                     }
@@ -540,6 +544,8 @@ namespace care{
                     //insert extensions of reverse complement of r4 at beginning of r1
 
                     std::string r4revcNewPositions = SequenceHelpers::reverseComplementSequenceDecoded(r4.extendedRead.data() + r4.originalLength, r4.extendedRead.size() - r4.originalLength);
+                    
+                    assert(r4.originalLength > 0);
                     std::string r4revNewQualities(r4.qualityScores.data() + r4.originalLength, r4.qualityScores.size() - r4.originalLength);
                     std::reverse(r4revNewQualities.begin(), r4revNewQualities.end());
 

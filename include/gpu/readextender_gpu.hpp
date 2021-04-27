@@ -697,6 +697,8 @@ public:
             //     );
             // }
 
+            assert(batchData.h_anchorQualityScores.size() >= (t+1) * batchData.qualityPitchInBytes);
+
             std::copy(
                 task.currentQualityScores.begin(),
                 task.currentQualityScores.end(),
@@ -1018,7 +1020,9 @@ public:
 
                     //update data for next iteration of outer while loop                           
 
+                    assert(extendBy + task.currentAnchorLength <= consensusLength);
                     std::string decodedAnchor(consensus + extendBy, task.currentAnchorLength);
+                    std::string decodedAnchorQuality(consensusquality + extendBy, task.currentAnchorLength);
 
                     const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
 
@@ -1033,12 +1037,13 @@ public:
                     task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
 
-                    std::string decodedAnchorQuality(consensusquality + extendBy, task.currentAnchorLength);
 
                     task.currentQualityScores.resize(decodedAnchorQuality.size());
                     std::copy(decodedAnchorQuality.begin(), decodedAnchorQuality.end(), task.currentQualityScores.begin());
 
                     task.totalAnchorQualityScores.emplace_back(std::move(decodedAnchorQuality));
+
+                    assert(task.totalDecodedAnchors.back().size() == task.totalAnchorQualityScores.back().size());
 
                     // task.resultsequence.insert(
                     //     task.resultsequence.end(), 
@@ -1141,10 +1146,15 @@ public:
                         );
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths + missingPositionsBetweenAnchorEndAndMateBegin);
 
+                        assert(missingPositionsBetweenAnchorEndAndMateBegin < consensusLength);
+                        assert(missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus < consensusLength);
+
                         task.totalAnchorQualityScores.emplace_back(
                             consensusquality + missingPositionsBetweenAnchorEndAndMateBegin,
                             consensusquality + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
                         );
+
+                        assert(task.totalDecodedAnchors.back().size() == task.totalAnchorQualityScores.back().size());
                     }
 
 
@@ -1291,6 +1301,10 @@ public:
             const gpu::MSAColumnProperties msaProps = batchData.h_msa_column_properties[i];
 
             const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
+            assert(msaProps.firstColumn_incl == 0);
+            assert(msaProps.lastColumn_excl <= batchData.msaColumnPitchInElements);
+            assert(batchData.h_consensus.size() >= (i+1) * batchData.msaColumnPitchInElements);
+            assert(batchData.h_consensusQuality.size() >= (i+1) * batchData.msaColumnPitchInElements);
             const char* const consensus = batchData.h_consensus.data() + i * batchData.msaColumnPitchInElements;
             const char* const consensusQuality = batchData.h_consensusQuality.data() + i * batchData.msaColumnPitchInElements;
             
@@ -1672,6 +1686,7 @@ public:
                     task.totalDecodedAnchors[c].end(),
                     stepstrings.begin() + (c-1) * maxlen
                 );
+                assert(task.totalAnchorQualityScores[c].size() <= maxlen);
                 std::copy(
                     task.totalAnchorQualityScores[c].begin(),
                     task.totalAnchorQualityScores[c].end(),
@@ -1681,11 +1696,11 @@ public:
             }
 
             MultipleSequenceAlignment::InputData msaInput;
-            msaInput.useQualityScores = true;
+            msaInput.useQualityScores = false;
             msaInput.subjectLength = decodedAnchor.length();
             msaInput.nCandidates = numsteps-1;
             msaInput.candidatesPitch = maxlen;
-            msaInput.candidateQualitiesPitch = batchData.qualityPitchInBytes;
+            msaInput.candidateQualitiesPitch = maxlen;
             msaInput.subject = decodedAnchor.c_str();
             msaInput.candidates = stepstrings.data();
             msaInput.subjectQualities = anchorQuality.data();
@@ -3672,6 +3687,9 @@ public:
 
         batchData.h_candidateQualityScores.resize(batchData.totalNumCandidates * batchData.qualityPitchInBytes);
 
+        assert(batchData.h_consensusQuality.size() >= batchData.d_consensusQuality.size());
+        assert(batchData.h_candidateQualityScores.size() >= batchData.d_candidateQualityScores.size());
+
         //convert encoded consensus to characters and copy to host
         //copy column properties to host
         helpers::lambda_kernel<<<batchData.numTasks, 128, 0, secondStream>>>(
@@ -3846,6 +3864,7 @@ public:
 
     MultipleSequenceAlignment constructMsaWithDataFromTask(ReadExtenderBase::Task& task, const BatchData& batchData) const{
         const std::string& decodedAnchor = task.totalDecodedAnchors.back();
+        assert(false);
 
         MultipleSequenceAlignment msa;
 
