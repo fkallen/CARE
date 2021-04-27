@@ -71,9 +71,11 @@ namespace care{
 
         const float errorprob = std::max(-(qualityweight - 1.0f), 0.0f);
         if(feq(0.0f, errorprob)){
-            return 'K';
+            return 'I';
         }else{
-            return roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+            char result = roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+            result = std::min(std::max('!', result), 'I');
+            return result;
         }
     }
 

@@ -263,7 +263,6 @@ void initializePairedEndExtensionBatchData4(
         task2.resultQualityScores = task2.currentQualityScores;
         task2.totalAnchorQualityScores.emplace_back(task2.currentQualityScores);
 
-
         auto& task3 = batchData.tasks[4*i + 2];
         task3.reset();
 
@@ -313,6 +312,7 @@ void initializePairedEndExtensionBatchData4(
         std::reverse(task4.currentQualityScores.begin(), task4.currentQualityScores.end());
         task4.resultQualityScores = task4.currentQualityScores;
         task4.totalAnchorQualityScores.emplace_back(task4.currentQualityScores);
+
     }
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
@@ -1621,8 +1621,8 @@ extend_gpu_pairedend(
 
                     input.qualityScores1.resize(input.readLength1);
                     input.qualityScores2.resize(input.readLength2);
-                    std::copy_n(currentQualityScores.get() + (2*i) * input.readLength1, qualityPitchInBytes, input.qualityScores1.begin());
-                    std::copy_n(currentQualityScores.get() + (2*i + 1) * input.readLength2, qualityPitchInBytes, input.qualityScores2.begin());
+                    std::copy_n(currentQualityScores.get() + (2*i) * qualityPitchInBytes, input.readLength1, input.qualityScores1.begin());
+                    std::copy_n(currentQualityScores.get() + (2*i + 1) * qualityPitchInBytes, input.readLength2, input.qualityScores2.begin());
                 }
             
                 #if 1
