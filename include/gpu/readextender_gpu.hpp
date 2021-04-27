@@ -1719,11 +1719,20 @@ public:
 
             std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
             std::string extendedReadQuality(msa.consensus.size(), '\0');
+            std::cerr << "quality of task id " << task.id << " readid " << task.myReadId << "\n";
             std::transform(msa.support.begin(), msa.support.end(), extendedReadQuality.begin(),
                 [](const float f){
-                    return getQualityChar(f);
+                    char q = getQualityChar(f);
+                    //if(q < '!' || q > 'K'){
+                        //printf("input %.8f, outint %d, outchar %c\n", f, int(q), q);
+                        std::cerr << int(q) << " ";
+                    //}
+                    return q;
                 }
             );
+            std::cerr << "\n";
+            std::copy(extendedReadQuality.begin(), extendedReadQuality.end(), std::ostream_iterator<char>(std::cerr, ""));
+            std::cerr << "\n";
 
             std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
             std::copy(anchorQuality.begin(), anchorQuality.end(), extendedReadQuality.begin());
@@ -1736,6 +1745,10 @@ public:
                     extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
                 );
 
+                std::cerr << "mateQualityScoresReversed\n";
+                std::copy(task.mateQualityScoresReversed.begin(), task.mateQualityScoresReversed.end(), std::ostream_iterator<char>(std::cerr, ""));
+                std::cerr << "\n";
+
                 std::copy(
                     task.mateQualityScoresReversed.begin(),
                     task.mateQualityScoresReversed.end(),
@@ -1746,6 +1759,10 @@ public:
             }else{
                 extendResult.read2begin = -1;
             }
+
+            std::cerr << "final qual for task\n";
+            std::copy(extendedReadQuality.begin(), extendedReadQuality.end(), std::ostream_iterator<char>(std::cerr, ""));
+            std::cerr << "\n";
 
             extendResult.extendedRead = std::move(extendedRead);
             extendResult.qualityScores = std::move(extendedReadQuality);

@@ -402,8 +402,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(4);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -1702,6 +1702,10 @@ extend_gpu_pairedend(
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
                 ExtendedRead& er = extendedReads[i];
+
+                std::cerr << "final extension quality\n";
+                std::copy(extensionOutput.qualityScores.begin(), extensionOutput.qualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
+                std::cerr << "\n";
 
                 er.readId = extensionOutput.readId1;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);

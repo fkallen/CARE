@@ -696,6 +696,7 @@ namespace care{
                             const Read& read = *outputBatch->extendedReads[processed];
                             //extendedReadWriter->writeRead(str);
                             extendedReadWriter->writeRead(read.header, read.sequence, read.quality);
+                            std::cerr << "write extended read\n";
 
                             #if 1                         
 

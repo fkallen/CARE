@@ -73,7 +73,8 @@ namespace care{
         if(feq(0.0f, errorprob)){
             return 'K';
         }else{
-            return roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+            char result = roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+            return result;
         }
     }
 
