@@ -294,7 +294,8 @@ namespace care{
             const std::size_t requiredBytes = sizeof(read_number) //readid
                 + sizeof(ExtendedReadStatus) //status
                 + sizeof(int) * 4  //original ranges
-                + sizeof(int) + extendedSequence.length(); //sequence
+                + sizeof(int) + extendedSequence.length() //sequence
+                + sizeof(int) + qualityScores.length(); // quality scores
 
             const std::size_t availableBytes = std::distance(ptr, endPtr);
 
