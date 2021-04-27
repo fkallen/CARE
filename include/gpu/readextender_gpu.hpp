@@ -437,6 +437,8 @@ struct BatchData{
     DeviceBuffer<int> d_counts;
     DeviceBuffer<float> d_weights;
 
+    PinnedBuffer<int> h_coverage;
+
     PinnedBuffer<char> h_consensusQuality;
     DeviceBuffer<char> d_consensusQuality;
 
@@ -1001,7 +1003,7 @@ public:
             return constructMsaWithDataFromTask(task, batchData);
         };
 
-        auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, const char* consensusquality, int taskIndex){
+        auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, const char* consensusquality, const int* coverage, int taskIndex){
 
             //can extend by at most maxextensionPerStep bps
             int extendBy = std::min(
@@ -1010,6 +1012,19 @@ public:
             );
             //cannot extend over fragment 
             extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
+
+            constexpr int minCoverageForExtension = 7;
+
+            auto firstLowCoverageIter = std::find_if(
+                coverage + task.currentAnchorLength, 
+                coverage + consensusLength,
+                [&](int cov){ return cov < minCoverageForExtension; }
+            );
+
+            extendBy = std::distance(coverage + task.currentAnchorLength, firstLowCoverageIter);
+            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
+
+            //std::cerr << "extendby: " << extendBy << ", firstLowCoveragePos: " << std::distance(coverage + task.currentAnchorLength, firstLowCoverageIter) << "\n";
 
             auto makeAnchorForNextIteration = [&](){
                 if(extendBy == 0){
@@ -1307,6 +1322,8 @@ public:
             assert(batchData.h_consensusQuality.size() >= (i+1) * batchData.msaColumnPitchInElements);
             const char* const consensus = batchData.h_consensus.data() + i * batchData.msaColumnPitchInElements;
             const char* const consensusQuality = batchData.h_consensusQuality.data() + i * batchData.msaColumnPitchInElements;
+
+            const int* const msacoverage = batchData.h_coverage.data() + i * batchData.msaColumnPitchInElements;
             
 #if 0
             //if(task.splitDepth == 0){
@@ -1461,7 +1478,7 @@ public:
                 extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
             }
 #else 
-            extendWithMsa(task, consensus, consensusLength, consensusQuality, indexOfActiveTask);
+            extendWithMsa(task, consensus, consensusLength, consensusQuality, msacoverage, indexOfActiveTask);
 #endif
 
         }
@@ -3685,6 +3702,8 @@ public:
         batchData.h_msa_column_properties.resize(batchData.numTasks);
         batchData.h_consensusQuality.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
 
+        batchData.h_coverage.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
+
         batchData.h_candidateQualityScores.resize(batchData.totalNumCandidates * batchData.qualityPitchInBytes);
 
         assert(batchData.h_consensusQuality.size() >= batchData.d_consensusQuality.size());
@@ -3765,6 +3784,14 @@ public:
             D2H,
             firstStream
         );
+
+        cudaMemcpyAsync(
+            batchData.h_coverage.data(),
+            batchData.d_coverage.data(),
+            sizeof(int) * batchData.numTasks * batchData.msaColumnPitchInElements,
+            D2H,
+            firstStream
+        ); CUERR;
 
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
