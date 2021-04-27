@@ -557,6 +557,8 @@ namespace care{
                     batch->processedItems = 0;
                     batch->validItems = batchsize;
 
+                    std::cerr << "decoded " << batchsize << " results\n";
+
                     unprocessedTcsBatches.push(batch);
                 }
 
@@ -602,6 +604,10 @@ namespace care{
                 //batch->items2.resize(inputreader_maxbatchsize);
                 batch->extendedReads.resize(inputreader_maxbatchsize);
 
+                for(auto& optional : batch->extendedReads){
+                    optional.reset();
+                }
+
                 std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
                 int batchsize = 1;
 
@@ -629,6 +635,10 @@ namespace care{
                 batch->items.resize(inputreader_maxbatchsize);
                 batch->items2.resize(inputreader_maxbatchsize);
                 batch->extendedReads.resize(inputreader_maxbatchsize);
+
+                for(auto& optional : batch->extendedReads){
+                    optional.reset();
+                }
 
                 std::swap(batch->items[0], pairedInputReader.getCurrent1()); //process element from outer loop next() call
                 std::swap(batch->items2[0], pairedInputReader.getCurrent2()); //process element from outer loop next() call
@@ -696,7 +706,6 @@ namespace care{
                             const Read& read = *outputBatch->extendedReads[processed];
                             //extendedReadWriter->writeRead(str);
                             extendedReadWriter->writeRead(read.header, read.sequence, read.quality);
-                            std::cerr << "write extended read\n";
 
                             #if 1                         
 

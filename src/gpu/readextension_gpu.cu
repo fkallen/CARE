@@ -236,16 +236,8 @@ void initializePairedEndExtensionBatchData4(
         task1.resultQualityScores = task1.currentQualityScores;
         task1.totalAnchorQualityScores.emplace_back(task1.currentQualityScores);
 
-        std::cerr << "task1.currentQualityScores\n";
-        std::copy(task1.currentQualityScores.begin(), task1.currentQualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
-
         task1.mateQualityScoresReversed.insert(task1.mateQualityScoresReversed.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
         std::reverse(task1.mateQualityScoresReversed.begin(), task1.mateQualityScoresReversed.end());
-
-        std::cerr << "task1.mateQualityScoresReversed\n";
-        std::copy(task1.mateQualityScoresReversed.begin(), task1.mateQualityScoresReversed.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
 
         auto& task2 = batchData.tasks[4*i + 1];
         task2.reset();
@@ -271,11 +263,6 @@ void initializePairedEndExtensionBatchData4(
         task2.resultQualityScores = task2.currentQualityScores;
         task2.totalAnchorQualityScores.emplace_back(task2.currentQualityScores);
 
-        std::cerr << "task2.currentQualityScores\n";
-        std::copy(task2.currentQualityScores.begin(), task2.currentQualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
-
-
         auto& task3 = batchData.tasks[4*i + 2];
         task3.reset();
 
@@ -299,16 +286,8 @@ void initializePairedEndExtensionBatchData4(
         task3.resultQualityScores = task3.currentQualityScores;
         task3.totalAnchorQualityScores.emplace_back(task3.currentQualityScores);
 
-        std::cerr << "task3.currentQualityScores\n";
-        std::copy(task3.currentQualityScores.begin(), task3.currentQualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
-
         task3.mateQualityScoresReversed.insert(task3.mateQualityScoresReversed.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
         std::reverse(task3.mateQualityScoresReversed.begin(), task3.mateQualityScoresReversed.end());
-
-        std::cerr << "task3.mateQualityScoresReversed\n";
-        std::copy(task3.mateQualityScoresReversed.begin(), task3.mateQualityScoresReversed.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
 
         auto& task4 = batchData.tasks[4*i + 3];
         task4.reset();
@@ -334,9 +313,6 @@ void initializePairedEndExtensionBatchData4(
         task4.resultQualityScores = task4.currentQualityScores;
         task4.totalAnchorQualityScores.emplace_back(task4.currentQualityScores);
 
-        std::cerr << "task4.currentQualityScores\n";
-        std::copy(task4.currentQualityScores.begin(), task4.currentQualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
-        std::cerr << "\n";
     }
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
@@ -426,8 +402,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(4);
+    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(4);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -1726,10 +1702,6 @@ extend_gpu_pairedend(
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
                 ExtendedRead& er = extendedReads[i];
-
-                std::cerr << "final extension quality\n";
-                std::copy(extensionOutput.qualityScores.begin(), extensionOutput.qualityScores.end(), std::ostream_iterator<char>(std::cerr, ""));
-                std::cerr << "\n";
 
                 er.readId = extensionOutput.readId1;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
