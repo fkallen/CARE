@@ -846,6 +846,8 @@ public:
 
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
 
+        //std::cerr << "Step: Active tasks " << numActiveTasks << ", totalNumCandidates " << batchData.totalNumCandidates << "\n";
+
         nvtx::push_range("removeUsedIdsAndMateIds", 1);
 
         removeUsedIdsAndMateIdsCPU(batchData, batchData.streams[0], batchData.streams[1]);    
@@ -1013,7 +1015,7 @@ public:
             //cannot extend over fragment 
             extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
 
-            constexpr int minCoverageForExtension = 7;
+            constexpr int minCoverageForExtension = 3;
 
             auto firstLowCoverageIter = std::find_if(
                 coverage + task.currentAnchorLength, 
@@ -1116,6 +1118,8 @@ public:
                 //     std::cerr << task.decodedMateRevC << "\n";
                 // }
 
+                #if 0
+
                 for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
                     //compute metrics of overlap
                         
@@ -1151,6 +1155,30 @@ public:
                     // }
                 //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
                     const int mateStartposInConsensus = flatMap[0].second.front();
+                #endif
+
+                std::pair<int, int> bestOverlap{std::numeric_limits<int>::max(), -1}; //{number of mismatches, startpos}
+
+                for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
+                    //compute metrics of overlap
+                        
+                    const int ham = cpu::hammingDistanceOverlap(
+                        consensus + startpos, consensus + consensusLength, 
+                        task.decodedMateRevC.begin(), task.decodedMateRevC.end()
+                    );
+
+                    if(bestOverlap.first > ham){
+                        bestOverlap.first = ham;
+                        bestOverlap.second = startpos;
+                    }
+
+                    if(bestOverlap.first == 0){
+                        break;
+                    }
+                }
+
+                if(bestOverlap.first <= maxNumMismatches){
+                    const int mateStartposInConsensus = bestOverlap.second;
                     const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
 
                     if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
@@ -3304,6 +3332,7 @@ public:
             [
                 consensusQuality = batchData.d_consensusQuality.data(),
                 support = batchData.d_support.data(),
+                coverages = batchData.d_coverage.data(),
                 msa_column_properties = batchData.d_msa_column_properties.data(),
                 d_numCandidatesInMsa = batchData.d_numCandidatesPerAnchor2.data(),
                 columnPitchInElements = batchData.msaColumnPitchInElements,
@@ -3313,6 +3342,7 @@ public:
                 for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
                     if(d_numCandidatesInMsa[t] > 0){
                         const float* const taskSupport = support + t * columnPitchInElements;
+                        const int* const taskCoverage = coverages + t * columnPitchInElements;
                         char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
                         const int begin = msa_column_properties[t].firstColumn_incl;
                         const int end = msa_column_properties[t].lastColumn_excl;
@@ -3326,6 +3356,14 @@ public:
                         assert(end < columnPitchInElements);
 
                         for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
+                            const float support = taskSupport[i];
+                            const float cov = taskCoverage[i];
+
+                            char q = getQualityChar(taskSupport[i]);
+
+                            //scale down quality depending on coverage
+                            q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
+
                             taskConsensusQuality[i] = getQualityChar(taskSupport[i]);
                         }
                     }
