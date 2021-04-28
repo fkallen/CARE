@@ -253,10 +253,6 @@ struct BatchData{
         indicesOfActiveTasks.resize(tasks.size());
         std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
 
-        splitTracker.clear();
-        for(const auto& t : tasks){
-            splitTracker[t.myReadId] = 1;
-        }
 
         //set input string as current anchor
         for(int i = 0; i < int(tasks.size()); i++){
@@ -441,18 +437,11 @@ struct BatchData{
 
     PinnedBuffer<char> h_consensusQuality;
     DeviceBuffer<char> d_consensusQuality;
-
-    PinnedBuffer<MultipleSequenceAlignment::PossibleSplitColumn> h_possibleSplitColumns;
-    PinnedBuffer<int> h_numPossibleSplitColumnsPerAnchor;
-    DeviceBuffer<MultipleSequenceAlignment::PossibleSplitColumn> d_possibleSplitColumns;
-    DeviceBuffer<int> d_numPossibleSplitColumnsPerAnchor;
-
     
     std::array<CudaEvent, 1> events{};
     std::array<CudaStream, 4> streams{};
     std::vector<int> indicesOfActiveTasks{};
     std::vector<ReadExtenderBase::Task> tasks;
-    std::map<read_number, int> splitTracker{}; //counts number of tasks per read id, which can change by splitting a task
 
 };
 
@@ -1224,106 +1213,11 @@ public:
                     // );
 
                 }else{
-                    // if(task.myReadId == 199726){
-
-                    //     std::cerr << "mate not found\n";
-                    //     std::cerr << "flatmapsize: " << flatMap.size() << "\n";
-                    //     if(flatMap.size() > 0){
-                    //         std::cerr << "first flatmap mismatches\n";
-                    //         std::cerr << flatMap[0].first << "\n";
-                    //     }
-                    // }
                     makeAnchorForNextIteration();
                 }
             }else{
                 makeAnchorForNextIteration();
             }
-        };
-
-        auto keepSelectedCandidates = [&](auto& task, const auto& selectedCandidateIndices, int taskIndex){
-            assert(task.dataIsAvailable);
-
-            const int numCandidateIndices = selectedCandidateIndices.size();
-            assert(numCandidateIndices <= task.numRemainingCandidates);
-
-            for(int i = 0; i < numCandidateIndices; i++){
-                const int c = vecAccess(selectedCandidateIndices, i);
-                // if(!(0 <= c && c < task.candidateReadIds.size())){
-                //     std::cerr << "c = " << c << ", candidateReadIds.size() = " << task.candidateReadIds.size() << "\n";
-                // }
-
-                // assert(0 <= c && c < task.candidateReadIds.size());
-                // assert(0 <= c && c < task.candidateSequenceLengths.size());
-                // assert(0 <= c && c < task.alignments.size());
-                // assert(0 <= c && c < task.alignmentFlags.size());
-
-                // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesFwdData.size());
-                // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequencesRevcData.size());
-                // assert(0 <= c && c*encodedSequencePitchInInts < task.candidateSequenceData.size());
-
-                vecAccess(task.candidateReadIds, i) = vecAccess(task.candidateReadIds, c);
-                vecAccess(task.candidateSequenceLengths , i) = vecAccess(task.candidateSequenceLengths, c);
-                vecAccess(task.alignments, i) = vecAccess(task.alignments, c);
-                vecAccess(task.alignmentFlags, i) = vecAccess(task.alignmentFlags, c);
-                vecAccess(task.candidateShifts, i) = vecAccess(task.candidateShifts, c);
-                vecAccess(task.candidateOverlapWeights, i) = vecAccess(task.candidateOverlapWeights, c);
-
-                // std::copy_n(
-                //     task.candidateSequencesFwdData.begin() + c * encodedSequencePitchInInts,
-                //     encodedSequencePitchInInts,
-                //     task.candidateSequencesFwdData.begin() + i * encodedSequencePitchInInts
-                // );
-
-                // std::copy_n(
-                //     task.candidateSequencesRevcData.begin() + c * encodedSequencePitchInInts,
-                //     encodedSequencePitchInInts,
-                //     task.candidateSequencesRevcData.begin() + i * encodedSequencePitchInInts
-                // );
-
-                std::copy_n(
-                    task.candidateSequenceData.begin() + c * batchData.encodedSequencePitchInInts,
-                    batchData.encodedSequencePitchInInts,
-                    task.candidateSequenceData.begin() + i * batchData.encodedSequencePitchInInts
-                );
-
-                std::copy_n(
-                    task.candidateStrings.begin() + c * batchData.decodedSequencePitchInBytes,
-                    batchData.decodedSequencePitchInBytes,
-                    task.candidateStrings.begin() + i * batchData.decodedSequencePitchInBytes
-                );
-            }
-
-            task.candidateReadIds.erase(
-                task.candidateReadIds.begin() + numCandidateIndices,
-                task.candidateReadIds.end()
-            );
-            task.candidateSequenceLengths.erase(
-                task.candidateSequenceLengths.begin() + numCandidateIndices,
-                task.candidateSequenceLengths.end()
-            );
-            task.alignments.erase(
-                task.alignments.begin() + numCandidateIndices,
-                task.alignments.end()
-            );
-            task.alignmentFlags.erase(
-                task.alignmentFlags.begin() + numCandidateIndices,
-                task.alignmentFlags.end()
-            );
-            task.candidateSequenceData.erase(
-                task.candidateSequenceData.begin() + numCandidateIndices * batchData.encodedSequencePitchInInts,
-                task.candidateSequenceData.end()
-            );
-            if(task.pairedEnd){
-                task.mateIdLocationIter = std::lower_bound(
-                    task.candidateReadIds.begin(),
-                    task.candidateReadIds.end(),
-                    task.mateReadId
-                );
-
-                task.mateHasBeenFound = (task.mateIdLocationIter != task.candidateReadIds.end() 
-                    && *task.mateIdLocationIter == task.mateReadId);
-            }
-            task.numRemainingCandidates = numCandidateIndices;
         };
 
         nvtx::push_range("MSA", 6);
@@ -1338,9 +1232,6 @@ public:
             }
             assert(task.numRemainingCandidates > 0);
 
-            const std::size_t splitcolumnsPitchElements = 32;
-            const auto* const possibleSplitColumns = batchData.h_possibleSplitColumns.data() + splitcolumnsPitchElements * i;
-            const int numPossibleSplitColumns = batchData.h_numPossibleSplitColumnsPerAnchor[i];
             const gpu::MSAColumnProperties msaProps = batchData.h_msa_column_properties[i];
 
             const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
@@ -1353,181 +1244,9 @@ public:
 
             const int* const msacoverage = batchData.h_coverage.data() + i * batchData.msaColumnPitchInElements;
             
-#if 0
-            //if(task.splitDepth == 0){
-            if(batchData.splitTracker[task.myReadId] <= 4 && batchData.h_numPossibleSplitColumnsPerAnchor[i] > 0){
-                
-                const int numCandidates = task.numRemainingCandidates;
-                const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
-                const int* const candidateShifts = batchData.h_alignment_shifts.data() + offset;
-                const int* const candidateLengths = batchData.h_candidateSequencesLength.data() + offset;
-                const auto* const alignmentFlags = batchData.h_alignment_best_alignment_flags.data() + offset;
-
-                const unsigned int* const myCandidateSequencesData = &batchData.h_candidateSequencesData[offset * batchData.encodedSequencePitchInInts];
-
-                task.candidateStrings.resize(batchData.decodedSequencePitchInBytes * numCandidates, '\0');
-
-                //decode the candidates for msa
-                for(int c = 0; c < task.numRemainingCandidates; c++){
-                    SequenceHelpers::decode2BitSequence(
-                        task.candidateStrings.data() + c * batchData.decodedSequencePitchInBytes,
-                        myCandidateSequencesData + c * batchData.encodedSequencePitchInInts,
-                        candidateLengths[c]
-                    );
-
-                    if(alignmentFlags[c] == BestAlignment_t::ReverseComplement){
-                        SequenceHelpers::reverseComplementSequenceDecodedInplace(
-                            task.candidateStrings.data() + c * batchData.decodedSequencePitchInBytes, 
-                            candidateLengths[c]
-                        );
-                    }
-                }
-
-                auto possibleSplits = inspectColumnsRegionSplit(
-                    possibleSplitColumns,
-                    numPossibleSplitColumns,
-                    task.currentAnchorLength, 
-                    msaProps.lastColumn_excl - msaProps.firstColumn_incl,
-                    msaProps.subjectColumnsBegin_incl,
-                    numCandidates,
-                    task.candidateStrings.data(),
-                    batchData.decodedSequencePitchInBytes,
-                    candidateShifts,
-                    candidateLengths
-                );
-
-                if(possibleSplits.splits.size() > 1){
-                    //nvtx::push_range("split msa", 8);
-                    //auto& task = batchData.tasks[indexOfActiveTask];
-                    #if 1
-                    std::sort(
-                        possibleSplits.splits.begin(), 
-                        possibleSplits.splits.end(),
-                        [](const auto& split1, const auto& split2){
-                            //sort by size, descending
-                            return split2.listOfCandidates.size() < split1.listOfCandidates.size();
-                        }
-                    );
-                    #else
-                    std::nth_element(
-                        possibleSplits.splits.begin(), 
-                        possibleSplits.splits.begin() + 1, 
-                        possibleSplits.splits.end(),
-                        [](const auto& split1, const auto& split2){
-                            //sort by size, descending
-                            return split2.listOfCandidates.size() < split1.listOfCandidates.size();
-                        }
-                    );
-                    #endif
-
-                    // std::cerr << "split[0] = ";
-                    // for(auto x : possibleSplits.splits[0].listOfCandidates) std::cerr << x << " ";
-                    // std::cerr << "\nsplit[1] = ";
-                    // for(auto x : possibleSplits.splits[1].listOfCandidates) std::cerr << x << " ";
-                    // std::cerr << "\n";
-
-                    // auto printColumnInfo = [](const auto& x){
-                    //     std::cerr << "(" << x.column << ", " << x.letter << ", " << x.ratio << ") ";
-                    // };
-
-                    // std::cerr << "columns[0] = ";
-                    // for(auto x : possibleSplits.splits[0].columnInfo) printColumnInfo(x);
-                    // std::cerr << "\ncolumns[1] = ";
-                    // for(auto x : possibleSplits.splits[1].columnInfo) printColumnInfo(x);
-                    // std::cerr << "\n";
-
-
-                    //copy task's data from batchData into task
-
-                    copyBatchDataIntoTask(task, i, batchData);
-
-                    //create the separate shifts array
-                    //create defaultweights, which is split in keepSelectedCandidates
-
-                    task.candidateShifts.resize(task.alignments.size());
-                    task.candidateOverlapWeights.resize(task.numRemainingCandidates);
-
-                    for(int c = 0; c < task.numRemainingCandidates; c++){
-                        task.candidateShifts[c] = task.alignments[c].shift;
-
-                        task.candidateOverlapWeights[c] = calculateOverlapWeight(
-                            task.currentAnchorLength, 
-                            task.alignments[c].nOps,
-                            task.alignments[c].overlap,
-                            goodAlignmentProperties->maxErrorRate
-                        );
-                    }                       
-
-                    task.dataIsAvailable = true;
-                    //create a copy of task, and only keep candidates of first split
-                    
-                    auto taskCopy = task;
-                    taskCopy.splitDepth++;
-
-                    // std::cerr << "split\n";
-                    // msa.print(std::cerr); 
-                    // std::cerr << "\n into \n";
-
-                    keepSelectedCandidates(taskCopy, possibleSplits.splits[0].listOfCandidates, -1);
-                    const MultipleSequenceAlignment msaOfCopy = constructMsa(taskCopy, -1);
-
-                    // msaOfCopy.print(std::cerr); 
-                    // std::cerr << "\n and \n";
-
-                    extendWithMsa(taskCopy, msaOfCopy.consensus.data(), msaOfCopy.consensus.size(), -1);
-
-                    //only keep canddiates of second split
-                    keepSelectedCandidates(task, possibleSplits.splits[1].listOfCandidates, -1); 
-                    const MultipleSequenceAlignment newMsa = constructMsa(task, -1);
-
-                    // newMsa.print(std::cerr); 
-                    // std::cerr << "\n";
-
-                    extendWithMsa(task, newMsa.consensus.data(), newMsa.consensus.size(), -1);
-
-                    //if extension was not possible in task, replace task by task copy
-                    if(task.abort && task.abortReason == AbortReason::MsaNotExtended){
-                        //replace task by taskCopy
-                        task = std::move(taskCopy);
-                    }else if(!taskCopy.abort){
-                        //if extension was possible in both task and taskCopy, taskCopy will be added to tasks and list of active tasks
-                        newTaskIndices.emplace_back(batchData.tasks.size() + newTasksFromSplit.size());
-                        newTasksFromSplit.emplace_back(std::move(taskCopy));
-
-                        batchData.splitTracker[task.myReadId]++;
-
-
-                    }
-                    //nvtx::pop_range();                     
-                }else{
-                    extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
-                }
-            }else{
-                extendWithMsa(task, consensus, consensusLength, indexOfActiveTask);
-            }
-#else 
             extendWithMsa(task, consensus, consensusLength, consensusQuality, msacoverage, indexOfActiveTask);
-#endif
-
         }
 
-        // for(int i = 0; i < numActiveTasks-1; i++){ 
-        //     const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
-        //     const auto& task = batchData.tasks[indexOfActiveTask];
-        //     auto& othertask = batchData.tasks[batchData.indicesOfActiveTasks[i+1]];
-
-        //     //if tasks are paired
-        //     if(task.id + 1 == othertask.id){
-        //         //if left anchor is finished
-        //         if(task.abort || task.mateHasBeenFound){
-        //             if(!othertask.abort){
-        //                 othertask.abort = true;
-        //                 othertask.abortReason = AbortReason::PairedAnchorFinished;
-        //             }
-        //         }
-        //         i++;
-        //     }
-        // }
 
         assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
 
@@ -3576,136 +3295,6 @@ public:
         std::swap(batchData.d_candidateQualityScores, batchData.d_candidateQualityScores2);
 
         //compute possible msa splits
-        batchData.d_possibleSplitColumns.resize(32 * batchData.numTasks);
-        batchData.d_numPossibleSplitColumnsPerAnchor.resize(batchData.numTasks);
-
-        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, firstStream>>>(
-            [
-                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
-                d_counts = batchData.d_counts.data(),
-                d_coverage = batchData.d_coverage.data(),
-                msaColumnPitchInElements = batchData.msaColumnPitchInElements,
-                d_msa_column_properties = batchData.d_msa_column_properties.data(),
-                numTasks = batchData.numTasks,
-                splitcolumnsPitchElements = 32,
-                d_possibleSplitColumns = batchData.d_possibleSplitColumns.data(),
-                d_numPossibleSplitColumnsPerTask = batchData.d_numPossibleSplitColumnsPerAnchor.data()
-            ] __device__ (){
-
-                using PSC = MultipleSequenceAlignment::PossibleSplitColumn;
-                constexpr int maxColumnsPerTask = 32;
-
-                __shared__ PSC sharedPSC[maxColumnsPerTask];
-                __shared__ int broadcastint;
-
-                using BlockReduce = cub::BlockReduce<int, 128>;
-                using BlockScan = cub::BlockScan<int, 128>;
-                __shared__ typename BlockReduce::TempStorage blockreducetemp;
-                __shared__ typename BlockScan::TempStorage blockscantemp;
-
-                for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
-
-                    int* const numSplitColumnsPtr = d_numPossibleSplitColumnsPerTask + task;
-                    PSC* const splitColumnsPtr = d_possibleSplitColumns + splitcolumnsPitchElements * task;
-
-                    if(d_numCandidatesPerAnchor[task] > 0){
-
-                        //only check columns to the right of anchor
-                        const int firstColumn = d_msa_column_properties[task].subjectColumnsEnd_excl;
-                        const int lastColumnExcl = d_msa_column_properties[task].lastColumn_excl;                                
-
-                        int* myCountsPtr[4];
-                        myCountsPtr[0] = d_counts + 4 * msaColumnPitchInElements * task + 0 * msaColumnPitchInElements;
-                        myCountsPtr[1] = d_counts + 4 * msaColumnPitchInElements * task + 1 * msaColumnPitchInElements;
-                        myCountsPtr[2] = d_counts + 4 * msaColumnPitchInElements * task + 2 * msaColumnPitchInElements;
-                        myCountsPtr[3] = d_counts + 4 * msaColumnPitchInElements * task + 3 * msaColumnPitchInElements;   
-                        
-                        int* myCoveragesPtr = d_coverage + msaColumnPitchInElements * task;
-
-                        int totalNumResults = 0;
-
-                        const int numIterations = SDIV(lastColumnExcl - firstColumn, blockDim.x);
-
-                        for(int iteration = 0; iteration < numIterations; iteration++){
-                            const int col = firstColumn + iteration * blockDim.x + threadIdx.x;
-
-                            PSC myresults[3];
-                            int myNumResults = 0;
-
-                            if(col < lastColumnExcl){                                   
-
-                                auto checkNuc = [&](const auto& counts, const char nuc){
-                                    if(myNumResults < 3){
-
-                                        const float ratio = float(counts[col]) / float(myCoveragesPtr[col]);
-                                        //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
-                                        if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
-
-                                            #pragma unroll
-                                            for(int k = 0; k < 3; k++){
-                                                if(myNumResults == k){
-                                                    myresults[k] = {nuc, col, ratio};
-                                                    myNumResults++;
-                                                    break;
-                                                }
-                                            }
-                                            
-                                        }
-                                    }
-                                };
-
-                                checkNuc(myCountsPtr[0], 'A');
-                                checkNuc(myCountsPtr[1], 'C');
-                                checkNuc(myCountsPtr[2], 'G');
-                                checkNuc(myCountsPtr[3], 'T');
-
-                                if(myNumResults != 2){
-                                    myNumResults = 0;
-                                }    
-                            }
-
-                            int totalNumResultsIteration = BlockReduce(blockreducetemp).Sum(myNumResults);
-                            if(threadIdx.x == 0){
-                                broadcastint = totalNumResultsIteration;
-                            }
-                            __syncthreads();
-                            totalNumResultsIteration = broadcastint;
-
-                            if(totalNumResultsIteration + totalNumResults > maxColumnsPerTask){
-                                totalNumResults = 0;
-                                break;
-                            }else{
-                                int outputoffset = 0;
-
-                                BlockScan(blockscantemp).ExclusiveSum(myNumResults, outputoffset);
-
-                                if(myNumResults == 2){
-                                    sharedPSC[totalNumResults + outputoffset + 0] = myresults[0];
-                                    sharedPSC[totalNumResults + outputoffset + 1] = myresults[1];
-                                }
-
-                                totalNumResults += totalNumResultsIteration;
-                            }
-
-                            __syncthreads();
-                        }
-
-                        for(int i = threadIdx.x; i < totalNumResults; i += blockDim.x){
-                            splitColumnsPtr[i] = sharedPSC[i];
-                        }
-
-                        if(threadIdx.x == 0){
-                            *numSplitColumnsPtr = totalNumResults;
-                        }
-                    }else{
-                        if(threadIdx.x == 0){
-                            *numSplitColumnsPtr = 0;
-                        }
-                    }
-                }
-            }
-        ); CUERR;
-
         cudaEventSynchronize(batchData.events[0]); CUERR; //wait for h_numCandidates
 
         batchData.totalNumCandidates = *batchData.h_numCandidates; 
@@ -3734,8 +3323,6 @@ public:
         batchData.h_alignment_nOps.resize(batchData.totalNumCandidates);
         batchData.h_alignment_best_alignment_flags.resize(batchData.totalNumCandidates);
 
-        batchData.h_possibleSplitColumns.resize(32 * batchData.numTasks);
-        batchData.h_numPossibleSplitColumnsPerAnchor.resize(batchData.numTasks);
         batchData.h_consensus.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
         batchData.h_msa_column_properties.resize(batchData.numTasks);
         batchData.h_consensusQuality.resize(batchData.numTasks * batchData.msaColumnPitchInElements);
@@ -3808,14 +3395,6 @@ public:
         );
 
         cudaMemcpyAsync(
-            batchData.h_possibleSplitColumns.get(),
-            batchData.d_possibleSplitColumns.get(),
-            sizeof(MultipleSequenceAlignment::PossibleSplitColumn) * 32 * batchData.numTasks,
-            D2H,
-            firstStream
-        ); CUERR;
-
-        cudaMemcpyAsync(
             batchData.h_consensusQuality.data(),
             batchData.d_consensusQuality.data(),
             sizeof(char) * batchData.numTasks * batchData.msaColumnPitchInElements,
@@ -3834,14 +3413,12 @@ public:
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
                 batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
-                batchData.d_numCandidatesPerAnchor.data(),
-                batchData.d_numPossibleSplitColumnsPerAnchor.get()
+                batchData.d_numCandidatesPerAnchor.data()
             )),
             batchData.numTasks,
             thrust::make_zip_iterator(thrust::make_tuple(
                 batchData.h_numCandidatesPerAnchorPrefixSum.data() + 1,
-                batchData.h_numCandidatesPerAnchor.data(),
-                batchData.h_numPossibleSplitColumnsPerAnchor.get()
+                batchData.h_numCandidatesPerAnchor.data()
             )),
             firstStream
         );          
