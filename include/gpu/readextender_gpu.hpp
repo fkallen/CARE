@@ -309,6 +309,10 @@ struct BatchData{
     std::size_t msaColumnPitchInElements = 0;
     std::size_t qualityPitchInBytes = 0;
 
+    std::size_t outputAnchorPitchInBytes = 0;
+    std::size_t outputAnchorQualityPitchInBytes = 0;
+    std::size_t decodedMatesRevCPitchInBytes = 0;
+
     PinnedBuffer<read_number> h_anchorReadIds{};
     DeviceBuffer<read_number> d_anchorReadIds{};
     PinnedBuffer<read_number> h_mateReadIds{};
@@ -848,16 +852,6 @@ public:
     }
 
     void step(BatchData& batchData) const{
-        #if 1
-        //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
-            return vec[index];
-        };
-        #else 
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
-            return vec.at(index);
-        };
-        #endif 
 
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
 
@@ -971,9 +965,15 @@ public:
 
         nvtx::pop_range();
 
+        nvtx::push_range("computeExtendedSequences", 7);
+
+        computeExtendedSequencesFromMSAs(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
         //copy all necessary buffers to host
             
-        nvtx::push_range("copyBuffersToHost", 7);
+        nvtx::push_range("copyBuffersToHost", 8);
 
         copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[1]);
 
@@ -981,654 +981,23 @@ public:
         
 
         cudaStreamSynchronize(batchData.streams[0]); CUERR;
-        cudaStreamSynchronize(batchData.streams[1]); CUERR;
-
-        for(int i = 0; i < numActiveTasks; i++){
-            auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
-
-            task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
-
-            if(task.numRemainingCandidates == 0){
-                task.abort = true;
-                task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
-            }
-        }
-
-
-        
+        cudaStreamSynchronize(batchData.streams[1]); CUERR;        
     }
 
     void extendAfterStep(BatchData& batchData) const{
 
-        //std::cerr << batchData.numTasks << "\n";
-
-        batchData.h_accumExtensionsLengths.resize(batchData.numTasks);
-        batchData.h_inputMateLengths.resize(batchData.numTasks);
-        batchData.h_abortReasons.resize(batchData.numTasks);
-        std::size_t outputAnchorPitchInBytes = batchData.decodedSequencePitchInBytes;
-        batchData.h_outputAnchors.resize(batchData.numTasks * outputAnchorPitchInBytes);
-        std::size_t outputAnchorQualityPitchInBytes = batchData.qualityPitchInBytes;
-        batchData.h_outputAnchorQualities.resize(batchData.numTasks * outputAnchorQualityPitchInBytes);
-        batchData.h_outputAnchorLengths.resize(batchData.numTasks);
-        batchData.h_isPairedTask.resize(batchData.numTasks);
-        std::size_t decodedMatesRevCPitchInBytes = batchData.decodedSequencePitchInBytes;
-        batchData.h_decodedMatesRevC.resize(batchData.numTasks * decodedMatesRevCPitchInBytes);
-        batchData.h_outputMateHasBeenFound.resize(batchData.numTasks);
-        batchData.h_sizeOfGapToMate.resize(batchData.numTasks);
-
-        batchData.d_accumExtensionsLengths.resize(batchData.numTasks);
-        batchData.d_inputMateLengths.resize(batchData.numTasks);
-        batchData.d_abortReasons.resize(batchData.numTasks);
-        batchData.d_outputAnchors.resize(batchData.numTasks * outputAnchorPitchInBytes);
-        batchData.d_outputAnchorQualities.resize(batchData.numTasks * outputAnchorQualityPitchInBytes);
-        batchData.d_outputAnchorLengths.resize(batchData.numTasks);
-        batchData.d_isPairedTask.resize(batchData.numTasks);
-        batchData.d_decodedMatesRevC.resize(batchData.numTasks * decodedMatesRevCPitchInBytes);
-        batchData.d_outputMateHasBeenFound.resize(batchData.numTasks);
-        batchData.d_sizeOfGapToMate.resize(batchData.numTasks);
-
-        batchData.d_decodedMatesRevCDense.resize(batchData.numTasks * decodedMatesRevCPitchInBytes);
-        batchData.d_scatterMap.resize(batchData.numTasks);
-        batchData.h_scatterMap.resize(batchData.numTasks);
-
-
-        helpers::call_fill_kernel_async(batchData.d_outputMateHasBeenFound.data(), batchData.numTasks, false, batchData.streams[0]); CUERR;
-
-        for(int i = 0; i < batchData.numTasks; i++){
-            const int index = batchData.indicesOfActiveTasks[i];
-            const auto& task = batchData.tasks[index];
-
-            batchData.h_accumExtensionsLengths[i] = task.accumExtensionLengths;
-            batchData.h_inputMateLengths[i] = task.mateLength;
-            batchData.h_abortReasons[i] = task.abortReason;
-            batchData.h_isPairedTask[i] = task.pairedEnd;
-        }
-
-        helpers::call_copy_n_kernel(
-            thrust::make_zip_iterator(thrust::make_tuple(
-                batchData.h_accumExtensionsLengths.data(),
-                batchData.h_inputMateLengths.data(),
-                batchData.h_abortReasons.data(),
-                batchData.h_isPairedTask.data()
-            )),
-            batchData.numTasks,
-            thrust::make_zip_iterator(thrust::make_tuple(
-                batchData.d_accumExtensionsLengths.data(),
-                batchData.d_inputMateLengths.data(),
-                batchData.d_abortReasons.data(),
-                batchData.d_isPairedTask.data()
-            )),
-            batchData.streams[0]
-        );
-
-        int numPairedEndTasks = 0;
-        for(int i = 0; i < batchData.numTasks; i++){
-            const int index = batchData.indicesOfActiveTasks[i];
-            const auto& task = batchData.tasks[index];
-
-            if(task.pairedEnd){
-
-                // assert(task.decodedMateRevC.size() <= decodedMatesRevCPitchInBytes);
-                // std::copy(task.decodedMateRevC.begin(), task.decodedMateRevC.end(), &h_decodedMatesRevC[i * decodedMatesRevCPitchInBytes]);
-                std::copy(task.decodedMateRevC.begin(), task.decodedMateRevC.end(), &batchData.h_decodedMatesRevC[numPairedEndTasks * decodedMatesRevCPitchInBytes]);
-                batchData.h_scatterMap[numPairedEndTasks] = i;
-                numPairedEndTasks++;
-            }
-        }
-
-        cudaMemcpyAsync(
-            batchData.d_decodedMatesRevCDense.data(),
-            batchData.h_decodedMatesRevC.data(),
-            sizeof(char) * decodedMatesRevCPitchInBytes * numPairedEndTasks,
-            H2D,
-            batchData.streams[0]
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            batchData.d_scatterMap.data(),
-            batchData.h_scatterMap.data(),
-            sizeof(int) * numPairedEndTasks,
-            H2D,
-            batchData.streams[0]
-        ); CUERR;
-
-        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, batchData.streams[0]>>>(
-            [
-                numPairedEndTasks = numPairedEndTasks,
-                decodedMatesRevCPitchInBytes = decodedMatesRevCPitchInBytes,
-                d_scatterMap = batchData.d_scatterMap.data(),
-                d_decodedMatesRevCDense = batchData.d_decodedMatesRevCDense.data(),
-                d_decodedMatesRevC = batchData.d_decodedMatesRevC.data()
-            ] __device__ (){
-
-                for(int t = blockIdx.x; t < numPairedEndTasks; t += gridDim.x){
-                    const int destinationtask = d_scatterMap[t];
-
-                    for(int i = threadIdx.x; i < decodedMatesRevCPitchInBytes; i += blockDim.x){
-                        d_decodedMatesRevC[destinationtask * decodedMatesRevCPitchInBytes + i] = d_decodedMatesRevCDense[t * decodedMatesRevCPitchInBytes + i];
-                    }
-                }
-            }
-        ); CUERR;
-
-
-           
-        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, batchData.streams[0]>>>(
-            [
-                numTasks = batchData.numTasks,
-                maxextensionPerStep = maxextensionPerStep,
-                insertSize = insertSize,
-                insertSizeStddev = insertSizeStddev,
-                msaColumnPitchInElements = batchData.msaColumnPitchInElements,
-                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
-                d_msa_column_properties = batchData.d_msa_column_properties.data(),
-                d_consensusEncoded = batchData.d_consensusEncoded.data(),
-                d_consensusQuality = batchData.d_consensusQuality.data(),
-                d_coverage = batchData.d_coverage.data(),
-                d_anchorSequencesLength = batchData.d_anchorSequencesLength.data(),
-                d_accumExtensionsLengths = (int*)batchData.d_accumExtensionsLengths.data(),
-                d_inputMateLengths = (int*)batchData.d_inputMateLengths.data(),
-                d_abortReasons = (AbortReason*)batchData.d_abortReasons.data(),
-                d_outputAnchors = (char*)batchData.d_outputAnchors.data(),
-                outputAnchorPitchInBytes = outputAnchorPitchInBytes,
-                d_outputAnchorQualities = (char*)batchData.d_outputAnchorQualities.data(),
-                outputAnchorQualityPitchInBytes = outputAnchorQualityPitchInBytes,
-                d_outputAnchorLengths = (int*)batchData.d_outputAnchorLengths.data(),
-                d_isPairedTask = (bool*)batchData.d_isPairedTask.data(),
-                d_decodedMatesRevC = (char*)batchData.d_decodedMatesRevC.data(),
-                decodedMatesRevCPitchInBytes = decodedMatesRevCPitchInBytes,
-                d_outputMateHasBeenFound = (bool*)batchData.d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate = (int*)batchData.d_sizeOfGapToMate.data()
-            ] __device__ (){
-
-                auto decodeConsensus = [](const std::uint8_t encoded){
-                    char decoded = 'F';
-                    if(encoded == std::uint8_t{0}){
-                        decoded = 'A';
-                    }else if(encoded == std::uint8_t{1}){
-                        decoded = 'C';
-                    }else if(encoded == std::uint8_t{2}){
-                        decoded = 'G';
-                    }else if(encoded == std::uint8_t{3}){
-                        decoded = 'T';
-                    }
-                    return decoded;
-                };
-
-                using BlockReduce = cub::BlockReduce<int, 128>;
-
-                __shared__ union{
-                    typename BlockReduce::TempStorage reduce;
-                } temp;
-
-                __shared__ int broadcastsmem_int;
-
-                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-                    const int numCandidates = d_numCandidatesPerAnchor[t];
-
-                    if(numCandidates > 0){
-                        const auto msaProps = d_msa_column_properties[t];
-
-                        assert(msaProps.firstColumn_incl == 0);
-                        assert(msaProps.lastColumn_excl <= msaColumnPitchInElements);
-
-                        const int anchorLength = d_anchorSequencesLength[t];
-                        int accumExtensionsLength = d_accumExtensionsLengths[t];
-                        const int mateLength = d_inputMateLengths[t];
-                        const bool isPaired = d_isPairedTask[t];
-
-                        const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
-
-                        const std::uint8_t* const consensusEncoded = d_consensusEncoded + t * msaColumnPitchInElements;
-                        auto consensusDecoded = thrust::transform_iterator(consensusEncoded, decodeConsensus);
-                        const char* const consensusQuality = d_consensusQuality + t * msaColumnPitchInElements;
-                        const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
-                        const char* const decodedMateRevC = d_decodedMatesRevC + t * decodedMatesRevCPitchInBytes;
-
-                        AbortReason* const abortReasonPtr = d_abortReasons + t;
-                        char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
-                        char* const outputAnchorQuality = d_outputAnchorQualities + t * outputAnchorQualityPitchInBytes;
-                        int* const outputAnchorLengthPtr = d_outputAnchorLengths + t;
-                        bool* const mateHasBeenFoundPtr = d_outputMateHasBeenFound + t;
-
-                        int extendBy = std::min(
-                            consensusLength - anchorLength, 
-                            maxextensionPerStep
-                        );
-                        //cannot extend over fragment 
-                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
-
-                        constexpr int minCoverageForExtension = 3;
-
-                        //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
-                        //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
-                        int myPos = consensusLength;
-                        for(int i = anchorLength + threadIdx.x; i < consensusLength; i += blockDim.x){
-                            int flag = msacoverage[i] < minCoverageForExtension ? 0 : 1;
-                            if(flag == 0 && i < myPos){
-                                myPos = i;
-                            }
-                        }
-
-                        myPos = BlockReduce(temp.reduce).Reduce(myPos, cub::Min{});
-
-                        if(threadIdx.x == 0){
-                            broadcastsmem_int = myPos;
-                        }
-                        __syncthreads();
-                        myPos = broadcastsmem_int;
-                        __syncthreads();
-
-                        extendBy = myPos - anchorLength;
-                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
-
-                        auto makeAnchorForNextIteration = [&](){
-                            if(extendBy == 0){
-                                if(threadIdx.x == 0){
-                                    *abortReasonPtr = AbortReason::MsaNotExtended;
-                                }
-                            }else{
-                                accumExtensionsLength += extendBy;
-                                if(threadIdx.x == 0){
-                                    d_accumExtensionsLengths[t] = accumExtensionsLength;
-                                    *outputAnchorLengthPtr = anchorLength;
-                                }
-
-                                for(int i = threadIdx.x; i < anchorLength; i += blockDim.x){
-                                    outputAnchor[i] = consensusDecoded[extendBy + i];
-                                    outputAnchorQuality[i] = consensusQuality[extendBy + i];
-                                }
-                            }
-                        };
-
-                        constexpr int requiredOverlapMate = 70; //TODO relative overlap 
-                        constexpr float maxRelativeMismatchesInOverlap = 0.06f;
-                        constexpr int maxAbsoluteMismatchesInOverlap = 10;
-
-                        const int maxNumMismatches = std::min(int(mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
-
-                        
-
-                        if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
-                            //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
-
-                            const int firstStartpos = std::max(0, insertSize - insertSizeStddev - accumExtensionsLength - mateLength);
-                            const int lastStartposExcl = std::min(
-                                std::max(0, insertSize + insertSizeStddev - accumExtensionsLength - mateLength) + 1,
-                                consensusLength - requiredOverlapMate
-                            );
-
-                            int bestOverlapMismatches = std::numeric_limits<int>::max();
-                            int bestOverlapStartpos = -1;
-
-                            for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
-                                //compute metrics of overlap
-
-                                //Hamming distance. positions which do not overlap are not accounted for
-                                int ham = 0;
-                                for(int i = threadIdx.x; i < min(consensusLength - startpos, mateLength); i += blockDim.x){
-                                    ham += (consensusDecoded[startpos + i] != decodedMateRevC[i]) ? 1 : 0;
-                                }
-
-                                ham = BlockReduce(temp.reduce).Sum(ham);
-
-                                if(threadIdx.x == 0){
-                                    broadcastsmem_int = ham;
-                                }
-                                __syncthreads();
-                                ham = broadcastsmem_int;
-                                __syncthreads();
-
-                                if(bestOverlapMismatches > ham){
-                                    bestOverlapMismatches = ham;
-                                    bestOverlapStartpos = startpos;
-                                }
-
-                                if(bestOverlapMismatches == 0){
-                                    break;
-                                }
-                            }
-
-                            // if(threadIdx.x == 0){
-                            //     printf("gpu: bestOverlapMismatches %d,bestOverlapStartpos %d\n", bestOverlapMismatches, bestOverlapStartpos);
-                            // }
-
-                            if(bestOverlapMismatches <= maxNumMismatches){
-                                const int mateStartposInConsensus = bestOverlapStartpos;
-                                const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - anchorLength);
-                                // if(threadIdx.x == 0){
-                                //     printf("missingPositionsBetweenAnchorEndAndMateBegin %d\n", missingPositionsBetweenAnchorEndAndMateBegin);
-                                // }
-
-                                if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
-                                    //bridge the gap between current anchor and mate
-
-                                    for(int i = threadIdx.x; i < missingPositionsBetweenAnchorEndAndMateBegin; i += blockDim.x){
-                                        outputAnchor[i] = consensusDecoded[anchorLength + i];
-                                        outputAnchorQuality[i] = consensusQuality[anchorLength + i];
-                                    }
-
-                                    accumExtensionsLength += anchorLength;
-
-                                    if(threadIdx.x == 0){
-                                        d_accumExtensionsLengths[t] = accumExtensionsLength;
-                                        *outputAnchorLengthPtr = missingPositionsBetweenAnchorEndAndMateBegin;
-                                        *mateHasBeenFoundPtr = true;
-                                        d_sizeOfGapToMate[t] = missingPositionsBetweenAnchorEndAndMateBegin;
-                                    }
-                                }else{
-                                    accumExtensionsLength += mateStartposInConsensus;
-
-                                    if(threadIdx.x == 0){
-                                        d_accumExtensionsLengths[t] = accumExtensionsLength;
-                                        *outputAnchorLengthPtr = 0;
-                                        *mateHasBeenFoundPtr = true;
-                                        d_sizeOfGapToMate[t] = 0;
-                                    }
-                                }
-
-                                
-                            }else{
-                                makeAnchorForNextIteration();
-                            }
-                        }else{
-                            makeAnchorForNextIteration();
-                        }
-
-                    }
-                }
-            }
-        );
-
-        helpers::call_copy_n_kernel(
-            thrust::make_zip_iterator(thrust::make_tuple(
-                batchData.d_accumExtensionsLengths.data(),
-                batchData.d_abortReasons.data(),
-                batchData.d_outputMateHasBeenFound.data(),
-                batchData.d_sizeOfGapToMate.data(),
-                batchData.d_outputAnchorLengths.data()
-            )),
-            batchData.numTasks,
-            thrust::make_zip_iterator(thrust::make_tuple(
-                batchData.h_accumExtensionsLengths.data(),
-                batchData.h_abortReasons.data(),
-                batchData.h_outputMateHasBeenFound.data(),
-                batchData.h_sizeOfGapToMate.data(),
-                batchData.h_outputAnchorLengths.data()
-            )),
-            batchData.streams[0]
-        );
-
-        cudaMemcpyAsync(
-            batchData.h_outputAnchors.data(),
-            batchData.d_outputAnchors.data(),
-            sizeof(char) * outputAnchorPitchInBytes * batchData.numTasks,
-            D2H,
-            batchData.streams[0]
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            batchData.h_outputAnchorQualities.data(),
-            batchData.d_outputAnchorQualities.data(),
-            sizeof(char) * outputAnchorQualityPitchInBytes * batchData.numTasks,
-            D2H,
-            batchData.streams[0]
-        ); CUERR;
-
-        cudaStreamSynchronize(batchData.streams[0]); CUERR;
-
-
-        #if 1
-        //undo: replace vecAccess\(([a-zA-z]+), ([a-zA-z]+)\) by $1[$2]
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec[index]){
-            return vec[index];
-        };
-        #else 
-        auto vecAccess = [](auto& vec, auto index) -> decltype(vec.at(index)){
-            return vec.at(index);
-        };
-        #endif 
-
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
 
-        std::vector<ReadExtenderBase::Task> newTasksFromSplit;
-        std::vector<int> newTaskIndices;        
+        // for(int i = 0; i < numActiveTasks; i++){
+        //     auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
 
-        auto constructMsa = [&](auto& task, int taskindex){
-            assert(task.dataIsAvailable);
-            return constructMsaWithDataFromTask(task, batchData);
-        };
+        //     task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
 
-        auto extendWithMsa = [&](auto& task, const char* consensus, int consensusLength, const char* consensusquality, const int* coverage, int taskIndex){
-
-            //can extend by at most maxextensionPerStep bps
-            int extendBy = std::min(
-                consensusLength - task.currentAnchorLength, 
-                maxextensionPerStep
-            );
-            //cannot extend over fragment 
-            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
-
-            constexpr int minCoverageForExtension = 3;
-
-            auto firstLowCoverageIter = std::find_if(
-                coverage + task.currentAnchorLength, 
-                coverage + consensusLength,
-                [&](int cov){ return cov < minCoverageForExtension; }
-            );
-
-            extendBy = std::distance(coverage + task.currentAnchorLength, firstLowCoverageIter);
-            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - task.mateLength) - task.accumExtensionLengths);
-
-            //std::cerr << "extendby: " << extendBy << ", firstLowCoveragePos: " << std::distance(coverage + task.currentAnchorLength, firstLowCoverageIter) << "\n";
-
-            auto makeAnchorForNextIteration = [&](){
-                if(extendBy == 0){
-                    task.abort = true;
-                    task.abortReason = AbortReason::MsaNotExtended;
-                }else{
-                    task.accumExtensionLengths += extendBy;
-
-                    //update data for next iteration of outer while loop                           
-
-                    assert(extendBy + task.currentAnchorLength <= consensusLength);
-                    std::string decodedAnchor(consensus + extendBy, task.currentAnchorLength);
-                    std::string decodedAnchorQuality(consensusquality + extendBy, task.currentAnchorLength);
-
-                    const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
-
-                    task.currentAnchor.resize(numInts);
-
-                    SequenceHelpers::encodeSequence2Bit(
-                        task.currentAnchor.data(), 
-                        decodedAnchor.data(), 
-                        task.currentAnchorLength
-                    );
-
-                    task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-
-
-                    task.currentQualityScores.resize(decodedAnchorQuality.size());
-                    std::copy(decodedAnchorQuality.begin(), decodedAnchorQuality.end(), task.currentQualityScores.begin());
-
-                    task.totalAnchorQualityScores.emplace_back(std::move(decodedAnchorQuality));
-
-                    assert(task.totalDecodedAnchors.back().size() == task.totalAnchorQualityScores.back().size());
-
-                    // task.resultsequence.insert(
-                    //     task.resultsequence.end(), 
-                    //     consensus + task.currentAnchorLength, 
-                    //     consensus + task.currentAnchorLength + extendBy
-                    // );
-
-
-                    // std::string tmp(task.currentAnchorLength, '\0');
-
-                    // decode2BitSequence(
-                    //     &tmp[0],
-                    //     task.currentAnchor.data(),
-                    //     task.currentAnchorLength
-                    // );
-
-                    // auto sub = task.resultsequence.substr(task.resultsequence.length() - task.currentAnchorLength);
-
-                    // assert(sub == tmp);
-                }
-            };
-
-            constexpr int requiredOverlapMate = 70; //TODO relative overlap 
-            constexpr float maxRelativeMismatchesInOverlap = 0.06f;
-            constexpr int maxAbsoluteMismatchesInOverlap = 10;
-
-            const int maxNumMismatches = std::min(int(task.mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
-
-            
-
-            if(task.pairedEnd && task.accumExtensionLengths + consensusLength - requiredOverlapMate + task.mateLength >= insertSize - insertSizeStddev){
-                //check if mate can be overlapped with consensus 
-
-                //hamMap[i] stores possible starting positions of overlaps which would have hamming distance i
-                std::map<int, std::vector<int>> hamMap;
-
-                //longmatchMap[i] stores possible starting positions of overlaps which would have a longest match of length i between mate and msa consensus
-                //std::map<int, std::vector<int>> longmatchMap; //map length of longest match to list start positions
-
-                //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
-
-                const int firstStartpos = std::max(0, insertSize - insertSizeStddev - task.accumExtensionLengths - task.mateLength);
-                const int lastStartposExcl = std::min(
-                    std::max(0, insertSize + insertSizeStddev - task.accumExtensionLengths - task.mateLength) + 1,
-                    consensusLength - requiredOverlapMate
-                );
-
-                // if(task.myReadId == 199726){
-                //     std::cerr << task.iteration << "in if\n";
-                //     std::cerr << "accumExtensionLengths = " << task.accumExtensionLengths << "\n";
-                //     std::string tmp(consensus, consensus + consensusLength);
-                //     std::cerr << "consensus\n";
-                //     std::cerr << tmp << "\n";
-                //     std::cerr << "mate revc\n";
-                //     std::cerr << task.decodedMateRevC << "\n";
-                // }
-
-                #if 0
-
-                for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
-                    //compute metrics of overlap
-                        
-                    const int ham = cpu::hammingDistanceOverlap(
-                        consensus + startpos, consensus + consensusLength, 
-                        task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                    );
-
-                    hamMap[ham].emplace_back(startpos);
-
-                    // const int longest = cpu::longestMatch(
-                    //     consensus + startpos, consensus + consensusLength, 
-                    //     task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                    // );
-
-                    // longmatchMap[longest].emplace_back(startpos);
-                }
-                
-                std::vector<std::pair<int, std::vector<int>>> flatMap(hamMap.begin(), hamMap.end());
-                //sort by hamming distance, ascending
-                std::sort(flatMap.begin(), flatMap.end(), [](const auto& p1, const auto& p2){return p1.first < p2.first;});
-
-                //std::vector<std::pair<int, std::vector<int>>> flatMap2(longmatchMap.begin(), longmatchMap.end());
-                //sort by length of longest match, descending
-                //std::sort(flatMap2.begin(), flatMap2.end(), [](const auto& p1, const auto& p2){return p2.first < p1.first;});
-
-                //if there exists an overlap between msa consensus and mate which would end the merge, use the best one
-                if(flatMap.size() > 0 && flatMap[0].first <= maxNumMismatches){
-                    // if(task.myReadId == 199726){
-
-                    //     std::cerr << "mate found\n";
-
-                    // }
-                //if(flatMap2.size() > 0 && flatMap2[0].first >= 40){
-                    const int mateStartposInConsensus = flatMap[0].second.front();
-                #endif
-
-                std::pair<int, int> bestOverlap{std::numeric_limits<int>::max(), -1}; //{number of mismatches, startpos}
-
-                for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
-                    //compute metrics of overlap
-                        
-                    const int ham = cpu::hammingDistanceOverlap(
-                        consensus + startpos, consensus + consensusLength, 
-                        task.decodedMateRevC.begin(), task.decodedMateRevC.end()
-                    );
-
-                    if(bestOverlap.first > ham){
-                        bestOverlap.first = ham;
-                        bestOverlap.second = startpos;
-                    }
-
-                    if(bestOverlap.first == 0){
-                        break;
-                    }
-                }
-
-                //printf("cpu: bestOverlapMismatches %d,bestOverlapStartpos %d\n", bestOverlap.first, bestOverlap.second);
-
-                if(bestOverlap.first <= maxNumMismatches){
-                    const int mateStartposInConsensus = bestOverlap.second;
-                    const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - task.currentAnchorLength);
-
-                    //printf("missingPositionsBetweenAnchorEndAndMateBegin %d\n", missingPositionsBetweenAnchorEndAndMateBegin);
-                    if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
-                        //bridge the gap between current anchor and mate
-                        task.totalDecodedAnchors.emplace_back(
-                            consensus + missingPositionsBetweenAnchorEndAndMateBegin,
-                            consensus + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
-                        );
-                        task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths + missingPositionsBetweenAnchorEndAndMateBegin);
-
-                        assert(missingPositionsBetweenAnchorEndAndMateBegin < consensusLength);
-                        assert(missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus < consensusLength);
-
-                        task.totalAnchorQualityScores.emplace_back(
-                            consensusquality + missingPositionsBetweenAnchorEndAndMateBegin,
-                            consensusquality + missingPositionsBetweenAnchorEndAndMateBegin + mateStartposInConsensus
-                        );
-
-                        assert(task.totalDecodedAnchors.back().size() == task.totalAnchorQualityScores.back().size());
-                    }
-
-
-                    task.mateHasBeenFound = true;
-
-                    //const int currentAccumExtensionLengths = task.accumExtensionLengths;
-                    
-                    task.accumExtensionLengths += mateStartposInConsensus;
-                    std::string decodedAnchor(task.decodedMateRevC);
-
-                    task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-
-                    task.totalAnchorQualityScores.emplace_back(task.mateQualityScoresReversed);
-
-                    // const int startpos = mateStartposInConsensus;
-                    // task.resultsequence.resize(currentAccumExtensionLengths + startpos + task.decodedMateRevC.length());
-                    // const auto replaceBegin = task.resultsequence.begin() + currentAccumExtensionLengths + startpos;
-                    // task.resultsequence.replace(
-                    //     replaceBegin, 
-                    //     replaceBegin + task.decodedMateRevC.length(), 
-                    //     task.decodedMateRevC.begin(), 
-                    //     task.decodedMateRevC.end()
-                    // );
-
-                }else{
-                    makeAnchorForNextIteration();
-                }
-            }else{
-                makeAnchorForNextIteration();
-            }
-        };
-
-        //auto taskstmp = batchData.tasks;
+        //     if(task.numRemainingCandidates == 0){
+        //         task.abort = true;
+        //         task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+        //     }
+        // }
 
         nvtx::push_range("Unpack gpu results", 6);
 
@@ -1636,10 +1005,12 @@ public:
             const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
             auto& task = batchData.tasks[indexOfActiveTask];
 
-            if(task.numRemainingCandidates == 0){
-                continue;
-            }
-            assert(task.numRemainingCandidates > 0);
+            // if(task.numRemainingCandidates == 0){
+            //     continue;
+            // }
+            // assert(task.numRemainingCandidates > 0);
+
+            task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
 
             task.abortReason = batchData.h_abortReasons[i];
             if(task.abortReason == AbortReason::None){
@@ -1648,8 +1019,8 @@ public:
                 if(!task.mateHasBeenFound){
                     const int newlength = batchData.h_outputAnchorLengths[i];
 
-                    std::string newseq(batchData.h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
-                    std::string newq(batchData.h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
+                    std::string newseq(batchData.h_outputAnchors.data() + i * batchData.outputAnchorPitchInBytes, newlength);
+                    std::string newq(batchData.h_outputAnchorQualities.data() + i * batchData.outputAnchorQualityPitchInBytes, newlength);
 
                     task.currentAnchorLength = newlength;
                     task.accumExtensionLengths = batchData.h_accumExtensionsLengths[i];
@@ -1676,8 +1047,8 @@ public:
                     }else{
                         const int newlength = batchData.h_outputAnchorLengths[i];
 
-                        std::string newseq(batchData.h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
-                        std::string newq(batchData.h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
+                        std::string newseq(batchData.h_outputAnchors.data() + i * batchData.outputAnchorPitchInBytes, newlength);
+                        std::string newq(batchData.h_outputAnchorQualities.data() + i * batchData.outputAnchorQualityPitchInBytes, newlength);
 
                         task.accumExtensionLengths = batchData.h_accumExtensionsLengths[i];
                         task.totalDecodedAnchors.emplace_back(std::move(newseq));
@@ -1721,104 +1092,6 @@ public:
 
         nvtx::pop_range();
 
-#if 0
-        nvtx::push_range("MSA", 6);
-        //msaTimer.start();
-
-        for(int i = 0; i < numActiveTasks; i++){ 
-            const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
-            auto& task = batchData.tasks[indexOfActiveTask];
-
-            if(task.numRemainingCandidates == 0){
-                continue;
-            }
-            assert(task.numRemainingCandidates > 0);
-
-            const gpu::MSAColumnProperties msaProps = batchData.h_msa_column_properties[i];
-
-            const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
-            assert(msaProps.firstColumn_incl == 0);
-            assert(msaProps.lastColumn_excl <= batchData.msaColumnPitchInElements);
-            assert(batchData.h_consensus.size() >= (i+1) * batchData.msaColumnPitchInElements);
-            assert(batchData.h_consensusQuality.size() >= (i+1) * batchData.msaColumnPitchInElements);
-            const char* const consensus = batchData.h_consensus.data() + i * batchData.msaColumnPitchInElements;
-            const char* const consensusQuality = batchData.h_consensusQuality.data() + i * batchData.msaColumnPitchInElements;
-
-            const int* const msacoverage = batchData.h_coverage.data() + i * batchData.msaColumnPitchInElements;
-            
-            //auto taskcopy = task;
-
-            extendWithMsa(task, consensus, consensusLength, consensusQuality, msacoverage, indexOfActiveTask);
-
-            // taskcopy.abortReason = batchData.h_abortReasons[i];
-            // if(taskcopy.abortReason == AbortReason::None){
-            //     taskcopy.mateHasBeenFound = batchData.h_outputMateHasBeenFound[i];
-
-            //     if(!taskcopy.mateHasBeenFound){
-            //         const int newlength = batchData.h_outputAnchorLengths[i];
-
-            //         std::string newseq(batchData.h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
-            //         std::string newq(batchData.h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
-
-            //         taskcopy.currentAnchorLength = newlength;
-            //         taskcopy.accumExtensionLengths = batchData.h_accumExtensionsLengths[i];
-            //         taskcopy.totalDecodedAnchors.emplace_back(std::move(newseq));
-            //         taskcopy.totalAnchorQualityScores.emplace_back(std::move(newq));
-            //         taskcopy.totalAnchorBeginInExtendedRead.emplace_back(taskcopy.accumExtensionLengths);
-
-            //         taskcopy.currentQualityScores = taskcopy.totalAnchorQualityScores.back(); 
-            //         const int numInts = SequenceHelpers::getEncodedNumInts2Bit(taskcopy.currentAnchorLength);
-            //         taskcopy.currentAnchor.resize(numInts);
-
-            //         SequenceHelpers::encodeSequence2Bit(
-            //             taskcopy.currentAnchor.data(), 
-            //             taskcopy.totalDecodedAnchors.back().data(), 
-            //             taskcopy.currentAnchorLength
-            //         );
-            //     }else{
-            //         const int sizeofGap = h_sizeOfGapToMate[i];
-            //         if(sizeofGap == 0){
-            //             taskcopy.accumExtensionLengths = batchData.h_accumExtensionsLengths[i];
-            //             taskcopy.totalAnchorBeginInExtendedRead.emplace_back(taskcopy.accumExtensionLengths);
-            //             taskcopy.totalDecodedAnchors.emplace_back(taskcopy.decodedMateRevC);
-            //             taskcopy.totalAnchorQualityScores.emplace_back(taskcopy.mateQualityScoresReversed);
-            //         }else{
-            //             const int newlength = batchData.h_outputAnchorLengths[i];
-
-            //             std::string newseq(batchData.h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
-            //             std::string newq(batchData.h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
-
-            //             taskcopy.accumExtensionLengths = batchData.h_accumExtensionsLengths[i];
-            //             taskcopy.totalDecodedAnchors.emplace_back(std::move(newseq));
-            //             taskcopy.totalAnchorQualityScores.emplace_back(std::move(newq));
-            //             taskcopy.totalAnchorBeginInExtendedRead.emplace_back(taskcopy.accumExtensionLengths);
-
-            //             taskcopy.accumExtensionLengths += newlength;
-            //             taskcopy.totalAnchorBeginInExtendedRead.emplace_back(taskcopy.accumExtensionLengths);
-            //             taskcopy.totalDecodedAnchors.emplace_back(taskcopy.decodedMateRevC);
-            //             taskcopy.totalAnchorQualityScores.emplace_back(taskcopy.mateQualityScoresReversed);
-            //         }
-            //     }
-            // }
-
-            // taskcopy.abort = taskcopy.abortReason != AbortReason::None;
-
-            //assert(taskcopy == task);
-
-        }
-
-        nvtx::pop_range();
-#endif
-#if 0
-        for(int i = 0; i < numActiveTasks; i++){ 
-            const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
-            auto& task = batchData.tasks[indexOfActiveTask];
-            auto& tasknew = taskstmp[indexOfActiveTask];
-
-            assert(tasknew == task);
-        }
-#endif
-
         assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
 
         for(int i = 0; i < numActiveTasks; i++){ 
@@ -1836,8 +1109,6 @@ public:
                 if(task.mateHasBeenFound){                    
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
                     batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
-                    // batchData.tasks[indexOfActiveTask + 2].abort = true;
-                    // batchData.tasks[indexOfActiveTask + 2].abortReason = AbortReason::OtherStrandFoundMate;
                     batchData.tasks[indexOfActiveTask + 3].abort = true;
                     batchData.tasks[indexOfActiveTask + 3].abortReason = AbortReason::OtherStrandFoundMate;
                 }else if(task.abort){
@@ -1849,8 +1120,6 @@ public:
                 assert(task.pairedEnd == true);
 
                 if(task.mateHasBeenFound){                    
-                    // batchData.tasks[indexOfActiveTask - 2].abort = true;
-                    // batchData.tasks[indexOfActiveTask - 2].abortReason = AbortReason::OtherStrandFoundMate;
                     batchData.tasks[indexOfActiveTask - 1].abort = true;
                     batchData.tasks[indexOfActiveTask - 1].abortReason = AbortReason::OtherStrandFoundMate;
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
@@ -1862,27 +1131,6 @@ public:
             }
         }
 
-
-
-
-
-        //msaTimer.stop();
-
-        
-
-        // if(newTasksFromSplit.size() > 0){
-        //     //std::cerr << "Added " << newTasksFromSplit.size() << " tasks\n";
-        //     batchData.tasks.insert(
-        //         batchData.tasks.end(), 
-        //         std::make_move_iterator(newTasksFromSplit.begin()), 
-        //         std::make_move_iterator(newTasksFromSplit.end())
-        //     );
-        //     batchData.indicesOfActiveTasks.insert(
-        //         batchData.indicesOfActiveTasks.end(), 
-        //         newTaskIndices.begin(), 
-        //         newTaskIndices.end()
-        //     );
-        // }           
 
         /*
             update book-keeping of used candidates
@@ -1937,22 +1185,7 @@ public:
         
         //update list of active task indices
 
-        std::vector<int> newEnabledTaskIndices;
-        // for(int i = 0; i < numActiveTasks; i++){
-        //     auto index = batchData.indicesOfActiveTasks[i];
-        //     const auto& task = batchData.tasks[index];
-
-        //     // if task is the first LR task of the respective read pair
-        //     if(index % 4 == 0){
-        //         //if mate has not been found on lr direction and task is finished, enable RL direction
-
-        //         if(!task.mateHasBeenFound && !task.isActive(insertSize, insertSizeStddev)){
-        //             newEnabledTaskIndices.emplace_back(index + 2);
-        //             newEnabledTaskIndices.emplace_back(index + 3);
-        //         }
-        //     }
-        // }
-
+       
         batchData.indicesOfActiveTasks.erase(
             std::remove_if(
                 batchData.indicesOfActiveTasks.begin(), 
@@ -1963,17 +1196,6 @@ public:
             ),
             batchData.indicesOfActiveTasks.end()
         );
-
-        // std::vector<int> tmp(batchData.indicesOfActiveTasks.size() + newEnabledTaskIndices.size());
-        // auto iterator = std::merge(
-        //     batchData.indicesOfActiveTasks.begin(),
-        //     batchData.indicesOfActiveTasks.end(),
-        //     newEnabledTaskIndices.begin(),
-        //     newEnabledTaskIndices.end(),
-        //     tmp.begin()
-        // );
-        // assert(iterator == tmp.end()); //there should be no duplicates
-        // std::swap(batchData.indicesOfActiveTasks, tmp);
     }
 
 
@@ -3656,7 +2878,7 @@ public:
                             //scale down quality depending on coverage
                             q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
 
-                            taskConsensusQuality[i] = getQualityChar(taskSupport[i]);
+                            taskConsensusQuality[i] = getQualityChar(support);
                         }
                     }
                 }
@@ -3885,6 +3107,383 @@ public:
         // std::cerr << "\n";
     }
 
+    void computeExtendedSequencesFromMSAs(BatchData& batchData, cudaStream_t stream) const{
+        batchData.h_accumExtensionsLengths.resize(batchData.numTasks);
+        batchData.h_inputMateLengths.resize(batchData.numTasks);
+        batchData.h_abortReasons.resize(batchData.numTasks);
+        batchData.outputAnchorPitchInBytes = batchData.decodedSequencePitchInBytes;
+        batchData.h_outputAnchors.resize(batchData.numTasks * batchData.outputAnchorPitchInBytes);
+        batchData.outputAnchorQualityPitchInBytes = batchData.qualityPitchInBytes;
+        batchData.h_outputAnchorQualities.resize(batchData.numTasks * batchData.outputAnchorQualityPitchInBytes);
+        batchData.h_outputAnchorLengths.resize(batchData.numTasks);
+        batchData.h_isPairedTask.resize(batchData.numTasks);
+        batchData.decodedMatesRevCPitchInBytes = batchData.decodedSequencePitchInBytes;
+        batchData.h_decodedMatesRevC.resize(batchData.numTasks * batchData.decodedMatesRevCPitchInBytes);
+        batchData.h_outputMateHasBeenFound.resize(batchData.numTasks);
+        batchData.h_sizeOfGapToMate.resize(batchData.numTasks);
+
+        batchData.d_accumExtensionsLengths.resize(batchData.numTasks);
+        batchData.d_inputMateLengths.resize(batchData.numTasks);
+        batchData.d_abortReasons.resize(batchData.numTasks);
+        batchData.d_outputAnchors.resize(batchData.numTasks * batchData.outputAnchorPitchInBytes);
+        batchData.d_outputAnchorQualities.resize(batchData.numTasks * batchData.outputAnchorQualityPitchInBytes);
+        batchData.d_outputAnchorLengths.resize(batchData.numTasks);
+        batchData.d_isPairedTask.resize(batchData.numTasks);
+        batchData.d_decodedMatesRevC.resize(batchData.numTasks * batchData.decodedMatesRevCPitchInBytes);
+        batchData.d_outputMateHasBeenFound.resize(batchData.numTasks);
+        batchData.d_sizeOfGapToMate.resize(batchData.numTasks);
+
+        batchData.d_decodedMatesRevCDense.resize(batchData.numTasks * batchData.decodedMatesRevCPitchInBytes);
+        batchData.d_scatterMap.resize(batchData.numTasks);
+        batchData.h_scatterMap.resize(batchData.numTasks);
+
+
+        helpers::call_fill_kernel_async(batchData.d_outputMateHasBeenFound.data(), batchData.numTasks, false, stream); CUERR;
+        helpers::call_fill_kernel_async(batchData.d_abortReasons.data(), batchData.numTasks, AbortReason::None, stream); CUERR;
+
+        for(int i = 0; i < batchData.numTasks; i++){
+            const int index = batchData.indicesOfActiveTasks[i];
+            const auto& task = batchData.tasks[index];
+
+            batchData.h_accumExtensionsLengths[i] = task.accumExtensionLengths;
+            batchData.h_inputMateLengths[i] = task.mateLength;
+            batchData.h_isPairedTask[i] = task.pairedEnd;
+        }
+
+        helpers::call_copy_n_kernel(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.h_accumExtensionsLengths.data(),
+                batchData.h_inputMateLengths.data(),
+                batchData.h_isPairedTask.data()
+            )),
+            batchData.numTasks,
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.d_accumExtensionsLengths.data(),
+                batchData.d_inputMateLengths.data(),
+                batchData.d_isPairedTask.data()
+            )),
+            stream
+        );
+
+        int numPairedEndTasks = 0;
+        for(int i = 0; i < batchData.numTasks; i++){
+            const int index = batchData.indicesOfActiveTasks[i];
+            const auto& task = batchData.tasks[index];
+
+            if(task.pairedEnd){
+
+                // assert(task.decodedMateRevC.size() <= decodedMatesRevCPitchInBytes);
+                // std::copy(task.decodedMateRevC.begin(), task.decodedMateRevC.end(), &h_decodedMatesRevC[i * decodedMatesRevCPitchInBytes]);
+                std::copy(task.decodedMateRevC.begin(), task.decodedMateRevC.end(), &batchData.h_decodedMatesRevC[numPairedEndTasks * batchData.decodedMatesRevCPitchInBytes]);
+                batchData.h_scatterMap[numPairedEndTasks] = i;
+                numPairedEndTasks++;
+            }
+        }
+
+        cudaMemcpyAsync(
+            batchData.d_decodedMatesRevCDense.data(),
+            batchData.h_decodedMatesRevC.data(),
+            sizeof(char) * batchData.decodedMatesRevCPitchInBytes * numPairedEndTasks,
+            H2D,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            batchData.d_scatterMap.data(),
+            batchData.h_scatterMap.data(),
+            sizeof(int) * numPairedEndTasks,
+            H2D,
+            stream
+        ); CUERR;
+
+        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, stream>>>(
+            [
+                numPairedEndTasks = numPairedEndTasks,
+                decodedMatesRevCPitchInBytes = batchData.decodedMatesRevCPitchInBytes,
+                d_scatterMap = batchData.d_scatterMap.data(),
+                d_decodedMatesRevCDense = batchData.d_decodedMatesRevCDense.data(),
+                d_decodedMatesRevC = batchData.d_decodedMatesRevC.data()
+            ] __device__ (){
+
+                for(int t = blockIdx.x; t < numPairedEndTasks; t += gridDim.x){
+                    const int destinationtask = d_scatterMap[t];
+
+                    for(int i = threadIdx.x; i < decodedMatesRevCPitchInBytes; i += blockDim.x){
+                        d_decodedMatesRevC[destinationtask * decodedMatesRevCPitchInBytes + i] = d_decodedMatesRevCDense[t * decodedMatesRevCPitchInBytes + i];
+                    }
+                }
+            }
+        ); CUERR;
+
+
+           
+        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, stream>>>(
+            [
+                numTasks = batchData.numTasks,
+                maxextensionPerStep = maxextensionPerStep,
+                insertSize = insertSize,
+                insertSizeStddev = insertSizeStddev,
+                msaColumnPitchInElements = batchData.msaColumnPitchInElements,
+                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                d_msa_column_properties = batchData.d_msa_column_properties.data(),
+                d_consensusEncoded = batchData.d_consensusEncoded.data(),
+                d_consensusQuality = batchData.d_consensusQuality.data(),
+                d_coverage = batchData.d_coverage.data(),
+                d_anchorSequencesLength = batchData.d_anchorSequencesLength.data(),
+                d_accumExtensionsLengths = (int*)batchData.d_accumExtensionsLengths.data(),
+                d_inputMateLengths = (int*)batchData.d_inputMateLengths.data(),
+                d_abortReasons = (AbortReason*)batchData.d_abortReasons.data(),
+                d_outputAnchors = (char*)batchData.d_outputAnchors.data(),
+                outputAnchorPitchInBytes = batchData.outputAnchorPitchInBytes,
+                d_outputAnchorQualities = (char*)batchData.d_outputAnchorQualities.data(),
+                outputAnchorQualityPitchInBytes = batchData.outputAnchorQualityPitchInBytes,
+                d_outputAnchorLengths = (int*)batchData.d_outputAnchorLengths.data(),
+                d_isPairedTask = (bool*)batchData.d_isPairedTask.data(),
+                d_decodedMatesRevC = (char*)batchData.d_decodedMatesRevC.data(),
+                decodedMatesRevCPitchInBytes = batchData.decodedMatesRevCPitchInBytes,
+                d_outputMateHasBeenFound = (bool*)batchData.d_outputMateHasBeenFound.data(),
+                d_sizeOfGapToMate = (int*)batchData.d_sizeOfGapToMate.data()
+            ] __device__ (){
+
+                auto decodeConsensus = [](const std::uint8_t encoded){
+                    char decoded = 'F';
+                    if(encoded == std::uint8_t{0}){
+                        decoded = 'A';
+                    }else if(encoded == std::uint8_t{1}){
+                        decoded = 'C';
+                    }else if(encoded == std::uint8_t{2}){
+                        decoded = 'G';
+                    }else if(encoded == std::uint8_t{3}){
+                        decoded = 'T';
+                    }
+                    return decoded;
+                };
+
+                using BlockReduce = cub::BlockReduce<int, 128>;
+
+                __shared__ union{
+                    typename BlockReduce::TempStorage reduce;
+                } temp;
+
+                __shared__ int broadcastsmem_int;
+
+                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+                    const int numCandidates = d_numCandidatesPerAnchor[t];
+
+                    if(numCandidates > 0){
+                        const auto msaProps = d_msa_column_properties[t];
+
+                        assert(msaProps.firstColumn_incl == 0);
+                        assert(msaProps.lastColumn_excl <= msaColumnPitchInElements);
+
+                        const int anchorLength = d_anchorSequencesLength[t];
+                        int accumExtensionsLength = d_accumExtensionsLengths[t];
+                        const int mateLength = d_inputMateLengths[t];
+                        const bool isPaired = d_isPairedTask[t];
+
+                        const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
+
+                        const std::uint8_t* const consensusEncoded = d_consensusEncoded + t * msaColumnPitchInElements;
+                        auto consensusDecoded = thrust::transform_iterator(consensusEncoded, decodeConsensus);
+                        const char* const consensusQuality = d_consensusQuality + t * msaColumnPitchInElements;
+                        const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
+                        const char* const decodedMateRevC = d_decodedMatesRevC + t * decodedMatesRevCPitchInBytes;
+
+                        AbortReason* const abortReasonPtr = d_abortReasons + t;
+                        char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
+                        char* const outputAnchorQuality = d_outputAnchorQualities + t * outputAnchorQualityPitchInBytes;
+                        int* const outputAnchorLengthPtr = d_outputAnchorLengths + t;
+                        bool* const mateHasBeenFoundPtr = d_outputMateHasBeenFound + t;
+
+                        int extendBy = std::min(
+                            consensusLength - anchorLength, 
+                            maxextensionPerStep
+                        );
+                        //cannot extend over fragment 
+                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+
+                        constexpr int minCoverageForExtension = 3;
+
+                        //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
+                        //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
+                        int myPos = consensusLength;
+                        for(int i = anchorLength + threadIdx.x; i < consensusLength; i += blockDim.x){
+                            int flag = msacoverage[i] < minCoverageForExtension ? 0 : 1;
+                            if(flag == 0 && i < myPos){
+                                myPos = i;
+                            }
+                        }
+
+                        myPos = BlockReduce(temp.reduce).Reduce(myPos, cub::Min{});
+
+                        if(threadIdx.x == 0){
+                            broadcastsmem_int = myPos;
+                        }
+                        __syncthreads();
+                        myPos = broadcastsmem_int;
+                        __syncthreads();
+
+                        extendBy = myPos - anchorLength;
+                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+
+                        auto makeAnchorForNextIteration = [&](){
+                            if(extendBy == 0){
+                                if(threadIdx.x == 0){
+                                    *abortReasonPtr = AbortReason::MsaNotExtended;
+                                }
+                            }else{
+                                accumExtensionsLength += extendBy;
+                                if(threadIdx.x == 0){
+                                    d_accumExtensionsLengths[t] = accumExtensionsLength;
+                                    *outputAnchorLengthPtr = anchorLength;
+                                }
+
+                                for(int i = threadIdx.x; i < anchorLength; i += blockDim.x){
+                                    outputAnchor[i] = consensusDecoded[extendBy + i];
+                                    outputAnchorQuality[i] = consensusQuality[extendBy + i];
+                                }
+                            }
+                        };
+
+                        constexpr int requiredOverlapMate = 70; //TODO relative overlap 
+                        constexpr float maxRelativeMismatchesInOverlap = 0.06f;
+                        constexpr int maxAbsoluteMismatchesInOverlap = 10;
+
+                        const int maxNumMismatches = std::min(int(mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
+
+                        
+
+                        if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
+                            //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+
+                            const int firstStartpos = std::max(0, insertSize - insertSizeStddev - accumExtensionsLength - mateLength);
+                            const int lastStartposExcl = std::min(
+                                std::max(0, insertSize + insertSizeStddev - accumExtensionsLength - mateLength) + 1,
+                                consensusLength - requiredOverlapMate
+                            );
+
+                            int bestOverlapMismatches = std::numeric_limits<int>::max();
+                            int bestOverlapStartpos = -1;
+
+                            for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
+                                //compute metrics of overlap
+
+                                //Hamming distance. positions which do not overlap are not accounted for
+                                int ham = 0;
+                                for(int i = threadIdx.x; i < min(consensusLength - startpos, mateLength); i += blockDim.x){
+                                    ham += (consensusDecoded[startpos + i] != decodedMateRevC[i]) ? 1 : 0;
+                                }
+
+                                ham = BlockReduce(temp.reduce).Sum(ham);
+
+                                if(threadIdx.x == 0){
+                                    broadcastsmem_int = ham;
+                                }
+                                __syncthreads();
+                                ham = broadcastsmem_int;
+                                __syncthreads();
+
+                                if(bestOverlapMismatches > ham){
+                                    bestOverlapMismatches = ham;
+                                    bestOverlapStartpos = startpos;
+                                }
+
+                                if(bestOverlapMismatches == 0){
+                                    break;
+                                }
+                            }
+
+                            // if(threadIdx.x == 0){
+                            //     printf("gpu: bestOverlapMismatches %d,bestOverlapStartpos %d\n", bestOverlapMismatches, bestOverlapStartpos);
+                            // }
+
+                            if(bestOverlapMismatches <= maxNumMismatches){
+                                const int mateStartposInConsensus = bestOverlapStartpos;
+                                const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - anchorLength);
+                                // if(threadIdx.x == 0){
+                                //     printf("missingPositionsBetweenAnchorEndAndMateBegin %d\n", missingPositionsBetweenAnchorEndAndMateBegin);
+                                // }
+
+                                if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
+                                    //bridge the gap between current anchor and mate
+
+                                    for(int i = threadIdx.x; i < missingPositionsBetweenAnchorEndAndMateBegin; i += blockDim.x){
+                                        outputAnchor[i] = consensusDecoded[anchorLength + i];
+                                        outputAnchorQuality[i] = consensusQuality[anchorLength + i];
+                                    }
+
+                                    accumExtensionsLength += anchorLength;
+
+                                    if(threadIdx.x == 0){
+                                        d_accumExtensionsLengths[t] = accumExtensionsLength;
+                                        *outputAnchorLengthPtr = missingPositionsBetweenAnchorEndAndMateBegin;
+                                        *mateHasBeenFoundPtr = true;
+                                        d_sizeOfGapToMate[t] = missingPositionsBetweenAnchorEndAndMateBegin;
+                                    }
+                                }else{
+                                    accumExtensionsLength += mateStartposInConsensus;
+
+                                    if(threadIdx.x == 0){
+                                        d_accumExtensionsLengths[t] = accumExtensionsLength;
+                                        *outputAnchorLengthPtr = 0;
+                                        *mateHasBeenFoundPtr = true;
+                                        d_sizeOfGapToMate[t] = 0;
+                                    }
+                                }
+
+                                
+                            }else{
+                                makeAnchorForNextIteration();
+                            }
+                        }else{
+                            makeAnchorForNextIteration();
+                        }
+
+                    }else{ //numCandidates == 0
+                        d_abortReasons[t] = AbortReason::NoPairedCandidatesAfterAlignment;
+                    }
+                }
+            }
+        );
+
+        helpers::call_copy_n_kernel(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.d_accumExtensionsLengths.data(),
+                batchData.d_abortReasons.data(),
+                batchData.d_outputMateHasBeenFound.data(),
+                batchData.d_sizeOfGapToMate.data(),
+                batchData.d_outputAnchorLengths.data()
+            )),
+            batchData.numTasks,
+            thrust::make_zip_iterator(thrust::make_tuple(
+                batchData.h_accumExtensionsLengths.data(),
+                batchData.h_abortReasons.data(),
+                batchData.h_outputMateHasBeenFound.data(),
+                batchData.h_sizeOfGapToMate.data(),
+                batchData.h_outputAnchorLengths.data()
+            )),
+            stream
+        );
+
+        cudaMemcpyAsync(
+            batchData.h_outputAnchors.data(),
+            batchData.d_outputAnchors.data(),
+            sizeof(char) * batchData.outputAnchorPitchInBytes * batchData.numTasks,
+            D2H,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            batchData.h_outputAnchorQualities.data(),
+            batchData.d_outputAnchorQualities.data(),
+            sizeof(char) * batchData.outputAnchorQualityPitchInBytes * batchData.numTasks,
+            D2H,
+            stream
+        ); CUERR;
+    }
+    
+    
+    
     void copyBuffersToHost(BatchData& batchData, cudaStream_t firstStream, cudaStream_t secondStream) const{
         batchData.h_candidateReadIds.resize(batchData.totalNumCandidates);
         batchData.h_candidateSequencesLength.resize(batchData.totalNumCandidates);
@@ -3906,6 +3505,8 @@ public:
 
         assert(batchData.h_consensusQuality.size() >= batchData.d_consensusQuality.size());
         assert(batchData.h_candidateQualityScores.size() >= batchData.d_candidateQualityScores.size());
+
+    #if 0
 
         //convert encoded consensus to characters and copy to host
         //copy column properties to host
@@ -3983,6 +3584,8 @@ public:
             firstStream
         ); CUERR;
 
+    #endif
+
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
                 batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1,
@@ -3994,7 +3597,9 @@ public:
                 batchData.h_numCandidatesPerAnchor.data()
             )),
             firstStream
-        );          
+        );   
+
+    #if 0       
 
         cudaMemcpyAsync(
             batchData.h_candidateSequencesData.get(),
@@ -4011,6 +3616,9 @@ public:
             D2H,
             firstStream
         ); CUERR;
+    #endif
+
+    #if 0
 
         auto d_zipped_begin = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -4040,198 +3648,18 @@ public:
             h_zipped_begin,
             firstStream
         );
-    }
 
-    void copyBatchDataIntoTask(ReadExtenderBase::Task& task, int taskindex, const BatchData& batchData) const{
-        const int numCandidates = batchData.h_numCandidatesPerAnchor[taskindex];
-        const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[taskindex];
-
-        task.candidateReadIds.resize(numCandidates);
-        std::copy_n(batchData.h_candidateReadIds.data() + offset, numCandidates, task.candidateReadIds.begin());
-
-        task.candidateSequenceLengths.resize(numCandidates);
-        std::copy_n(batchData.h_candidateSequencesLength.data() + offset, numCandidates, task.candidateSequenceLengths.begin());
-
-        task.candidateSequenceData.resize(numCandidates * batchData.encodedSequencePitchInInts);
-        std::copy_n(
-            batchData.h_candidateSequencesData.data() + offset * batchData.encodedSequencePitchInInts, 
-            numCandidates * batchData.encodedSequencePitchInInts, 
-            task.candidateSequenceData.begin()
+    #else 
+        cudaMemcpyAsync(
+            batchData.h_candidateReadIds.data(),
+            batchData.d_candidateReadIds.data(),
+            sizeof(read_number) * batchData.totalNumCandidates,
+            D2H,
+            firstStream
         );
-
-        task.alignmentFlags.resize(numCandidates);
-        task.alignments.resize(numCandidates);
-
-        for(int c = 0; c < numCandidates; c++){
-            task.alignments[c].shift = batchData.h_alignment_shifts[offset + c];
-            task.alignments[c].overlap = batchData.h_alignment_overlaps[offset + c];
-            task.alignments[c].nOps = batchData.h_alignment_nOps[offset + c];
-            task.alignmentFlags[c] = batchData.h_alignment_best_alignment_flags[offset + c];
-        }
-
-        task.numRemainingCandidates = numCandidates;
-
-        if(task.numRemainingCandidates == 0){
-            task.abort = true;
-            task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
-        }
+    #endif
     }
 
-    MultipleSequenceAlignment constructMsaWithDataFromTask(ReadExtenderBase::Task& task, const BatchData& batchData) const{
-        const std::string& decodedAnchor = task.totalDecodedAnchors.back();
-        assert(false);
-
-        MultipleSequenceAlignment msa;
-
-        auto build = [&](){
-
-            task.candidateShifts.resize(task.numRemainingCandidates);
-            task.candidateOverlapWeights.resize(task.numRemainingCandidates);
-
-            //gather data required for msa
-            for(int c = 0; c < task.numRemainingCandidates; c++){
-                task.candidateShifts[c] = task.alignments[c].shift;
-
-                task.candidateOverlapWeights[c] = calculateOverlapWeight(
-                    task.currentAnchorLength, 
-                    task.alignments[c].nOps,
-                    task.alignments[c].overlap,
-                    goodAlignmentProperties->maxErrorRate
-                );
-            }
-
-            task.candidateStrings.resize(batchData.decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
-
-            //decode the candidates for msa
-            for(int c = 0; c < task.numRemainingCandidates; c++){
-                SequenceHelpers::decode2BitSequence(
-                    task.candidateStrings.data() + c * batchData.decodedSequencePitchInBytes,
-                    task.candidateSequenceData.data() + c * batchData.encodedSequencePitchInInts,
-                    task.candidateSequenceLengths[c]
-                );
-
-                if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
-                    SequenceHelpers::reverseComplementSequenceDecodedInplace(
-                        task.candidateStrings.data() + c * batchData.decodedSequencePitchInBytes, 
-                        task.candidateSequenceLengths[c]
-                    );
-                }
-            }
-
-            MultipleSequenceAlignment::InputData msaInput;
-            msaInput.useQualityScores = false;
-            msaInput.subjectLength = task.currentAnchorLength;
-            msaInput.nCandidates = task.numRemainingCandidates;
-            msaInput.candidatesPitch = batchData.decodedSequencePitchInBytes;
-            msaInput.candidateQualitiesPitch = 0;
-            msaInput.subject = decodedAnchor.c_str();
-            msaInput.candidates = task.candidateStrings.data();
-            msaInput.subjectQualities = nullptr;
-            msaInput.candidateQualities = nullptr;
-            msaInput.candidateLengths = task.candidateSequenceLengths.data();
-            msaInput.candidateShifts = task.candidateShifts.data();
-            msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();                    
-
-            msa.build(msaInput);
-        };
-
-        build();
-
-        #if 1
-
-        auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
-            const int numCandidates = task.candidateReadIds.size();
-
-            int insertpos = 0;
-            for(int i = 0; i < numCandidates; i++){
-                if(!minimizationResult.differentRegionCandidate[i]){               
-                    //keep candidate
-
-                    task.candidateReadIds[insertpos] = task.candidateReadIds[i];
-
-                    std::copy_n(
-                        task.candidateSequenceData.data() + i * size_t(batchData.encodedSequencePitchInInts),
-                        batchData.encodedSequencePitchInInts,
-                        task.candidateSequenceData.data() + insertpos * size_t(batchData.encodedSequencePitchInInts)
-                    );
-
-                    task.candidateSequenceLengths[insertpos] = task.candidateSequenceLengths[i];
-                    task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-                    task.alignments[insertpos] = task.alignments[i];
-                    task.candidateOverlapWeights[insertpos] = task.candidateOverlapWeights[i];
-                    task.candidateShifts[insertpos] = task.candidateShifts[i];
-
-                    std::copy_n(
-                        task.candidateStrings.data() + i * size_t(batchData.decodedSequencePitchInBytes),
-                        batchData.decodedSequencePitchInBytes,
-                        task.candidateStrings.data() + insertpos * size_t(batchData.decodedSequencePitchInBytes)
-                    );
-
-                    insertpos++;
-                }
-            }
-
-            task.numRemainingCandidates = insertpos;
-
-            task.candidateReadIds.erase(
-                task.candidateReadIds.begin() + insertpos, 
-                task.candidateReadIds.end()
-            );
-            task.candidateSequenceData.erase(
-                task.candidateSequenceData.begin() + batchData.encodedSequencePitchInInts * insertpos, 
-                task.candidateSequenceData.end()
-            );
-            task.candidateSequenceLengths.erase(
-                task.candidateSequenceLengths.begin() + insertpos, 
-                task.candidateSequenceLengths.end()
-            );
-            task.alignmentFlags.erase(
-                task.alignmentFlags.begin() + insertpos, 
-                task.alignmentFlags.end()
-            );
-            task.alignments.erase(
-                task.alignments.begin() + insertpos, 
-                task.alignments.end()
-            );
-
-            task.candidateStrings.erase(
-                task.candidateStrings.begin() + batchData.decodedSequencePitchInBytes * insertpos, 
-                task.candidateStrings.end()
-            );
-            task.candidateOverlapWeights.erase(
-                task.candidateOverlapWeights.begin() + insertpos, 
-                task.candidateOverlapWeights.end()
-            );
-            task.candidateShifts.erase(
-                task.candidateShifts.begin() + insertpos, 
-                task.candidateShifts.end()
-            );
-            
-        };
-
-        if(getNumRefinementIterations() > 0){                
-
-            for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
-                const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
-                    correctionOptions->estimatedCoverage
-                );
-
-                if(minimizationResult.performedMinimization){
-                    removeCandidatesOfDifferentRegion(minimizationResult);
-
-                    //build minimized multiple sequence alignment
-                    build();
-                }else{
-                    break;
-                }               
-                
-            }
-        }   
-
-        #endif
-
-        return msa;
-    }
 };
 
 
