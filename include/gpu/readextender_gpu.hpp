@@ -236,48 +236,6 @@ struct BatchData{
         };
     }
 
-    #if 0
-    void init(std::vector<ReadExtenderBase::Task> tasks_,
-        std::size_t encodedSequencePitchInInts_,
-        std::size_t decodedSequencePitchInBytes_,
-        std::size_t msaColumnPitchInElements_
-    ){
-        tasks = std::move(tasks_);
-
-        if(tasks.empty()) return;
-
-        encodedSequencePitchInInts = encodedSequencePitchInInts_;
-        decodedSequencePitchInBytes = decodedSequencePitchInBytes_;
-        msaColumnPitchInElements = msaColumnPitchInElements_;
-
-        indicesOfActiveTasks.resize(tasks.size());
-        std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
-
-
-        //set input string as current anchor
-        for(int i = 0; i < int(tasks.size()); i++){
-            auto& task  = tasks[i];
-            task.id = i; //TODO set this outside of this function, when task is created
-
-            std::string decodedAnchor(task.currentAnchorLength, '\0');
-
-            SequenceHelpers::decode2BitSequence(
-                &decodedAnchor[0],
-                task.currentAnchor.data(),
-                task.currentAnchorLength
-            );
-
-            task.totalDecodedAnchors.emplace_back(std::move(decodedAnchor));
-            task.totalAnchorBeginInExtendedRead.emplace_back(0);
-        }
-
-        pairedEnd = tasks[indicesOfActiveTasks[0]].pairedEnd;
-        if(pairedEnd){
-
-        }
-    }
-    #endif
-
     bool isEmpty() const noexcept{
         return indicesOfActiveTasks.empty();
     }
@@ -387,6 +345,7 @@ struct BatchData{
     PinnedBuffer<int> h_candidateSequencesLength{};
     DeviceBuffer<int> d_candidateSequencesLength{};
     PinnedBuffer<unsigned int> h_subjectSequencesData{};
+    PinnedBuffer<char> h_subjectSequencesDataDecoded{};
     PinnedBuffer<unsigned int> h_candidateSequencesData{};
     PinnedBuffer<unsigned int> h_candidateSequencesRevcData{};
 
@@ -397,6 +356,7 @@ struct BatchData{
     
 
     DeviceBuffer<unsigned int> d_subjectSequencesData{};
+    DeviceBuffer<char> d_subjectSequencesDataDecoded{};
     DeviceBuffer<unsigned int> d_candidateSequencesData{};
     DeviceBuffer<unsigned int> d_candidateSequencesRevcData{};
 
@@ -649,6 +609,9 @@ public:
         
         batchData.h_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
         batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
+        batchData.h_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numActiveTasks);
+        batchData.d_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numActiveTasks);
+
         batchData.h_anchorSequencesLength.resize(numActiveTasks);
         batchData.d_anchorSequencesLength.resize(numActiveTasks);
 
@@ -693,10 +656,16 @@ public:
 
                 batchData.h_anchorSequencesLength[t] = task.currentAnchorLength;
 
+                // std::copy(
+                //     task.currentAnchor.begin(),
+                //     task.currentAnchor.end(),
+                //     batchData.h_subjectSequencesData.begin() + t * batchData.encodedSequencePitchInInts
+                // );
+
                 std::copy(
-                    task.currentAnchor.begin(),
-                    task.currentAnchor.end(),
-                    batchData.h_subjectSequencesData.begin() + t * batchData.encodedSequencePitchInInts
+                    task.totalDecodedAnchors.back().begin(),
+                    task.totalDecodedAnchors.back().end(),
+                    batchData.h_subjectSequencesDataDecoded.begin() + t * batchData.decodedSequencePitchInBytes
                 );
             // }else{
             //     //only hash kmers which include extended positions
@@ -727,16 +696,24 @@ public:
             );
         }
 
-        helpers::call_copy_n_kernel(
-            thrust::make_zip_iterator(thrust::make_tuple(
-                //batchData.h_inputanchormatedata.data(),
-                batchData.h_subjectSequencesData.data()
-            )),
-            batchData.numTasks * batchData.encodedSequencePitchInInts,
-            thrust::make_zip_iterator(thrust::make_tuple(
-                //batchData.d_inputanchormatedata.data(),
-                batchData.d_subjectSequencesData.data()
-            )),
+        // helpers::call_copy_n_kernel(
+        //     thrust::make_zip_iterator(thrust::make_tuple(
+        //         //batchData.h_inputanchormatedata.data(),
+        //         batchData.h_subjectSequencesData.data()
+        //     )),
+        //     batchData.numTasks * batchData.encodedSequencePitchInInts,
+        //     thrust::make_zip_iterator(thrust::make_tuple(
+        //         //batchData.d_inputanchormatedata.data(),
+        //         batchData.d_subjectSequencesData.data()
+        //     )),
+        //     batchData.streams[0]
+        // );
+
+        cudaMemcpyAsync(
+            batchData.d_subjectSequencesDataDecoded.data(),
+            batchData.h_subjectSequencesDataDecoded.data(),
+            sizeof(char) * batchData.decodedSequencePitchInBytes * batchData.numTasks,
+            H2D,
             batchData.streams[0]
         );
 
@@ -767,6 +744,89 @@ public:
             )),
             batchData.streams[0]
         );
+
+        //2-bit encode anchorsequences
+        helpers::lambda_kernel<<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+            [
+                decodedSequencePitchInBytes = batchData.decodedSequencePitchInBytes,
+                encodedSequencePitchInInts = batchData.encodedSequencePitchInInts,
+                numTasks = batchData.numTasks,
+                encodedSequences = batchData.d_subjectSequencesData.data(),
+                decodedSequences = batchData.d_subjectSequencesDataDecoded.data(),
+                sequenceLengths = batchData.d_anchorSequencesLength.data()
+            ] __device__ (){
+
+                auto group = cg::tiled_partition<8>(cg::this_thread_block());
+                const int numGroups = (blockDim.x * gridDim.x) / group.size();
+                const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
+
+                for(int a = groupId; a < numTasks; a += numGroups){
+                    unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
+                    const char* const in = decodedSequences + a * decodedSequencePitchInBytes;
+                    const int length = sequenceLengths[a];
+
+                    const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+                    constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+                    for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                        unsigned int data = 0;
+
+                        const int loopend = min((i+1) * basesPerInt, length);
+                        
+                        for(int nucIndex = i * basesPerInt; nucIndex < loopend; nucIndex++){
+                            switch(in[nucIndex]) {
+                            case 'A':
+                                data = (data << 2) | SequenceHelpers::encodedbaseA();
+                                break;
+                            case 'C':
+                                data = (data << 2) | SequenceHelpers::encodedbaseC();
+                                break;
+                            case 'G':
+                                data = (data << 2) | SequenceHelpers::encodedbaseG();
+                                break;
+                            case 'T':
+                                data = (data << 2) | SequenceHelpers::encodedbaseT();
+                                break;
+                            default:
+                                data = (data << 2) | SequenceHelpers::encodedbaseA();
+                                break;
+                            }
+                        }
+
+                        if(i == nInts-1){
+                            //pack bits of last integer into higher order bits
+                            int leftoverbits = 2 * (nInts * basesPerInt - length);
+                            if(leftoverbits > 0){
+                                data <<= leftoverbits;
+                            }
+                        }
+
+                        out[i] = data;
+                    }
+                }
+            }
+        );
+
+        //2-bit encode anchorsequences 
+        // helpers::lambda_kernel<<<batchData.numTasks, 64, 0, batchData.streams[0]>>>(
+        //     [
+        //         decodedSequencePitchInBytes = batchData.decodedSequencePitchInBytes,
+        //         encodedSequencePitchInInts = batchData.encodedSequencePitchInInts,
+        //         numTasks = batchData.numTasks,
+        //         encodedSequences = batchData.d_subjectSequencesData.data(),
+        //         decodedSequences = batchData.d_subjectSequencesDataDecoded.data(),
+        //         sequenceLengths = batchData.d_anchorSequencesLength.data()
+        //     ] __device__ (){
+
+        //         for(int a = threadIdx.x + blockIdx.x * blockDim.x; a < numTasks; a += gridDim.x){
+        //             unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
+        //             const char* const in = decodedSequences + a * decodedSequencePitchInBytes;
+        //             const int length = sequenceLengths[a];
+
+        //             SequenceHelpers::encodeSequence2Bit(out, in, length);
+        //         }
+        //     }
+        // );
 
         if(0){
             batchData.h_usedReadIds.resize(batchData.totalNumberOfUsedIds);
@@ -1029,14 +1089,7 @@ public:
                     task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
 
                     task.currentQualityScores = task.totalAnchorQualityScores.back(); 
-                    const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
-                    task.currentAnchor.resize(numInts);
-
-                    SequenceHelpers::encodeSequence2Bit(
-                        task.currentAnchor.data(), 
-                        task.totalDecodedAnchors.back().data(), 
-                        task.currentAnchorLength
-                    );
+                    
                 }else{
                     const int sizeofGap = batchData.h_sizeOfGapToMate[i];
                     if(sizeofGap == 0){
@@ -1068,29 +1121,32 @@ public:
 
         nvtx::pop_range();
 
-        nvtx::push_range("Encode remaining anchors", 6);
+        // nvtx::push_range("Encode remaining anchors", 6);
 
-        for(int i = 0; i < numActiveTasks; i++){ 
-            const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
-            auto& task = batchData.tasks[indexOfActiveTask];
+        // for(int i = 0; i < numActiveTasks; i++){ 
+        //     const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
+        //     auto& task = batchData.tasks[indexOfActiveTask];
 
-            if(task.numRemainingCandidates == 0){
-                continue;
-            }
-            assert(task.numRemainingCandidates > 0);
+        //     if(task.numRemainingCandidates == 0){
+        //         continue;
+        //     }
+        //     assert(task.numRemainingCandidates > 0);
 
-            if(task.abortReason == AbortReason::None){
-                if(!task.mateHasBeenFound){
-                    SequenceHelpers::encodeSequence2Bit(
-                        task.currentAnchor.data(), 
-                        task.totalDecodedAnchors.back().data(), 
-                        task.currentAnchorLength
-                    );
-                }
-            }
-        }
+        //     if(task.abortReason == AbortReason::None){
+        //         if(!task.mateHasBeenFound){
+        //             const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
+        //             task.currentAnchor.resize(numInts);
 
-        nvtx::pop_range();
+        //             SequenceHelpers::encodeSequence2Bit(
+        //                 task.currentAnchor.data(), 
+        //                 task.totalDecodedAnchors.back().data(), 
+        //                 task.currentAnchorLength
+        //             );
+        //         }
+        //     }
+        // }
+
+        // nvtx::pop_range();
 
         assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
 
