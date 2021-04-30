@@ -1447,6 +1447,23 @@ extend_gpu_pairedend(
 
     std::atomic<int> numProcessedBatches{0};
 
+    std::vector<std::unique_ptr<cub::CachingDeviceAllocator>> cubAllocators;
+
+    for(auto d : runtimeOptions.deviceIds){
+        cub::SwitchDevice sd{d};
+
+        cubAllocators.emplace_back(
+            std::make_unique<cub::CachingDeviceAllocator>(
+                8, //bin_growth
+                1, //min_bin
+                cub::CachingDeviceAllocator::INVALID_BIN, //max_bin
+                cub::CachingDeviceAllocator::INVALID_SIZE, //max_cached_bytes
+                false, //skip_cleanup 
+                false //debug
+            )
+        );
+    }
+
     #pragma omp parallel
     {
         const int numDeviceIds = runtimeOptions.deviceIds.size();
@@ -1454,8 +1471,11 @@ extend_gpu_pairedend(
         assert(numDeviceIds > 0);
 
         const int ompThreadId = omp_get_thread_num();
-        const int deviceId = runtimeOptions.deviceIds.at(ompThreadId % numDeviceIds);
-        cudaSetDevice(deviceId); CUERR;     
+        const int deviceIdIndex = ompThreadId % numDeviceIds;
+        const int deviceId = runtimeOptions.deviceIds.at(deviceIdIndex);
+        cudaSetDevice(deviceId); CUERR;
+
+        cub::CachingDeviceAllocator* myCubAllocator = cubAllocators[deviceIdIndex].get();
 
         std::int64_t numSuccess0 = 0;
         std::int64_t numSuccess1 = 0;
@@ -1467,7 +1487,6 @@ extend_gpu_pairedend(
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
-        cub::CachingDeviceAllocator cubAllocator;
 
         GpuReadHasher gpuReadHasher(minhasher);
 
@@ -1479,7 +1498,7 @@ extend_gpu_pairedend(
             insertSize,
             insertSizeStddev,
             maxextensionPerStep,
-            cubAllocator
+            *myCubAllocator
         );
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
