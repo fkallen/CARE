@@ -1447,7 +1447,10 @@ extend_gpu_pairedend(
 
     std::atomic<int> numProcessedBatches{0};
 
-    std::vector<std::unique_ptr<cub::CachingDeviceAllocator>> cubAllocators;
+    std::vector<std::unique_ptr<cub::CachingDeviceAllocator>> cubAllocators; 
+
+    constexpr unsigned int cub_CachingDeviceAllocator_INVALID_BIN = (unsigned int) -1;
+    constexpr size_t cub_CachingDeviceAllocator_INVALID_SIZE = (size_t) -1;
 
     for(auto d : runtimeOptions.deviceIds){
         cub::SwitchDevice sd{d};
@@ -1456,8 +1459,8 @@ extend_gpu_pairedend(
             std::make_unique<cub::CachingDeviceAllocator>(
                 8, //bin_growth
                 1, //min_bin
-                cub::CachingDeviceAllocator::INVALID_BIN, //max_bin
-                cub::CachingDeviceAllocator::INVALID_SIZE, //max_cached_bytes
+                cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
+                cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
                 false, //skip_cleanup 
                 false //debug
             )
@@ -1478,8 +1481,8 @@ extend_gpu_pairedend(
         cub::CachingDeviceAllocator myCubAllocator(
             8, //bin_growth
             1, //min_bin
-            cub::CachingDeviceAllocator::INVALID_BIN, //max_bin
-            cub::CachingDeviceAllocator::INVALID_SIZE, //max_cached_bytes
+            cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
+            cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
             false, //skip_cleanup 
             false //debug
         );
