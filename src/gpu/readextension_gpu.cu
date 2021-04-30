@@ -1475,7 +1475,16 @@ extend_gpu_pairedend(
         const int deviceId = runtimeOptions.deviceIds.at(deviceIdIndex);
         cudaSetDevice(deviceId); CUERR;
 
-        cub::CachingDeviceAllocator* myCubAllocator = cubAllocators[deviceIdIndex].get();
+        cub::CachingDeviceAllocator myCubAllocator(
+            8, //bin_growth
+            1, //min_bin
+            cub::CachingDeviceAllocator::INVALID_BIN, //max_bin
+            cub::CachingDeviceAllocator::INVALID_SIZE, //max_cached_bytes
+            false, //skip_cleanup 
+            false //debug
+        );
+
+        //cub::CachingDeviceAllocator* myCubAllocator = cubAllocators[deviceIdIndex].get();
 
         std::int64_t numSuccess0 = 0;
         std::int64_t numSuccess1 = 0;
@@ -1498,7 +1507,7 @@ extend_gpu_pairedend(
             insertSize,
             insertSizeStddev,
             maxextensionPerStep,
-            *myCubAllocator
+            myCubAllocator
         );
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
