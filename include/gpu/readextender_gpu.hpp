@@ -29,7 +29,7 @@
 
 //#define DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
 
-#define DO_NOT_REMOVE_USED_IDS
+#define DO_ONLY_REMOVE_MATE_IDS
 
 namespace care{
 
@@ -1768,7 +1768,7 @@ public:
 
             std::vector<read_number> tmp(task.candidateReadIds.size());
 
-            #ifdef DO_NOT_REMOVE_USED_IDS
+            #ifdef DO_ONLY_REMOVE_MATE_IDS
                 //remove none
                 auto end = std::copy(myIds, myIds + num, destids);
             #else
@@ -2151,7 +2151,7 @@ public:
 
         assert(batchData.d_candidateReadIds.size() >= batchData.totalNumCandidates);
 
-        #ifdef DO_NOT_REMOVE_USED_IDS
+        #ifdef DO_ONLY_REMOVE_MATE_IDS
             cudaMemcpyAsync(
                 batchData.d_candidateReadIds.data(),
                 d_candidateReadIds2,
