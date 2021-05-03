@@ -388,19 +388,35 @@ struct BatchData{
     enum class State{
         BeforePrepare,
         BeforeHash,
-        BeforeStep,
+        BeforeRemoveIds,
+        BeforeComputePairFlags,
+        BeforeLoadCandidates,
+        BeforeEraseData,
+        BeforeAlignment,
+        BeforeAlignmentFilter,
+        BeforeMSA,
         BeforeExtend,
-        BeforeOutput,
+        BeforeCopyToHost,
+        BeforeUnpack,
+        Finished,
         None
     };
 
-    std::string to_string(State s) const{
+    static std::string to_string(State s){
         switch(s){
             case State::BeforePrepare: return "BeforePrepare";
             case State::BeforeHash: return "BeforeHash";
-            case State::BeforeStep: return "BeforeStep";
+            case State::BeforeRemoveIds: return "BeforeRemoveIds";
+            case State::BeforeComputePairFlags: return "BeforeComputePairFlags";
+            case State::BeforeLoadCandidates: return "BeforeLoadCandidates";
+            case State::BeforeEraseData: return "BeforeEraseData";
+            case State::BeforeAlignment: return "BeforeAlignment";
+            case State::BeforeAlignmentFilter: return "BeforeAlignmentFilter";
+            case State::BeforeMSA: return "BeforeMSA";
             case State::BeforeExtend: return "BeforeExtend";
-            case State::BeforeOutput: return "BeforeOutput";
+            case State::BeforeCopyToHost: return "BeforeCopyToHost";
+            case State::BeforeUnpack: return "BeforeUnpack";
+            case State::Finished: return "Finished";
             case State::None: return "None";
             default: return "Missing case BatchData::to_string(State)\n";
         };
@@ -544,54 +560,6 @@ public:
     ) : gpuMinhasher(&mh),
         minhashHandle(gpuMinhasher->makeQueryHandle()) {
     }
-
-    void getCandidateReadIds(BatchData& batchData) const{
-
-        int totalNumValues = 0;
-
-        gpuMinhasher->determineNumValues(
-            minhashHandle,
-            batchData.d_subjectSequencesData.get(),
-            batchData.encodedSequencePitchInInts,
-            batchData.d_anchorSequencesLength.get(),
-            batchData.numTasks,
-            batchData.d_numCandidatesPerAnchor.get(),
-            totalNumValues,
-            batchData.streams[0]
-        );
-
-        cudaStreamSynchronize(batchData.streams[0]); CUERR;
-
-        batchData.d_candidateReadIds.resize(totalNumValues);        
-
-        if(totalNumValues == 0){
-            cudaMemsetAsync(batchData.d_numCandidatesPerAnchor.get(), 0, sizeof(int) * batchData.numTasks , batchData.streams[0]); CUERR;
-            cudaMemsetAsync(batchData.d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + batchData.numTasks), batchData.streams[0]); CUERR;
-            batchData.totalNumCandidates = 0;
-            return;
-        }
-
-        gpuMinhasher->retrieveValues(
-            minhashHandle,
-            nullptr,
-            batchData.numTasks,              
-            totalNumValues,
-            batchData.d_candidateReadIds.get(),
-            batchData.d_numCandidatesPerAnchor.get(),
-            batchData.d_numCandidatesPerAnchorPrefixSum.get(),
-            batchData.streams[0]
-        );
-
-        cudaMemcpyAsync(
-            &batchData.totalNumCandidates,
-            batchData.d_numCandidatesPerAnchorPrefixSum.data() + batchData.numTasks,
-            sizeof(int),
-            D2H,
-            batchData.streams[0]
-        ); CUERR;
-
-        cudaStreamSynchronize(batchData.streams[0]); CUERR;
-    }
     
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const{
 
@@ -631,7 +599,7 @@ public:
         );
 
         cudaMemcpyAsync(
-            &batchData.totalNumCandidates,
+            batchData.h_numCandidates.data(),
             batchData.d_numCandidatesPerAnchorPrefixSum.data() + batchData.numTasks,
             sizeof(int),
             D2H,
@@ -639,6 +607,8 @@ public:
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
+
+        batchData.totalNumCandidates = *batchData.h_numCandidates;
     }
 
     const gpu::GpuMinhasher* gpuMinhasher{};
@@ -648,12 +618,16 @@ public:
 
 struct GpuExtensionStepper{
 public:
+
+    enum class ComputeType {CPU, GPU};
+
     int deviceId{};
     int insertSize{};
     int insertSizeStddev{};
     int maxextensionPerStep{};
     cub::CachingDeviceAllocator* cubAllocator{};
     const gpu::GpuReadStorage* gpuReadStorage{};
+    const GpuReadHasher* gpuReadHasher{};
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
     const cpu::QualityScoreConversion* qualityConversion{};
@@ -664,6 +638,7 @@ public:
 
     GpuExtensionStepper(
         const gpu::GpuReadStorage& rs, 
+        const GpuReadHasher& hasher,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap,
         const cpu::QualityScoreConversion& qualityConversion_,
@@ -676,6 +651,7 @@ public:
         maxextensionPerStep(maxextensionPerStep_),
         cubAllocator(&cubAllocator_),
         gpuReadStorage(&rs),
+        gpuReadHasher(&hasher),
         correctionOptions(&coropts),
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
@@ -690,7 +666,49 @@ public:
         return 5;
     }
 
+    static constexpr ComputeType typeOfNextStep(BatchData& batchData){
+        switch(batchData.state){
+            case BatchData::State::BeforePrepare: return ComputeType::CPU;
+            case BatchData::State::BeforeHash: return ComputeType::CPU;
+            case BatchData::State::BeforeRemoveIds: return ComputeType::CPU;
+            case BatchData::State::BeforeComputePairFlags: return ComputeType::CPU;
+            case BatchData::State::BeforeLoadCandidates: return ComputeType::GPU;
+            case BatchData::State::BeforeEraseData: return ComputeType::GPU;
+            case BatchData::State::BeforeAlignment: return ComputeType::GPU;
+            case BatchData::State::BeforeAlignmentFilter: return ComputeType::GPU;
+            case BatchData::State::BeforeMSA: return ComputeType::GPU;
+            case BatchData::State::BeforeExtend: return ComputeType::GPU;
+            case BatchData::State::BeforeCopyToHost: return ComputeType::CPU;
+            case BatchData::State::BeforeUnpack: return ComputeType::CPU;
+            case BatchData::State::Finished: return ComputeType::CPU;
+            case BatchData::State::None: return ComputeType::CPU;
+            default: return ComputeType::CPU;
+        };
+    }
+
+    void performNextStep(BatchData& batchData) const{
+        switch(batchData.state){
+            case BatchData::State::BeforePrepare: prepareStep(batchData); break;
+            case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
+            case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
+            case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); break;
+            case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); break;
+            case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); break;
+            case BatchData::State::BeforeAlignment: calculateAlignments(batchData); break;
+            case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); break;
+            case BatchData::State::BeforeMSA: computeMSAs(batchData); break;
+            case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); break;
+            case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); break;
+            case BatchData::State::BeforeUnpack: unpackResults(batchData); break;
+            case BatchData::State::Finished: break;
+            case BatchData::State::None: break;
+            default: break;
+        };
+    }
+
     void prepareStep(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforePrepare);
+
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
         batchData.numTasks = numActiveTasks;
 
@@ -982,13 +1000,186 @@ public:
             );
         }
         #endif
+
+        batchData.setState(BatchData::State::BeforeHash);
     }
 
+    void getCandidateReadIds(BatchData& batchData) const{
+        nvtx::push_range("getCandidateReadIds", 0);
+
+        assert(batchData.state == BatchData::State::BeforeHash);
+        gpuReadHasher->getCandidateReadIds(batchData, batchData.streams[0]);
+        batchData.setState(BatchData::State::BeforeRemoveIds);
+
+        nvtx::pop_range();
+    }
+
+    void removeUsedIdsAndMateIds(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeRemoveIds);
+        
+        nvtx::push_range("removeUsedIdsAndMateIds", 1);
+
+        #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
+
+        removeUsedIdsAndMateIds(batchData, batchData.streams[0], batchData.streams[1]);  
+
+        #else 
+
+        removeUsedIdsAndMateIdsCPU(batchData, batchData.streams[0], batchData.streams[1]);    
+        
+        #endif
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeComputePairFlags);
+    }
+
+    void computePairFlags(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeComputePairFlags);
+
+        nvtx::push_range("flagpairs", 7);
+
+        computePairFlagsCpu(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeLoadCandidates);
+    }
+
+    void loadCandidateSequenceData(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeLoadCandidates);
+
+        nvtx::push_range("loadCandidateSequenceData", 2);
+
+        loadCandidateSequenceData(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeEraseData);
+    }
+
+    void eraseDataOfRemovedMates(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeEraseData);
+
+        if(batchData.numTasksWithMateRemoved > 0){
+
+            //for those tasks where a mate id has been removed, remove candidates whose sequence is equal to the mate sequence.
+            //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks.
+
+            nvtx::push_range("eraseDataOfRemovedMates", 3);
+
+            eraseDataOfRemovedMates(batchData, batchData.streams[0]);
+
+            nvtx::pop_range();
+
+        }
+
+        batchData.setState(BatchData::State::BeforeAlignment);
+    }
+
+    void calculateAlignments(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeAlignment);
+
+        nvtx::push_range("calculateAlignments", 4);
+
+        calculateAlignments(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeAlignmentFilter);
+    }
+
+    void filterAlignments(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeAlignmentFilter);
+
+        nvtx::push_range("filterAlignments", 5);
+    
+        //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks.
+        filterAlignments(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeMSA);
+    }
+
+    void computeMSAs(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeMSA);
+
+        nvtx::push_range("computeMSAs", 6);
+
+        //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
+        computeMSAs(batchData, batchData.streams[0], batchData.streams[1]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeExtend);
+    }
+
+    void computeExtendedSequencesFromMSAs(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeExtend);
+
+        nvtx::push_range("computeExtendedSequences", 7);
+
+        computeExtendedSequencesFromMSAs(batchData, batchData.streams[0]);
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeCopyToHost);
+    }
+
+    void copyBuffersToHost(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeCopyToHost);
+
+        nvtx::push_range("copyBuffersToHost", 8);
+
+        copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[1]);
+
+        cudaStreamSynchronize(batchData.streams[0]); CUERR;
+        cudaStreamSynchronize(batchData.streams[1]); CUERR;
+
+        nvtx::pop_range();
+
+        batchData.setState(BatchData::State::BeforeUnpack);
+    }
+
+    void unpackResults(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeUnpack);
+
+        nvtx::push_range("unpackResults", 9);
+
+        unpackResultsIntoTasks(batchData);
+
+        nvtx::pop_range();
+
+        if(!batchData.isEmpty()){
+            batchData.setState(BatchData::State::BeforePrepare);
+        }else{
+            batchData.setState(BatchData::State::Finished);
+        }
+    }
+
+    #if 0
     void step(BatchData& batchData) const{
 
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
 
         //std::cerr << "Step: Active tasks " << numActiveTasks << ", totalNumCandidates " << batchData.totalNumCandidates << "\n";
+
+        // {
+        //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "before\n";
+        //     for(int i = 0; i < batchData.numTasks; i++){
+            
+        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
+        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
+        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
+
+        //         assert(std::is_sorted(ids, ids + numCandidates));
+        //         std::cerr << "task " << i << ", numCandidates " << numCandidates << " offset " << offset << "\n";
+        //         std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
+        //         std::cerr << "\n";
+        //     }
+        // }
 
         nvtx::push_range("removeUsedIdsAndMateIds", 1);
 
@@ -1004,6 +1195,7 @@ public:
 
         // {
         //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "after\n";
         //     for(int i = 0; i < batchData.numTasks; i++){
             
         //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
@@ -1011,6 +1203,9 @@ public:
         //         const read_number* ids = &batchData.d_candidateReadIds[offset];
 
         //         assert(std::is_sorted(ids, ids + numCandidates));
+        //         std::cerr << "task " << i << ", numCandidates " << numCandidates << " offset " << offset << "\n";
+        //         std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
+        //         std::cerr << "\n";
         //     }
         // }
 
@@ -1180,7 +1375,17 @@ public:
         cudaStreamSynchronize(batchData.streams[1]); CUERR;        
     }
 
-    void extendAfterStep(BatchData& batchData) const{
+    #else
+    void process(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforePrepare);
+
+        while(batchData.state != BatchData::State::Finished){
+            performNextStep(batchData);
+        }
+    }
+    #endif
+
+    void unpackResultsIntoTasks(BatchData& batchData) const{
 
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
 
@@ -2945,7 +3150,7 @@ public:
             d_zip_data, 
             d_keepflags, 
             d_zip_data_tmp, 
-            batchData.d_numCandidates.data(), 
+            batchData.h_numCandidates.data(), 
             totalNumCandidates, 
             stream
         );
@@ -2959,25 +3164,13 @@ public:
             d_zip_data, 
             d_keepflags, 
             d_zip_data_tmp, 
-            batchData.d_numCandidates.data(), 
+            batchData.h_numCandidates.data(), 
             totalNumCandidates, 
             stream
         );
         assert(cubstatus == cudaSuccess);
 
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
-
         cubAllocator->DeviceFree(cubTemp); CUERR;
-
-        cudaMemcpyAsync(
-            batchData.h_numCandidates.data(),
-            batchData.d_numCandidates.data(),
-            sizeof(int),
-            D2H,
-            stream
-        ); CUERR;
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
 
         cudaEventRecord(batchData.events[0], stream); CUERR;
 
