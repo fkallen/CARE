@@ -56,7 +56,7 @@ grid_search() {
 SCRIPTDIR=$(readlink -nf $0)
 
 MLCDIR=/home/jcascitt/errorcorrector/ml
-EVALDIR=/home/jcascitt/ec/gridsearch_test
+EVALDIR=/home/jcascitt/ec/gridsearch_normedweights
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
 CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 1"
@@ -117,7 +117,7 @@ cp $SCRIPTDIR $SCRIPTNAME.log.${num}
 
 ## sanity check only
 
-run_classic 2
+# run_classic 2
 
 ### print runs
 
@@ -145,8 +145,8 @@ main(prefixes, effiles, 2)
 
 EOF
 
-grid_search 2 2 60 90 5 60 90 5
-grid_search 2 2_maxdepth 60 90 5 60 90 5
+grid_search 2 2 85 90 5 60 90 5
+grid_search 2 2_maxdepth 85 90 5 60 90 5
 
 
 #echo "done."

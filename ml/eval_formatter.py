@@ -16,10 +16,10 @@ for f in sys.argv[1:]:
             to_delete = []
             add = True
             for setting in data:
-                if data[setting]["TP"]>=tp and data[setting]["FP"]<=fp:
+                if (data[setting]["TP"]>tp and data[setting]["FP"]>=fp) or (data[setting]["TP"]>=tp and data[setting]["FP"]>fp):
                     add = False
                     break
-                elif data[setting]["TP"]<=tp and data[setting]["FP"]>=fp:
+                elif (data[setting]["TP"]<tp and data[setting]["FP"]<=fp) or (data[setting]["TP"]<=tp and data[setting]["FP"]<fp):
                     to_delete.append(setting)
             if add:
                 data[(f, anchor, cands)]={"TP":tp, "FP":fp}
