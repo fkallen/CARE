@@ -557,8 +557,6 @@ namespace care{
                     batch->processedItems = 0;
                     batch->validItems = batchsize;
 
-                    std::cerr << "decoded " << batchsize << " results\n";
-
                     unprocessedTcsBatches.push(batch);
                 }
 
