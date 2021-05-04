@@ -25,6 +25,9 @@
 
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
+#include <thrust/logical.h>
+#include <thrust/binary_search.h>
+#include <thrust/execution_policy.h>
 
 
 //#define DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
@@ -529,18 +532,20 @@ struct BatchData{
 
     DeviceBuffer<char> d_consensusQuality;
 
-    helpers::SimpleAllocationPinnedHost<int> h_inputMateLengths;
-    helpers::SimpleAllocationPinnedHost<bool> h_isPairedTask;
-    helpers::SimpleAllocationPinnedHost<char> h_decodedMatesRevC;
-    helpers::SimpleAllocationPinnedHost<int> h_scatterMap;
+    PinnedBuffer<int> h_firstTasksOfPairsToCheck;
 
-    helpers::SimpleAllocationPinnedHost<int> h_accumExtensionsLengths;
-    helpers::SimpleAllocationPinnedHost<AbortReason> h_abortReasons;
-    helpers::SimpleAllocationPinnedHost<char> h_outputAnchors;
-    helpers::SimpleAllocationPinnedHost<char> h_outputAnchorQualities;
-    helpers::SimpleAllocationPinnedHost<int> h_outputAnchorLengths;
-    helpers::SimpleAllocationPinnedHost<bool> h_outputMateHasBeenFound;
-    helpers::SimpleAllocationPinnedHost<int> h_sizeOfGapToMate;
+    PinnedBuffer<int> h_inputMateLengths;
+    PinnedBuffer<bool> h_isPairedTask;
+    PinnedBuffer<char> h_decodedMatesRevC;
+    PinnedBuffer<int> h_scatterMap;
+
+    PinnedBuffer<int> h_accumExtensionsLengths;
+    PinnedBuffer<AbortReason> h_abortReasons;
+    PinnedBuffer<char> h_outputAnchors;
+    PinnedBuffer<char> h_outputAnchorQualities;
+    PinnedBuffer<int> h_outputAnchorLengths;
+    PinnedBuffer<bool> h_outputMateHasBeenFound;
+    PinnedBuffer<int> h_sizeOfGapToMate;
 
     
     std::array<CudaEvent, 1> events{};
@@ -671,7 +676,7 @@ public:
             case BatchData::State::BeforePrepare: return ComputeType::CPU;
             case BatchData::State::BeforeHash: return ComputeType::CPU;
             case BatchData::State::BeforeRemoveIds: return ComputeType::CPU;
-            case BatchData::State::BeforeComputePairFlags: return ComputeType::CPU;
+            case BatchData::State::BeforeComputePairFlags: return ComputeType::GPU;
             case BatchData::State::BeforeLoadCandidates: return ComputeType::GPU;
             case BatchData::State::BeforeEraseData: return ComputeType::GPU;
             case BatchData::State::BeforeAlignment: return ComputeType::GPU;
@@ -1039,7 +1044,8 @@ public:
 
         nvtx::push_range("flagpairs", 7);
 
-        computePairFlagsCpu(batchData, batchData.streams[0]);
+        //computePairFlagsCpu(batchData, batchData.streams[0]);
+        computePairFlagsGpu(batchData, batchData.streams[0]);
 
         nvtx::pop_range();
 
@@ -1717,6 +1723,422 @@ public:
         #endif
 
         return extendResultsCombined;
+    }
+
+    void computePairFlagsGpu(BatchData& batchData, cudaStream_t stream) const{
+        batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
+
+        helpers::call_fill_kernel_async(batchData.d_isPairedCandidate.data(), batchData.totalNumCandidates, false, stream);
+
+        batchData.h_firstTasksOfPairsToCheck.resize(batchData.numTasks);
+        int numChecks = 0;
+
+        for(int first = 0, second = 1; second < batchData.numTasks; ){
+            const int taskindex1 = batchData.indicesOfActiveTasks[first];
+            const int taskindex2 = batchData.indicesOfActiveTasks[second];
+
+            const bool areConsecutiveTasks = batchData.tasks[taskindex1].id + 1 == batchData.tasks[taskindex2].id;
+            const bool arePairedTasks = (batchData.tasks[taskindex1].id % 2) + 1 == (batchData.tasks[taskindex2].id % 2);
+
+            if(areConsecutiveTasks && arePairedTasks){
+                batchData.h_firstTasksOfPairsToCheck[numChecks] = first;
+                numChecks++;
+                
+                first += 2; second += 2;
+            }else{
+                first += 1; second += 1;
+            }
+        }
+
+        if(numChecks > 0){
+
+            int* d_firstTasksOfPairsToCheck = nullptr;
+            cubAllocator->DeviceAllocate((void**)&d_firstTasksOfPairsToCheck, sizeof(int) * numChecks); CUERR;
+
+            // int* d_status = nullptr;
+            // //cubAllocator->DeviceAllocate((void**)&d_status, sizeof(int) * numChecks); CUERR;
+            // cudaMallocHost(&d_status, sizeof(int) * numChecks); CUERR;
+
+            // std::fill(d_status, d_status + numChecks, 0);
+
+            cudaMemcpyAsync(
+                d_firstTasksOfPairsToCheck,
+                batchData.h_firstTasksOfPairsToCheck.data(),
+                sizeof(int) * numChecks,
+                H2D,
+                stream
+            ); CUERR;
+            
+
+            dim3 block = 128;
+            dim3 grid = numChecks;
+
+            // helpers::lambda_kernel<<<grid, block, 0, stream>>>(
+            //     [
+            //         numChecks,
+            //         d_firstTasksOfPairsToCheck,
+            //         d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+            //         d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+            //         d_candidateReadIds = batchData.d_candidateReadIds.data(),
+            //         d_isPairedCandidate = batchData.d_isPairedCandidate.data(),
+            //         d_status
+            //     ] __device__ (){
+
+            //         constexpr int blocksize = 128;
+            //         constexpr int itemsPerThread = 8;
+
+            //         assert(blockDim.x == blocksize);
+
+            //         using BlockRadixSort = cub::BlockRadixSort<read_number, blocksize, itemsPerThread, std::uint16_t>;
+            //         using BlockLoad = cub::BlockLoad<read_number, blocksize, itemsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+
+            //         struct SortedData{
+            //             std::uint16_t originalPositions[itemsPerThread * blocksize];
+            //             read_number readIds[itemsPerThread * blocksize];
+            //         };
+
+            //         __shared__ union{
+            //             typename BlockRadixSort::TempStorage radix;
+            //             typename BlockLoad::TempStorage load;
+            //             SortedData sortedData;
+            //         } temp;
+
+            //         for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
+            //             const int firstTask = d_firstTasksOfPairsToCheck[a];
+            //             const int secondTask = firstTask + 1;
+
+            //             const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
+            //             const int rangeEnd = d_numCandidatesPerAnchorPrefixSum[firstTask + 2];
+            //             const int numElementsInRange = rangeEnd - rangeBegin;
+
+            //             const int numCandidatesFirst = d_numCandidatesPerAnchor[firstTask];
+
+            //             auto whichsegment = [&](const int position){ return position < numCandidatesFirst ? 0 : 1;};
+
+            //             if(numElementsInRange <= blocksize * itemsPerThread){
+
+            //                 read_number myReadIds[itemsPerThread];
+            //                 std::uint16_t myOriginalPositions[itemsPerThread];
+
+            //                 BlockLoad(temp.load).Load(d_candidateReadIds + rangeBegin, myReadIds, numElementsInRange, std::numeric_limits<read_number>::max());
+
+            //                 #pragma unroll
+            //                 for(int k = 0; k < itemsPerThread; k++){
+            //                     const int globalid = threadIdx.x * itemsPerThread + k;
+            //                     myOriginalPositions[k] = globalid;
+            //                 }
+
+            //                 __syncthreads();
+
+            //                 const int begin_bit = 0;
+            //                 const int end_bit = sizeof(read_number) * 8;
+            //                 BlockRadixSort(temp.radix).Sort(myReadIds, myOriginalPositions, begin_bit, end_bit);
+
+            //                 __syncthreads();
+
+            //                 cub::StoreDirectBlocked(
+            //                     threadIdx.x,
+            //                     temp.sortedData.originalPositions,
+            //                     myOriginalPositions,
+            //                     numElementsInRange 
+            //                 );
+
+            //                 cub::StoreDirectBlocked(
+            //                     threadIdx.x,
+            //                     temp.sortedData.readIds,
+            //                     myReadIds,
+            //                     numElementsInRange 
+            //                 );	
+
+            //                 __syncthreads();
+
+            //                 for(int i = threadIdx.x; i < numElementsInRange; i += blockDim.x){
+            //                     const read_number readId = temp.sortedData.readIds[i];
+            //                     const int originalPosition = temp.sortedData.originalPositions[i];
+            //                     const int segmentId = whichsegment(originalPosition);
+
+            //                     const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+            //                     const int segmentIdToFind = segmentId == 0 ? 1 : 0;
+
+            //                     bool found = false;
+
+            //                     for(int k = i - 3; k <= i + 3; k++){
+            //                         if(k >= 0 && k < numElementsInRange){
+            //                             if(temp.sortedData.readIds[k] == readIdToFind && whichsegment(temp.sortedData.originalPositions[k]) == segmentIdToFind){
+            //                                 found = true;
+            //                                 break;
+            //                             }
+            //                         }
+            //                     }
+
+            //                     if(found){
+            //                         d_isPairedCandidate[rangeBegin + originalPosition] = true;
+            //                     }
+            //                 }
+
+            //                 __syncthreads();	
+
+
+
+            //                 if(d_status != nullptr && threadIdx.x == 0){
+            //                     d_status[a] = 0;
+            //                 }
+            //             }else{
+            //                 if(d_status != nullptr && threadIdx.x == 0){
+            //                     //printf("%d %d\n", numElementsInRange, blocksize * itemsPerThread);
+            //                     d_status[a] = numElementsInRange;
+            //                 }
+
+            //                 const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
+            //                 //not an efficient fallback. just use binary search
+            //                 for(int i = rangeBegin + threadIdx.x; i < rangeMid; i += blockDim.x){
+            //                     const read_number readId = d_candidateReadIds[i];
+            //                     const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+            //                     bool found = thrust::binary_search(thrust::seq, d_candidateReadIds + rangeMid, d_candidateReadIds + rangeEnd, readIdToFind);
+            //                     if(found){
+            //                         d_isPairedCandidate[i] = true;
+            //                     }
+            //                 }
+
+            //                 for(int i = rangeMid + threadIdx.x; i < rangeEnd; i += blockDim.x){
+            //                     const read_number readId = d_candidateReadIds[i];
+            //                     const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+            //                     bool found = thrust::binary_search(thrust::seq, d_candidateReadIds + rangeBegin, d_candidateReadIds + rangeMid, readIdToFind);
+            //                     if(found){
+            //                         d_isPairedCandidate[i] = true;
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //     }
+            // ); CUERR;
+
+            //helpers::call_fill_kernel_async(batchData.d_isPairedCandidate.data(), batchData.totalNumCandidates, false, stream);
+
+
+            helpers::lambda_kernel<<<grid, block, 0, stream>>>(
+                [
+                    numChecks,
+                    d_firstTasksOfPairsToCheck,
+                    d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                    d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                    d_candidateReadIds = batchData.d_candidateReadIds.data(),
+                    d_isPairedCandidate = batchData.d_isPairedCandidate.data()
+                ] __device__ (){
+
+                    constexpr int numSharedElements = 1024;
+
+                    __shared__ read_number sharedElements[numSharedElements];
+
+                    for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
+                        const int firstTask = d_firstTasksOfPairsToCheck[a];
+                        const int secondTask = firstTask + 1;
+
+                        const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
+                        const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
+                        const int rangeEnd = d_numCandidatesPerAnchorPrefixSum[firstTask + 2];
+                        
+                        //load [mid, end) into shared, and search for pair candidates of [begin, mid)
+                        const int numElementsMidEnd = rangeEnd - rangeMid;
+                        const int numIterationsMidEnd = SDIV(numElementsMidEnd, numSharedElements);
+
+                        for(int iteration = 0; iteration < numIterationsMidEnd; iteration++){
+
+                            const int begin = rangeMid + iteration * numSharedElements;
+                            const int end = min(rangeMid + (iteration+1) * numSharedElements, rangeEnd);
+                            const int num = end - begin;
+
+                            for(int i = threadIdx.x; i < num; i += blockDim.x){
+                                sharedElements[i] = d_candidateReadIds[begin + i];
+                            }
+
+                            __syncthreads();
+
+                            //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                            for(int i = rangeBegin + threadIdx.x; i < rangeMid; i += blockDim.x){
+                                if(iteration == 0 || !d_isPairedCandidate[i]){
+                                    const read_number readId = d_candidateReadIds[i];
+                                    const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                                    const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                                    if(found){
+                                        d_isPairedCandidate[i] = true;
+                                    }
+                                }
+                            }
+
+                            __syncthreads();
+                        }
+
+                        //load [begin, mid) into shared, and search for pair candidates of [mid, end)
+                        const int numElementsBeginMid = rangeMid - rangeBegin;
+                        const int numIterationsBeginMid = SDIV(numElementsBeginMid, numSharedElements);
+
+                        for(int iteration = 0; iteration < numIterationsBeginMid; iteration++){
+
+                            const int begin = rangeBegin + iteration * numSharedElements;
+                            const int end = min(rangeBegin + (iteration+1) * numSharedElements, rangeMid);
+                            const int num = end - begin;
+
+                            for(int i = threadIdx.x; i < num; i += blockDim.x){
+                                sharedElements[i] = d_candidateReadIds[begin + i];
+                            }
+
+                            __syncthreads();
+
+                            //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                            for(int i = rangeMid + threadIdx.x; i < rangeEnd; i += blockDim.x){
+                                if(iteration == 0 || !d_isPairedCandidate[i]){
+                                    const read_number readId = d_candidateReadIds[i];
+                                    const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                                    const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                                    if(found){
+                                        d_isPairedCandidate[i] = true;
+                                    }
+                                }
+                            }
+
+                            __syncthreads();
+                        }
+                    }
+                }
+            ); CUERR;
+
+            cubAllocator->DeviceFree(d_firstTasksOfPairsToCheck); CUERR;
+
+            // cudaStreamSynchronize(stream); CUERR;
+            // int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
+            // if(numNotFinished > 0){
+            //     std::cerr << "numNotFinished = " << numNotFinished << "\n";
+            // }
+
+            // cudaFreeHost(d_status); CUERR;
+
+            // for(int i = 0; i < numChecks; i++){
+            //     if(d_status[i] > 0){
+            //         const int first = firstTasksOfPairsToCheck[i];
+            //         const int second = first + 1;
+
+            //         const int begin1 = batchData.h_numCandidatesPerAnchorPrefixSum[first];
+            //         const int end1 = batchData.h_numCandidatesPerAnchorPrefixSum[second];
+            //         const int begin2 = batchData.h_numCandidatesPerAnchorPrefixSum[second];
+            //         const int end2 = batchData.h_numCandidatesPerAnchorPrefixSum[second + 1];
+
+            //         // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
+            //         // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
+
+            //         std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
+            //         std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
+
+            //         auto endIters = findPositionsOfPairedReadIds(
+            //             batchData.h_candidateReadIds.data() + begin1,
+            //             batchData.h_candidateReadIds.data() + end1,
+            //             batchData.h_candidateReadIds.data() + begin2,
+            //             batchData.h_candidateReadIds.data() + end2,
+            //             pairedPositions.begin(),
+            //             pairedPositions2.begin()
+            //         );
+
+            //         pairedPositions.erase(endIters.first, pairedPositions.end());
+            //         pairedPositions2.erase(endIters.second, pairedPositions2.end());
+            //         for(auto i : pairedPositions){
+            //             batchData.h_isPairedCandidate[begin1 + i] = true;
+            //         }
+            //         for(auto i : pairedPositions2){
+            //             batchData.h_isPairedCandidate[begin2 + i] = true;
+            //         }
+            //     }
+            // }
+
+            // int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
+            // if(numNotFinished > 0){
+            //     std::cerr << "numNotFinished = " << numNotFinished << "\n";
+
+            //     int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
+            // }
+
+            // ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
+            // auto policy = thrust::cuda::par(thrustCachingAllocator1).on(stream);
+
+            // bool error = thrust::any_of(policy, d_status, d_status + numChecks, [] __host__ __device__ (const int i){ return i > 0; });
+
+            // if(error){
+            //     std::cerr << "too many candidates for pair filter. fallback to cpu\n";
+
+            //     int *d_max = thrust::max_element(policy, d_status, d_status + numChecks);
+            // }
+
+            // cubAllocator->DeviceFree(d_status); CUERR;
+
+        }
+
+        //DEBUG
+
+        // auto pairflagstmp = std::make_unique<bool[]>(batchData.totalNumCandidates);
+
+        // cudaMemcpyAsync(
+        //     pairflagstmp.get(),
+        //     batchData.d_isPairedCandidate.data(),
+        //     sizeof(bool) * batchData.totalNumCandidates,
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // cudaStreamSynchronize(stream); CUERR;
+
+        // computePairFlagsCpu(batchData, stream);
+
+        // cudaStreamSynchronize(stream); CUERR;
+
+        // cudaMemcpyAsync(
+        //     batchData.h_numCandidatesPerAnchorPrefixSum.data(),
+        //     batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //     sizeof(int) * (batchData.numTasks + 1),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // cudaStreamSynchronize(stream); CUERR;
+
+        // //TODO compare pair flags
+        // bool error = false;
+        // for(int i = 0; i < batchData.totalNumCandidates; i++){
+        //     if(pairflagstmp[i] != batchData.h_isPairedCandidate[i]){
+
+                
+
+        //         std::cerr << "firstTasksOfPairsToCheck\n";
+        //         std::copy_n(firstTasksOfPairsToCheck.data(), numChecks, std::ostream_iterator<int>(std::cerr, " "));
+        //         std::cerr << "\n";
+
+        //         std::cerr << "batchData.h_numCandidatesPerAnchorPrefixSum\n";
+        //         std::copy_n(batchData.h_numCandidatesPerAnchorPrefixSum.get(), batchData.numTasks + 1, std::ostream_iterator<int>(std::cerr, " "));
+        //         std::cerr << "\n";
+
+        //         std::cerr << "pairflagstmp\n";
+        //         std::copy_n(pairflagstmp.get(), batchData.totalNumCandidates, std::ostream_iterator<bool>(std::cerr, " "));
+        //         std::cerr << "\n";
+
+        //         std::cerr << "correct pair flags\n";
+        //         std::copy_n(batchData.h_isPairedCandidate.get(), batchData.totalNumCandidates, std::ostream_iterator<bool>(std::cerr, " "));
+        //         std::cerr << "\n";
+        //         error = true;
+        //         break;
+        //     }
+        // }
+
+        // if(!error){
+        //     //std::cerr << "paired gpu no errors\n";
+        // }else{
+        //     std::cerr << "error paired gpu\n";
+        //     std::exit(0);
+        // }
+
     }
 
 
