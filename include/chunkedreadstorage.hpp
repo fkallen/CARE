@@ -573,6 +573,8 @@ public: //inherited interface
         const read_number* readIds,
         int numSequences
     ) const override{
+        if(numSequences == 0) return;
+        
         for(int i = 0; i < numSequences; i++){
             lengths[i] = lengthStorage.getLength(readIds[i]);
         }

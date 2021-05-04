@@ -343,6 +343,8 @@ public:
             int numSequences, 
             cudaStream_t stream
         ) const override{
+            if(numSequences == 0) return;
+
             int deviceId = 0;
             cudaGetDevice(&deviceId); CUERR;
 
@@ -364,6 +366,8 @@ public:
             int numSequences,
             cudaStream_t stream
         ) const override{
+            if(numSequences == 0) return;
+
             int deviceId = 0;
             cudaGetDevice(&deviceId); CUERR;
 
@@ -395,6 +399,8 @@ public:
             int numSequences,
             cudaStream_t stream
         ) const override{
+            if(numSequences == 0) return;
+
             int deviceId = 0;
             cudaGetDevice(&deviceId); CUERR;
 
@@ -424,6 +430,8 @@ public:
             int numSequences,    
             cudaStream_t stream
         ) const override{
+            if(numSequences == 0) return;
+            
             int deviceId = 0;
             cudaGetDevice(&deviceId); CUERR;
 
