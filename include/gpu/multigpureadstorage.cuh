@@ -834,8 +834,9 @@ public: //inherited GPUReadStorage interface
         int numSequences,
         cudaStream_t stream
     ) const override{
-        nvtx::push_range("multigpureadstorage::gatherQualities", 4);
         if(numSequences == 0) return;
+        
+        nvtx::push_range("multigpureadstorage::gatherQualities", 4);
 
         int deviceId = 0;
         cudaGetDevice(&deviceId); CUERR;
