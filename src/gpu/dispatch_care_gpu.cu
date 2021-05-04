@@ -577,7 +577,7 @@ namespace care{
             memoryOptions,
             correctionOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Single
+            gpu::GpuMinhasherType::Multi
         );
 
         gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
