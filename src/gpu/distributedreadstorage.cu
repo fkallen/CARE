@@ -912,6 +912,8 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream) const{
 
+    if(nReadIds == 0) return;
+
     if(threadPool != nullptr){
 
         ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
@@ -953,6 +955,8 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             int nReadIds,
                             int deviceId,
                             cudaStream_t stream) const{
+
+    if(nReadIds == 0) return;
 
     if(threadPool != nullptr){
 
@@ -1008,6 +1012,8 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBuffer(
                             int* lengths,
                             const read_number* readIds,
                             int nReadIds) const{
+
+    if(nReadIds == 0) return;
 
     assert(isReadOnly);
 

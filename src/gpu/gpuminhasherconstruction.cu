@@ -93,7 +93,7 @@ namespace gpu{
                 gpuReadStorage.getNumberOfReads(), 
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage), 
                 correctionOptions.kmerlength,
-                std::vector<int>{0,0} //runtimeOptions.deviceIds
+                runtimeOptions.deviceIds
             );
 
             gpuMinhasher->constructFromReadStorage(

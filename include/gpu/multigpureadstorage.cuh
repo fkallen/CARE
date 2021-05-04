@@ -572,6 +572,8 @@ public: //inherited GPUReadStorage interface
         int numSequences,
         cudaStream_t stream
     ) const override{
+        if(numSequences == 0) return;
+        
         nvtx::push_range("multigpureadstorage::gatherSequences", 4);
 
         int deviceId = 0;
@@ -831,6 +833,8 @@ public: //inherited GPUReadStorage interface
         int numSequences,
         cudaStream_t stream
     ) const override{
+        if(numSequences == 0) return;
+        
         nvtx::push_range("multigpureadstorage::gatherQualities", 4);
 
         int deviceId = 0;
@@ -1072,6 +1076,8 @@ public: //inherited GPUReadStorage interface
         cudaStream_t stream
     ) const override{
 
+        if(numSequences == 0) return;
+
         gpuLengthStorage.gatherLengthsOnDeviceAsync(
             d_lengths, 
             d_readIds, 
@@ -1186,6 +1192,8 @@ private:
         unsigned int* outputarray,
         std::size_t outputPitchInInts
     ) const {
+        if(numSequences == 0) return;
+
         if(!isStandalone()){
             cpuReadStorage->gatherSequences(
                 tempData->cpuReadStorageHandle,
@@ -1219,6 +1227,7 @@ private:
         char* outputarray,
         std::size_t outputPitchInBytes
     ) const {
+        if(numSequences == 0) return;
         if(!isStandalone()){
 
             cpuReadStorage->gatherQualities(
