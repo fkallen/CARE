@@ -713,6 +713,8 @@ public:
 
     void prepareStep(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforePrepare);
+        
+        nvtx::push_range("prepareStep", 1);
 
         const int numActiveTasks = batchData.indicesOfActiveTasks.size();
         batchData.numTasks = numActiveTasks;
@@ -1007,12 +1009,15 @@ public:
         #endif
 
         batchData.setState(BatchData::State::BeforeHash);
+
+        nvtx::pop_range();
     }
 
     void getCandidateReadIds(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforeHash);
+
         nvtx::push_range("getCandidateReadIds", 0);
 
-        assert(batchData.state == BatchData::State::BeforeHash);
         gpuReadHasher->getCandidateReadIds(batchData, batchData.streams[0]);
         batchData.setState(BatchData::State::BeforeRemoveIds);
 
@@ -1036,7 +1041,12 @@ public:
 
         nvtx::pop_range();
 
-        batchData.setState(BatchData::State::BeforeComputePairFlags);
+        //removeUsedIdsAndMateIds is a compaction step. check early exit.
+        if(batchData.totalNumCandidates == 0){
+            batchData.setState(BatchData::State::Finished);
+        }else{
+            batchData.setState(BatchData::State::BeforeComputePairFlags);
+        }
     }
 
     void computePairFlags(BatchData& batchData) const{
@@ -1105,7 +1115,12 @@ public:
 
         nvtx::pop_range();
 
-        batchData.setState(BatchData::State::BeforeMSA);
+        //filterAlignments is a compaction step. check early exit.
+        if(batchData.totalNumCandidates == 0){
+            batchData.setState(BatchData::State::Finished);
+        }else{
+            batchData.setState(BatchData::State::BeforeMSA);
+        }
     }
 
     void computeMSAs(BatchData& batchData) const{
@@ -1164,224 +1179,7 @@ public:
         }
     }
 
-    #if 0
-    void step(BatchData& batchData) const{
 
-        const int numActiveTasks = batchData.indicesOfActiveTasks.size();
-
-        //std::cerr << "Step: Active tasks " << numActiveTasks << ", totalNumCandidates " << batchData.totalNumCandidates << "\n";
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     std::cerr << "before\n";
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //         std::cerr << "task " << i << ", numCandidates " << numCandidates << " offset " << offset << "\n";
-        //         std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
-        //         std::cerr << "\n";
-        //     }
-        // }
-
-        nvtx::push_range("removeUsedIdsAndMateIds", 1);
-
-        #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
-
-        removeUsedIdsAndMateIds(batchData, batchData.streams[0], batchData.streams[1]);  
-
-        #else 
-
-        removeUsedIdsAndMateIdsCPU(batchData, batchData.streams[0], batchData.streams[1]);    
-        
-        #endif
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     std::cerr << "after\n";
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //         std::cerr << "task " << i << ", numCandidates " << numCandidates << " offset " << offset << "\n";
-        //         std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
-        //         std::cerr << "\n";
-        //     }
-        // }
-
-
-        nvtx::pop_range();
-
-        //std::exit(0);
-
-        nvtx::push_range("flagpairs", 7);
-
-        computePairFlagsCpu(batchData, batchData.streams[0]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-        //collectTimer.start();
-
-        nvtx::push_range("loadCandidateSequenceData", 2);
-
-        loadCandidateSequenceData(batchData, batchData.streams[0]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-        
-        if(batchData.numTasksWithMateRemoved > 0){
-
-            //for those tasks where a mate id has been removed, remove candidates whose sequence is equal to the mate sequence.
-            //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks.
-
-            nvtx::push_range("eraseDataOfRemovedMates", 3);
-
-            eraseDataOfRemovedMates(batchData, batchData.streams[0]);
-
-            nvtx::pop_range();
-
-        }
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-
-        //collectTimer.stop();
-
-        /*
-            Compute alignments
-        */
-
-        //alignmentTimer.start();
-
-        nvtx::push_range("calculateAlignments", 4);
-
-        calculateAlignments(batchData, batchData.streams[0]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-
-        //alignmentTimer.stop();
-        
-        nvtx::push_range("filterAlignments", 5);
-    
-        //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks.
-        filterAlignments(batchData, batchData.streams[0]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-
-        //loadCandidateQualityScores(batchData, batchData.streams[0]);
-
-        nvtx::push_range("computeMSAs", 6);
-
-        //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
-        computeMSAs(batchData, batchData.streams[0], batchData.streams[1]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-
-        nvtx::push_range("computeExtendedSequences", 7);
-
-        computeExtendedSequencesFromMSAs(batchData, batchData.streams[0]);
-
-        nvtx::pop_range();
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     for(int i = 0; i < batchData.numTasks; i++){
-            
-        //         const int numCandidates = batchData.d_numCandidatesPerAnchor[i];
-        //         const int offset = batchData.d_numCandidatesPerAnchorPrefixSum[i];
-        //         const read_number* ids = &batchData.d_candidateReadIds[offset];
-
-        //         assert(std::is_sorted(ids, ids + numCandidates));
-        //     }
-        // }
-
-        //copy all necessary buffers to host
-            
-        nvtx::push_range("copyBuffersToHost", 8);
-
-        copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[1]);
-
-        nvtx::pop_range();
-        
-
-        cudaStreamSynchronize(batchData.streams[0]); CUERR;
-        cudaStreamSynchronize(batchData.streams[1]); CUERR;        
-    }
-
-    #else
     void process(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforePrepare);
 
@@ -1389,7 +1187,6 @@ public:
             performNextStep(batchData);
         }
     }
-    #endif
 
     void unpackResultsIntoTasks(BatchData& batchData) const{
 
