@@ -583,7 +583,7 @@ public:
 
         cudaStreamSynchronize(stream); CUERR;
 
-        batchData.d_candidateReadIds.resize(totalNumValues);        
+        batchData.d_candidateReadIds.resize(totalNumValues);    
 
         if(totalNumValues == 0){
             cudaMemsetAsync(batchData.d_numCandidatesPerAnchor.get(), 0, sizeof(int) * batchData.numTasks , stream); CUERR;
