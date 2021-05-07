@@ -4397,7 +4397,9 @@ public:
                         }
 
                     }else{ //numCandidates == 0
-                        d_abortReasons[t] = AbortReason::NoPairedCandidatesAfterAlignment;
+                        if(threadIdx.x == 0){
+                            d_abortReasons[t] = AbortReason::NoPairedCandidatesAfterAlignment;
+                        }
                     }
                 }
             }
