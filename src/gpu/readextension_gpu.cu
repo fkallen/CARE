@@ -395,8 +395,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -1267,6 +1267,13 @@ extend_gpu_pairedend(
 
         auto batchData = std::make_unique<BatchData>();
 
+        int minCoverageForExtension = 3;
+        int fixedStepsize = 20;
+
+        std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
+        std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
+        bool isLastIteration = false;
+
         auto init = [&](){
             nvtx::push_range("init", 2);
 
@@ -1275,10 +1282,31 @@ extend_gpu_pairedend(
                 currentIds.get()
             );
 
-            const int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
+            int numReadsInBatch = std::distance(currentIds.get(), readIdsEnd);
 
             if(numReadsInBatch % 2 == 1){
                 throw std::runtime_error("Input files not properly paired. Aborting read extension.");
+            }
+
+            if(numReadsInBatch == 0 && pairsWhichShouldBeRepeated.size() > 0){
+
+                const int numPairsToCopy = std::min(batchsizePairs, int(pairsWhichShouldBeRepeated.size()));
+
+                for(int i = 0; i < numPairsToCopy; i++){
+                    currentIds[2*i + 0] = pairsWhichShouldBeRepeated[i].first;
+                    currentIds[2*i + 1] = pairsWhichShouldBeRepeated[i].second;
+                }
+
+                for(int i = 0; i < numPairsToCopy; i++){
+                    if(currentIds[2*i + 0] > currentIds[2*i + 1]){
+                        std::swap(currentIds[2*i + 0], currentIds[2*i + 1]);
+                    }
+                    assert(currentIds[2*i + 1] == currentIds[2*i + 0] + 1);
+                }
+
+                pairsWhichShouldBeRepeated.erase(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.begin() + numPairsToCopy);
+
+                numReadsInBatch = 2 * numPairsToCopy;
             }
             
             if(numReadsInBatch > 0){
@@ -1362,6 +1390,9 @@ extend_gpu_pairedend(
                 );
                 #endif
 
+                batchData->minCoverageForExtension = minCoverageForExtension;
+                batchData->fixedStepsize = fixedStepsize;
+
                 batchData->setState(BatchData::State::BeforePrepare);
             }else{
                 batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
@@ -1377,43 +1408,61 @@ extend_gpu_pairedend(
 
             const int numresults = extensionResults.size();
 
-            std::vector<ExtendedRead> extendedReads(numresults);
+            std::vector<ExtendedRead> extendedReads;
+            extendedReads.reserve(numresults);
+
+            int repeated = 0;
             
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
-                ExtendedRead& er = extendedReads[i];
-
-                er.readId = extensionOutput.readId1;
-                er.extendedSequence = std::move(extensionOutput.extendedRead);
-                er.qualityScores = std::move(extensionOutput.qualityScores);
-                er.read1begin = extensionOutput.read1begin;
-                er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
-                er.read2begin = extensionOutput.read2begin;
-                if(er.read2begin != -1){
-                    er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
+                const int extendedReadLength = extensionOutput.extendedRead.size();
+                //if(extendedReadLength == extensionOutput.originalLength){
+                //if(!extensionOutput.mateHasBeenFound){
+                if(extendedReadLength > extensionOutput.originalLength && !extensionOutput.mateHasBeenFound && !isLastIteration){
+                    //do not insert directly into pairsWhichShouldBeRepeated. it causes an infinite loop
+                    pairsWhichShouldBeRepeatedTemp.emplace_back(std::make_pair(extensionOutput.readId1, extensionOutput.readId2));
+                    repeated++;
                 }else{
-                    er.read2end = -1;
-                }
+                    //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
-                if(extensionOutput.mateHasBeenFound){
-                    er.status = ExtendedReadStatus::FoundMate;
-                }else{
-                    if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+                    ExtendedRead er;
 
-                            er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
-                            er.status = ExtendedReadStatus::MSANoExtension;
-                        }
+                    er.readId = extensionOutput.readId1;
+                    er.extendedSequence = std::move(extensionOutput.extendedRead);
+                    er.qualityScores = std::move(extensionOutput.qualityScores);
+                    er.read1begin = extensionOutput.read1begin;
+                    er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
+                    er.read2begin = extensionOutput.read2begin;
+                    if(er.read2begin != -1){
+                        er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
                     }else{
-                        er.status = ExtendedReadStatus::LengthAbort;
+                        er.read2end = -1;
                     }
-                }  
-                
-                if(extensionOutput.success){
-                    numSuccessRead++;
-                }                
+
+                    if(extensionOutput.mateHasBeenFound){
+                        er.status = ExtendedReadStatus::FoundMate;
+                    }else{
+                        if(extensionOutput.aborted){
+                            if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
+                                    || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+
+                                er.status = ExtendedReadStatus::CandidateAbort;
+                            }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
+                                er.status = ExtendedReadStatus::MSANoExtension;
+                            }
+                        }else{
+                            er.status = ExtendedReadStatus::LengthAbort;
+                        }
+                    }  
+                    
+                    if(extensionOutput.success){
+                        numSuccessRead++;
+                    }
+
+                    extendedReads.emplace_back(std::move(er));
+
+                }
+                              
             }
 
             auto outputfunc = [&, vec = std::move(extendedReads)](){
@@ -1430,7 +1479,7 @@ extend_gpu_pairedend(
 
             nvtx::pop_range();
 
-            progressThread.addProgress(batchData->numReadPairs);
+            progressThread.addProgress(batchData->numReadPairs - repeated);
         };
 
         while(!(readIdGenerator.empty())){
@@ -1440,6 +1489,48 @@ extend_gpu_pairedend(
                 output();
             }
         }
+
+        constexpr int increment = 1;
+        constexpr int limit = 13;
+
+        fixedStepsize -= 2;
+        minCoverageForExtension += increment;
+        std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+
+        while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+
+            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (fixedStepsize <= 2);
+
+            while(pairsWhichShouldBeRepeated.size() > 0){
+                init();
+                if(batchData->state != BatchData::State::None){
+                    gpuExtensionStepper.process(*batchData);
+                    output();
+                }
+            }
+
+            fixedStepsize -= 2;
+            std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        }
+
+        // while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit) || (fixedStepsize > 0))){
+
+        //     std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with minCoverageForExtension = " << minCoverageForExtension << ", fixedStepsize = " << fixedStepsize << "\n";
+        //     isLastIteration = (minCoverageForExtension + increment >= limit) && (fixedStepsize <= 0);
+
+        //     while(pairsWhichShouldBeRepeated.size() > 0){
+        //         init();
+        //         if(batchData->state != BatchData::State::None){
+        //             gpuExtensionStepper.process(*batchData);
+        //             output();
+        //         }
+        //     }
+
+        //     minCoverageForExtension += increment;
+        //     fixedStepsize = -5;
+        //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        // }
 
         //#pragma omp critical
         {

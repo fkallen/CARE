@@ -448,6 +448,9 @@ struct BatchData{
     int someId = 0;
     int numReadPairs = 0;
 
+    int minCoverageForExtension = 3;
+    int fixedStepsize = 20;
+
     int totalNumCandidates = 0;
     int totalNumberOfUsedIds = 0;
 
@@ -1473,6 +1476,49 @@ public:
 
             std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
             std::copy(anchorQuality.begin(), anchorQuality.end(), extendedReadQuality.begin());
+
+
+            //alternative extendedRead. no msa + consensus, just concat
+
+            // std::string extendedReadTmp;
+
+            // if(numsteps > 1){
+            //     extendedReadTmp.resize(shifts.back() + stepstringlengths.back(), '\0');
+
+            //     auto b = std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedReadTmp.begin());
+            //     for(int i = 0; i < numsteps - 1; i++){
+            //         const int currentEnd = std::distance(extendedReadTmp.begin(), b);
+
+            //         const int nextLength = stepstringlengths[i];
+            //         const int nextBegin = shifts[i];
+
+            //         if(nextBegin + nextLength > currentEnd){
+            //             const int copybegin = currentEnd - nextBegin;
+            //             b = std::copy(
+            //                 task.totalDecodedAnchors[i+1].begin() + copybegin,
+            //                 task.totalDecodedAnchors[i+1].end(),
+            //                 b
+            //             );
+            //         }
+            //     }
+
+            //     assert(b == extendedReadTmp.end());
+
+            //     // if(extendedReadTmp != extendedRead){
+            //     //     std::cerr << "old: " << extendedRead << "\n";
+            //     //     std::cerr << "new: " << extendedReadTmp << "\n";
+            //     // }
+            // }else{
+            //     extendedReadTmp = decodedAnchor;
+            // }
+
+            
+            //std::swap(extendedReadTmp, extendedRead);
+
+
+
+
+            
 
             if(task.mateHasBeenFound){
                 //std::cerr << "copy " << task.decodedMateRevC << " to end of consensus " << task.myReadId << "\n";
@@ -4172,7 +4218,8 @@ public:
         cubAllocator->DeviceFree(d_decodedMatesRevCDense); CUERR;
         cubAllocator->DeviceFree(d_scatterMap); CUERR;
 
-
+        const int minCoverageForExtension = batchData.minCoverageForExtension;
+        const int fixedStepsize = batchData.fixedStepsize;
            
         helpers::lambda_kernel<<<batchData.numTasks, 128, 0, stream>>>(
             [
@@ -4199,7 +4246,9 @@ public:
                 d_decodedMatesRevC = (char*)d_decodedMatesRevC,
                 decodedMatesRevCPitchInBytes = batchData.decodedMatesRevCPitchInBytes,
                 d_outputMateHasBeenFound = (bool*)d_outputMateHasBeenFound,
-                d_sizeOfGapToMate = (int*)d_sizeOfGapToMate
+                d_sizeOfGapToMate = (int*)d_sizeOfGapToMate,
+                minCoverageForExtension,
+                fixedStepsize
             ] __device__ (){
 
                 auto decodeConsensus = [](const std::uint8_t encoded){
@@ -4254,12 +4303,10 @@ public:
 
                         int extendBy = std::min(
                             consensusLength - anchorLength, 
-                            maxextensionPerStep
+                            std::max(0, fixedStepsize)
                         );
                         //cannot extend over fragment 
                         extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
-
-                        constexpr int minCoverageForExtension = 3;
 
                         //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
                         //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
@@ -4280,8 +4327,10 @@ public:
                         myPos = broadcastsmem_int;
                         __syncthreads();
 
-                        extendBy = myPos - anchorLength;
-                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+                        if(fixedStepsize <= 0){
+                            extendBy = myPos - anchorLength;
+                            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+                        }
 
                         auto makeAnchorForNextIteration = [&](){
                             if(extendBy == 0){
