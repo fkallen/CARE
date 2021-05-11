@@ -785,7 +785,9 @@ namespace gpu{
             currentNumAnchors = *currentInput->h_numAnchors.get();
             currentNumCandidates = *currentInput->h_numCandidates.get();
 
-            assert(currentNumAnchors % 2 == 0);
+            if(gpuReadStorage->isPairedEnd()){
+                assert(currentNumAnchors % 2 == 0);
+            }
 
             currentOutput->nothingToDo = false;
             currentOutput->numAnchors = currentNumAnchors;
@@ -2318,7 +2320,7 @@ namespace gpu{
             );
 
             #if 1
-            if(false && !gpuReadStorage->isPairedEnd()){
+            if(!gpuReadStorage->isPairedEnd()){
                 //default kernel
                 call_cuda_filter_alignments_by_mismatchratio_kernel_async(
                     d_alignment_best_alignment_flags.get(),
