@@ -1635,6 +1635,7 @@ public:
                     __shared__ read_number sharedElements[numSharedElements];
 
                     //search elements of array1 in array2. if found, set output element to true
+                    //array1 and array2 must be sorted
                     auto process = [&](
                         const read_number* array1,
                         int numElements1,
@@ -1727,133 +1728,7 @@ public:
 
             cubAllocator->DeviceFree(d_firstTasksOfPairsToCheck); CUERR;
 
-            // cudaStreamSynchronize(stream); CUERR;
-            // int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
-            // if(numNotFinished > 0){
-            //     std::cerr << "numNotFinished = " << numNotFinished << "\n";
-            // }
-
-            // cudaFreeHost(d_status); CUERR;
-
-            // for(int i = 0; i < numChecks; i++){
-            //     if(d_status[i] > 0){
-            //         const int first = firstTasksOfPairsToCheck[i];
-            //         const int second = first + 1;
-
-            //         const int begin1 = batchData.h_numCandidatesPerAnchorPrefixSum[first];
-            //         const int end1 = batchData.h_numCandidatesPerAnchorPrefixSum[second];
-            //         const int begin2 = batchData.h_numCandidatesPerAnchorPrefixSum[second];
-            //         const int end2 = batchData.h_numCandidatesPerAnchorPrefixSum[second + 1];
-
-            //         // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
-            //         // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
-
-            //         std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
-            //         std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
-
-            //         auto endIters = findPositionsOfPairedReadIds(
-            //             batchData.h_candidateReadIds.data() + begin1,
-            //             batchData.h_candidateReadIds.data() + end1,
-            //             batchData.h_candidateReadIds.data() + begin2,
-            //             batchData.h_candidateReadIds.data() + end2,
-            //             pairedPositions.begin(),
-            //             pairedPositions2.begin()
-            //         );
-
-            //         pairedPositions.erase(endIters.first, pairedPositions.end());
-            //         pairedPositions2.erase(endIters.second, pairedPositions2.end());
-            //         for(auto i : pairedPositions){
-            //             batchData.h_isPairedCandidate[begin1 + i] = true;
-            //         }
-            //         for(auto i : pairedPositions2){
-            //             batchData.h_isPairedCandidate[begin2 + i] = true;
-            //         }
-            //     }
-            // }
-
-            // int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
-            // if(numNotFinished > 0){
-            //     std::cerr << "numNotFinished = " << numNotFinished << "\n";
-
-            //     int numNotFinished = std::count_if(d_status, d_status + numChecks, [] (const int i){ return i > 0; });
-            // }
-
-            // ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
-            // auto policy = thrust::cuda::par(thrustCachingAllocator1).on(stream);
-
-            // bool error = thrust::any_of(policy, d_status, d_status + numChecks, [] __host__ __device__ (const int i){ return i > 0; });
-
-            // if(error){
-            //     std::cerr << "too many candidates for pair filter. fallback to cpu\n";
-
-            //     int *d_max = thrust::max_element(policy, d_status, d_status + numChecks);
-            // }
-
-            // cubAllocator->DeviceFree(d_status); CUERR;
-
         }
-
-        //DEBUG
-
-        // auto pairflagstmp = std::make_unique<bool[]>(batchData.totalNumCandidates);
-
-        // cudaMemcpyAsync(
-        //     pairflagstmp.get(),
-        //     batchData.d_isPairedCandidate.data(),
-        //     sizeof(bool) * batchData.totalNumCandidates,
-        //     D2H,
-        //     stream
-        // ); CUERR;
-
-        // cudaStreamSynchronize(stream); CUERR;
-
-        // computePairFlagsCpu(batchData, stream);
-
-        // cudaStreamSynchronize(stream); CUERR;
-
-        // cudaMemcpyAsync(
-        //     batchData.h_numCandidatesPerAnchorPrefixSum.data(),
-        //     batchData.d_numCandidatesPerAnchorPrefixSum.data(),
-        //     sizeof(int) * (batchData.numTasks + 1),
-        //     D2H,
-        //     stream
-        // ); CUERR;
-
-        // cudaStreamSynchronize(stream); CUERR;
-
-        // //TODO compare pair flags
-        // bool error = false;
-        // for(int i = 0; i < batchData.totalNumCandidates; i++){
-        //     if(pairflagstmp[i] != batchData.h_isPairedCandidate[i]){
-
-                
-
-        //         std::cerr << "firstTasksOfPairsToCheck\n";
-        //         std::copy_n(firstTasksOfPairsToCheck.data(), numChecks, std::ostream_iterator<int>(std::cerr, " "));
-        //         std::cerr << "\n";
-
-        //         std::cerr << "batchData.h_numCandidatesPerAnchorPrefixSum\n";
-        //         std::copy_n(batchData.h_numCandidatesPerAnchorPrefixSum.get(), batchData.numTasks + 1, std::ostream_iterator<int>(std::cerr, " "));
-        //         std::cerr << "\n";
-
-        //         std::cerr << "pairflagstmp\n";
-        //         std::copy_n(pairflagstmp.get(), batchData.totalNumCandidates, std::ostream_iterator<bool>(std::cerr, " "));
-        //         std::cerr << "\n";
-
-        //         std::cerr << "correct pair flags\n";
-        //         std::copy_n(batchData.h_isPairedCandidate.get(), batchData.totalNumCandidates, std::ostream_iterator<bool>(std::cerr, " "));
-        //         std::cerr << "\n";
-        //         error = true;
-        //         break;
-        //     }
-        // }
-
-        // if(!error){
-        //     //std::cerr << "paired gpu no errors\n";
-        // }else{
-        //     std::cerr << "error paired gpu\n";
-        //     std::exit(0);
-        // }
 
     }
 
@@ -2542,82 +2417,8 @@ public:
 
         #endif
 
-        // cudaDeviceSynchronize(); CUERR; //DEBUG
-
-        // const int aaaaaaaaaa = std::distance(batchData.d_candidateReadIds.data(), d_candidateReadIds_end);
-
-        // std::vector<read_number> foo1(batchData.totalNumCandidates);
-        // cudaMemcpyAsync(foo1.data(), d_candidateReadIds2,sizeof(read_number) * foo1.size(), D2H, firstStream);CUERR;
-
-        // std::vector<read_number> foo2(batchData.totalNumberOfUsedIds);
-        // cudaMemcpyAsync(foo2.data(), batchData.d_usedReadIds.data(),sizeof(read_number) * foo2.size(), D2H, firstStream);CUERR;
-
-        // std::vector<read_number> foo3(aaaaaaaaaa);
-        // cudaMemcpyAsync(foo3.data(), batchData.d_candidateReadIds.data(),sizeof(read_number) * foo3.size(), D2H, firstStream);CUERR;
-
-        // std::vector<int> foo4(batchData.numTasks);
-        // cudaMemcpyAsync(foo4.data(), batchData.d_numCandidatesPerAnchor.data(),sizeof(int) * foo4.size(), D2H, firstStream);CUERR;
-
-        // std::vector<int> foo5(aaaaaaaaaa);
-        // cudaMemcpyAsync(foo5.data(), d_anchorIndicesOfCandidates2, sizeof(int) * foo5.size(), D2H, firstStream);CUERR;
-
-        // cudaDeviceSynchronize(); CUERR; //DEBUG
 
         cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
-
-        //std::cerr << "(" << batchData.totalNumCandidates << ", " << batchData.totalNumberOfUsedIds << ") -> " << std::distance(batchData.d_candidateReadIds.data(), d_candidateReadIds_end) << "\n";
-
-        
-
-        // if(batchData.totalNumCandidates < aaaaaaaaaa){
-        //     std::cerr << "h_numCandidatesPerAnchor\n";
-        //     std::copy_n(batchData.h_numCandidatesPerAnchor.data(), batchData.numTasks, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "h_segmentIdsOfReadIds\n";
-        //     std::copy_n(batchData.h_segmentIdsOfReadIds.data(), batchData.totalNumCandidates, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "d_candidateReadIds2\n";
-        //     std::copy_n(foo1.data(), batchData.totalNumCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-
-
-        //     std::cerr << "h_numUsedReadIdsPerAnchor\n";
-        //     std::copy_n(batchData.h_numUsedReadIdsPerAnchor.data(), batchData.numTasks, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "h_numUsedReadIdsPerAnchorPrefixSum\n";
-        //     std::copy_n(batchData.h_numUsedReadIdsPerAnchorPrefixSum.data(), batchData.numTasks, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "h_segmentIdsOfUsedReadIds\n";
-        //     std::copy_n(batchData.h_segmentIdsOfUsedReadIds.data(), batchData.totalNumberOfUsedIds, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "d_usedReadIds\n";
-        //     std::copy_n(foo2.data(), batchData.totalNumberOfUsedIds, std::ostream_iterator<read_number>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "output\n";
-
-            
-
-        //     std::cerr << "d_candidateReadIds\n";
-        //     std::copy_n(foo3.data(), aaaaaaaaaa, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "d_numCandidatesPerAnchor\n";
-        //     std::copy_n(foo4.data(), batchData.numTasks, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     std::cerr << "d_anchorIndicesOfCandidates2\n";
-        //     std::copy_n(foo5.data(), aaaaaaaaaa, std::ostream_iterator<int>(std::cerr, " "));
-        //     std::cerr << "\n";
-
-        //     assert(false);
-        // }
 
         batchData.totalNumCandidates = std::distance(batchData.d_candidateReadIds.data(), d_candidateReadIds_end);
 
@@ -2814,15 +2615,12 @@ public:
                         if(numSelected != numCandidates){
                             assert(numSelected < numCandidates);
                             d_numCandidatesPerAnchor[t] = numSelected;
-                            //printf("task %d, removed %d\n", t, numCandidates - numSelected);
                         }
                     }
 
                 }
             }
         ); CUERR;
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
 
         cubAllocator->DeviceFree(d_outputpositions); CUERR;
         cubAllocator->DeviceFree(d_keepflags); CUERR;
@@ -2889,8 +2687,6 @@ public:
         cubAllocator->DeviceFree(d_anchorIndicesOfCandidates2); CUERR;
 
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData); 
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG     
        
     }
 
@@ -2966,8 +2762,6 @@ public:
         cubAllocator->DeviceFree(d_tempstorage); CUERR;
 
         cubAllocator->DeviceFree(d_alignment_isValid); CUERR;
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
     }
 
     void filterAlignments(BatchData& batchData, cudaStream_t stream) const{
@@ -2984,9 +2778,6 @@ public:
         cubAllocator->DeviceAllocate((void**)&d_keepflags, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR; 
 
         helpers::call_fill_kernel_async(d_keepflags, batchData.totalNumCandidates, true, stream);
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
-
 
         dim3 block(128,1,1);
         dim3 grid(numAnchors, 1, 1);
@@ -3043,7 +2834,7 @@ public:
                                 const float relativeOverlap = overlap / anchorLength;
                                 const float errorrate = numMismatches / overlap;
 
-                                if(fgeq(errorrate, 0.06f)){
+                                if(fleq(errorrate, 0.03f)){
                                     d_keepflags[offset + c] = true;
                                 }else{
                                     d_keepflags[offset + c] = false;
@@ -3167,6 +2958,9 @@ public:
                     }else{
                         //NOOP.
                         //if no good alignment exists, no candidate is removed. we will try to work with the not-so-good alignments
+                        // if(threadIdx.x == 0){
+                        //     printf("no good alignment,nc %d\n", num);
+                        // }
                     }
 
                     removed = BlockReduceInt(cubtemp.intreduce).Sum(removed);
@@ -3179,11 +2973,6 @@ public:
             }
         ); CUERR;
         #endif
-
-
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
-
-        #if 1
 
         auto d_zip_data = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -3201,52 +2990,24 @@ public:
 
         int* d_alignment_overlaps2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_overlaps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         int* d_alignment_shifts2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_shifts2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         int* d_alignment_nOps2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_nOps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         BestAlignment_t* d_alignment_best_alignment_flags2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_best_alignment_flags2, sizeof(BestAlignment_t) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         int* d_candidateSequencesLength2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_candidateSequencesLength2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         read_number* d_candidateReadIds2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         bool* d_isPairedCandidate2 = nullptr;
         allocstatus = cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR;
-        if(cudaSuccess != allocstatus){
-            std::cerr << cudaGetErrorString(allocstatus) << "\n";
-            assert(false);
-        }
 
         auto d_zip_data_tmp = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -3344,8 +3105,6 @@ public:
             stream
         );
 
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
-
         cubAllocator->DeviceFree(cubTemp); CUERR;
 
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
@@ -3378,8 +3137,6 @@ public:
 
         cubAllocator->DeviceFree(cubTemp); CUERR;
 
-        //cudaDeviceSynchronize(); CUERR;  //DEBUG
-
         std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
         
 
@@ -3401,164 +3158,6 @@ public:
         cubAllocator->DeviceFree(d_candidateSequencesLength2); CUERR;
         cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
         cubAllocator->DeviceFree(d_isPairedCandidate2); CUERR;
-
-
-        #else
-        //setup cub 
-        auto d_zip_data = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                batchData.d_alignment_nOps.data(),
-                batchData.d_alignment_overlaps.data(),
-                batchData.d_alignment_shifts.data(),
-                batchData.d_alignment_best_alignment_flags.data(),
-                batchData.d_candidateReadIds.data(),
-                batchData.d_candidateSequencesLength.data(),
-                batchData.d_isPairedCandidate.data()
-            )
-        );
-
-        batchData.d_isPairedCandidate2.resize(batchData.d_isPairedCandidate.size());
-
-        assert(batchData.d_alignment_nOps2.data() != nullptr);
-        assert(batchData.d_alignment_overlaps2.data() != nullptr);
-        assert(batchData.d_alignment_shifts2.data() != nullptr);
-        assert(batchData.d_alignment_best_alignment_flags2.data() != nullptr);
-        assert(batchData.d_candidateReadIds2.data() != nullptr);
-        assert(batchData.d_candidateSequencesLength2.data() != nullptr);
-        assert(batchData.d_isPairedCandidate2.data() != nullptr);
-
-        auto d_zip_output = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                batchData.d_alignment_nOps2.data(),
-                batchData.d_alignment_overlaps2.data(),
-                batchData.d_alignment_shifts2.data(),
-                batchData.d_alignment_best_alignment_flags2.data(),
-                batchData.d_candidateReadIds2.data(),
-                batchData.d_candidateSequencesLength2.data(),
-                batchData.d_isPairedCandidate2.data()
-            )
-        );
-
-        std::size_t requiredCubSize1 = 0;
-        cudaError_t cubstatus = cub::DeviceSelect::Flagged(
-            nullptr, 
-            requiredCubSize1, 
-            d_zip_data, 
-            d_keepflags, 
-            d_zip_output, 
-            batchData.d_numCandidates.data(), 
-            totalNumCandidates, 
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        std::size_t requiredCubSize2 = 0;
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            requiredCubSize2,
-            batchData.d_candidateSequencesData.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags, int(batchData.encodedSequencePitchInInts)}
-            ),
-            batchData.d_candidateSequencesData2.data(),
-            thrust::make_discard_iterator(),
-            totalNumCandidates * batchData.encodedSequencePitchInInts,
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        std::size_t requiredCubSize3 = 0;
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr,
-            requiredCubSize3,
-            batchData.d_numCandidatesPerAnchor2.data(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            batchData.numTasks, 
-            stream
-        );
-        assert(cudaSuccess == cubstatus);
-
-        std::size_t requiredCubSize = std::max(std::max(requiredCubSize1, requiredCubSize2), requiredCubSize3);
-        void* cubtemp; cubAllocator->DeviceAllocate((void**)&cubtemp, requiredCubSize, stream);
-
-        //compact zip data
-        assert(batchData.d_numCandidates.data() != nullptr);
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubtemp, 
-            requiredCubSize, 
-            d_zip_data, 
-            d_keepflags, 
-            d_zip_output, 
-            batchData.d_numCandidates.data(), 
-            totalNumCandidates, 
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        //compact sequence data.
-
-        assert(batchData.d_candidateSequencesData2.data() != nullptr);
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubtemp,
-            requiredCubSize,
-            batchData.d_candidateSequencesData.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags, int(batchData.encodedSequencePitchInInts)}
-            ),
-            batchData.d_candidateSequencesData2.data(),
-            thrust::make_discard_iterator(),
-            totalNumCandidates * batchData.encodedSequencePitchInInts,
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        cubAllocator->DeviceFree(d_keepflags); CUERR;
-
-        //update prefix sum
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            cubtemp, 
-            requiredCubSize, 
-            batchData.d_numCandidatesPerAnchor2.data(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            batchData.numTasks, 
-            stream
-        );
-        assert(cudaSuccess == cubstatus);
-
-
-        cubAllocator->DeviceFree(cubtemp);
-
-        std::swap(batchData.d_alignment_nOps2, batchData.d_alignment_nOps);
-        std::swap(batchData.d_alignment_overlaps2, batchData.d_alignment_overlaps);
-        std::swap(batchData.d_alignment_shifts2, batchData.d_alignment_shifts);
-        std::swap(batchData.d_alignment_best_alignment_flags2, batchData.d_alignment_best_alignment_flags);
-        std::swap(batchData.d_candidateReadIds2, batchData.d_candidateReadIds);
-        std::swap(batchData.d_candidateSequencesLength2, batchData.d_candidateSequencesLength);
-        std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
-        std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
-        std::swap(batchData.d_isPairedCandidate2, batchData.d_isPairedCandidate);
-
-        cudaMemcpyAsync(
-            &batchData.totalNumCandidates,
-            batchData.d_numCandidatesPerAnchorPrefixSum.data() + batchData.numTasks,
-            sizeof(int),
-            D2H,
-            stream
-        ); CUERR;
-
-        cudaStreamSynchronize(stream); CUERR;
-        #endif
-
-        // cudaStreamSynchronize(stream); CUERR; //DEBUG
-        // std::vector<int> vec1(batchData.d_numCandidatesPerAnchor.size());
-        // cudaMemcpyAsync(vec1.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
-        // cudaStreamSynchronize(stream); CUERR; //DEBUG
-        // for(int i = 0; i < batchData.numTasks; i++){
-        //     std::cerr << vec1[i] << " ";
-        // }
-        // std::cerr << "\n";
     }
 
     void loadCandidateQualityScores(BatchData& batchData, cudaStream_t stream, char* d_qualityscores) const{

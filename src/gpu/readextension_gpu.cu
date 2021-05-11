@@ -1482,6 +1482,7 @@ extend_gpu_pairedend(
             progressThread.addProgress(batchData->numReadPairs - repeated);
         };
 
+        isLastIteration = true;
         while(!(readIdGenerator.empty())){
             init();
             if(batchData->state != BatchData::State::None){
@@ -1490,29 +1491,29 @@ extend_gpu_pairedend(
             }
         }
 
-        constexpr int increment = 1;
-        constexpr int limit = 13;
+        // constexpr int increment = 1;
+        // constexpr int limit = 13;
 
-        fixedStepsize -= 2;
-        minCoverageForExtension += increment;
-        std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        // fixedStepsize -= 2;
+        // minCoverageForExtension += increment;
+        // std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
-        while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+        // while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
 
-            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-            isLastIteration = (fixedStepsize <= 2);
+        //     //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+        //     isLastIteration = (fixedStepsize <= 2);
 
-            while(pairsWhichShouldBeRepeated.size() > 0){
-                init();
-                if(batchData->state != BatchData::State::None){
-                    gpuExtensionStepper.process(*batchData);
-                    output();
-                }
-            }
+        //     while(pairsWhichShouldBeRepeated.size() > 0){
+        //         init();
+        //         if(batchData->state != BatchData::State::None){
+        //             gpuExtensionStepper.process(*batchData);
+        //             output();
+        //         }
+        //     }
 
-            fixedStepsize -= 2;
-            std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
-        }
+        //     fixedStepsize -= 2;
+        //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        // }
 
         // while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit) || (fixedStepsize > 0))){
 
