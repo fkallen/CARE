@@ -574,10 +574,6 @@ struct extract_anchor_normed_weights {
     }
 };
 
-<<<<<<< HEAD
-=======
-
->>>>>>> randomforestgpu
 struct extract_cands_normed_weights {
     using features_t = std::array<float, 26>;
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
