@@ -9,6 +9,7 @@
 
 #include <bestalignment.hpp>
 #include <correctionresultprocessing.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
 
@@ -163,6 +164,7 @@ void callConstructMultipleSequenceAlignmentsKernel_async(
         const int* d_candidatesPerSubjectPrefixSum,            
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
+        const bool* d_isPairedCandidate,
         const char* d_subjectQualities,
         const char* d_candidateQualities,
         const int* d_numAnchors,
@@ -186,6 +188,7 @@ void callMsaCandidateRefinementKernel_singleiter_async(
         const int* d_overlaps,
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
+        const bool* d_isPairedCandidate,
         const int* d_subjectSequencesLength,
         const int* d_candidateSequencesLength,
         const char* d_subjectQualities,
@@ -220,6 +223,7 @@ void callMsaCandidateRefinementKernel_multiiter_async(
     const int* d_overlaps,
     const unsigned int* d_subjectSequencesData,
     const unsigned int* d_candidateSequencesData,
+    const bool* d_isPairedCandidate,
     const int* d_subjectSequencesLength,
     const int* d_candidateSequencesLength,
     const char* d_subjectQualities,
@@ -241,91 +245,7 @@ void callMsaCandidateRefinementKernel_multiiter_async(
     KernelLaunchHandle& handle
 );
 
-void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaRebuildKernel_async(
-            int* d_newIndices,
-            int* d_newNumIndicesPerSubject,
-            int* d_newNumIndices,
-            MSAColumnProperties* d_msaColumnProperties,
-            char* d_consensus,
-            int* d_coverage,
-            int* d_counts,
-            float* d_weights,
-            float* d_support,
-            int* d_origCoverages,
-            float* d_origWeights,
-            const BestAlignment_t* d_bestAlignmentFlags,
-            const int* d_shifts,
-            const int* d_nOps,
-            const int* d_overlaps,
-            const unsigned int* d_subjectSequencesData,
-            const unsigned int* d_candidateSequencesData,
-            const unsigned int* d_transposedCandidateSequencesData,
-            const int* d_subjectSequencesLength,
-            const int* d_candidateSequencesLength,
-            const char* d_subjectQualities,
-            const char* d_candidateQualities,
-            bool* d_shouldBeKept,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_numAnchors,
-            const int* d_numCandidates,
-            float desiredAlignmentMaxErrorRate,
-            int maxNumAnchors,
-            int maxNumCandidates,
-            bool canUseQualityScores,
-            size_t encodedSequencePitchInInts,
-            size_t qualityPitchInBytes,
-            size_t msaColumnPitchInElements,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            int dataset_coverage,
-            const bool* d_canExecute,
-            int iteration,
-            const read_number* d_subjectReadIds,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
 
-void callMsaFindCandidatesOfDifferentRegionAndRemoveThemViaDeletionKernel_async(
-        int* d_newIndices,
-        int* d_newNumIndicesPerSubject,
-        int* d_newNumIndices,
-        MSAColumnProperties* d_msaColumnProperties,
-        char* d_consensus,
-        int* d_coverage,
-        int* d_counts,
-        float* d_weights,
-        float* d_support,
-        int* d_origCoverages,
-        float* d_origWeights,
-        const BestAlignment_t* d_bestAlignmentFlags,
-        const int* d_shifts,
-        const int* d_nOps,
-        const int* d_overlaps,
-        const unsigned int* d_subjectSequencesData,
-        const unsigned int* d_candidateSequencesData,
-        const unsigned int* d_transposedCandidateSequencesData,
-        const int* d_subjectSequencesLength,
-        const int* d_candidateSequencesLength,
-        const char* d_subjectQualities,
-        const char* d_candidateQualities,
-        bool* d_shouldBeKept,
-        const int* d_candidates_per_subject_prefixsum,
-        const int* d_numAnchors,
-        const int* d_numCandidates,
-        float desiredAlignmentMaxErrorRate,
-        int maxNumAnchors,
-        int maxNumCandidates,
-        bool canUseQualityScores,
-        size_t encodedSequencePitchInInts,
-        size_t qualityPitchInBytes,
-        size_t msaColumnPitchInElements,
-        const int* d_indices,
-        const int* d_indices_per_subject,
-        int dataset_coverage,
-        const bool* d_canExecute,
-        int iteration,
-        const read_number* d_subjectReadIds,
-        cudaStream_t stream,
-        KernelLaunchHandle& handle);          
 
 // correction kernels
 
@@ -356,30 +276,32 @@ void call_msaCorrectAnchorsKernel_async(
     KernelLaunchHandle& handle
 );
 
-void callConstructAnchorResultsKernelAsync(
-    TempCorrectedSequence::EncodedEdit* __restrict__ d_editsPerCorrectedSubject,
-    int* __restrict__ d_numEditsPerCorrectedSubject,
-    int doNotUseEditsValue,
-    const int* __restrict__ d_indicesOfCorrectedSubjects,
-    const int* __restrict__ d_numIndicesOfCorrectedSubjects,
-    const bool* __restrict__ d_readContainsN,
-    const unsigned int* __restrict__ d_uncorrectedSubjects,
-    const int* __restrict__ d_subjectLengths,
-    const char* __restrict__ d_correctedSubjects,
-    int numEditsThreshold,
-    size_t encodedSequencePitchInInts,
-    size_t decodedSequencePitchInBytes,
-    size_t editsPitchInBytes,
-    const int* d_numAnchors,
-    int maxNumAnchors,
-    cudaStream_t stream,
-    KernelLaunchHandle& handle
-);
 
 void callFlagCandidatesToBeCorrectedKernel_async(
     bool* d_candidateCanBeCorrected,
     int* d_numCorrectedCandidatesPerAnchor,
     GPUMultiMSA multiMSA,
+    const int* d_alignmentShifts,
+    const int* d_candidateSequencesLengths,
+    const int* d_anchorIndicesOfCandidates,
+    const AnchorHighQualityFlag* d_hqflags,
+    const int* d_candidatesPerSubjectPrefixsum,
+    const int* d_localGoodCandidateIndices,
+    const int* d_numLocalGoodCandidateIndicesPerSubject,
+    const int* d_numAnchors,
+    const int* d_numCandidates,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    int new_columns_to_correct,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
+void callFlagCandidatesToBeCorrectedWithExcludeFlagsKernel(
+    bool* d_candidateCanBeCorrected,
+    int* d_numCorrectedCandidatesPerAnchor,
+    GPUMultiMSA multiMSA,
+    const bool* d_excludeFlags, //candidates with flag == true will not be considered
     const int* d_alignmentShifts,
     const int* d_candidateSequencesLengths,
     const int* d_anchorIndicesOfCandidates,
@@ -417,6 +339,82 @@ void callCorrectCandidatesKernel_async(
     size_t decodedSequencePitchInBytes,
     size_t editsPitchInBytes,
     int maximum_sequence_length,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
+void callMsaCorrectAnchorsWithForestKernel(
+    char* d_correctedSubjects,
+    bool* d_subjectIsCorrected,
+    AnchorHighQualityFlag* d_isHighQualitySubject,
+    GPUMultiMSA multiMSA,
+    GpuForest::Clf gpuForest,
+    float forestThreshold,
+    const unsigned int* d_subjectSequencesData,
+    const int* d_indices_per_subject,
+    const int numAnchors,
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    int maximumSequenceLength,
+    float estimatedErrorrate,
+    float desiredAlignmentMaxErrorRate,
+    float estimatedCoverage,
+    float avg_support_threshold,
+    float min_support_threshold,
+    float min_coverage_threshold,
+    float max_coverage_threshold,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle
+);
+
+void callMsaCorrectCandidatesWithForestKernel(
+    int* d_forestOpCandidateIndices,
+    int* d_forestOpPositionsInCandidates,
+    int* d_numForestOperationsPerCandidate,
+    int* d_numForestOperations,
+    char* d_correctedCandidates,
+    TempCorrectedSequence::EncodedEdit* d_editsPerCorrectedCandidate,
+    int* d_numEditsPerCorrectedCandidate,
+    GPUMultiMSA multiMSA,
+    GpuForest::Clf gpuForest,
+    float forestThreshold,
+    float estimatedCoverage,
+    const int* d_shifts,
+    const BestAlignment_t* d_bestAlignmentFlags,
+    const unsigned int* d_candidateSequencesData,
+    const int* d_candidateSequencesLengths,
+    const bool* d_candidateContainsN,
+    const int* d_candidateIndicesOfCandidatesToBeCorrected,
+    const int* d_numCandidatesToBeCorrected,
+    const int* d_anchorIndicesOfCandidates,
+    const int numCandidates,
+    int doNotUseEditsValue,
+    int numEditsThreshold,            
+    int encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,
+    int maximum_sequence_length,
+    cudaStream_t stream,
+    KernelLaunchHandle& handle,
+    const read_number* candidateReadIds
+);
+
+void callConstructSequenceCorrectionResultsKernel(
+    TempCorrectedSequence::EncodedEdit* d_edits,
+    int* d_numEditsPerCorrection,
+    int doNotUseEditsValue,
+    const int* d_indicesOfUncorrectedSequences,
+    const int* d_numIndices,
+    const bool* d_readContainsN,
+    const unsigned int* d_uncorrectedEncodedSequences,
+    const int* d_sequenceLengths,
+    const char* d_correctedSequences,
+    const int numCorrectedSequencesUpperBound, // >= *d_numIndices. d_edits must be large enought to store the edits of this many sequences
+    bool isCompactCorrection,
+    int numEditsThreshold,
+    size_t encodedSequencePitchInInts,
+    size_t decodedSequencePitchInBytes,
+    size_t editsPitchInBytes,        
     cudaStream_t stream,
     KernelLaunchHandle& handle
 );

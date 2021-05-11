@@ -4,6 +4,9 @@
 
 #include <hpc_helpers.cuh>
 #include <classification.hpp>
+#include <memorymanagement.hpp>
+
+#include <utility>
 
 //#include <forest.hpp>
 
@@ -17,9 +20,9 @@ namespace cg = cooperative_groups;
 #endif
 
 namespace care{
+namespace gpu{
 
-template<class CpuForest>
-class GpuForest {
+struct GpuForest {
 
     using Features = anchor_extractor::features_t;
 
@@ -34,12 +37,15 @@ class GpuForest {
     };
 
     struct Clf{
-        int numTrees;
-        Node** data;
+        using NodeType = Node;
 
+        int numTrees;
+        const Node** data;
+
+        template<class Iter>
         HOSTDEVICEQUALIFIER
-        float decide(const float* features, const Node* tree, size_t i = 0) const {
-            if (features[tree[i].att] < tree[i].thresh) {
+        float decide(Iter features, const Node* tree, size_t i = 0) const {
+            if (*(features + tree[i].att) < tree[i].thresh) {
                 if (tree[i].flag / 2)
                     return tree[i].lhs.prob;
                 return decide(features, tree, tree[i].lhs.idx);
@@ -50,38 +56,51 @@ class GpuForest {
             }
         }
 
+        template<class Iter>
         HOSTDEVICEQUALIFIER
-        float decide(const float* features) const {
+        bool decide(Iter features, float thresh) const {
             float prob = 0.f;
             for(int t = 0; t < numTrees; t++){
                 prob += decide(features, data[t]);
             }
-            return prob / numTrees;
+            return prob / numTrees >= thresh;
         }
 
-        #if __CUDACC_VER_MAJOR__ >= 11
-
-            //correct result is returned by the first thread in the group
-            template<class Group>
-            DEVICEQUALIFIER
-            float decide(Group& g, const float* features) const{
-                float prob = 0.f;
-                for(int t = g.thread_rank(); t < numTrees; t += g.size()){
-                    prob += decide(features, data[t]);
-                }
-                prob = cg::reduce(g, prob, cg::plus<float>{});
-
-                return prob / numTrees;
+        //use group to parallelize over trees. one thread per tree
+        //correct result is returned by the first thread in the group
+        template<class Group, class Iter, class GroupReduceFloatSum>
+        DEVICEQUALIFIER
+        float decide(Group& g, Iter features, float thresh, GroupReduceFloatSum reduce) const{
+            float prob = 0.f;
+            for(int t = g.thread_rank(); t < numTrees; t += g.size()){
+                prob += decide(features, data[t]);
             }
-        #endif
+            prob = reduce(prob);
+            return prob / numTrees >= thresh;
+        }
         
     };
 
-    int deviceId;
-    int numTrees;
-    Node** h_data;
+public:
+    int deviceId{};
+    int numTrees{};
+    Node** d_data{};
+    std::vector<std::size_t> numNodesPerTree{};
+
+    MemoryUsage getMemoryInfo() const noexcept{
+        MemoryUsage result{};
+
+        for(auto num : numNodesPerTree){
+            result.device[deviceId] += sizeof(Node) * num;
+        }
+
+        return result;
+    }
 
 
+    GpuForest() = default;
+
+    template<class CpuForest>
     GpuForest(const CpuForest& clf, int gpuId)
         : deviceId(gpuId) {
 
@@ -91,12 +110,14 @@ class GpuForest {
 
         numTrees = clf.forest_.size();
 
-        cudaMallocHost(&h_data, sizeof(Node*) * numTrees); CUERR;
+        std::vector<Node*> devicePointers(numTrees);
 
         for(int t = 0; t < numTrees; t++){
             const int numNodes = clf.forest_[t].size();
 
-            cudaMallocHost(&h_data[t], sizeof(Node) * numNodes); CUERR;
+            numNodesPerTree.emplace_back(numNodes);
+
+            std::vector<Node> nodes(numNodes);
 
             for(int n = 0; n < numNodes; n++){
                 const auto forestNode = clf.forest_[t][n];
@@ -108,22 +129,64 @@ class GpuForest {
                 node.lhs.idx = forestNode.lhs.idx;
                 node.rhs.idx = forestNode.rhs.idx;
 
-                h_data[t][n] = node;
+                nodes[n] = node;
             }
+
+            cudaMalloc(&devicePointers[t], sizeof(Node) * numNodes); CUERR;
+            cudaMemcpy(
+                devicePointers[t],
+                nodes.data(),
+                sizeof(Node) * numNodes,
+                H2D
+            );CUERR;
         }
+
+        cudaMalloc(&d_data, sizeof(Node*) * numTrees);
+
+        cudaMemcpy(
+            d_data,
+            devicePointers.data(),
+            sizeof(Node*) * numTrees,
+            H2D
+        );CUERR;
 
         cudaSetDevice(curgpu); CUERR;
     }
+
+    GpuForest(GpuForest&& rhs){
+        deviceId = std::exchange(rhs.deviceId, 0);
+        numTrees = std::exchange(rhs.numTrees, 0);
+        d_data = std::exchange(rhs.d_data, nullptr);
+    }
+
+    GpuForest(const GpuForest& rhs) = delete;
+
+    GpuForest& operator=(GpuForest&& rhs){
+        deviceId = std::exchange(rhs.deviceId, 0);
+        numTrees = std::exchange(rhs.numTrees, 0);
+        d_data = std::exchange(rhs.d_data, nullptr);
+        return *this;
+    }
+
+    GpuForest& operator=(const GpuForest& rhs) = delete;
 
     ~GpuForest(){
         int curgpu;
         cudaGetDevice(&curgpu); CUERR;
         cudaSetDevice(deviceId); CUERR;
 
+        std::vector<Node*> devicePointers(numTrees);
+        cudaMemcpy(
+            devicePointers.data(),
+            d_data,
+            sizeof(Node*) * numTrees,
+            D2H
+        );CUERR;
+
         for(int t = 0; t < numTrees; t++){
-            cudaFreeHost(h_data[t]); CUERR;
+            cudaFree(devicePointers[t]); CUERR;
         }
-        cudaFreeHost(h_data); CUERR;
+        cudaFree(d_data); CUERR;
 
 
         cudaSetDevice(curgpu); CUERR;
@@ -134,26 +197,14 @@ class GpuForest {
     }
 
     Clf getClf() const{
-        return Clf{numTrees, h_data};
+        return Clf{numTrees, (const Node**)d_data};
     }
 
-    float decide(const float* features) const {
-        Clf clf = getClf();
-
-        float prob = 0.f;
-        for(int t = 0; t < numTrees; t++){
-            prob += clf.decide(features, h_data[t]);
-        }
-        return prob / numTrees;
-    }
-
-    float decide(const Features& features) const {
-        return decide(features.data());
-    }
 };
 
 
 
+}
 }
 
 

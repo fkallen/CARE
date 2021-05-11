@@ -8,6 +8,8 @@
 #include <memorymanagement.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
+#include <classification.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <gpu/multigpureadstorage.cuh>
 #include <chunkedreadstorageconstruction.hpp>
@@ -186,6 +188,13 @@ namespace care{
             return;
         }
 
+        if(correctionOptions.correctionType == CorrectionType::Print 
+            || correctionOptions.correctionTypeCands == CorrectionType::Print){
+
+            std::cout << "CorrectionType Print is not supported in CARE GPU. Please use CARE CPU instead to print features. Abort!" << std::endl;
+            return;
+        }
+
         cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
@@ -276,6 +285,25 @@ namespace care{
             gpumemorylimits,
             0
         );
+
+        std::vector<gpu::GpuForest> anchorForests;
+        std::vector<gpu::GpuForest> candidateForests;
+
+        {
+            ClfAgent clfAgent_(correctionOptions, fileOptions);
+
+            for(int deviceId : runtimeOptions.deviceIds){
+                cub::SwitchDevice sd{deviceId};
+                if(correctionOptions.correctionType == CorrectionType::Forest){
+                    anchorForests.emplace_back(*clfAgent_.classifier_anchor, deviceId);
+                }
+
+                if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+                    candidateForests.emplace_back(*clfAgent_.classifier_cands, deviceId);
+                }
+            }
+
+        }
 
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
@@ -389,7 +417,9 @@ namespace care{
             fileOptions, 
             memoryOptions,
             *gpuMinhasher, 
-            gpuReadStorage            
+            gpuReadStorage,
+            anchorForests,
+            candidateForests
         );
 
         step2timer.print();

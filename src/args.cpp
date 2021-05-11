@@ -138,6 +138,10 @@ namespace args{
             result.sampleRateCands = t>1.0?t/100:t;
         }
 
+        if(pr.count("pairedthreshold1")){
+            result.pairedthreshold1 = pr["pairedthreshold1"].as<float>();
+        }
+
         return result;
 	}
 
@@ -240,24 +244,20 @@ namespace args{
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
         FileOptions result{};
 
-        // result.format = FileFormat::NONE;
-        // if(pr.count("inputfile")){
-		//     result.inputfile = pr["inputfile"].as<std::string>();
-        //     result.format = getFileFormat(result.inputfile);
-        // }
         if(pr.count("outdir")){
 		    result.outputdirectory = pr["outdir"].as<std::string>();
         }
-        // if(pr.count("outfile")){
-        //     result.outputfilename = pr["outfile"].as<std::string>();
-        // }
+        if(pr.count("pairmode")){
+            const std::string arg = pr["pairmode"].as<std::string>();
 
-        // if(result.outputfilename == "")
-        //     result.outputfilename = "care_corrected_" + filehelpers::getFileName(result.inputfile);
-
-		// result.outputfile = result.outputdirectory + "/" + result.outputfilename;
-
-        
+            if(arg == "se" || arg == "SE"){
+                result.pairType = SequencePairType::SingleEnd;
+            }else if(arg == "pe" || arg == "PE"){
+                result.pairType = SequencePairType::PairedEnd;
+            }else{
+                result.pairType = SequencePairType::Invalid;
+            }
+        }
         if(pr.count("nReads")){
 		    result.nReads = pr["nReads"].as<std::uint64_t>();
         }

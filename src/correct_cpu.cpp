@@ -21,6 +21,8 @@
 #include <filehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 
+#include <classification.hpp>
+
 
 //#define ENABLE_CPU_CORRECTOR_TIMING
 #include <corrector.hpp>
@@ -148,6 +150,8 @@ correct_cpu(
         const std::size_t decodedSequencePitchInBytes = readStorage.getSequenceLengthUpperBound();
         const std::size_t qualityPitchInBytes = readStorage.getSequenceLengthUpperBound();
 
+        const int myBatchsize = std::max((readStorage.isPairedEnd() ? 2 : 1), correctionOptions.batchsize);
+
         CpuErrorCorrector errorCorrector(
             encodedSequencePitchInInts2Bit,
             decodedSequencePitchInBytes,
@@ -162,17 +166,17 @@ correct_cpu(
 
         ReadStorageHandle readStorageHandle = readStorage.makeHandle();
 
-        std::vector<read_number> batchReadIds(correctionOptions.batchsize);
-        std::vector<unsigned int> batchEncodedData(correctionOptions.batchsize * encodedSequencePitchInInts2Bit);
-        std::vector<char> batchQualities(correctionOptions.batchsize * qualityPitchInBytes);
-        std::vector<int> batchReadLengths(correctionOptions.batchsize);    
+        std::vector<read_number> batchReadIds(myBatchsize);
+        std::vector<unsigned int> batchEncodedData(myBatchsize * encodedSequencePitchInInts2Bit);
+        std::vector<char> batchQualities(myBatchsize * qualityPitchInBytes);
+        std::vector<int> batchReadLengths(myBatchsize);    
 
         while(!(readIdGenerator.empty())){
 
-            batchReadIds.resize(correctionOptions.batchsize);
+            batchReadIds.resize(myBatchsize);
 
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
-                correctionOptions.batchsize, 
+                myBatchsize, 
                 batchReadIds.begin()
             );
             
@@ -211,25 +215,59 @@ correct_cpu(
 
             CorrectionOutput correctionOutput;
 
-            for(size_t i = 0; i < batchReadIds.size(); i++){
-                const read_number readId = batchReadIds[i];
+            if(readStorage.isPairedEnd()){
+                assert(batchReadIds.size() % 2 == 0);
 
-                CpuErrorCorrectorInput input;
-                input.anchorReadId = readId;
-                input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
-                input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
-                input.anchorLength = batchReadLengths[i];
+                CpuErrorCorrectorMultiInput input{};
+                input.anchorLengths.resize(batchReadIds.size());
+                input.anchorReadIds.resize(batchReadIds.size());
+                input.encodedAnchors.resize(batchReadIds.size());
+                input.anchorQualityscores.resize(batchReadIds.size());
 
-                auto output = errorCorrector.process(input);
-
-                if(output.hasAnchorCorrection){
-                    correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
-                    correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                for(size_t i = 0; i < batchReadIds.size(); i++){
+                    input.anchorReadIds[i] = batchReadIds[i];
+                    input.encodedAnchors[i] = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
+                    input.anchorQualityscores[i] = batchQualities.data() + i * qualityPitchInBytes;
+                    input.anchorLengths[i] = batchReadLengths[i];
                 }
 
-                for(auto& tmp : output.candidateCorrections){
-                    correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
-                    correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
+                auto outputs = errorCorrector.processMulti(input);
+
+                for(auto& output : outputs){
+
+                    if(output.hasAnchorCorrection){
+                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
+                        correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                    }
+
+                    for(auto& tmp : output.candidateCorrections){
+                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
+                        correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
+                    }
+                }
+
+            }else{
+
+                for(size_t i = 0; i < batchReadIds.size(); i++){
+                    const read_number readId = batchReadIds[i];
+
+                    CpuErrorCorrectorInput input;
+                    input.anchorReadId = readId;
+                    input.encodedAnchor = batchEncodedData.data() + i * encodedSequencePitchInInts2Bit;
+                    input.anchorQualityscores = batchQualities.data() + i * qualityPitchInBytes;
+                    input.anchorLength = batchReadLengths[i];
+
+                    auto output = errorCorrector.process(input);
+
+                    if(output.hasAnchorCorrection){
+                        correctionOutput.encodedAnchorCorrections.emplace_back(output.anchorCorrection.encode());
+                        correctionOutput.anchorCorrections.emplace_back(std::move(output.anchorCorrection));
+                    }
+
+                    for(auto& tmp : output.candidateCorrections){
+                        correctionOutput.encodedCandidateCorrections.emplace_back(tmp.encode());
+                        correctionOutput.candidateCorrections.emplace_back(std::move(tmp));
+                    }
                 }
             }
 

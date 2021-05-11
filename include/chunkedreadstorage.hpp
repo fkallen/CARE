@@ -30,7 +30,8 @@ namespace care{
 
 class ChunkedReadStorage : public CpuReadStorage{
 public:
-    ChunkedReadStorage(bool hasQualityScores_ = false) : hasQualityScores(hasQualityScores_){
+    ChunkedReadStorage(bool pairedEnd_, bool hasQualityScores_) 
+    : pairedEnd(pairedEnd_), hasQualityScores(hasQualityScores_){
         offsetsPrefixSum.emplace_back(0);
     }
 
@@ -573,6 +574,8 @@ public: //inherited interface
         const read_number* readIds,
         int numSequences
     ) const override{
+        if(numSequences == 0) return;
+        
         for(int i = 0; i < numSequences; i++){
             lengths[i] = lengthStorage.getLength(readIds[i]);
         }
@@ -631,6 +634,10 @@ public: //inherited interface
 
     int getSequenceLengthUpperBound() const override{
         return lengthStorage.getMaxLength();
+    }
+
+    bool isPairedEnd() const override{
+        return pairedEnd;
     }
 
     void destroy() override{
@@ -823,6 +830,8 @@ private:
         int numReads = 0;
         StoredQualities data;
     };
+
+    bool pairedEnd{};
 
     bool hasQualityScores{};
     std::size_t totalNumberOfReads{};

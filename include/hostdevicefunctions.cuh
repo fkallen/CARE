@@ -61,6 +61,8 @@ namespace care{
     INLINEQUALIFIER
     float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize, float maxMismatchRatio){
         return 1.0f - sqrtf(nOps / (overlapsize * maxMismatchRatio));
+        //return 1.0f - sqrtf(float(nOps) / float(overlapsize));
+        //return 1.0f - nOps / overlapsize;
     }
 
     HD_WARNING_DISABLE

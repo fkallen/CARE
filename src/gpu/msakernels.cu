@@ -63,6 +63,7 @@ namespace gpu{
         const int* __restrict__ candidatesPerSubjectPrefixSum,            
         const unsigned int* __restrict__ subjectSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
+        const bool* __restrict__ d_isPairedCandidate,
         const char* __restrict__ subjectQualities,
         const char* __restrict__ candidateQualities,
         const int* __restrict__ d_numAnchors,
@@ -119,6 +120,7 @@ namespace gpu{
                 const unsigned int* const myCandidateSequencesData = candidateSequencesData + size_t(globalCandidateOffset) * encodedSequencePitchInInts;
                 const char* const myAnchorQualityData = subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
                 const char* const myCandidateQualities = candidateQualities + size_t(globalCandidateOffset) * qualityPitchInBytes;
+                const bool* const myIsPairedCandidate = d_isPairedCandidate + globalCandidateOffset;
 
                 MSAColumnProperties columnProperties;
 
@@ -175,6 +177,7 @@ namespace gpu{
                     myCandidateSequencesData,
                     myCandidateQualities,
                     myCandidateLengths,
+                    myIsPairedCandidate,
                     myIndices,
                     myNumGoodCandidates,
                     canUseQualityScores, 
@@ -221,9 +224,6 @@ namespace gpu{
     }
 
 
-
-
-
     template<int BLOCKSIZE, MemoryType memoryType>
     __global__
     void msaCandidateRefinement_singleiter_kernel(
@@ -237,6 +237,7 @@ namespace gpu{
         const int* __restrict__ overlaps,
         const unsigned int* __restrict__ subjectSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
+        const bool* __restrict__ d_isPairedCandidate,
         const int* __restrict__ subjectSequencesLength,
         const int* __restrict__ candidateSequencesLength,
         const char* __restrict__ subjectQualities,
@@ -325,6 +326,8 @@ namespace gpu{
 
                     const int subjectLength = subjectSequencesLength[subjectIndex];
                     const int* const myCandidateLengths = candidateSequencesLength + globalOffset;
+
+                    const bool* const myIsPairedCandidate = d_isPairedCandidate + globalOffset;
 
                     const int* const srcIndices = myIndices;
                     int* const destIndices = myNewIndicesPtr;
@@ -427,6 +430,7 @@ namespace gpu{
                             myCandidateSequencesData,
                             myCandidateQualities,
                             myCandidateLengths,
+                            myIsPairedCandidate,
                             destIndices,
                             *destNumIndices,
                             canUseQualityScores, 
@@ -525,6 +529,7 @@ namespace gpu{
         const int* __restrict__ overlaps,
         const unsigned int* __restrict__ subjectSequencesData,
         const unsigned int* __restrict__ candidateSequencesData,
+        const bool* __restrict__ d_isPairedCandidate,
         const int* __restrict__ subjectSequencesLength,
         const int* __restrict__ candidateSequencesLength,
         const char* __restrict__ subjectQualities,
@@ -584,7 +589,8 @@ namespace gpu{
                 int* const myNewIndicesPtr = d_newIndices + globalOffset;
                 int* const myNewNumIndicesPerSubjectPtr = d_newNumIndicesPerSubject + subjectIndex;
 
-                bool* const myShouldBeKept = d_shouldBeKept + globalOffset;                    
+                bool* const myShouldBeKept = d_shouldBeKept + globalOffset;
+                const bool* const myIsPairedCandidate = d_isPairedCandidate + globalOffset;
 
                 GpuSingleMSA msa = multiMSA.getSingleMSA(subjectIndex);
                 msa.columnProperties = &shared_columnProperties;
@@ -742,6 +748,7 @@ namespace gpu{
                             myCandidateQualities, //not transposed
                             myCandidateLengths,
                             srcIndices,
+                            myIsPairedCandidate,
                             *srcNumIndices,
                             canUseQualityScores, 
                             encodedSequencePitchInInts,
@@ -842,6 +849,7 @@ namespace gpu{
         const int* d_overlaps,
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
+        const bool* d_isPairedCandidate,
         const int* d_subjectSequencesLength,
         const int* d_candidateSequencesLength,
         const char* d_subjectQualities,
@@ -932,6 +940,7 @@ namespace gpu{
             d_overlaps,
             d_subjectSequencesData,
             d_candidateSequencesData,
+            d_isPairedCandidate,
             d_subjectSequencesLength,
             d_candidateSequencesLength,
             d_subjectQualities,
@@ -967,6 +976,7 @@ namespace gpu{
         const int* d_overlaps,
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
+        const bool* d_isPairedCandidate,
         const int* d_subjectSequencesLength,
         const int* d_candidateSequencesLength,
         const char* d_subjectQualities,
@@ -1057,6 +1067,7 @@ namespace gpu{
             d_overlaps,
             d_subjectSequencesData,
             d_candidateSequencesData,
+            d_isPairedCandidate,
             d_subjectSequencesLength,
             d_candidateSequencesLength,
             d_subjectQualities,
@@ -1095,6 +1106,7 @@ namespace gpu{
         const int* d_candidatesPerSubjectPrefixSum,            
         const unsigned int* d_subjectSequencesData,
         const unsigned int* d_candidateSequencesData,
+        const bool* d_isPairedCandidate,
         const char* d_subjectQualities,
         const char* d_candidateQualities,
         const int* d_numAnchors,
@@ -1172,6 +1184,7 @@ namespace gpu{
         d_candidatesPerSubjectPrefixSum,            
         d_subjectSequencesData,
         d_candidateSequencesData,
+        d_isPairedCandidate,
         d_subjectQualities,
         d_candidateQualities,
         d_numAnchors,

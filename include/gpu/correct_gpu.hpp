@@ -3,6 +3,7 @@
 
 #include <gpu/gpuminhasher.cuh>
 #include <gpu/gpureadstorage.cuh>
+#include <gpu/forest_gpu.cuh>
 
 #include <config.hpp>
 #include <correctionresultprocessing.hpp>
@@ -26,7 +27,9 @@ correct_gpu(
 	const FileOptions& fileOptions,
 	const MemoryOptions& memoryOptions,
 	GpuMinhasher& minhasher,
-	GpuReadStorage& readStorage
+	GpuReadStorage& readStorage,
+	const std::vector<GpuForest>& anchorForests,
+	const std::vector<GpuForest>& candidateForests
 );
 
 }

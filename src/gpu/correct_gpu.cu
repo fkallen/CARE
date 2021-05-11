@@ -17,6 +17,11 @@
 #include <corrector.hpp>
 #include <corrector_common.hpp>
 
+#include <classification.hpp>
+#include <forest.hpp>
+#include <gpu/forest_gpu.cuh>
+
+
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -175,11 +180,15 @@ public:
     SimpleGpuCorrectionPipeline(
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
-        ThreadPool* threadPool_          
+        ThreadPool* threadPool_,
+        const GpuForest* gpuForestAnchor_, 
+        const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
-        threadPool(threadPool_)
+        threadPool(threadPool_),
+        gpuForestAnchor(gpuForestAnchor_),
+        gpuForestCandidate(gpuForestCandidate_)
     {
 
     }
@@ -332,10 +341,13 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -598,10 +610,13 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -737,6 +752,8 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
+    const GpuForest* gpuForestAnchor;
+    const GpuForest* gpuForestCandidate;
 };
 
 
@@ -753,11 +770,15 @@ public:
     ComplexGpuCorrectionPipeline(
         const GpuReadStorage& readStorage_,
         const Minhasher& minhasher_,
-        ThreadPool* threadPool_          
+        ThreadPool* threadPool_,
+        const GpuForest* gpuForestAnchor_, 
+        const GpuForest* gpuForestCandidate_
     ) :
         readStorage(&readStorage_),
         minhasher(&minhasher_),
-        threadPool(threadPool_)
+        threadPool(threadPool_),
+        gpuForestAnchor(gpuForestAnchor_),
+        gpuForestCandidate(gpuForestCandidate_)
     {
 
     }
@@ -872,8 +893,12 @@ public:
                     std::async(
                         std::launch::async,
                         [&](){ 
-                            correctorThreadFunction(deviceId, correctionOptions, 
-                                goodAlignmentProperties);                          
+                            correctorThreadFunction(
+                                deviceId, 
+                                correctionOptions, 
+                                goodAlignmentProperties,
+                                correctionFlags
+                            );                          
                         }
                     )
                 );
@@ -971,6 +996,9 @@ public:
 
         if(activeHasherThreads == 0){
             noMoreInputs = true;
+            for(int i = 0; i < 2 * currentConfig.numCorrectors; i++){
+                unprocessedInputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(hasherStream);
@@ -989,26 +1017,32 @@ public:
     void correctorThreadFunction(
         int deviceId,
         const CorrectionOptions& correctionOptions,
-        const GoodAlignmentProperties& goodAlignmentProperties
+        const GoodAlignmentProperties& goodAlignmentProperties,
+        const ReadCorrectionFlags& correctionFlags
     ){
         cudaSetDevice(deviceId);
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         CudaStream stream;
 
-        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
-            [&](){
-                return !noMoreInputs;  //if noMoreInputs, return nullptr
-            },
-            nullptr
-        ); 
+        // GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+        //     },
+        //     nullptr
+        // ); 
+
+        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.pop(); 
 
         while(inputPtr != nullptr){
             nvtx::push_range("getFreeRawOutput",1);
@@ -1046,12 +1080,13 @@ public:
             unprocessedRawOutputs.push(rawOutputPtr);
         
             nvtx::push_range("getUnprocessedInput",2);
-            inputPtr = unprocessedInputs.popOrDefault(
-                [&](){
-                    return !noMoreInputs;  //if noMoreInputs, return nullptr
-                },
-                nullptr
-            ); 
+            // inputPtr = unprocessedInputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+            //     },
+            //     nullptr
+            // ); 
+            inputPtr = unprocessedInputs.pop(); 
             nvtx::pop_range();
 
         };
@@ -1060,6 +1095,9 @@ public:
 
         if(activeCorrectorThreads == 0){
             noMoreRawOutputs = true;
+            for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
+                unprocessedRawOutputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(stream); CUERR;
@@ -1082,10 +1120,13 @@ public:
 
         GpuErrorCorrector gpuErrorCorrector{
             *readStorage,
+            correctionFlags,
             correctionOptions,
             goodAlignmentProperties,
             correctionOptions.batchsize,
-            threadPool
+            threadPool,
+            gpuForestAnchor,
+            gpuForestCandidate
         };
 
         OutputConstructor outputConstructor(            
@@ -1128,12 +1169,14 @@ public:
         std::queue<std::pair<GpuErrorCorrectorInput*,
             GpuErrorCorrectorRawOutput*>> dataInFlight;
 
-        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
-            [&](){
-                return !noMoreInputs;  //if noMoreInputs, return nullptr
-            },
-            nullptr
-        ); 
+        // GpuErrorCorrectorInput* inputPtr = unprocessedInputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+        //     },
+        //     nullptr
+        // ); 
+
+        GpuErrorCorrectorInput* inputPtr = unprocessedInputs.pop(); 
 
         for(int preIters = 0; preIters < getNumExtraBuffers(); preIters++){
 
@@ -1150,12 +1193,13 @@ public:
 
                 dataInFlight.emplace(inputPtr, rawOutputPtr);
 
-                inputPtr = unprocessedInputs.popOrDefault(
-                    [&](){
-                        return !noMoreInputs;  //if noMoreInputs, return nullptr
-                    },
-                    nullptr
-                ); 
+                // inputPtr = unprocessedInputs.popOrDefault(
+                //     [&](){
+                //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+                //     },
+                //     nullptr
+                // ); 
+                inputPtr = unprocessedInputs.pop();
             }
         }
 
@@ -1202,12 +1246,13 @@ public:
             }            
 
             nvtx::push_range("getUnprocessedInput",2);
-            inputPtr = unprocessedInputs.popOrDefault(
-                [&](){
-                    return !noMoreInputs;  //if noMoreInputs, return nullptr
-                },
-                nullptr
-            ); 
+            // inputPtr = unprocessedInputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreInputs;  //if noMoreInputs, return nullptr
+            //     },
+            //     nullptr
+            // ); 
+            inputPtr = unprocessedInputs.pop();
             nvtx::pop_range();
 
         };
@@ -1226,8 +1271,11 @@ public:
 
         activeCorrectorThreads--;
 
-        if(activeCorrectorThreads == 0){
+        if(activeCorrectorThreads == 0){            
             noMoreRawOutputs = true;
+            for(int i = 0; i < 2*currentConfig.numOutputConstructors; i++){
+                unprocessedRawOutputs.push(nullptr);
+            }
         }
 
         cudaStreamSynchronize(stream); CUERR;
@@ -1251,12 +1299,14 @@ public:
         //ForLoopExecutor forLoopExecutor(&threadPool, &pforHandle);
         SequentialForLoopExecutor forLoopExecutor;
 
-        GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-            [&](){
-                return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-            },
-            nullptr
-        );
+        // GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.popOrDefault(
+        //     [&](){
+        //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
+        //     },
+        //     nullptr
+        // );
+
+        GpuErrorCorrectorRawOutput* rawOutputPtr = unprocessedRawOutputs.pop();
 
         while(rawOutputPtr != nullptr){
             nvtx::push_range("constructResults", 0);
@@ -1309,12 +1359,14 @@ public:
             freeRawOutputs.push(rawOutputPtr);
 
             nvtx::push_range("getUnprocessedRawOutput", 2);
-            rawOutputPtr = unprocessedRawOutputs.popOrDefault(
-                [&](){
-                    return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
-                },
-                nullptr
-            );  
+            // rawOutputPtr = unprocessedRawOutputs.popOrDefault(
+            //     [&](){
+            //         return !noMoreRawOutputs;  //if noMoreRawOutputs, return nullptr
+            //     },
+            //     nullptr
+            // );  
+
+            rawOutputPtr = unprocessedRawOutputs.pop();
 
             nvtx::pop_range();
         }
@@ -1324,6 +1376,8 @@ private:
     const GpuReadStorage* readStorage;
     const Minhasher* minhasher;
     ThreadPool* threadPool;
+    const GpuForest* gpuForestAnchor;
+    const GpuForest* gpuForestCandidate;
 
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> freeInputs;
     SimpleSingleProducerSingleConsumerQueue<GpuErrorCorrectorInput*> unprocessedInputs;
@@ -1342,13 +1396,16 @@ private:
 template<class Minhasher>
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu_impl(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
-        Minhasher& minhasher,
-        GpuReadStorage& readStorage){
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    Minhasher& minhasher,
+    GpuReadStorage& readStorage,
+    const std::vector<GpuForest>& anchorForests,
+    const std::vector<GpuForest>& candidateForests
+){
 
     assert(runtimeOptions.canUseGpu);
     //assert(runtimeOptions.max_candidates > 0);
@@ -1401,8 +1458,10 @@ correct_gpu_impl(
     BackgroundThread outputThread;
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence* tmp, const EncodedTempCorrectedSequence* encoded){
+        // if(tmp->readId == 38851){
+        // std::cerr << *tmp << "\n";
+        // }
         //useEditsCountMap[tmp.useEdits]++;
-        //std::cerr << tmp << "\n";
         //std::unique_lock<std::mutex> l(outputstreammutex);
         if(!(tmp->hq && tmp->useEdits && tmp->edits.empty())){
             //outputstream << tmp << '\n';
@@ -1414,50 +1473,6 @@ correct_gpu_impl(
         }
     };
 
-    // auto processResults = [&](
-    //     std::vector<TempCorrectedSequence>&& anchorCorrections,
-    //     std::vector<TempCorrectedSequence>&& candidateCorrections,
-    //     std::vector<EncodedTempCorrectedSequence>&& encodedAnchorCorrections,
-    //     std::vector<EncodedTempCorrectedSequence>&& encodedCandidateCorrections
-    // ){
-    //     assert(anchorCorrections.size() == encodedAnchorCorrections.size());
-    //     assert(candidateCorrections.size() == encodedCandidateCorrections.size());
-
-    //     const int numA = encodedAnchorCorrections.size();
-    //     const int numC = encodedCandidateCorrections.size();
-
-    //     auto outputFunction = [
-    //         &,
-    //         anchorCorrections = std::move(anchorCorrections),
-    //         candidateCorrections = std::move(candidateCorrections),
-    //         encodedAnchorCorrections = std::move(encodedAnchorCorrections),
-    //         encodedCandidateCorrections = std::move(encodedCandidateCorrections)
-    //     ](){
-
-    //         const int numA = encodedAnchorCorrections.size();
-    //         const int numC = encodedCandidateCorrections.size();
-
-    //         for(int i = 0; i < numA; i++){
-    //             saveCorrectedSequence(
-    //                 &anchorCorrections[i], 
-    //                 &encodedAnchorCorrections[i]
-    //             );
-    //         }
-
-    //         for(int i = 0; i < numC; i++){
-    //             saveCorrectedSequence(
-    //                 &candidateCorrections[i], 
-    //                 &encodedCandidateCorrections[i]
-    //             );
-    //         }
-    //     };
-
-    //     if(numA > 0 || numC > 0){
-    //         outputThread.enqueue(std::move(outputFunction));
-    //         //outputFunction();
-    //     }
-    // };
-
     auto processResults = [&](
         CorrectionOutput&& correctionOutput
     ){
@@ -1466,6 +1481,9 @@ correct_gpu_impl(
 
         const int numA = correctionOutput.encodedAnchorCorrections.size();
         const int numC = correctionOutput.encodedCandidateCorrections.size();
+
+        // std::stable_sort(correctionOutput.encodedCandidateCorrections.begin(), correctionOutput.encodedCandidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
+        // std::stable_sort(correctionOutput.candidateCorrections.begin(), correctionOutput.candidateCorrections.end(), [](const auto& l, const auto& r){ return l.readId < r.readId;});
 
         auto outputFunction = [
             &,
@@ -1504,6 +1522,12 @@ correct_gpu_impl(
     //std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
     //ThreadPool threadPool(threadPoolSize);
 
+    
+
+    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(std::min(200000u, readStorage.getNumberOfReads()));
+
+
     auto showProgress = [&](std::int64_t totalCount, int seconds){
         if(runtimeOptions.showProgress){
 
@@ -1533,18 +1557,19 @@ correct_gpu_impl(
         progressThread.addProgress(size);
     };
 
-
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000);
-
     if(false /* && runtimeOptions.threads <= 6*/){
         //execute a single thread pipeline with each available thread
 
-        auto runPipeline = [&](int deviceId){    
+        auto runPipeline = [&](int deviceId, 
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
+        ){    
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool
+                gpuForestAnchor,
+                gpuForestCandidate
             );
     
             pipeline.runToCompletion(
@@ -1561,12 +1586,15 @@ correct_gpu_impl(
         std::vector<std::future<void>> futures;
     
         for(int i = 0; i < runtimeOptions.threads; i++){
-            const int deviceId = deviceIds[i % deviceIds.size()];
+            const int position = i % deviceIds.size();
+            const int deviceId = deviceIds[position];
 
             futures.emplace_back(std::async(
                 std::launch::async,
                 runPipeline,
-                deviceId
+                deviceId,
+                &anchorForests[position],
+                &candidateForests[position]
             ));
         }
     
@@ -1587,7 +1615,9 @@ correct_gpu_impl(
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool
+                &anchorForests[0],
+                &candidateForests[0]
             );
 
             constexpr int numBatches = 50;
@@ -1628,11 +1658,16 @@ correct_gpu_impl(
         //     // ); 
         // };
 
-        auto runSimpleGpuPipeline = [&](int deviceId){
+        auto runSimpleGpuPipeline = [&](int deviceId,
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
+        ){
             SimpleGpuCorrectionPipeline<Minhasher> pipeline(
                 readStorage,
                 minhasher,
-                nullptr //&threadPool         
+                nullptr, //&threadPool
+                gpuForestAnchor,
+                gpuForestCandidate
             );
 
             pipeline.runToCompletionDoubleBuffered(
@@ -1646,9 +1681,18 @@ correct_gpu_impl(
             );  
         };
 
-        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config){
+        auto runComplexGpuPipeline = [&](int deviceId, typename ComplexGpuCorrectionPipeline<Minhasher>::Config config,
+            const GpuForest* gpuForestAnchor, 
+            const GpuForest* gpuForestCandidate
+        ){
             
-            ComplexGpuCorrectionPipeline<Minhasher> pipeline(readStorage, minhasher, nullptr); //&threadPool);
+            ComplexGpuCorrectionPipeline<Minhasher> pipeline(
+                readStorage, 
+                minhasher, 
+                nullptr,
+                gpuForestAnchor,
+                gpuForestCandidate
+            );
 
             pipeline.run(
                 deviceId,
@@ -1704,17 +1748,18 @@ correct_gpu_impl(
         for(int i = 0; i < numDevices; i++){ 
             const int deviceId = deviceIds[i];
 
-            int threadsForDevice = std::min(availableThreads, requiredNumThreadsForComplex);
+            int threadsForDevice = std::max(1,std::min(availableThreads, requiredNumThreadsForComplex));
 
             if(threadsForDevice > 3){
 
                 typename ComplexGpuCorrectionPipeline<Minhasher>::Config pipelineConfig;
+                #if 1
                 pipelineConfig.numOutputConstructors = 0; //always 0
 
                 pipelineConfig.numCorrectors = 1;
                 threadsForDevice -= pipelineConfig.numCorrectors;
                 
-                pipelineConfig.numHashers = std::min(threadsForDevice, numHashersPerCorrectorByTime);
+                pipelineConfig.numHashers = std::max(1, std::min(threadsForDevice, numHashersPerCorrectorByTime));
                 threadsForDevice -= pipelineConfig.numHashers;
 
                 if(threadsForDevice > 0){
@@ -1723,8 +1768,13 @@ correct_gpu_impl(
                 }
 
                 pipelineConfig.numHashers += threadsForDevice;
+                #else
+                pipelineConfig.numOutputConstructors = 0; //always 0
+                pipelineConfig.numCorrectors = 13;
+                pipelineConfig.numHashers = 3;
+                #endif
 
-                std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), " 
+                std::cerr << "\nWill use " << pipelineConfig.numHashers << " hasher(s), "
                 << pipelineConfig.numCorrectors << " corrector(s) "
                 << "on device " << deviceId << "\n";                
 
@@ -1732,7 +1782,9 @@ correct_gpu_impl(
                     std::async(
                         std::launch::async,
                         runComplexGpuPipeline,
-                        deviceId, pipelineConfig
+                        deviceId, pipelineConfig,
+                        &anchorForests[i],
+                        &candidateForests[i]
                     )
                 );
 
@@ -1746,7 +1798,9 @@ correct_gpu_impl(
                     futures.emplace_back(std::async(
                         std::launch::async,
                         runSimpleGpuPipeline,
-                        deviceId
+                        deviceId,
+                        &anchorForests[i],
+                        &candidateForests[i]
                     ));
 
                     threadsForDevice--;
@@ -1824,7 +1878,6 @@ correct_gpu_impl(
 
 #if 0
 
-auto runPipeline = [&](int deviceId){
     auto printRunStats = [](const auto& runStatistics){
         std::cerr << "hashing time average: " << runStatistics.hasherTimeAverage << "\n";
         std::cerr << "corrector time average: " << runStatistics.correctorTimeAverage << "\n";
@@ -1891,13 +1944,16 @@ auto runPipeline = [&](int deviceId){
 
 MemoryFileFixedSize<EncodedTempCorrectedSequence> 
 correct_gpu(
-        const GoodAlignmentProperties& goodAlignmentProperties,
-        const CorrectionOptions& correctionOptions,
-        const RuntimeOptions& runtimeOptions,
-        const FileOptions& fileOptions,
-        const MemoryOptions& memoryOptions,
-        GpuMinhasher& minhasher,
-        GpuReadStorage& readStorage){
+    const GoodAlignmentProperties& goodAlignmentProperties,
+    const CorrectionOptions& correctionOptions,
+    const RuntimeOptions& runtimeOptions,
+    const FileOptions& fileOptions,
+    const MemoryOptions& memoryOptions,
+    GpuMinhasher& minhasher,
+    GpuReadStorage& readStorage,
+    const std::vector<GpuForest>& anchorForests,
+    const std::vector<GpuForest>& candidateForests
+){
 
     return correct_gpu_impl(
         goodAlignmentProperties,
@@ -1906,7 +1962,9 @@ correct_gpu(
         fileOptions,
         memoryOptions,
         minhasher,
-        readStorage
+        readStorage,
+        anchorForests,
+        candidateForests
     );
 }
 

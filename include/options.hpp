@@ -10,10 +10,27 @@
 
 namespace care{
 
+    enum class SequencePairType{
+        Invalid,
+        SingleEnd,
+        PairedEnd,
+    };
+
+    __inline__
+    std::string to_string(SequencePairType s){
+        switch(s){
+            case SequencePairType::Invalid: return "Invalid";
+            case SequencePairType::SingleEnd: return "SingleEnd";
+            case SequencePairType::PairedEnd: return "PairedEnd";
+            default: return "Error";
+        }
+    }
+
+
     enum class CorrectionType : int {Classic, Forest, Print};
 
     __inline__
-    std::string nameOfCorrectionType(CorrectionType t){
+    std::string to_string(CorrectionType t){
         switch(t){
             case CorrectionType::Classic: return "Classic"; break;
             case CorrectionType::Forest: return "Forest"; break;
@@ -49,6 +66,7 @@ namespace care{
         float thresholdCands = .5f; // threshold for cands classifier
         float sampleRateAnchor = 1.f;
         float sampleRateCands = 0.01f;
+        float pairedthreshold1 = 0.06f;
     };
 
 
@@ -66,6 +84,7 @@ namespace care{
     };
 
 	struct FileOptions{
+        SequencePairType pairType = SequencePairType::SingleEnd;
 		std::string outputdirectory;
 		std::uint64_t nReads = 0;
         int minimum_sequence_length = 0;

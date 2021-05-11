@@ -13,10 +13,13 @@
 
 namespace care {
 
+namespace gpu{
+    class GpuForest;
+}
+
 template<size_t feature_count>
 class ForestClf {
-    template<class CpuForest>
-    friend class GpuForest;
+    friend class care::gpu::GpuForest;
 
     struct Node {
         uint8_t att;
@@ -29,7 +32,7 @@ class ForestClf {
     };
 
     using Tree = std::vector<Node>;
-    using features_t = std::array<float, feature_count>; // for now, only std::arrays are allowed
+    using features_t = std::array<float, feature_count>;
 
     void populate(std::ifstream& is, Tree& tree) {
         Node& node = *tree.emplace(tree.end());
@@ -73,14 +76,13 @@ public:
         thresh_(t) 
     {
         std::ifstream is(path, std::ios::binary);
-        
         if (!is)
-            throw std::runtime_error("Loading classifier file failed!");
+            throw std::runtime_error("Loading classifier file failed! " + path);
 
         size_t file_feat_count = read_one<uint8_t>(is);
         if (file_feat_count != feature_count)
             throw std::runtime_error("Classifier feature shape does not match feature extractor! Expected: " +std::to_string(feature_count) + " Got: "+std::to_string(file_feat_count));
-
+        
         forest_ = Forest(read_one<uint32_t>(is));
         for (Tree& tree: forest_) {
             tree.reserve(read_one<uint32_t>(is));

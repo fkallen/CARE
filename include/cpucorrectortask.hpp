@@ -18,6 +18,13 @@ namespace care{
         const char* anchorQualityscores{};
     };
 
+    struct CpuErrorCorrectorMultiInput{
+        std::vector<int> anchorLengths;
+        std::vector<read_number> anchorReadIds;
+        std::vector<const unsigned int*> encodedAnchors;
+        std::vector<const char*> anchorQualityscores;
+    };
+
     struct CpuErrorCorrectorTask{
         bool active{};
 
@@ -36,6 +43,7 @@ namespace care{
         std::vector<cpu::SHDResult> alignments{};
         std::vector<cpu::SHDResult> revcAlignments{};
         std::vector<BestAlignment_t> alignmentFlags{};
+        std::vector<bool> isPairedCandidate{};
 
         CpuErrorCorrectorInput input{};
 
