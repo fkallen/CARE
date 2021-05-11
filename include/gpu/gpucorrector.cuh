@@ -34,6 +34,7 @@
 
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/binary_search.h>
 
 
 namespace care{
@@ -1240,6 +1241,105 @@ namespace gpu{
 
             if(gpuReadStorage->isPairedEnd()){
 
+                #if 1
+                assert(currentNumAnchors % 2 == 0);
+                assert(currentNumAnchors != 0);
+
+                d_isPairedCandidate.resize(currentNumCandidates);
+
+                helpers::call_fill_kernel_async(d_isPairedCandidate.data(), currentNumCandidates, false, stream);                   
+
+                dim3 block = 128;
+                dim3 grid = currentNumAnchors;
+
+                helpers::lambda_kernel<<<grid, block, 0, stream>>>(
+                    [
+                        numPairedAnchors = currentNumAnchors / 2,
+                        d_numCandidatesPerAnchor = d_candidates_per_anchor.data(),
+                        d_numCandidatesPerAnchorPrefixSum = d_candidates_per_anchor_prefixsum.data(),
+                        d_candidateReadIds = d_candidate_read_ids.data(),
+                        d_isPairedCandidate = d_isPairedCandidate.data()
+                    ] __device__ (){
+
+                        constexpr int numSharedElements = 1024;
+
+                        __shared__ read_number sharedElements[numSharedElements];
+
+                        //search elements of array1 in array2. if found, set output element to true
+                        //array1 and array2 must be sorted
+                        auto process = [&](
+                            const read_number* array1,
+                            int numElements1,
+                            const read_number* array2,
+                            int numElements2,
+                            bool* output
+                        ){
+                            const int numIterations = SDIV(numElements2, numSharedElements);
+
+                            for(int iteration = 0; iteration < numIterations; iteration++){
+
+                                const int begin = iteration * numSharedElements;
+                                const int end = min((iteration+1) * numSharedElements, numElements2);
+                                const int num = end - begin;
+
+                                for(int i = threadIdx.x; i < num; i += blockDim.x){
+                                    sharedElements[i] = array2[begin + i];
+                                }
+
+                                __syncthreads();
+
+                                //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                                for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
+                                    if(!output[i]){
+                                        const read_number readId = array1[i];
+                                        const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                                        const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                                        if(found){
+                                            output[i] = true;
+                                        }
+                                    }
+                                }
+
+                                __syncthreads();
+                            }
+                        };
+
+                        for(int a = blockIdx.x; a < numPairedAnchors; a += gridDim.x){
+                            const int firstTask = 2*a;
+                            const int secondTask = 2*a + 1;
+
+                            //check for pairs in current candidates
+
+                            const int range1Begin = d_numCandidatesPerAnchorPrefixSum[firstTask]; 
+                            const int numElements1 = d_numCandidatesPerAnchor[firstTask];
+
+                            const int range2Begin = d_numCandidatesPerAnchorPrefixSum[secondTask]; 
+                            const int numElements2 = d_numCandidatesPerAnchor[secondTask];
+
+                            process(
+                                d_candidateReadIds + range1Begin,
+                                numElements1,
+                                d_candidateReadIds + range2Begin,
+                                numElements2,
+                                d_isPairedCandidate + range1Begin
+                            );
+
+                            process(
+                                d_candidateReadIds + range2Begin,
+                                numElements2,
+                                d_candidateReadIds + range1Begin,
+                                numElements1,
+                                d_isPairedCandidate + range2Begin
+                            );
+                        }
+                    }
+                ); CUERR;
+
+
+                #else
+
                 cudaMemcpyAsync(
                     h_candidates_per_anchor_prefixsum.data(),
                     d_candidates_per_anchor_prefixsum.data(),
@@ -1301,6 +1401,8 @@ namespace gpu{
                     H2D,
                     stream
                 ); CUERR;
+
+                #endif
 
 
                 #if 0
