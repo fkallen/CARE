@@ -340,8 +340,63 @@ namespace gpu{
             int columnStart,
             float overlapweight,
             const char* __restrict__ quality, //not transposed
-            bool canUseQualityScores
+            bool canUseQualityScores,
+            bool isPairedCandidate
         ){
+
+            auto defaultweightfunc = [&](char q){
+                return canUseQualityScores ? getQualityWeight(q) * overlapweight : overlapweight;
+            };
+
+            // auto weightfuncIncreasedOverlapweightForPairedCandidate = [&](char q){
+            //     constexpr float increasefactor = 2.0f;
+
+            //     const float newoverlapweight = isPairedCandidate ? min(1.0f, overlapweight * increasefactor) : overlapweight;
+            //     return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            // };
+
+            // auto weightfuncOverlap1ForPairedCandidate = [&](char q){
+
+            //     const float newoverlapweight = isPairedCandidate ? 1.0f : overlapweight;
+            //     return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            // };
+
+            // auto weightfuncIncreasedQualityweightForPairedCandidate = [&](char q){
+            //     constexpr float increasefactor = 2.0f;
+
+            //     if(canUseQualityScores){
+            //         if(isPairedCandidate){
+            //             return min(1.0f, getQualityWeight(q) * increasefactor) * overlapweight;
+            //         }else{
+            //             return getQualityWeight(q) * overlapweight;
+            //         }
+            //     }else{
+            //         return overlapweight;
+            //     }
+            // };
+
+            // auto weightfuncQuality1ForPairedCandidate = [&](char q){
+   
+            //     if(canUseQualityScores){
+            //         if(isPairedCandidate){
+            //             return 1.0f * overlapweight;
+            //         }else{
+            //             return getQualityWeight(q) * overlapweight;
+            //         }
+            //     }else{
+            //         return overlapweight;
+            //     }
+            // };
+
+            // auto perfectWeightForPairedCandidate = [&](char q){
+            //     if(isPairedCandidate){
+            //         return 1.0f;
+            //     }else{
+            //         return defaultweightfunc(q);
+            //     }
+            // };
+
+            auto weightfunc = defaultweightfunc;
 
             constexpr int nucleotidesPerInt2Bit = SequenceHelpers::basesPerInt2Bit();
             const int fullInts = sequenceLength / nucleotidesPerInt2Bit;
@@ -367,7 +422,8 @@ namespace gpu{
                         if(!isForward){
                             encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                         }
-                        const float weight = canUseQualityScores ? getQualityWeight(currentFourQualities[l]) * overlapweight : overlapweight;
+
+                        const float weight = weightfunc(currentFourQualities[l]);
 
                         assert(weight != 0);
                         const int rowOffset = encodedBaseAsInt * columnPitchInElements;
@@ -392,7 +448,7 @@ namespace gpu{
                         //reverse complement
                         encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                     }
-                    const float weight = canUseQualityScores ? getQualityWeight(quality[fullInts * nucleotidesPerInt2Bit + posInInt]) * overlapweight : overlapweight;
+                    const float weight = weightfunc(quality[fullInts * nucleotidesPerInt2Bit + posInInt]);
 
                     assert(weight != 0);
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;
@@ -418,6 +474,7 @@ namespace gpu{
             const unsigned int* __restrict__ myCandidateSequencesData,
             const char* __restrict__ myCandidateQualities,
             const int* __restrict__ myCandidateLengths,
+            const bool* __restrict__ myPairedCandidateFlags,
             const int* __restrict__ myIndices,
             int numIndices,
             bool canUseQualityScores, 
@@ -472,7 +529,8 @@ namespace gpu{
                     subjectColumnsBegin_incl,
                     1.0f,
                     subjectQualityScore,
-                    canUseQualityScores
+                    canUseQualityScores,
+                    false
                 );
             }
 
@@ -515,125 +573,11 @@ namespace gpu{
                     defaultcolumnoffset,
                     overlapweight,
                     queryQualityScore,
-                    canUseQualityScores
+                    canUseQualityScores,
+                    myPairedCandidateFlags[localCandidateIndex]
                 );
             }
         }
-
-        template<class ThreadGroup>
-        __device__ __forceinline__
-        void constructFromSequences(
-            ThreadGroup& group,
-            const int* __restrict__ myShifts,
-            const int* __restrict__ myOverlaps,
-            const int* __restrict__ myNops,
-            const BestAlignment_t* __restrict__ myAlignmentFlags,
-            const unsigned int* __restrict__ myAnchorSequenceData,
-            const char* __restrict__ myAnchorQualityData,
-            const unsigned int* __restrict__ myCandidateSequencesData,
-            const char* __restrict__ myCandidateQualities,
-            const int* __restrict__ myCandidateLengths,
-            int numIndices,
-            bool canUseQualityScores, 
-            size_t encodedSequencePitchInInts,
-            size_t qualityPitchInBytes,
-            float desiredAlignmentMaxErrorRate,
-            int subjectIndex
-        ){   
-            constexpr int threadsPerSequence = 8;
-            auto tile = cg::tiled_partition<threadsPerSequence>(group);
-            const int tileIdInGroup = group.thread_rank() / threadsPerSequence;
-            const int numTilesInGroup = group.size() / threadsPerSequence;
-
-            for(int column = group.thread_rank(); column < columnPitchInElements; column += group.size()){
-                for(int i = 0; i < 4; i++){
-                    counts[i * columnPitchInElements + column] = 0;
-                    weights[i * columnPitchInElements + column] = 0.0f;
-                }
-
-                coverages[column] = 0;
-            }
-            
-            group.sync();
-
-            
-            const int subjectColumnsBegin_incl = columnProperties->subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = columnProperties->subjectColumnsEnd_excl;
-
-            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-            const unsigned int* const subject = myAnchorSequenceData;
-            const char* const subjectQualityScore = myAnchorQualityData;
-                            
-            // for(int i = group.thread_rank(); i < subjectLength; i += group.size()){
-            //     const int columnIndex = subjectColumnsBegin_incl + i;
-            //     const unsigned int encbase = getEncodedNuc2Bit(subject, subjectLength, i);
-            //     const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
-            //     const int rowOffset = int(encbase) * columnPitchInElements;
-
-            //     atomicAdd(counts + rowOffset + columnIndex, 1);
-            //     atomicAdd(weights + rowOffset + columnIndex, weight);
-            //     atomicAdd(coverages + columnIndex, 1);
-            // }
-
-            //add anchor
-
-            if(tileIdInGroup == 0){
-                msaAddOrDeleteASequence2Bit<true>(
-                    tile,
-                    subject, 
-                    subjectLength, 
-                    true,
-                    subjectColumnsBegin_incl,
-                    1.0f,
-                    subjectQualityScore,
-                    canUseQualityScores
-                );
-            }
-
-            for(int indexInList = tileIdInGroup; indexInList < numIndices; indexInList += numTilesInGroup){
-
-                const int localCandidateIndex = indexInList;
-                const int shift = myShifts[localCandidateIndex];
-                const BestAlignment_t flag = myAlignmentFlags[localCandidateIndex];
-
-                const int queryLength = myCandidateLengths[localCandidateIndex];
-                const unsigned int* const query = myCandidateSequencesData 
-                    + std::size_t(localCandidateIndex) * encodedSequencePitchInInts;
-
-                const char* const queryQualityScore = myCandidateQualities 
-                    + std::size_t(localCandidateIndex) * qualityPitchInBytes;
-
-                const int query_alignment_overlap = myOverlaps[localCandidateIndex];
-                const int query_alignment_nops = myNops[localCandidateIndex];
-
-                const float overlapweight = calculateOverlapWeight(
-                    subjectLength, 
-                    query_alignment_nops, 
-                    query_alignment_overlap,
-                    desiredAlignmentMaxErrorRate
-                );
-
-                assert(overlapweight <= 1.0f);
-                assert(overlapweight >= 0.0f);
-                assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
-
-                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-
-                const bool isForward = flag == BestAlignment_t::Forward;
-
-                msaAddOrDeleteASequence2Bit<true>(
-                    tile,
-                    query, 
-                    queryLength, 
-                    isForward,
-                    defaultcolumnoffset,
-                    overlapweight,
-                    queryQualityScore,
-                    canUseQualityScores
-                );
-            }
-        }
-
 
         template<class ThreadGroup, class Selector>
         __device__ __forceinline__
@@ -648,6 +592,7 @@ namespace gpu{
             const char* __restrict__ myCandidateQualities, //not transposed
             const int* __restrict__ myCandidateLengths,
             const int* __restrict__ myIndices,
+            const bool* __restrict__ myPairedCandidateFlags,
             int numIndices,
             bool canUseQualityScores, 
             size_t encodedSequencePitchInInts,
@@ -704,7 +649,8 @@ namespace gpu{
                         defaultcolumnoffset,
                         overlapweight,
                         queryQualityScore,
-                        canUseQualityScores
+                        canUseQualityScores,
+                        myPairedCandidateFlags[localCandidateIndex]
                     );
 
                 }

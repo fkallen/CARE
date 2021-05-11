@@ -67,6 +67,8 @@ public:
 
     virtual int getSequenceLengthUpperBound() const = 0;
 
+    virtual bool isPairedEnd() const = 0;
+
     virtual void destroy() = 0;
 
 protected:
