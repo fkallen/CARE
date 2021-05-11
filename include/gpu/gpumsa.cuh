@@ -348,53 +348,53 @@ namespace gpu{
                 return canUseQualityScores ? getQualityWeight(q) * overlapweight : overlapweight;
             };
 
-            auto weightfuncIncreasedOverlapweightForPairedCandidate = [&](char q){
-                constexpr float increasefactor = 2.0f;
+            // auto weightfuncIncreasedOverlapweightForPairedCandidate = [&](char q){
+            //     constexpr float increasefactor = 2.0f;
 
-                const float newoverlapweight = isPairedCandidate ? min(1.0f, overlapweight * increasefactor) : overlapweight;
-                return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
-            };
+            //     const float newoverlapweight = isPairedCandidate ? min(1.0f, overlapweight * increasefactor) : overlapweight;
+            //     return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            // };
 
-            auto weightfuncOverlap1ForPairedCandidate = [&](char q){
+            // auto weightfuncOverlap1ForPairedCandidate = [&](char q){
 
-                const float newoverlapweight = isPairedCandidate ? 1.0f : overlapweight;
-                return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
-            };
+            //     const float newoverlapweight = isPairedCandidate ? 1.0f : overlapweight;
+            //     return canUseQualityScores ? getQualityWeight(q) * newoverlapweight : newoverlapweight;
+            // };
 
-            auto weightfuncIncreasedQualityweightForPairedCandidate = [&](char q){
-                constexpr float increasefactor = 2.0f;
+            // auto weightfuncIncreasedQualityweightForPairedCandidate = [&](char q){
+            //     constexpr float increasefactor = 2.0f;
 
-                if(canUseQualityScores){
-                    if(isPairedCandidate){
-                        return min(1.0f, getQualityWeight(q) * increasefactor) * overlapweight;
-                    }else{
-                        return getQualityWeight(q) * overlapweight;
-                    }
-                }else{
-                    return overlapweight;
-                }
-            };
+            //     if(canUseQualityScores){
+            //         if(isPairedCandidate){
+            //             return min(1.0f, getQualityWeight(q) * increasefactor) * overlapweight;
+            //         }else{
+            //             return getQualityWeight(q) * overlapweight;
+            //         }
+            //     }else{
+            //         return overlapweight;
+            //     }
+            // };
 
-            auto weightfuncQuality1ForPairedCandidate = [&](char q){
+            // auto weightfuncQuality1ForPairedCandidate = [&](char q){
    
-                if(canUseQualityScores){
-                    if(isPairedCandidate){
-                        return 1.0f * overlapweight;
-                    }else{
-                        return getQualityWeight(q) * overlapweight;
-                    }
-                }else{
-                    return overlapweight;
-                }
-            };
+            //     if(canUseQualityScores){
+            //         if(isPairedCandidate){
+            //             return 1.0f * overlapweight;
+            //         }else{
+            //             return getQualityWeight(q) * overlapweight;
+            //         }
+            //     }else{
+            //         return overlapweight;
+            //     }
+            // };
 
-            auto perfectWeightForPairedCandidate = [&](char q){
-                if(isPairedCandidate){
-                    return 1.0f;
-                }else{
-                    return defaultweightfunc(q);
-                }
-            };
+            // auto perfectWeightForPairedCandidate = [&](char q){
+            //     if(isPairedCandidate){
+            //         return 1.0f;
+            //     }else{
+            //         return defaultweightfunc(q);
+            //     }
+            // };
 
             auto weightfunc = defaultweightfunc;
 
