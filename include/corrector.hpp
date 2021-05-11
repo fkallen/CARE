@@ -1029,6 +1029,11 @@ private:
 
     //remove candidates with bad alignment mismatch ratio
     void filterCandidatesByAlignmentMismatchRatio(CpuErrorCorrectorTask& task) const{
+
+        if(readStorage->isPairedEnd()){
+            filterCandidatesByAlignmentMismatchRatioWithPairFlags(task);
+            return;
+        }
         
         auto lastResortFunc = [](){
             return false;
@@ -1091,6 +1096,62 @@ private:
                 task.alignments[insertpos] = task.alignments[i]; 
 
                 insertpos++;
+            }
+        }
+
+        task.candidateReadIds.erase(
+            task.candidateReadIds.begin() + insertpos, 
+            task.candidateReadIds.end()
+        );
+        task.candidateSequencesData.erase(
+            task.candidateSequencesData.begin() + encodedSequencePitchInInts * insertpos, 
+            task.candidateSequencesData.end()
+        );
+        task.candidateSequencesLengths.erase(
+            task.candidateSequencesLengths.begin() + insertpos, 
+            task.candidateSequencesLengths.end()
+        );
+        task.alignmentFlags.erase(
+            task.alignmentFlags.begin() + insertpos, 
+            task.alignmentFlags.end()
+        );
+        task.alignments.erase(
+            task.alignments.begin() + insertpos, 
+            task.alignments.end()
+        );
+    }
+
+    void filterCandidatesByAlignmentMismatchRatioWithPairFlags(CpuErrorCorrectorTask& task) const{
+        const float threshold = correctionOptions->pairedthreshold1;
+        const int numCandidates = task.candidateReadIds.size();
+
+        int insertpos = 0;
+        auto keep = [&](int i){
+            task.candidateReadIds[insertpos] = task.candidateReadIds[i];
+            std::copy_n(
+                task.candidateSequencesData.data() + i * size_t(encodedSequencePitchInInts),
+                encodedSequencePitchInInts,
+                task.candidateSequencesData.data() + insertpos * size_t(encodedSequencePitchInInts)
+            );
+            task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
+            task.alignmentFlags[insertpos] = task.alignmentFlags[i];
+            task.alignments[insertpos] = task.alignments[i]; 
+
+            insertpos++;
+        };
+
+        //paired candidates are kept unconditionally. others are filtered by mismatch ratio
+
+        for(int candidate_index = 0; candidate_index < numCandidates; candidate_index += 1) {
+            if(!task.isPairedCandidate[candidate_index]){
+                const auto& alignment = task.alignments[candidate_index];
+                const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+
+                if(mismatchratio < threshold) {
+                    keep(candidate_index);
+                }
+            }else{                
+                keep(candidate_index);
             }
         }
 
