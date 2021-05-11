@@ -558,6 +558,8 @@ private:
             multiids.isPairedCandidate.begin() + offsetBegin,
             multiids.isPairedCandidate.begin() + offsetEnd
         );
+
+        assert(task.isPairedCandidate.size() == task.candidateReadIds.size());
         
         return task;
     }
@@ -729,7 +731,9 @@ private:
                 multiCandidateIds.numCandidatesPerAnchorPS[i] + candidateIds.size();
             multiCandidateIds.candidateReadIds.insert(multiCandidateIds.candidateReadIds.end(), candidateIds.begin(), candidateIds.end());
         
-            multiCandidateIds.isPairedCandidate.resize(candidateIds.size(), false);
+            multiCandidateIds.isPairedCandidate.resize(multiCandidateIds.candidateReadIds.size(), false);
+
+            assert(multiCandidateIds.isPairedCandidate.size() == multiCandidateIds.candidateReadIds.size());
         }
 
         return multiCandidateIds;
@@ -749,6 +753,9 @@ private:
             assert(numAnchors % 2 == 0);
 
             const int numAnchorPairs = numAnchors / 2;
+
+            assert(multiIds.isPairedCandidate.size() == multiIds.candidateReadIds.size());
+            assert(multiIds.numCandidatesPerAnchorPS.size() == multiIds.numCandidatesPerAnchor.size() + 1);
 
             for(int ap = 0; ap < numAnchorPairs; ap++){
                 const int begin1 = multiIds.numCandidatesPerAnchorPS[2*ap + 0];
@@ -781,6 +788,7 @@ private:
                 }            
             }
         }else{
+            assert(multiIds.isPairedCandidate.size() == multiIds.candidateReadIds.size());
             std::fill(multiIds.isPairedCandidate.begin(), multiIds.isPairedCandidate.end(), false);
         }
     }
@@ -982,7 +990,8 @@ private:
                 );
                 task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
                 task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-                task.alignments[insertpos] = task.alignments[i];                
+                task.alignments[insertpos] = task.alignments[i];   
+                task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];             
 
                 insertpos++;
             }else if(flag == BestAlignment_t::ReverseComplement){
@@ -994,7 +1003,8 @@ private:
                 );
                 task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
                 task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-                task.alignments[insertpos] = task.revcAlignments[i];                
+                task.alignments[insertpos] = task.revcAlignments[i];
+                task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];               
 
                 insertpos++;
             }else{
@@ -1021,6 +1031,10 @@ private:
         task.alignments.erase(
             task.alignments.begin() + insertpos, 
             task.alignments.end()
+        );
+        task.isPairedCandidate.erase(
+            task.isPairedCandidate.begin() + insertpos, 
+            task.isPairedCandidate.end()
         );
 
         task.revcAlignments.clear();
@@ -1093,7 +1107,8 @@ private:
                 );
                 task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
                 task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-                task.alignments[insertpos] = task.alignments[i]; 
+                task.alignments[insertpos] = task.alignments[i];
+                task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];
 
                 insertpos++;
             }
@@ -1119,6 +1134,10 @@ private:
             task.alignments.begin() + insertpos, 
             task.alignments.end()
         );
+        task.isPairedCandidate.erase(
+            task.isPairedCandidate.begin() + insertpos, 
+            task.isPairedCandidate.end()
+        );
     }
 
     void filterCandidatesByAlignmentMismatchRatioWithPairFlags(CpuErrorCorrectorTask& task) const{
@@ -1135,12 +1154,14 @@ private:
             );
             task.candidateSequencesLengths[insertpos] = task.candidateSequencesLengths[i];
             task.alignmentFlags[insertpos] = task.alignmentFlags[i];
-            task.alignments[insertpos] = task.alignments[i]; 
+            task.alignments[insertpos] = task.alignments[i];
+            task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];
 
             insertpos++;
         };
 
         //paired candidates are kept unconditionally. others are filtered by mismatch ratio
+        assert(task.isPairedCandidate.size() == task.candidateReadIds.size());
 
         for(int candidate_index = 0; candidate_index < numCandidates; candidate_index += 1) {
             if(!task.isPairedCandidate[candidate_index]){
@@ -1174,6 +1195,10 @@ private:
         task.alignments.erase(
             task.alignments.begin() + insertpos, 
             task.alignments.end()
+        );
+        task.isPairedCandidate.erase(
+            task.isPairedCandidate.begin() + insertpos, 
+            task.isPairedCandidate.end()
         );
     }
 
