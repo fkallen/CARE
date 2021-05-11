@@ -40,17 +40,11 @@ namespace care{
 class CpuErrorCorrector{
 public:
 
-    struct MultiCorrectionInput{
-        std::vector<int> anchorLengths;
-        std::vector<read_number> anchorReadIds;
-        std::vector<const unsigned int*> encodedAnchors;
-        std::vector<const char*> anchorQualityscores;
-    };
-
     struct MultiCandidateIds{
         std::vector<read_number> candidateReadIds;
         std::vector<int> numCandidatesPerAnchor;
         std::vector<int> numCandidatesPerAnchorPS;
+        std::vector<bool> isPairedCandidate;
     };
 
     struct MultiCandidateData{
@@ -163,6 +157,8 @@ public:
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
         #endif
+
+        computePairFlags(task);
 
 
         if(task.candidateReadIds.size() == 0){
@@ -327,7 +323,11 @@ public:
     std::stringstream& getMlStreamCandidates(){
         return ml_stream_cands;
     }
-    std::vector<CpuErrorCorrectorOutput> processMulti(const MultiCorrectionInput input){
+    std::vector<CpuErrorCorrectorOutput> processMulti(const CpuErrorCorrectorMultiInput input){
+        //if paired end, both reads of a pair must be processed simultaneously
+        //paired anchors are stored consecutively
+        assert(!readStorage->isPairedEnd() || input.anchorReadIds.size() % 2 == 0);
+
         const int numAnchors = input.anchorReadIds.size();
         if(numAnchors == 0){
             return {};
@@ -343,6 +343,8 @@ public:
         #endif
 
         MultiCandidateIds multiIds = determineCandidateReadIds(input);
+
+        computePairFlags(multiIds);
 
         #ifdef ENABLE_CPU_CORRECTOR_TIMING
         timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -524,7 +526,7 @@ private:
         return task;
     }
 
-    CpuErrorCorrectorTask makeTask(const MultiCorrectionInput& multiinput, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index){
+    CpuErrorCorrectorTask makeTask(const CpuErrorCorrectorMultiInput& multiinput, const MultiCandidateIds& multiids, const MultiCandidateData& multicandidateData, int index){
         CpuErrorCorrectorInput input;
         input.anchorLength = multiinput.anchorLengths[index];
         input.anchorReadId = multiinput.anchorReadIds[index];
@@ -550,6 +552,11 @@ private:
             task.candidateSequencesData.end(),
             multicandidateData.encodedCandidates.begin() + encodedSequencePitchInInts * offsetBegin,
             multicandidateData.encodedCandidates.begin() + encodedSequencePitchInInts * offsetEnd
+        );
+        task.isPairedCandidate.insert(
+            task.isPairedCandidate.end(),
+            multiids.isPairedCandidate.begin() + offsetBegin,
+            multiids.isPairedCandidate.begin() + offsetEnd
         );
         
         return task;
@@ -634,7 +641,7 @@ private:
 
 
 
-    MultiCandidateIds determineCandidateReadIds(const MultiCorrectionInput& multiInput) const{
+    MultiCandidateIds determineCandidateReadIds(const CpuErrorCorrectorMultiInput& multiInput) const{
         const int numAnchors = multiInput.anchorReadIds.size();
 
         MultiCandidateIds multiCandidateIds;
@@ -721,9 +728,61 @@ private:
             multiCandidateIds.numCandidatesPerAnchorPS[i + 1] = 
                 multiCandidateIds.numCandidatesPerAnchorPS[i] + candidateIds.size();
             multiCandidateIds.candidateReadIds.insert(multiCandidateIds.candidateReadIds.end(), candidateIds.begin(), candidateIds.end());
+        
+            multiCandidateIds.isPairedCandidate.resize(candidateIds.size(), false);
         }
 
         return multiCandidateIds;
+    }
+
+
+    void computePairFlags(CpuErrorCorrectorTask& task) const{
+        //pair flags cannot be computed for a single task
+
+        task.isPairedCandidate.resize(task.candidateReadIds.size());
+        std::fill(task.isPairedCandidate.begin(), task.isPairedCandidate.end(), false);
+    }
+
+    void computePairFlags(MultiCandidateIds& multiIds) const{
+        if(readStorage->isPairedEnd()){
+            const int numAnchors = multiIds.numCandidatesPerAnchor.size();
+            assert(numAnchors % 2 == 0);
+
+            const int numAnchorPairs = numAnchors / 2;
+
+            for(int ap = 0; ap < numAnchorPairs; ap++){
+                const int begin1 = multiIds.numCandidatesPerAnchorPS[2*ap + 0];
+                const int end1 = multiIds.numCandidatesPerAnchorPS[2*ap + 1];
+                const int begin2 = multiIds.numCandidatesPerAnchorPS[2*ap + 1];
+                const int end2 = multiIds.numCandidatesPerAnchorPS[2*ap + 2];
+
+                // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
+                // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
+
+                std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
+                std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
+
+                auto endIters = findPositionsOfPairedReadIds(
+                    multiIds.candidateReadIds.data() + begin1,
+                    multiIds.candidateReadIds.data() + end1,
+                    multiIds.candidateReadIds.data() + begin2,
+                    multiIds.candidateReadIds.data() + end2,
+                    pairedPositions.begin(),
+                    pairedPositions2.begin()
+                );
+
+                pairedPositions.erase(endIters.first, pairedPositions.end());
+                pairedPositions2.erase(endIters.second, pairedPositions2.end());
+                for(auto i : pairedPositions){
+                    multiIds.isPairedCandidate[begin1 + i] = true;
+                }
+                for(auto i : pairedPositions2){
+                    multiIds.isPairedCandidate[begin2 + i] = true;
+                }            
+            }
+        }else{
+            std::fill(multiIds.isPairedCandidate.begin(), multiIds.isPairedCandidate.end(), false);
+        }
     }
 
 
