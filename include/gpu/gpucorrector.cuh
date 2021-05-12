@@ -808,7 +808,7 @@ namespace gpu{
 
             resizeBuffers(currentNumAnchors, currentNumCandidates);
 
-            gpucorrectorkernels::copyCorrectionInputDeviceData<<<32768,256, 0, stream>>>(
+            gpucorrectorkernels::copyCorrectionInputDeviceData<<<SDIV(currentNumCandidates, 256),256, 0, stream>>>(
                 d_numAnchors,
                 d_numCandidates,
                 d_anchorReadIds,
@@ -818,8 +818,8 @@ namespace gpu{
                 d_candidates_per_anchor,
                 d_candidates_per_anchor_prefixsum,
                 encodedSequencePitchInInts,
-                currentInput->d_numAnchors,
-                currentInput->d_numCandidates,
+                currentNumAnchors,
+                currentNumCandidates,
                 currentInput->d_anchorReadIds,
                 currentInput->d_anchor_sequences_data,
                 currentInput->d_anchor_sequences_lengths,
@@ -832,7 +832,7 @@ namespace gpu{
             currentInput->event.record(stream);
 
             gpucorrectorkernels::setAnchorIndicesOfCandidateskernel
-                    <<<1024, 128, 0, stream>>>(
+                    <<<currentNumAnchors, 128, 0, stream>>>(
                 d_anchorIndicesOfCandidates.get(),
                 d_numAnchors.get(),
                 d_candidates_per_anchor.get(),
@@ -1520,7 +1520,7 @@ namespace gpu{
 
                         //cudaDeviceSynchronize(); CUERR;
 
-                        helpers::lambda_kernel<<<4, 256, 0, stream>>>(
+                        helpers::lambda_kernel<<<SDIV(currentNumAnchors, 256), 256, 0, stream>>>(
                             [
                                 d_uniqueAnchorIndices,
                                 d_aggregates_out,
@@ -2808,7 +2808,7 @@ namespace gpu{
                 d_numAnchors.get()
             ); CUERR;
 
-            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<640, 128, 0, stream>>>(
+            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(maxCandidates, 128), 128, 0, stream>>>(
                 maxCandidates,
                 d_numAnchors.get(),
                 d_num_corrected_candidates_per_anchor.get(),
@@ -2956,7 +2956,7 @@ namespace gpu{
                 d_numAnchors.get()
             ); CUERR;
 
-            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<640, 128, 0, stream>>>(
+            gpucorrectorkernels::initArraysBeforeCandidateCorrectionKernel<<<SDIV(maxCandidates, 128), 128, 0, stream>>>(
                 maxCandidates,
                 d_numAnchors.get(),
                 d_num_corrected_candidates_per_anchor.get(),
