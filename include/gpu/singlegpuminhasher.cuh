@@ -253,6 +253,22 @@ namespace gpu{
 
             gpuReadStorage.destroyHandle(sequencehandle);
 
+            std::vector<GpuTable::DeviceTableView> views;
+            for(const auto& ptr : gpuHashTables){
+                views.emplace_back(ptr->makeDeviceView());
+            }
+
+            d_deviceAccessibleTableViews.resize(numberOfAvailableHashFunctions);
+            cudaMemcpyAsync(
+                d_deviceAccessibleTableViews.data(),
+                views.data(),
+                sizeof(GpuTable::DeviceTableView) * numberOfAvailableHashFunctions,
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
             return numberOfAvailableHashFunctions; 
         }
 
@@ -708,6 +724,33 @@ namespace gpu{
             fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
 
             //determine number of values per hashfunction per sequence
+            #if 1
+
+            {
+
+            const int signaturesPitchInElements = numSequences;
+            const int numValuesPerKeyPitchInElements = numSequences;
+            constexpr int cgsize = GpuTable::DeviceTableView::cg_size();
+
+            dim3 block(256, 1, 1);
+            const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+
+            gpuhashtablekernels::numValuesPerKeyCompactMultiTableKernel<<<grid, block, 0, stream>>>(
+                d_deviceAccessibleTableViews.data(),
+                numHashfunctions,
+                resultsPerMapThreshold,
+                d_signatures_transposed,
+                signaturesPitchInElements,
+                numSequences,
+                d_numValuesPerSequencePerHash,
+                numValuesPerKeyPitchInElements
+            );
+
+            }
+            #else
+
+            
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[i]->numValuesPerKeyCompact(
                     d_signatures_transposed + i * numSequences,
@@ -716,6 +759,8 @@ namespace gpu{
                     stream
                 );
             }
+
+            #endif
 
             // accumulate number of values per sequence in d_numValuesPerSequence
             // calculate vertical exclusive prefix sum
@@ -916,6 +961,33 @@ namespace gpu{
 
             //retrieve values
 
+            #if 1
+            {
+            const int signaturesPitchInElements = numSequences;
+            const int numValuesPerKeyPitchInElements = numSequences;
+            const int beginOffsetsPitchInElements = numSequences;
+            constexpr int cgsize = GpuTable::DeviceTableView::cg_size();
+
+            dim3 block(256, 1, 1);
+            const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+
+            gpuhashtablekernels::retrieveCompactKernel<<<grid, block, 0, stream>>>(
+                d_deviceAccessibleTableViews.data(),
+                numHashfunctions,
+                d_signatures_transposed,
+                signaturesPitchInElements,
+                d_queryOffsetsPerSequencePerHash,
+                beginOffsetsPitchInElements,
+                d_numValuesPerSequencePerHash,
+                numValuesPerKeyPitchInElements,
+                resultsPerMapThreshold,
+                numSequences,
+                d_values_dblbuf.Current()
+            );
+            }
+            #else
+
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[i]->retrieveCompact(
                     d_signatures_transposed + i * numSequences,
@@ -926,6 +998,8 @@ namespace gpu{
                     stream
                 );
             }
+
+            #endif
 
             // all values for the same key are stored in consecutive locations in d_values_tmp.
             // now, make value ranges unique
@@ -1045,6 +1119,7 @@ private:
         int resultsPerMapThreshold{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
+        DeviceBuffer<GpuTable::DeviceTableView> d_deviceAccessibleTableViews{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 

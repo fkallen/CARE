@@ -765,9 +765,9 @@ namespace gpu{
         ~GpuErrorCorrector(){
             gpuReadStorage->destroyHandle(readstorageHandle);
 
-            for(auto pair : numCandidatesPerReadMap){
+            //for(auto pair : numCandidatesPerReadMap){
                 //std::cerr << pair.first << " " << pair.second << "\n";
-            }
+            //}
         }
 
         void correct(GpuErrorCorrectorInput& input, GpuErrorCorrectorRawOutput& output, cudaStream_t stream){
@@ -2351,10 +2351,10 @@ namespace gpu{
                     ] __device__(){
                         using BlockReduceInt = cub::BlockReduce<int, 128>;
 
-                        __shared__ union {
-                            typename BlockReduceInt::TempStorage intreduce;
-                            int broadcast[3];
-                        } temp_storage;
+                        // __shared__ union {
+                        //     typename BlockReduceInt::TempStorage intreduce;
+                        //     int broadcast[3];
+                        // } temp_storage;
 
                         for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x) {
 
@@ -2365,7 +2365,7 @@ namespace gpu{
 
                             //printf("subjectindex %d\n", subjectindex);
 
-                            int counts[3]{0,0,0};
+                            //int counts[3]{0,0,0};
 
                             //if(threadIdx.x == 0){
                             //    printf("my_n_indices %d\n", my_n_indices);

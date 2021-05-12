@@ -3,7 +3,7 @@
 #include <bestalignment.hpp>
 
 #include <map>
-
+#include <bitset>
 namespace care{
 
 void MultipleSequenceAlignment::build(const InputData& args){
@@ -732,15 +732,13 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     return inspectColumnsRegionSplit(firstColumn, nColumns);
 }
 
-
-
-
 MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectColumnsRegionSplit(int firstColumn, int lastColumnExcl) const{
     assert(lastColumnExcl >= 0);
     assert(lastColumnExcl <= nColumns);
 
     std::vector<PossibleSplitColumn> possibleColumns;
 
+    //find columns in which two different nucleotides each make up approx 50% (40% - 60%) of the column
     for(int col = firstColumn; col < lastColumnExcl; col++){
         std::array<PossibleSplitColumn, 4> array{};
         int numPossibleNucs = 0;
@@ -773,9 +771,17 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
 
         //calculate proper results
         {
-            //std::map<unsigned int, std::pair<std::vector<PossibleSplitColumn>, std::vector<int>>> map;
-            std::map<unsigned int, std::vector<int>> map;
+            
 
+            //for each candidate check if it appears in the selected columns
+            //there can be at most 16 selected columns.the result is bit-encoded in 32 bits, 2 bits per column
+            //0b10 - candidate base matches first selected nuc in column
+            //0b11 - candidate base matches second selected nuc in column
+            //0b00 - candidate base does not match, or candidate does not occupy column
+
+            //map groups candidates with the same bit pattern
+            std::map<unsigned int, std::vector<int>> map;
+            
             for(int l = 0; l < nCandidates; l++){
                 const int candidateRow = l;
 
@@ -1063,9 +1069,350 @@ MultipleSequenceAlignment::PossibleMsaSplits MultipleSequenceAlignment::inspectC
     //         os << "\n";
     //     }
     // }
+
 }
 
+std::vector<MultipleSequenceAlignment::PossibleSplitColumn> computePossibleSplitColumns(
+    int firstColumn, 
+    int lastColumnExcl,
+    const int* countsA,
+    const int* countsC,
+    const int* countsG,
+    const int* countsT,
+    const int* coverages
+){
+    std::vector<MultipleSequenceAlignment::PossibleSplitColumn> possibleColumns;
 
+    //find columns in which two different nucleotides each make up approx 50% (40% - 60%) of the column
+    for(int col = firstColumn; col < lastColumnExcl; col++){
+        std::array<MultipleSequenceAlignment::PossibleSplitColumn, 4> array{};
+        int numPossibleNucs = 0;
+
+        auto checkNuc = [&](const auto& counts, const char nuc){
+            const float ratio = float(counts[col]) / float(coverages[col]);
+            //if((counts[col] == 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)) || counts[col] > 2){
+            if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
+                array[numPossibleNucs] = {nuc, col, ratio};
+                numPossibleNucs++;
+            }
+        };
+
+        checkNuc(countsA, 'A');
+        checkNuc(countsC, 'C');
+        checkNuc(countsG, 'G');
+        checkNuc(countsT, 'T');
+
+        
+        if(numPossibleNucs == 2){
+            possibleColumns.insert(possibleColumns.end(), array.begin(), array.begin() + numPossibleNucs);
+        }
+    }
+
+    assert(possibleColumns.size() % 2 == 0);
+
+    return possibleColumns;
+}
+
+MultipleSequenceAlignment::PossibleMsaSplits inspectColumnsRegionSplit(
+    const MultipleSequenceAlignment::PossibleSplitColumn* possibleColumns,
+    int numPossibleColumns,
+    int firstColumn, int lastColumnExcl,
+    int subjectColumnsBegin_incl,
+    int numCandidates,
+    const char* candidates,
+    int decodedSequencePitchBytes,
+    const int* candidateShifts,
+    const int* candidateLengths
+){   
+
+    if(2 <= numPossibleColumns && numPossibleColumns <= 32 && numPossibleColumns % 2 == 0){
+
+        MultipleSequenceAlignment::PossibleMsaSplits result;
+
+        //calculate proper results
+        {
+            
+
+            //for each candidate check if it appears in the selected columns
+            //there can be at most 16 selected columns.the result is bit-encoded in 32 bits, 2 bits per column
+            //0b10 - candidate base matches first selected nuc in column
+            //0b11 - candidate base matches second selected nuc in column
+            //0b00 - candidate base does not match, or candidate does not occupy column
+
+            //map groups candidates with the same bit pattern
+            std::map<unsigned int, std::vector<int>> map;
+            
+            for(int l = 0; l < numCandidates; l++){
+                const int candidateRow = l;
+
+                constexpr int numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, numPossibleColumns / 2);
+                const char* const candidateString = &candidates[candidateRow * decodedSequencePitchBytes];
+
+                for(int k = 0; k < numColumnsToCheck; k++){
+                    flags <<= 2;
+
+                    const MultipleSequenceAlignment::PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const MultipleSequenceAlignment::PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                map[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(map.begin(), map.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            for(auto& pair : finalMap){
+
+                std::vector<int> listOfCandidates = std::move(pair.second);
+                std::vector<MultipleSequenceAlignment::PossibleSplitColumn> columnInfo;
+
+                const unsigned int flag = pair.first;
+                const int num = numPossibleColumns / 2;
+                for(int i = 0; i < num; i++){
+                    const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                    const bool match = (cur & 0b10) == 0b10;
+                    if(match){
+                        const int which = cur & 1;
+                        columnInfo.emplace_back(possibleColumns[2*i + which]);
+                    }
+                }
+
+                result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));                
+            }
+        }
+
+#if 0
+        //calculate sorted and debug prints
+        {
+
+            std::map<unsigned int, std::vector<int>> debugprintmap;
+            std::vector<int> sortedindices(numCandidates);
+            std::iota(sortedindices.begin(), sortedindices.end(), 0);
+
+            auto get_shift_of_row = [&](int k){
+                return candidateShifts[k];
+            };
+
+            std::sort(sortedindices.begin(), sortedindices.end(),
+                    [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+            for(int l = 0; l < numCandidates; l++){
+                const int candidateRow = sortedindices[l];
+
+                constexpr std::size_t numPossibleColumnsPerFlag = sizeof(unsigned int) * CHAR_BIT / 2;
+
+                unsigned int flags = 0;
+
+                const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, possibleColumns.size() / 2);
+                const char* const candidateString = &candidates[candidateRow * decodedSequencePitchBytes];
+
+                for(int k = 0; k < numColumnsToCheck; k++){
+                    flags <<= 2;
+
+                    const PossibleSplitColumn psc0 = possibleColumns[2*k+0];
+                    const PossibleSplitColumn psc1 = possibleColumns[2*k+1];
+                    assert(psc0.column == psc1.column);
+
+                    const int candidateColumnsBegin_incl = candidateShifts[candidateRow] + subjectColumnsBegin_incl;
+                    const int candidateColumnsEnd_excl = candidateLengths[candidateRow] + candidateColumnsBegin_incl;
+                    
+                    //column range check for row
+                    if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){
+                        const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+
+                        if(candidateString[positionInCandidate] == psc0.letter){
+                            flags = flags | 0b10;
+                        }else if(candidateString[positionInCandidate] == psc1.letter){
+                            flags = flags | 0b11;
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }else{
+                        flags = flags | 0b00;
+                    } 
+
+                }
+
+                debugprintmap[flags].emplace_back(l);
+            }
+
+            std::vector<std::pair<unsigned int, std::vector<int>>> flatmap(debugprintmap.begin(), debugprintmap.end());
+
+            std::map<unsigned int, std::vector<int>> finalMap;
+
+            const int flatmapsize = flatmap.size();
+            for(int i = 0; i < flatmapsize; i++){
+                //try to merge flatmap[i] with flatmap[k], i < k, if possible
+                const unsigned int flagsToSearch = flatmap[i].first;
+                unsigned int mask = 0;
+                for(int s = 0; s < 16; s++){
+                    if(flagsToSearch >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+
+                //std::cerr << "i = " << i << ", flags = " << std::bitset<32>(flagsToSearch) << ", mask = " << std::bitset<32>(mask) << "\n";
+
+                bool merged = false;
+                for(int k = i+1; k < flatmapsize; k++){
+                    //if both columns are identical not including wildcard columns
+                    if((mask & flatmap[k].first) == flagsToSearch){
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " equal" << "\n";
+                        flatmap[k].second.insert(
+                            flatmap[k].second.end(),
+                            flatmap[i].second.begin(),
+                            flatmap[i].second.end()
+                        );
+
+                        std::sort(flatmap[k].second.begin(), flatmap[k].second.end());
+
+                        flatmap[k].second.erase(
+                            std::unique(flatmap[k].second.begin(), flatmap[k].second.end()),
+                            flatmap[k].second.end()
+                        );
+
+                        merged = true;
+                    }else{
+                        //std::cerr << "k = " << k << ", flags = " << std::bitset<32>(flatmap[k].first) << " not equal" << "\n";
+                    }
+                }
+
+                if(!merged){
+                    finalMap[flatmap[i].first] = std::move(flatmap[i].second);
+                }
+            }
+
+            auto printMap = [&](const auto& map){
+                for(const auto& pair : map){
+                    const unsigned int flag = pair.first;
+                    //convert flag to position and nuc
+                    const int num = numPossibleColumns / 2;
+
+                    std::cerr << "flag " << flag << " : ";
+                    for(int i = 0; i < num; i++){
+                        const unsigned int cur = (flag >> (num - i - 1) * 2) & 0b11;
+                        const bool match = (cur & 0b10) == 0b10;
+                        const int column = possibleColumns[2*i].column;
+                        char nuc = '-';
+                        if(match){
+                            int which = cur & 1;
+                            nuc = possibleColumns[2*i + which].letter;
+                        }
+                        std::cerr << "(" << nuc << ", " << column << ") ";
+                    }
+                    std::cerr << ": ";
+
+                    for(int c : pair.second){
+                        std::cerr << c << " ";
+                    }
+                    std::cerr << "\n";
+                }
+            };
+
+            if(numPossibleColumns > 0){
+                std::cerr << numPossibleColumns << "\n";
+                for(const auto& p : possibleColumns){
+                    std::cerr << "{" << p.letter << ", " << p.column << ", " << p.ratio << "} ";
+                }
+                std::cerr << "\n";
+                
+                printMap(debugprintmap);
+
+                std::cerr << "final map: \n";
+
+                printMap(finalMap);
+                std::cerr << "\n";
+
+                // print(std::cerr);
+                // std::cerr << "\n";
+            }
+        }
+#endif    
+        return result;
+    }else{
+        // single split with all candidates
+        std::vector<int> listOfCandidates(numCandidates);
+        std::iota(listOfCandidates.begin(), listOfCandidates.end(), 0);
+
+        MultipleSequenceAlignment::PossibleMsaSplits result;
+
+        std::vector<MultipleSequenceAlignment::PossibleSplitColumn> columnInfo;
+
+
+        result.splits.emplace_back(std::move(columnInfo), std::move(listOfCandidates));
+        
+        return result;
+    }
+}
 
 MSAProperties getMSAProperties(
     const float* support,

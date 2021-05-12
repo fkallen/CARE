@@ -926,18 +926,18 @@ namespace gpu{
             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
                 #if 0
                 for(int i = tgroup.thread_rank(); i < candidate_length / 2; i += tgroup.size()) {
-                    const char l = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
-                    const char r = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
+                    const char l = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[i]);
+                    const char r = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
                     shared_correctedCandidate[i] = r;
                     shared_correctedCandidate[candidate_length - i - 1] = l;
                 }
                 if(tgroup.thread_rank() == 0 && candidate_length % 2 == 1){
-                    shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
+                    shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
                 }
                 tgroup.sync();
                 #else
                 for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
-                    shared_correctedCandidate[i] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
+                    shared_correctedCandidate[i] = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[i]);
                 }
                 tgroup.sync(); // threads may access elements in shared memory which were written by another thread
                 reverseWithGroupShfl(tgroup, shared_correctedCandidate, candidate_length);
@@ -1039,13 +1039,13 @@ namespace gpu{
             //the forward strand will be returned -> make reverse complement again
             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
                 for(int i = tgroup.thread_rank(); i < candidate_length / 2; i += tgroup.size()) {
-                    const char l = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
-                    const char r = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
+                    const char l = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[i]);
+                    const char r = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
                     shared_correctedCandidate[i] = r;
                     shared_correctedCandidate[candidate_length - i - 1] = l;
                 }
                 if(tgroup.thread_rank() == 0 && candidate_length % 2 == 1){
-                    shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
+                    shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
                 }
                 tgroup.sync();
             }else{
@@ -1121,8 +1121,8 @@ namespace gpu{
                 char consensusBase = my_corrected_candidate[i];
 
                 if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
-                    origBase = SequenceHelpers::reverseComplementBaseDecoded(origBase);
-                    consensusBase = SequenceHelpers::reverseComplementBaseDecoded(consensusBase);
+                    origBase = SequenceHelpers::complementBaseDecoded(origBase);
+                    consensusBase = SequenceHelpers::complementBaseDecoded(consensusBase);
                 }
                 if(origBase != consensusBase){
                     helpers::atomicAggInc(&sharednum);
@@ -1284,8 +1284,8 @@ namespace gpu{
                 const char origBaseBackup = origBase;
 
                 if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
-                    origBase = SequenceHelpers::reverseComplementBaseDecoded(origBase);
-                    consensusBase = SequenceHelpers::reverseComplementBaseDecoded(consensusBase);
+                    origBase = SequenceHelpers::complementBaseDecoded(origBase);
+                    consensusBase = SequenceHelpers::complementBaseDecoded(consensusBase);
                 }
                 if(origBase != consensusBase){
 
@@ -1550,7 +1550,7 @@ namespace gpu{
                         if(!useConsensus){
                             char oldBase = extractorInput.origBase;
                             if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
-                                oldBase = SequenceHelpers::reverseComplementBaseDecoded(oldBase);
+                                oldBase = SequenceHelpers::complementBaseDecoded(oldBase);
                             }
                             my_corrected_candidate[positionInCandidate] = oldBase;
                         }
@@ -1595,8 +1595,8 @@ namespace gpu{
                         const BestAlignment_t bestAlignmentFlag = bestAlignmentFlags[candidateIndex];
 
                         if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
-                            origBase = SequenceHelpers::reverseComplementBaseDecoded(origBase);
-                            consensusBase = SequenceHelpers::reverseComplementBaseDecoded(consensusBase);
+                            origBase = SequenceHelpers::complementBaseDecoded(origBase);
+                            consensusBase = SequenceHelpers::complementBaseDecoded(consensusBase);
                         }
 
                         auto g = cg::coalesced_threads();
@@ -1848,13 +1848,13 @@ namespace gpu{
     //         //the forward strand will be returned -> make reverse complement again
     //         if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
     //             for(int i = tgroup.thread_rank(); i < candidate_length / 2; i += tgroup.size()) {
-    //                 const char l = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[i]);
-    //                 const char r = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
+    //                 const char l = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[i]);
+    //                 const char r = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length - i - 1]);
     //                 shared_correctedCandidate[i] = r;
     //                 shared_correctedCandidate[candidate_length - i - 1] = l;
     //             }
     //             if(tgroup.thread_rank() == 0 && candidate_length % 2 == 1){
-    //                 shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::reverseComplementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
+    //                 shared_correctedCandidate[candidate_length / 2] = SequenceHelpers::complementBaseDecoded(shared_correctedCandidate[candidate_length / 2]);
     //             }
     //             tgroup.sync();
     //         }else{

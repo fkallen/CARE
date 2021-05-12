@@ -8,6 +8,7 @@
 #include <cassert>
 
 #include <moodycamel/readerwriterqueue/readerwriterqueue.h>
+#include <moodycamel/concurrentqueue/blockingconcurrentqueue.h>
 
 namespace care{
 
@@ -66,9 +67,13 @@ struct WaitableData{
 
 template<class T>
 struct SimpleSingleProducerSingleConsumerQueue{
+    bool useDefaultElement = false;
+
     std::queue<T> queue;
     std::mutex mutex;
     std::condition_variable cv;
+
+    T defaultElement{};
 
     void push(T item){
         std::lock_guard<std::mutex> lg(mutex);
@@ -80,13 +85,27 @@ struct SimpleSingleProducerSingleConsumerQueue{
     T pop(){
         std::unique_lock<std::mutex> ul(mutex);
 
-        while(queue.empty()){
+        while(queue.empty() && !useDefaultElement){
             cv.wait(ul);
         }
 
-        T item = queue.front();
-        queue.pop();
-        return item;
+        if(!queue.empty()){
+            T item = queue.front();
+            queue.pop();
+            return item;
+        }else{
+            assert(useDefaultElement);
+            return defaultElement;
+        }
+    }
+
+    void enableDefaultElement(T def){
+        std::lock_guard<std::mutex> lg(mutex);
+        if(!useDefaultElement){
+            defaultElement = def;
+            useDefaultElement = true;
+            cv.notify_all();
+        }
     }
 
     //Wait until func() == false or queue is not empty.
@@ -111,6 +130,74 @@ struct SimpleSingleProducerSingleConsumerQueue{
         }
     }
 };
+
+
+template<class T>
+struct SimpleMultiProducerMultiConsumerQueue{
+
+    int numActiveProducers = 0;
+    std::queue<T> queue;
+    std::mutex mutex;
+    std::condition_variable cv;
+
+    SimpleMultiProducerMultiConsumerQueue() : SimpleMultiProducerMultiConsumerQueue(1){}
+
+    SimpleMultiProducerMultiConsumerQueue(int prod) : numActiveProducers(prod){
+        
+    }
+
+    void push(T item){
+        std::lock_guard<std::mutex> lg(mutex);
+        queue.emplace(std::move(item));
+        cv.notify_one();
+    }
+
+    //wait until queue is not empty, then remove first element from queue and return it
+    T pop(){
+        std::unique_lock<std::mutex> ul(mutex);
+
+        while(queue.empty()){
+            cv.wait(ul);
+        }
+
+        T item = queue.front();
+        queue.pop();
+        return item;
+    }
+
+    void decreaseActiveProducers(){
+        std::lock_guard<std::mutex> lg(mutex);
+        if(numActiveProducers > 0){
+            numActiveProducers--;
+            if(numActiveProducers == 0){
+                cv.notify_all();
+            }
+        }
+    }
+
+    T pop(T defaultElement){
+        std::unique_lock<std::mutex> ul(mutex);
+
+        while(queue.empty() && numActiveProducers > 0){
+            cv.wait(ul);
+        }
+
+        if(!queue.empty()){
+            T item = queue.front();
+            queue.pop();
+            return item;
+        }else{
+            return defaultElement;
+        }
+    }
+};
+
+
+
+
+
+
+
 
 template<class T>
 struct SingleProducerSingleConsumerQueue{
@@ -150,8 +237,26 @@ struct SingleProducerSingleConsumerQueue{
     }
 };
 
+
+template<class T>
+struct MultiProducerMultiConsumerQueue{
+    moodycamel::BlockingConcurrentQueue<T> queue;
+
+    void push(T item){
+        queue.enqueue(item); 
+    }
+
+    //wait until queue is not empty, then remove first element from queue and return it
+    T pop(){
+        T item;
+        queue.wait_dequeue(item);
+        return item;
+    }
+};
+
 template<class T>
 using SimpleConcurrentQueue = SimpleSingleProducerSingleConsumerQueue<T>;
+//using SimpleConcurrentQueue = SingleProducerSingleConsumerQueue<T>;
 
 
 }

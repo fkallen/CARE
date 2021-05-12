@@ -165,6 +165,11 @@ bool sortValuesByGeneratedKeysViaSortByKeyDevice(
         return false;
     }
 
+    if(std::size_t(std::numeric_limits<int>::max()) < std::size_t(numValues)){
+        std::cerr << numValues << " > " << std::numeric_limits<int>::max() << "\n";
+        return false;
+    }
+
     std::size_t sizeOfKeys = SDIV(sizeof(KeyType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
     std::size_t sizeOfValues = SDIV(sizeof(ValueType) * numValues, sizeof(std::size_t)) * sizeof(std::size_t);
 
