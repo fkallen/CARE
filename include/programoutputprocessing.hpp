@@ -200,6 +200,8 @@ namespace care{
                 // std::chrono::time_point<std::chrono::system_clock> abegin, aend;
                 // std::chrono::duration<double> adelta{0};
 
+                int asdf = 0;
+
                 while(multiInputReader.next() >= 0){
 
                     ReadBatch* batch = freeReadBatches.pop();
@@ -211,9 +213,22 @@ namespace care{
                     std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
                     int batchsize = 1;
 
+                    if(asdf < 15){
+                        std::cerr << asdf << " read " << batch->items[0].read.sequence << "\n";
+                    }
+
+                    asdf++;
+
+
                     while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
                         std::swap(batch->items[batchsize], multiInputReader.getCurrent());
+
+                        if(asdf < 15){
+                            std::cerr << asdf << " read " << batch->items[batchsize].read.sequence << "\n";
+                        }
+                        
                         batchsize++;
+                        asdf++;
                     }
 
                     // aend = std::chrono::system_clock::now();
@@ -272,6 +287,10 @@ namespace care{
                         const auto& readWithId = outputBatch->items[processed];
                         const int writerIndex = numOutputfiles == 1 ? 0 : readWithId.fileId;
                         assert(writerIndex < numOutputfiles);
+
+                        if(readWithId.globalReadId < 15){
+                            std::cerr << readWithId.globalReadId << " write " << readWithId.read.sequence << "\n";
+                        }
 
                         writerVector[writerIndex]->writeRead(readWithId.read);
 
