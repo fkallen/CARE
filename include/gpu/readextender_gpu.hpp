@@ -1677,7 +1677,7 @@ public:
 
                     for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
                         const int firstTask = d_firstTasksOfPairsToCheck[a];
-                        const int secondTask = firstTask + 1;
+                        //const int secondTask = firstTask + 1;
 
                         //check for pairs in current candidates
 
@@ -2986,28 +2986,26 @@ public:
             )
         );
 
-        cudaError_t allocstatus = cudaSuccess;
-
         int* d_alignment_overlaps2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_overlaps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_alignment_overlaps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
 
         int* d_alignment_shifts2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_shifts2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_alignment_shifts2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
 
         int* d_alignment_nOps2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_nOps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_alignment_nOps2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
 
         BestAlignment_t* d_alignment_best_alignment_flags2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_alignment_best_alignment_flags2, sizeof(BestAlignment_t) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_alignment_best_alignment_flags2, sizeof(BestAlignment_t) * batchData.totalNumCandidates, stream); CUERR;
 
         int* d_candidateSequencesLength2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_candidateSequencesLength2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_candidateSequencesLength2, sizeof(int) * batchData.totalNumCandidates, stream); CUERR;
 
         read_number* d_candidateReadIds2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * batchData.totalNumCandidates, stream); CUERR;
 
         bool* d_isPairedCandidate2 = nullptr;
-        allocstatus = cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR;
 
         auto d_zip_data_tmp = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -3501,7 +3499,7 @@ public:
         // }
 
         //only information about number of candidates and readids are kept. all other information about candidates is discarded
-        auto oldnum = batchData.totalNumCandidates;
+        //auto oldnum = batchData.totalNumCandidates;
         batchData.totalNumCandidates = *batchData.h_numCandidates; 
 
         std::swap(batchData.d_numCandidatesPerAnchor, batchData.d_numCandidatesPerAnchor2);

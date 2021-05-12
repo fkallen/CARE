@@ -361,7 +361,7 @@ public:
         const auto gapend = result.begin() + result.size() - numToCopys2;
         std::copy_n(g.s2.begin() + g.s2.size() - numToCopys2, numToCopys2, gapend);
 
-        assert(g.q1.size() >= numToCopys1);
+        assert(int(g.q1.size()) >= numToCopys1);
         const auto gapbeginq = std::copy_n(g.q1.begin(), numToCopys1, resultquality.begin());      
         const auto gapendq = resultquality.begin() + resultquality.size() - numToCopys2;
         std::copy_n(g.q2.begin() + g.q2.size() - numToCopys2, numToCopys2, gapendq);

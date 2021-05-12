@@ -304,7 +304,7 @@ namespace care{
         int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
-        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+        //auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
         std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
 
@@ -364,7 +364,7 @@ namespace care{
         int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
-        auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
+        //auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
         std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
 
@@ -394,7 +394,7 @@ namespace care{
             l.extendedRead.resize(overlapstart + r.extendedRead.size());
             l.qualityScores.resize(overlapstart + r.extendedRead.size());
 
-            assert(std::distance(r.qualityScores.begin() + r.originalLength, r.qualityScores.end()) <= l.qualityScores.size() - beginOfNewPositions);
+            assert(int(std::distance(r.qualityScores.begin() + r.originalLength, r.qualityScores.end())) <= int(l.qualityScores.size() - beginOfNewPositions));
 
             std::copy(r.extendedRead.begin() + r.originalLength, r.extendedRead.end(), l.extendedRead.begin() + beginOfNewPositions);
             std::copy(r.qualityScores.begin() + r.originalLength, r.qualityScores.end(), l.qualityScores.begin() + beginOfNewPositions);
@@ -439,7 +439,7 @@ namespace care{
                 SequenceHelpers::reverseComplementSequenceDecodedInplace(r3.extendedRead.data(), extlength);
                 std::reverse(r3.qualityScores.begin(), r3.qualityScores.end());
 
-                const int sizeOfGap = r3.read2begin - (r3.read1begin + r3.originalLength);
+                //const int sizeOfGap = r3.read2begin - (r3.read1begin + r3.originalLength);
                 const int sizeOfRightExtension = extlength - (r3.read2begin + r3.originalMateLength);
 
                 int newread2begin = extlength - (r3.read1begin + r3.originalLength);
