@@ -1524,7 +1524,8 @@ correct_gpu_impl(
 
     
 
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(16);
     //cpu::RangeGenerator<read_number> readIdGenerator(std::min(200000u, readStorage.getNumberOfReads()));
 
 
