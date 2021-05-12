@@ -549,10 +549,8 @@ namespace gpu{
                     tmp.hq = currentOutput.h_is_high_quality_anchor[anchor_index].hq();                    
                     tmp.type = TempCorrectedSequence::Type::Anchor;
                     tmp.readId = readId;
-
                     
                     const int numEdits = currentOutput.h_numEditsPerCorrectedanchor[positionInVector];
-                    std::cerr << "readId " << readId << ", numEdits = " << numEdits << "\n";
                     if(numEdits != currentOutput.doNotUseEditsValue){
                         const int editOffset = currentOutput.h_anchorEditOffsets[positionInVector];
                         tmp.edits.resize(numEdits);
@@ -566,15 +564,11 @@ namespace gpu{
                         tmp.edits.clear();
                         tmp.useEdits = false;
 
-
                         const int sequenceOffset = currentOutput.h_correctedAnchorsOffsets[positionInVector];
 
                         const char* const my_corrected_anchor_data = currentOutput.h_corrected_anchors + sequenceOffset;
                         const int anchor_length = currentOutput.h_anchor_sequences_lengths[anchor_index];
                         tmp.sequence.assign(my_corrected_anchor_data, anchor_length);
-                        if(readId < 16){
-                            std::cerr << readId << " positionInVector = " << positionInVector << " got anchor " << tmp.sequence << "\n";
-                        }
                     }
 
                     // if(tmp.readId == 9273463){
@@ -694,8 +688,8 @@ namespace gpu{
         using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
         template<class T>
-        //using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
-        using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
+        using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
+        //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
 
         static constexpr int getNumRefinementIterations() noexcept{
@@ -1791,12 +1785,8 @@ namespace gpu{
                         const int indexOfCorrectedAnchor = d_indices_of_corrected_anchors[c];
                         const int numEdits = d_numEditsPerCorrectedanchor[c];
 
-                        if(warp.thread_rank() == 0) printf("warp %d indexOfCorrectedAnchor %d numEdits %d\n", c, indexOfCorrectedAnchor, numEdits);
-
                         if(numEdits == doNotUseEditsValue){
                             const int outputOffset = d_correctedAnchorOffsetsTmp[c];
-
-                            if(warp.thread_rank() == 0) printf("warp %d outputOffset %d,indexOfCorrectedAnchor %d\n", c, outputOffset, indexOfCorrectedAnchor);
 
                             char* outputPtr = d_corrected_anchors2 + outputOffset;
                             const char* inputPtr = d_corrected_anchors + indexOfCorrectedAnchor * decodedSequencePitchInBytes;
@@ -1817,48 +1807,6 @@ namespace gpu{
             ); CUERR;
 
             assert(decodedSequencePitchInBytes % sizeof(int) == 0);
-
-            cudaDeviceSynchronize(); CUERR;
-
-            static bool first = true;
-
-
-            if(first){
-                std::cerr << "decodedSequencePitchInBytes = " << decodedSequencePitchInBytes << "\n";
-                std::cerr << "currentNumAnchors = " << currentNumAnchors << "\n";
-                std::cerr << "d_totalCorrectedSequencesBytes = " << *d_totalCorrectedSequencesBytes << "\n";
-                std::cerr << "corrected anchors\n";
-                for(int i = 0; i < currentNumAnchors; i++){
-                    std::cerr << i << " : ";
-
-                    for(int k = 0; k < 101; k++){
-                        std::cerr << d_corrected_anchors[i*decodedSequencePitchInBytes + k];
-                    }
-                    std::cerr << "\n";
-                }
-
-                std::cerr << "num edits\n";
-                for(int i = 0; i < currentNumAnchors; i++){
-                    std::cerr << i << " : " << d_numEditsPerCorrectedanchor[i] << "\n";
-                }
-
-                std::cerr << "output offsets\n";
-                for(int i = 0; i < currentNumAnchors; i++){
-                    std::cerr << i << " : " << d_correctedAnchorOffsetsTmp[i] << "\n";
-                }
-
-                std::cerr << "corrected anchors2\n";
-                for(int i = 0; i < currentNumAnchors; i++){
-                    std::cerr << i << " : ";
-
-                    for(int k = 0; k < 101; k++){
-                        std::cerr << d_corrected_candidates2[i*decodedSequencePitchInBytes + k];
-                    }
-                    std::cerr << "\n";
-                }
-            }
-
-            first = false;
 
             //copy compacted anchor corrections to host
             helpers::call_copy_n_kernel(
