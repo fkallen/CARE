@@ -1,6 +1,7 @@
 #ifndef CARE_SINGLEGPUMINHASHERCONSTRUCTION_CUH
 #define CARE_SINGLEGPUMINHASHERCONSTRUCTION_CUH
 
+#ifdef CARE_HAS_WARPCORE
 
 #include <gpu/gpureadstorage.cuh>
 
@@ -26,6 +27,8 @@ namespace gpu{
 
 }
 }
+
+#endif
 
 
 

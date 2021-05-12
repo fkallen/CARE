@@ -26,10 +26,6 @@
 
 namespace care{
 
-
-
-
-
 std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     RuntimeOptions runtimeOptions,
     MemoryOptions memoryOptions,
@@ -38,14 +34,16 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
 ){
 
     if(fileOptions.load_binary_reads_from != ""){
-        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
+        const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores);
 
         readStorage->loadFromFile(fileOptions.load_binary_reads_from);
         std::cerr << "Loaded readstorage from file " << fileOptions.load_binary_reads_from << "\n";
 
         return readStorage;
     }else{
-        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(useQualityScores);
+        const bool pairedEnd = fileOptions.pairType == SequencePairType::PairedEnd;
+        std::unique_ptr<ChunkedReadStorage> readStorage = std::make_unique<ChunkedReadStorage>(pairedEnd, useQualityScores);
 
         const bool showProgress = runtimeOptions.showProgress;
 
@@ -477,12 +475,6 @@ std::unique_ptr<ChunkedReadStorage> constructChunkedReadStorageFromFiles(
     }
     
 }
-
-
-
-
-
-
 
 } //namespace care
 

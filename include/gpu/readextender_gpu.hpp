@@ -3280,6 +3280,7 @@ public:
             batchData.d_numCandidatesPerAnchorPrefixSum.get(),
             batchData.d_subjectSequencesData.get(),
             batchData.d_candidateSequencesData.get(),
+            batchData.d_isPairedCandidate.get(),
             batchData.d_anchorQualityScores.get(), //d_anchor_qualities.get(),
             d_candidateQualityScores,
             batchData.h_numAnchors.get(), //d_numAnchors
@@ -3308,6 +3309,7 @@ public:
             batchData.d_alignment_overlaps.get(),
             batchData.d_subjectSequencesData.get(),
             batchData.d_candidateSequencesData.get(),
+            batchData.d_isPairedCandidate.get(),
             batchData.d_anchorSequencesLength.get(),
             batchData.d_candidateSequencesLength.get(),
             batchData.d_anchorQualityScores.get(), //d_anchor_qualities.get(),
