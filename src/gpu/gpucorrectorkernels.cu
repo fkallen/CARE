@@ -9,7 +9,6 @@ namespace care{
     
     namespace gpucorrectorkernels{
     
-        
         __global__
         void copyCorrectionInputDeviceData(
             int* __restrict__ output_numAnchors,
@@ -21,8 +20,8 @@ namespace care{
             int* __restrict__ output_candidates_per_anchor,
             int* __restrict__ output_candidates_per_anchor_prefixsum,
             const int encodedSequencePitchInInts,
-            const int* __restrict__ input_numAnchors,
-            const int* __restrict__ input_numCandidates,
+            const int input_numAnchors,
+            const int input_numCandidates,
             const read_number* __restrict__ input_anchor_read_ids,
             const unsigned int* __restrict__ input_anchor_sequences_data,
             const int* __restrict__ input_anchor_sequences_lengths,
@@ -30,8 +29,8 @@ namespace care{
             const int* __restrict__ input_candidates_per_anchor,
             const int* __restrict__ input_candidates_per_anchor_prefixsum
         ){
-            const int numAnchors = *input_numAnchors;
-            const int numCandidates = *input_numCandidates;
+            const int numAnchors = input_numAnchors;
+            const int numCandidates = input_numCandidates;
     
             const int tid = threadIdx.x + blockIdx.x * blockDim.x;
             const int stride = blockDim.x * gridDim.x;
@@ -40,31 +39,28 @@ namespace care{
                 *output_numAnchors = numAnchors;
                 *output_numCandidates = numCandidates;
             }
-    
-            for(int i = tid; i < numAnchors; i += stride){
-                output_anchor_read_ids[i] = input_anchor_read_ids[i];
+
+            const int s = max(numAnchors + 1, max(numCandidates, numAnchors * encodedSequencePitchInInts));
+
+            for(int i = tid; i < s; i += stride){
+                if(i < numAnchors){
+                    output_anchor_read_ids[i] = input_anchor_read_ids[i];
+                    output_anchor_sequences_lengths[i] = input_anchor_sequences_lengths[i];
+                    output_candidates_per_anchor[i] = input_candidates_per_anchor[i];
+                }
+
+                if(i < numAnchors + 1){
+                    output_candidates_per_anchor_prefixsum[i] = input_candidates_per_anchor_prefixsum[i];
+                }
+
+                if(i < numAnchors * encodedSequencePitchInInts){
+                    output_anchor_sequences_data[i] = input_anchor_sequences_data[i];
+                }
+
+                if(i < numCandidates){
+                    output_candidate_read_ids[i] = input_candidate_read_ids[i];
+                }
             }
-    
-            for(int i = tid; i < numAnchors * encodedSequencePitchInInts; i += stride){
-                output_anchor_sequences_data[i] = input_anchor_sequences_data[i];
-            }
-    
-            for(int i = tid; i < numAnchors; i += stride){
-                output_anchor_sequences_lengths[i] = input_anchor_sequences_lengths[i];
-            }
-    
-            for(int i = tid; i < numCandidates; i += stride){
-                output_candidate_read_ids[i] = input_candidate_read_ids[i];
-            }
-    
-            for(int i = tid; i < numAnchors; i += stride){
-                output_candidates_per_anchor[i] = input_candidates_per_anchor[i];
-            }
-    
-            for(int i = tid; i < numAnchors + 1; i += stride){
-                output_candidates_per_anchor_prefixsum[i] = input_candidates_per_anchor_prefixsum[i];
-            }
-    
         }
     
         __global__ 
