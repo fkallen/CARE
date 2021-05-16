@@ -796,7 +796,8 @@ namespace gpu{
             currentOutput->editsPitchInBytes = editsPitchInBytes;
             currentOutput->decodedSequencePitchInBytes = decodedSequencePitchInBytes;
 
-            if(currentNumCandidates == 0){
+            if(currentNumCandidates == 0 || currentNumAnchors == 0){
+		std::cerr << "currentNumAnchors " << currentNumAnchors << ", currentNumCandidates " << currentNumCandidates << "\n";
                 currentOutput->nothingToDo = true;
                 return;
             }
