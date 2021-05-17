@@ -600,9 +600,6 @@ namespace gpu{
 
                     const size_t offsetForCorrectedCandidateData = currentOutput.h_num_corrected_candidates_per_anchor_prefixsum[anchor_index];
 
-                    const char* const my_corrected_candidates_data = currentOutput.h_corrected_candidates
-                                                    + offsetForCorrectedCandidateData * currentOutput.decodedSequencePitchInBytes;
-
                     const read_number candidate_read_id = currentOutput.h_candidate_read_ids[offsetForCorrectedCandidateData + candidateIndex];
                     const int candidate_shift = currentOutput.h_alignment_shifts[offsetForCorrectedCandidateData + candidateIndex];
 
@@ -626,9 +623,9 @@ namespace gpu{
                         std::copy_n(myEdits, numEdits, tmp.edits.begin());
                         tmp.useEdits = true;
                     }else{
-                        const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[offsetForCorrectedCandidateData + candidateIndex];
-                        const int candidate_length = currentOutput.h_candidate_sequences_lengths[offsetForCorrectedCandidateData + candidateIndex];
-                        const char* const candidate_data = my_corrected_candidates_data + correctionOffset * currentOutput.decodedSequencePitchInBytes;
+                        const int correctionOffset = currentOutput.h_correctedCandidatesOffsets[candidateIndex];
+                        const int candidate_length = currentOutput.h_candidate_sequences_lengths[candidateIndex];
+                        const char* const candidate_data = currentOutput.h_corrected_candidates + correctionOffset * currentOutput.decodedSequencePitchInBytes;
                         tmp.sequence.assign(candidate_data, candidate_length);
                         tmp.edits.clear();
                         tmp.useEdits = false;
