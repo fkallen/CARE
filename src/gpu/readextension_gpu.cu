@@ -1268,7 +1268,7 @@ extend_gpu_pairedend(
         auto batchData = std::make_unique<BatchData>();
 
         int minCoverageForExtension = 3;
-        int fixedStepsize = 20;
+        int fixedStepsize = -1;
 
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
@@ -1482,7 +1482,7 @@ extend_gpu_pairedend(
             progressThread.addProgress(batchData->numReadPairs - repeated);
         };
 
-        isLastIteration = true;
+        isLastIteration = false;
         while(!(readIdGenerator.empty())){
             init();
             if(batchData->state != BatchData::State::None){
@@ -1491,12 +1491,12 @@ extend_gpu_pairedend(
             }
         }
 
-        // constexpr int increment = 1;
-        // constexpr int limit = 13;
+        constexpr int increment = 1;
+        constexpr int limit = 10;
 
         // fixedStepsize -= 2;
-        // minCoverageForExtension += increment;
-        // std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        minCoverageForExtension += increment;
+        std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
         // while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
 
@@ -1515,23 +1515,22 @@ extend_gpu_pairedend(
         //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         // }
 
-        // while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit) || (fixedStepsize > 0))){
+        while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit))){
 
-        //     std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with minCoverageForExtension = " << minCoverageForExtension << ", fixedStepsize = " << fixedStepsize << "\n";
-        //     isLastIteration = (minCoverageForExtension + increment >= limit) && (fixedStepsize <= 0);
+            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with minCoverageForExtension = " << minCoverageForExtension << ", fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (minCoverageForExtension + increment >= limit);
 
-        //     while(pairsWhichShouldBeRepeated.size() > 0){
-        //         init();
-        //         if(batchData->state != BatchData::State::None){
-        //             gpuExtensionStepper.process(*batchData);
-        //             output();
-        //         }
-        //     }
+            while(pairsWhichShouldBeRepeated.size() > 0){
+                init();
+                if(batchData->state != BatchData::State::None){
+                    gpuExtensionStepper.process(*batchData);
+                    output();
+                }
+            }
 
-        //     minCoverageForExtension += increment;
-        //     fixedStepsize = -5;
-        //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
-        // }
+            minCoverageForExtension += increment;
+            std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        }
 
         //#pragma omp critical
         {
