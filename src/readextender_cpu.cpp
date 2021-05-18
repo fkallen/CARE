@@ -201,17 +201,17 @@ namespace care{
 
             msaTimer.stop();
 
-            for(int i = 0; i < int(tasks.size()); i++){
-                const auto& task = tasks[i];
+            // for(int i = 0; i < int(tasks.size()); i++){
+            //     const auto& task = tasks[i];
 
-                std::cerr << "i = " <<i << "\n";
-                std::cerr << "id " << task.id << "\n";
-                std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
-                std::cerr << "iteration " << task.iteration << "\n";
-                std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
-                std::cerr << "abort " << task.abort << "\n";
-                std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
-            }
+            //     std::cerr << "i = " <<i << "\n";
+            //     std::cerr << "id " << task.id << "\n";
+            //     std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
+            //     std::cerr << "iteration " << task.iteration << "\n";
+            //     std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
+            //     std::cerr << "abort " << task.abort << "\n";
+            //     std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
+            // }
 
             
 

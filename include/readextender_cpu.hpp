@@ -413,7 +413,7 @@ private:
             std::vector<bool> keepflags(size, true);
             int removed = 0;
             bool goodAlignmentExists = false;
-            float relativeOverlapThreshold = 0.9f;
+            float relativeOverlapThreshold = 0.0f;
 
             for(int c = 0; c < size; c++){
                 const BestAlignment_t alignmentFlag0 = task.alignmentFlags[c];
@@ -431,6 +431,9 @@ private:
                         }
                     }
                 }else{
+                    // if(task.candidateReadIds[c] == 22182866){
+                    //     std::cerr << "removed 22182866 in task id" << task.id << "\n";
+                    // }
                     keepflags[c] = false;
                     removed++;
                 }
@@ -445,6 +448,9 @@ private:
                             const float relativeOverlap = overlap / float(task.currentAnchorLength);                
 
                             if(!fgeq(relativeOverlap, relativeOverlapThreshold)){
+                                // if(task.candidateReadIds[c] == 22182866){
+                                //     std::cerr << "removed 22182866 in task id" << task.id << ". relativeOverlap = " << relativeOverlap << ", relativeOverlapThreshold = " << relativeOverlapThreshold << "\n";
+                                // }
                                 keepflags[c] = false;
                                 removed++;
                             }
@@ -455,6 +461,12 @@ private:
                 //NOOP.
                 //if no good alignment exists, no other candidate is removed. we will try to work with the not-so-good alignments
             }
+
+            // std::cerr << "candidates of task " << task.id << " before filter in iteration "<< task.iteration << ":\n";
+            // for(int i = 0; i < int(task.candidateReadIds.size()); i++){
+            //     std::cerr << task.candidateReadIds[i] << " ";
+            // }
+            // std::cerr << "\n";
 
             task.numRemainingCandidates = 0;
 
@@ -522,6 +534,12 @@ private:
                 task.abort = true;
                 task.abortReason = extension::AbortReason::NoPairedCandidatesAfterAlignment;
             }
+
+            // std::cerr << "candidates of task " << task.id << " after filter in iteration "<< task.iteration << ":\n";
+            // for(int i = 0; i < int(task.candidateReadIds.size()); i++){
+            //     std::cerr << task.candidateReadIds[i] << " ";
+            // }
+            // std::cerr << "\n";
 
         }
     }

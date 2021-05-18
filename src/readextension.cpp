@@ -81,7 +81,7 @@ extend_cpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(2);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 
     BackgroundThread outputThread(true);
 
@@ -340,6 +340,7 @@ extend_cpu_pairedend(
         };
         
 
+        isLastIteration = false;
         while(!(readIdGenerator.empty())){
             auto inputs = init();
 
