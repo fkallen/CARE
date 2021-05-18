@@ -1,3 +1,5 @@
+#if 0
+
 #include <readextenderbase.hpp>
 #include <cpu_alignment.hpp>
 
@@ -12,15 +14,15 @@
 
 namespace care{
 
-    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ExtendResult>& pairedEndDirectionResults,
+    std::vector<extension::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult>& pairedEndDirectionResults,
         int insertSize,
         int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
-        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
+        std::vector<extension::ExtendResult>& combinedResults = pairedEndDirectionResults;
 
         std::sort(
             combinedResults.begin(), 
@@ -67,12 +69,12 @@ namespace care{
                     const int xl = x->extendedRead.length();
                     const int yl = y->extendedRead.length();
 
-                    if((x->direction == ExtensionDirection::LR && y->direction == ExtensionDirection::RL)
-                            || (x->direction == ExtensionDirection::RL && y->direction == ExtensionDirection::LR)){
+                    if((x->direction == extension::ExtensionDirection::LR && y->direction == extension::ExtensionDirection::RL)
+                            || (x->direction == extension::ExtensionDirection::RL && y->direction == extension::ExtensionDirection::LR)){
                         if(xl + yl >= insertSize - insertSizeStddev + minimumOverlap){
 
                             //put direction LR first
-                            if(x->direction == ExtensionDirection::LR){
+                            if(x->direction == extension::ExtensionDirection::LR){
                                 //pairsToCheck.emplace_back(*x, *y);
                                 pairPositionsToCheck.emplace_back(std::distance(begin, x), std::distance(begin,y));
                             }else{
@@ -101,8 +103,8 @@ namespace care{
 
                 const auto& lr = *iteratorLR;
                 const auto& rl = *iteratorRL;
-                assert(lr.direction == ExtensionDirection::LR);
-                assert(rl.direction == ExtensionDirection::RL);
+                assert(lr.direction == extension::ExtensionDirection::LR);
+                assert(rl.direction == extension::ExtensionDirection::RL);
 
                 std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
                 SequenceHelpers::reverseComplementSequenceDecodedInplace(revcRLSeq.data(), revcRLSeq.size());
@@ -147,12 +149,12 @@ namespace care{
 
                 auto iteratorLR = std::next(begin, pairPositionsToCheck[0].first);
 
-                ExtendResult extendResult;
-                extendResult.direction = ExtensionDirection::LR;
+                extension::ExtendResult extendResult;
+                extendResult.direction = extension::ExtensionDirection::LR;
                 extendResult.mateHasBeenFound = true;
                 extendResult.numIterations = -1;
                 extendResult.aborted = false;
-                extendResult.abortReason = AbortReason::None;
+                extendResult.abortReason = extension::AbortReason::None;
                 extendResult.readId1 = iteratorLR->readId1;;
                 extendResult.readId2 = iteratorLR->readId2;
                 extendResult.originalLength = iteratorLR->originalLength;
@@ -180,7 +182,7 @@ namespace care{
 
                 // auto longestResult = std::max_element(begin, end, lengthcomp);
 
-                // if(longestResult->direction == ExtensionDirection::RL){
+                // if(longestResult->direction == extension::ExtensionDirection::RL){
 
                 //     int extlength = longestResult->extendedRead.size();
 
@@ -214,7 +216,7 @@ namespace care{
             //return longest read
             auto longestResult = std::max_element(begin, end, lengthcomp);
 
-            if(longestResult->direction == ExtensionDirection::RL){
+            if(longestResult->direction == extension::ExtensionDirection::RL){
 
                 int extlength = longestResult->extendedRead.size();
 
@@ -252,7 +254,7 @@ namespace care{
 
             }else{
                 #if 0
-                    return std::optional<ExtendResult>{std::nullopt};
+                    return std::optional<extension::ExtendResult>{std::nullopt};
                 #else
                     #if 1                
                         MismatchRatioGlueDecider decider(40, 0.05f);
@@ -298,15 +300,15 @@ namespace care{
     }
 
 
-    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults2(
-        std::vector<ExtendResult>& pairedEndDirectionResults,
+    std::vector<extension::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults2(
+        std::vector<extension::ExtendResult>& pairedEndDirectionResults,
         int insertSize,
         int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         //auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
-        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
+        std::vector<extension::ExtendResult>& combinedResults = pairedEndDirectionResults;
 
         bool isSorted = std::is_sorted(
             combinedResults.begin(), 
@@ -358,15 +360,15 @@ namespace care{
 
 
 
-    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults4(
-        std::vector<ExtendResult>& pairedEndDirectionResults,
+    std::vector<extension::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults4(
+        std::vector<extension::ExtendResult>& pairedEndDirectionResults,
         int insertSize,
         int insertSizeStddev
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         //auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
 
-        std::vector<ExtendResult>& combinedResults = pairedEndDirectionResults;
+        std::vector<extension::ExtendResult>& combinedResults = pairedEndDirectionResults;
 
         bool isSorted = std::is_sorted(
             combinedResults.begin(), 
@@ -576,16 +578,16 @@ namespace care{
 
 
 
-    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ExtendResult>& pairedEndDirectionResults
+    std::vector<extension::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult>& pairedEndDirectionResults
     ){
         return combinePairedEndDirectionResults(pairedEndDirectionResults, insertSize, insertSizeStddev);
     }
 
 
-    std::vector<ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
-        std::vector<ExtendResult>& resultsLR,
-        std::vector<ExtendResult>& resultsRL
+    std::vector<extension::ExtendResult> ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult>& resultsLR,
+        std::vector<extension::ExtendResult>& resultsRL
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.getReadPairId() < r.getReadPairId();};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
@@ -596,7 +598,7 @@ namespace care{
 
         std::sort(resultsRL.begin(), resultsRL.end(), idcomp);
 
-        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+        std::vector<extension::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
 
         std::merge(
             resultsLR.begin(), resultsLR.end(), 
@@ -606,7 +608,7 @@ namespace care{
         );
 
         #else
-        std::vector<ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
+        std::vector<extension::ExtendResult> combinedResults(resultsLR.size() +  resultsRL.size());
         auto itertmp = std::copy(
             std::make_move_iterator(resultsLR.begin()), std::make_move_iterator(resultsLR.end()), 
             combinedResults.begin()
@@ -652,7 +654,7 @@ namespace care{
             assert(std::distance(begin, end) > 0);
 
             //TODO optimization: store pairs of indices to results
-            //std::vector<std::pair<ExtendResult, ExtendResult>> pairsToCheck;
+            //std::vector<std::pair<extension::ExtendResult, extension::ExtendResult>> pairsToCheck;
             std::vector<std::pair<int, int>> pairPositionsToCheck;
 
             constexpr int minimumOverlap = 40;
@@ -663,12 +665,12 @@ namespace care{
                     const int xl = x->extendedRead.length();
                     const int yl = y->extendedRead.length();
 
-                    if((x->direction == ExtensionDirection::LR && y->direction == ExtensionDirection::RL)
-                            || (x->direction == ExtensionDirection::RL && y->direction == ExtensionDirection::LR)){
+                    if((x->direction == extension::ExtensionDirection::LR && y->direction == extension::ExtensionDirection::RL)
+                            || (x->direction == extension::ExtensionDirection::RL && y->direction == extension::ExtensionDirection::LR)){
                         if(xl + yl >= insertSize - insertSizeStddev + minimumOverlap){
 
                             //put direction LR first
-                            if(x->direction == ExtensionDirection::LR){
+                            if(x->direction == extension::ExtensionDirection::LR){
                                 //pairsToCheck.emplace_back(*x, *y);
                                 pairPositionsToCheck.emplace_back(std::distance(begin, x), std::distance(begin,y));
                             }else{
@@ -692,8 +694,8 @@ namespace care{
 
                 const auto& lr = *iteratorLR;
                 const auto& rl = *iteratorRL;
-                assert(lr.direction == ExtensionDirection::LR);
-                assert(rl.direction == ExtensionDirection::RL);
+                assert(lr.direction == extension::ExtensionDirection::LR);
+                assert(rl.direction == extension::ExtensionDirection::RL);
 
                 std::string revcRLSeq(rl.extendedRead.begin(), rl.extendedRead.end());
                 SequenceHelpers::reverseComplementSequenceDecodedInplace(revcRLSeq.data(), revcRLSeq.size());
@@ -733,14 +735,14 @@ namespace care{
                 //     }
                 // }
 
-                ExtendResult er;
+                extension::ExtendResult er;
                 er.mateHasBeenFound = true;
                 er.success = true;
                 er.aborted = false;
                 er.numIterations = -1;
 
-                er.direction = ExtensionDirection::LR;
-                er.abortReason = AbortReason::None;
+                er.direction = extension::ExtensionDirection::LR;
+                er.abortReason = extension::AbortReason::None;
 
                 auto iteratorLR = std::next(begin, pairPositionsToCheck[0].first);
                 
@@ -831,8 +833,8 @@ namespace care{
 
     //int batchId = 0;
 
-    std::vector<ExtendResult> ReadExtenderBase::extendPairedReadBatch(
-        const std::vector<ExtendInput>& inputs
+    std::vector<extension::ExtendResult> ReadExtenderBase::extendPairedReadBatch(
+        const std::vector<extension::ExtendInput>& inputs
     ){
 
         #if 0
@@ -840,41 +842,41 @@ namespace care{
 
         //std::cerr << "Transform LR " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, extension::ExtensionDirection::LR);});
 
         //std::cerr << "Process LR " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsLR = processPairedEndTasks(std::move(tasks));
+        std::vector<extension::ExtendResult> extendResultsLR = processPairedEndTasks(std::move(tasks));
 
         std::vector<Task> tasks2(inputs.size());
 
         //std::cerr << "Transform RL " << batchId << "\n";
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makePairedEndTask(i, extension::ExtensionDirection::RL);});
 
         //std::cerr << "Process RL " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsRL = processPairedEndTasks(std::move(tasks2));
+        std::vector<extension::ExtendResult> extendResultsRL = processPairedEndTasks(std::move(tasks2));
 
         //std::cerr << "Combine " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
             extendResultsLR,
             extendResultsRL
         );
 
         #else
-        std::vector<Task> tasks(inputs.size() * 2);
+        std::vector<extension::Task> tasks(inputs.size() * 2);
 
         //std::cerr << "Transform LR " << batchId << "\n";
         auto itertmp = std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::LR);});
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), extension::ExtensionDirection::LR);});
 
         std::transform(inputs.begin(), inputs.end(), itertmp, 
-            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::RL);});
+            [this](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), extension::ExtensionDirection::RL);});
 
         //std::cerr << "Process LR " << batchId << "\n";
-        std::vector<ExtendResult> extendResults = processPairedEndTasks(std::move(tasks));
+        std::vector<extension::ExtendResult> extendResults = processPairedEndTasks(std::move(tasks));
 
         //std::cerr << "Combine " << batchId << "\n";
-        std::vector<ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult> extendResultsCombined = combinePairedEndDirectionResults(
             extendResults
         );
         #endif
@@ -885,7 +887,7 @@ namespace care{
         //     auto& comb = extendResultsCombined[i];
         //     const auto& input = inputs[i];
 
-        //     if(comb.direction == ExtensionDirection::LR){
+        //     if(comb.direction == extension::ExtensionDirection::LR){
         //         decode2BitSequence(
         //             comb.extendedRead.data(),
         //             input.encodedRead1,
@@ -944,10 +946,10 @@ namespace care{
 
 
 
-    std::vector<ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
-        std::vector<ExtendResult>& resultsLR,
-        std::vector<ExtendResult>& resultsRL,
-        const std::vector<ReadExtenderBase::Task>& tasks
+    std::vector<extension::ExtendResult> ReadExtenderBase::combineSingleEndDirectionResults(
+        std::vector<extension::ExtendResult>& resultsLR,
+        std::vector<extension::ExtendResult>& resultsRL,
+        const std::vector<extension::Task>& tasks
     ){
         auto idcomp = [](const auto& l, const auto& r){ return l.readId1 < r.readId1;};
         auto lengthcomp = [](const auto& l, const auto& r){ return l.extendedRead.length() < r.extendedRead.length();};
@@ -986,7 +988,7 @@ namespace care{
 
         assert(remainingLR == remainingRL);
 
-        std::vector<ExtendResult> combinedResults(remainingRL);
+        std::vector<extension::ExtendResult> combinedResults(remainingRL);
 
         for(int i = 0; i < remainingRL; i++){
             auto& comb = combinedResults[i];
@@ -1017,20 +1019,20 @@ namespace care{
         return combinedResults;
     }
 
-    std::vector<ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
-        const std::vector<ExtendInput>& inputs
+    std::vector<extension::ExtendResult> ReadExtenderBase::extendSingleEndReadBatch(
+        const std::vector<extension::ExtendInput>& inputs
     ){
 
-        std::vector<Task> tasks(inputs.size());
+        std::vector<extension::Task> tasks(inputs.size());
 
         std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::LR);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, extension::ExtensionDirection::LR);});
 
-        std::vector<ExtendResult> extendResultsLR = processSingleEndTasks(tasks);
+        std::vector<extension::ExtendResult> extendResultsLR = processSingleEndTasks(tasks);
 
-        std::vector<Task> tasks2(inputs.size());
+        std::vector<extension::Task> tasks2(inputs.size());
         std::transform(inputs.begin(), inputs.end(), tasks2.begin(), 
-            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, ExtensionDirection::RL);});
+            [this](const auto& i){return ReadExtenderBase::makeSingleEndTask(i, extension::ExtensionDirection::RL);});
 
         //make sure candidates which were used in LR direction cannot be used again in RL direction
 
@@ -1038,9 +1040,9 @@ namespace care{
             tasks2[i].allUsedCandidateReadIdPairs = std::move(tasks[i].allUsedCandidateReadIdPairs);
         }
 
-        std::vector<ExtendResult> extendResultsRL = processSingleEndTasks(std::move(tasks2));
+        std::vector<extension::ExtendResult> extendResultsRL = processSingleEndTasks(std::move(tasks2));
 
-        std::vector<ExtendResult> extendResultsCombined = combineSingleEndDirectionResults(
+        std::vector<extension::ExtendResult> extendResultsCombined = combineSingleEndDirectionResults(
             extendResultsLR,
             extendResultsRL,
             tasks
@@ -1050,3 +1052,5 @@ namespace care{
     }
 
 }
+
+#endif

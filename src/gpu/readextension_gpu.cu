@@ -30,6 +30,7 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
+#include <readextender_common.hpp>
 
 #include <omp.h>
 #include <cub/cub.cuh>
@@ -51,10 +52,10 @@ void initializePairedEndExtensionBatchData(
 
     //std::cerr << "Transform LR " << batchId << "\n";
     auto itertmp = std::transform(inputs.begin(), inputs.end(), tasks.begin(), 
-        [](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::LR);});
+        [](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), extension::ExtensionDirection::LR);});
 
     std::transform(inputs.begin(), inputs.end(), itertmp, 
-        [](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), ExtensionDirection::RL);});
+        [](auto&& i){return ReadExtenderBase::makePairedEndTask(std::move(i), extension::ExtensionDirection::RL);});
 
     batchData.init(
         std::move(tasks), 
@@ -67,7 +68,7 @@ void initializePairedEndExtensionBatchData(
 
 void initializePairedEndExtensionBatchData2(
     BatchData& batchData,
-    const std::vector<ExtendInput>& inputs,
+    const std::vector<extension::ExtendInput>& inputs,
     std::size_t encodedSequencePitchInInts, 
     std::size_t decodedSequencePitchInBytes, 
     std::size_t msaColumnPitchInElements,
@@ -89,7 +90,7 @@ void initializePairedEndExtensionBatchData2(
         taskl.reset();
 
         taskl.pairedEnd = true;
-        taskl.direction = ExtensionDirection::LR;      
+        taskl.direction = extension::ExtensionDirection::LR;      
         taskl.currentAnchor = std::move(input.encodedRead1);
         taskl.encodedMate = std::move(input.encodedRead2);
         taskl.currentAnchorLength = input.readLength1;
@@ -125,7 +126,7 @@ void initializePairedEndExtensionBatchData2(
         taskr.reset();
 
         taskr.pairedEnd = true;
-        taskr.direction = ExtensionDirection::RL;
+        taskr.direction = extension::ExtensionDirection::RL;
         taskr.currentAnchor = taskl.encodedMate;
         taskr.encodedMate = taskl.currentAnchor;
 
@@ -170,7 +171,7 @@ void initializePairedEndExtensionBatchData2(
 
 void initializePairedEndExtensionBatchData4(
     BatchData& batchData,
-    const std::vector<ExtendInput>& inputs,
+    const std::vector<extension::ExtendInput>& inputs,
     std::size_t encodedSequencePitchInInts, 
     std::size_t decodedSequencePitchInBytes, 
     std::size_t msaColumnPitchInElements,
@@ -185,130 +186,9 @@ void initializePairedEndExtensionBatchData4(
 
     batchData.tasks.resize(batchsizePairs * 4);
 
-    for(int i = 0; i < batchsizePairs; i++){
-        const auto& input = inputs[i];
+    auto endIter = makePairedEndTasksFromInput4(inputs.begin(), inputs.end(), batchData.tasks.begin());
+    assert(endIter == batchData.tasks.end());
 
-        /*
-            5-3 input.encodedRead1 --->
-            3-5                           <--- input.encodedRead2
-        */
-
-        std::vector<unsigned int> enc1_53 = std::move(input.encodedRead1);
-        std::vector<unsigned int> enc2_35 = std::move(input.encodedRead2);
-
-        std::vector<unsigned int> enc1_35(enc1_53);
-        SequenceHelpers::reverseComplementSequenceInplace2Bit(enc1_35.data(), input.readLength1);
-        std::vector<unsigned int> enc2_53(enc2_35);
-        SequenceHelpers::reverseComplementSequenceInplace2Bit(enc2_53.data(), input.readLength2);
-
-        std::string dec1_53 = SequenceHelpers::get2BitString(enc1_53.data(), input.readLength1);
-        std::string dec1_35 = SequenceHelpers::get2BitString(enc1_35.data(), input.readLength1);
-        std::string dec2_53 = SequenceHelpers::get2BitString(enc2_53.data(), input.readLength2);
-        std::string dec2_35 = SequenceHelpers::get2BitString(enc2_35.data(), input.readLength2);
-
-
-        //task1, extend encodedRead1 to the right on 5-3 strand
-        auto& task1 = batchData.tasks[4*i + 0];
-        task1.reset();
-
-        task1.pairedEnd = true;
-        task1.direction = ExtensionDirection::LR;      
-        task1.currentAnchor = enc1_53;
-        task1.encodedMate = enc2_35;
-        task1.currentAnchorLength = input.readLength1;
-        task1.currentAnchorReadId = input.readId1;
-        task1.myLength = input.readLength1;
-        task1.myReadId = input.readId1;
-        task1.mateLength = input.readLength2;
-        task1.mateReadId = input.readId2;
-        task1.decodedMate = dec2_35;
-        task1.decodedMateRevC = dec2_53;
-        task1.resultsequence = dec1_53;
-        task1.totalDecodedAnchors.emplace_back(task1.resultsequence);
-        task1.totalAnchorBeginInExtendedRead.emplace_back(0);
-
-        task1.currentQualityScores.insert(task1.currentQualityScores.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
-        task1.resultQualityScores = task1.currentQualityScores;
-        task1.totalAnchorQualityScores.emplace_back(task1.currentQualityScores);
-
-        task1.mateQualityScoresReversed.insert(task1.mateQualityScoresReversed.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
-        std::reverse(task1.mateQualityScoresReversed.begin(), task1.mateQualityScoresReversed.end());
-
-        auto& task2 = batchData.tasks[4*i + 1];
-        task2.reset();
-
-        task2.pairedEnd = false;
-        task2.direction = ExtensionDirection::LR;      
-        task2.currentAnchor = enc2_53;
-        //task2.encodedMate
-        task2.currentAnchorLength = input.readLength2;
-        task2.currentAnchorReadId = input.readId2;
-        task2.myLength = input.readLength2;
-        task2.myReadId = input.readId2;
-        task2.mateLength = 0;
-        task2.mateReadId = std::numeric_limits<read_number>::max();
-        //task2.decodedMate
-        //task2.decodedMateRevC
-        task2.resultsequence = dec2_53;
-        task2.totalDecodedAnchors.emplace_back(task2.resultsequence);
-        task2.totalAnchorBeginInExtendedRead.emplace_back(0);
-
-        task2.currentQualityScores.insert(task2.currentQualityScores.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
-        std::reverse(task2.currentQualityScores.begin(), task2.currentQualityScores.end());
-        task2.resultQualityScores = task2.currentQualityScores;
-        task2.totalAnchorQualityScores.emplace_back(task2.currentQualityScores);
-
-        auto& task3 = batchData.tasks[4*i + 2];
-        task3.reset();
-
-        task3.pairedEnd = true;
-        task3.direction = ExtensionDirection::RL;      
-        task3.currentAnchor = enc2_35;
-        task3.encodedMate = enc1_53;
-        task3.currentAnchorLength = input.readLength2;
-        task3.currentAnchorReadId = input.readId2;
-        task3.myLength = input.readLength2;
-        task3.myReadId = input.readId2;
-        task3.mateLength = input.readLength1;
-        task3.mateReadId = input.readId1;
-        task3.decodedMate = dec1_53;
-        task3.decodedMateRevC = dec1_35;
-        task3.resultsequence = dec2_35;
-        task3.totalDecodedAnchors.emplace_back(task3.resultsequence);
-        task3.totalAnchorBeginInExtendedRead.emplace_back(0);
-
-        task3.currentQualityScores.insert(task3.currentQualityScores.begin(), input.qualityScores2.begin(), input.qualityScores2.end());
-        task3.resultQualityScores = task3.currentQualityScores;
-        task3.totalAnchorQualityScores.emplace_back(task3.currentQualityScores);
-
-        task3.mateQualityScoresReversed.insert(task3.mateQualityScoresReversed.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
-        std::reverse(task3.mateQualityScoresReversed.begin(), task3.mateQualityScoresReversed.end());
-
-        auto& task4 = batchData.tasks[4*i + 3];
-        task4.reset();
-
-        task4.pairedEnd = false;
-        task4.direction = ExtensionDirection::RL;      
-        task4.currentAnchor = enc1_35;
-        //task4.encodedMate
-        task4.currentAnchorLength = input.readLength1;
-        task4.currentAnchorReadId = input.readId1;
-        task4.myLength = input.readLength1;
-        task4.myReadId = input.readId1;
-        task4.mateLength = 0;
-        task4.mateReadId = std::numeric_limits<read_number>::max();
-        //task4.decodedMate = dec1_53;
-        //task4.decodedMateRevC = dec1_35;
-        task4.resultsequence = dec1_35;
-        task4.totalDecodedAnchors.emplace_back(task4.resultsequence);
-        task4.totalAnchorBeginInExtendedRead.emplace_back(0);
-
-        task4.currentQualityScores.insert(task4.currentQualityScores.begin(), input.qualityScores1.begin(), input.qualityScores1.end());
-        std::reverse(task4.currentQualityScores.begin(), task4.currentQualityScores.end());
-        task4.resultQualityScores = task4.currentQualityScores;
-        task4.totalAnchorQualityScores.emplace_back(task4.currentQualityScores);
-
-    }
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
@@ -396,7 +276,7 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    cpu::RangeGenerator<read_number> readIdGenerator(2);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -1268,7 +1148,7 @@ extend_gpu_pairedend(
         auto batchData = std::make_unique<BatchData>();
 
         int minCoverageForExtension = 3;
-        int fixedStepsize = -1;
+        int fixedStepsize = 20;
 
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
@@ -1347,7 +1227,7 @@ extend_gpu_pairedend(
 
                 const int numReadPairsInBatch = numReadsInBatch / 2;
 
-                std::vector<ExtendInput> inputs(numReadPairsInBatch); 
+                std::vector<extension::ExtendInput> inputs(numReadPairsInBatch); 
 
                 for(int i = 0; i < numReadPairsInBatch; i++){
                     auto& input = inputs[i];
@@ -1404,7 +1284,7 @@ extend_gpu_pairedend(
 
         auto output = [&](){
             nvtx::push_range("output", 5);
-            std::vector<ExtendResult> extensionResults = gpuExtensionStepper.constructResults(*batchData);
+            std::vector<extension::ExtendResult> extensionResults = gpuExtensionStepper.constructResults(*batchData);
 
             const int numresults = extensionResults.size();
 
@@ -1443,11 +1323,11 @@ extend_gpu_pairedend(
                         er.status = ExtendedReadStatus::FoundMate;
                     }else{
                         if(extensionOutput.aborted){
-                            if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
-                                    || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+                            if(extensionOutput.abortReason == extension::AbortReason::NoPairedCandidates
+                                    || extensionOutput.abortReason == extension::AbortReason::NoPairedCandidatesAfterAlignment){
 
                                 er.status = ExtendedReadStatus::CandidateAbort;
-                            }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
+                            }else if(extensionOutput.abortReason == extension::AbortReason::MsaNotExtended){
                                 er.status = ExtendedReadStatus::MSANoExtension;
                             }
                         }else{
@@ -1491,34 +1371,17 @@ extend_gpu_pairedend(
             }
         }
 
-        constexpr int increment = 1;
-        constexpr int limit = 10;
+        // constexpr int increment = 1;
+        // constexpr int limit = 10;
 
-        // fixedStepsize -= 2;
-        minCoverageForExtension += increment;
+        fixedStepsize -= 2;
+        //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
-        // while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+        while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
 
-        //     //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-        //     isLastIteration = (fixedStepsize <= 2);
-
-        //     while(pairsWhichShouldBeRepeated.size() > 0){
-        //         init();
-        //         if(batchData->state != BatchData::State::None){
-        //             gpuExtensionStepper.process(*batchData);
-        //             output();
-        //         }
-        //     }
-
-        //     fixedStepsize -= 2;
-        //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
-        // }
-
-        while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit))){
-
-            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with minCoverageForExtension = " << minCoverageForExtension << ", fixedStepsize = " << fixedStepsize << "\n";
-            isLastIteration = (minCoverageForExtension + increment >= limit);
+            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (fixedStepsize <= 2);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
                 init();
@@ -1528,9 +1391,26 @@ extend_gpu_pairedend(
                 }
             }
 
-            minCoverageForExtension += increment;
+            fixedStepsize -= 2;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
+
+        // while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit))){
+
+        //     //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with minCoverageForExtension = " << minCoverageForExtension << ", fixedStepsize = " << fixedStepsize << "\n";
+        //     isLastIteration = (minCoverageForExtension + increment >= limit);
+
+        //     while(pairsWhichShouldBeRepeated.size() > 0){
+        //         init();
+        //         if(batchData->state != BatchData::State::None){
+        //             gpuExtensionStepper.process(*batchData);
+        //             output();
+        //         }
+        //     }
+
+        //     minCoverageForExtension += increment;
+        //     std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+        // }
 
         //#pragma omp critical
         {

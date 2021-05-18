@@ -15,6 +15,8 @@
 #include <hostdevicefunctions.cuh>
 #include <util.hpp>
 
+#include <readextender_common.hpp>
+
 #include <algorithm>
 #include <vector>
 #include <numeric>
@@ -543,7 +545,7 @@ struct BatchData{
     PinnedBuffer<int> h_scatterMap;
 
     PinnedBuffer<int> h_accumExtensionsLengths;
-    PinnedBuffer<AbortReason> h_abortReasons;
+    PinnedBuffer<extension::AbortReason> h_abortReasons;
     PinnedBuffer<char> h_outputAnchors;
     PinnedBuffer<char> h_outputAnchorQualities;
     PinnedBuffer<int> h_outputAnchorLengths;
@@ -554,7 +556,7 @@ struct BatchData{
     std::array<CudaEvent, 1> events{};
     std::array<CudaStream, 4> streams{};
     std::vector<int> indicesOfActiveTasks{};
-    std::vector<ReadExtenderBase::Task> tasks;
+    std::vector<extension::Task> tasks;
 
 };
 
@@ -1203,7 +1205,7 @@ public:
 
         //     if(task.numRemainingCandidates == 0){
         //         task.abort = true;
-        //         task.abortReason = AbortReason::NoPairedCandidatesAfterAlignment;
+        //         task.abortReason = extension::AbortReason::NoPairedCandidatesAfterAlignment;
         //     }
         // }
 
@@ -1221,7 +1223,7 @@ public:
             task.numRemainingCandidates = batchData.h_numCandidatesPerAnchor[i];
 
             task.abortReason = batchData.h_abortReasons[i];
-            if(task.abortReason == AbortReason::None){
+            if(task.abortReason == extension::AbortReason::None){
                 task.mateHasBeenFound = batchData.h_outputMateHasBeenFound[i];
 
                 if(!task.mateHasBeenFound){
@@ -1264,7 +1266,7 @@ public:
                 }
             }
 
-            task.abort = task.abortReason != AbortReason::None;
+            task.abort = task.abortReason != extension::AbortReason::None;
         }
 
         nvtx::pop_range();
@@ -1280,7 +1282,7 @@ public:
         //     }
         //     assert(task.numRemainingCandidates > 0);
 
-        //     if(task.abortReason == AbortReason::None){
+        //     if(task.abortReason == extension::AbortReason::None){
         //         if(!task.mateHasBeenFound){
         //             const int numInts = SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength);
         //             task.currentAnchor.resize(numInts);
@@ -1307,32 +1309,45 @@ public:
             assert(indexOfActiveTask % 4 == whichtype);
 
             if(whichtype == 0){
-                assert(task.direction == ExtensionDirection::LR);
+                assert(task.direction == extension::ExtensionDirection::LR);
                 assert(task.pairedEnd == true);
 
                 if(task.mateHasBeenFound){                    
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                     batchData.tasks[indexOfActiveTask + 3].abort = true;
-                    batchData.tasks[indexOfActiveTask + 3].abortReason = AbortReason::OtherStrandFoundMate;
+                    batchData.tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
                 }else if(task.abort){
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                 }
             }else if(whichtype == 2){
-                assert(task.direction == ExtensionDirection::RL);
+                assert(task.direction == extension::ExtensionDirection::RL);
                 assert(task.pairedEnd == true);
 
                 if(task.mateHasBeenFound){                    
                     batchData.tasks[indexOfActiveTask - 1].abort = true;
-                    batchData.tasks[indexOfActiveTask - 1].abortReason = AbortReason::OtherStrandFoundMate;
+                    batchData.tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                 }else if(task.abort){
                     batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = AbortReason::PairedAnchorFinished;
+                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                 }
             }
+        }
+
+
+        for(int i = 0; i < int(batchData.tasks.size()); i++){
+            const auto& task = batchData.tasks[i];
+
+            std::cerr << "i = " <<i << "\n";
+            std::cerr << "id " << task.id << "\n";
+            std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
+            std::cerr << "iteration " << task.iteration << "\n";
+            std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
+            std::cerr << "abort " << task.abort << "\n";
+            std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
         }
 
 
@@ -1390,13 +1405,13 @@ public:
     }
 
 
-    std::vector<ExtendResult> constructResults(BatchData& batchData) const{
-        std::vector<ExtendResult> extendResults;
+    std::vector<extension::ExtendResult> constructResults(BatchData& batchData) const{
+        std::vector<extension::ExtendResult> extendResults;
         extendResults.reserve(batchData.tasks.size());
 
         for(const auto& task : batchData.tasks){
 
-            ExtendResult extendResult;
+            extension::ExtendResult extendResult;
             extendResult.direction = task.direction;
             extendResult.numIterations = task.iteration;
             extendResult.aborted = task.abort;
@@ -1550,7 +1565,7 @@ public:
 
         #if 0
 
-        std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
+        std::vector<extension::ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults(
             extendResults,
             insertSize,
             insertSizeStddev
@@ -1558,7 +1573,7 @@ public:
 
         #else
 
-        std::vector<ExtendResult> extendResultsCombined = ReadExtenderBase::combinePairedEndDirectionResults4(
+        std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
             extendResults,
             insertSize,
             insertSizeStddev
@@ -3576,7 +3591,7 @@ public:
 
         int* d_accumExtensionsLengths = nullptr;
         int* d_inputMateLengths = nullptr;
-        AbortReason* d_abortReasons = nullptr;
+        extension::AbortReason* d_abortReasons = nullptr;
         int* d_accumExtensionsLengthsOUT = nullptr;
         char* d_outputAnchors = nullptr;
         char* d_outputAnchorQualities = nullptr;
@@ -3588,7 +3603,7 @@ public:
 
         cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_inputMateLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
-        cubAllocator->DeviceAllocate((void**)&d_abortReasons, sizeof(AbortReason) * batchData.numTasks, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_abortReasons, sizeof(extension::AbortReason) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengthsOUT, sizeof(int) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_outputAnchors, sizeof(char) * batchData.numTasks * batchData.outputAnchorPitchInBytes, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_outputAnchorQualities, sizeof(char) * batchData.numTasks * batchData.outputAnchorQualityPitchInBytes, stream); CUERR;
@@ -3601,12 +3616,12 @@ public:
 
 
         helpers::call_fill_kernel_async(d_outputMateHasBeenFound, batchData.numTasks, false, stream); CUERR;
-        helpers::call_fill_kernel_async(d_abortReasons, batchData.numTasks, AbortReason::None, stream); CUERR;
+        helpers::call_fill_kernel_async(d_abortReasons, batchData.numTasks, extension::AbortReason::None, stream); CUERR;
 
         // helpers::call_fill_kernel_async(
         //     thrust::make_zip_iterator(thrust::make_tuple(d_outputMateHasBeenFound, d_abortReasons)),
         //     batchData.numTasks,
-        //     thrust::make_tuple(false, AbortReason::None),
+        //     thrust::make_tuple(false, extension::AbortReason::None),
         //     stream
         // );
 
@@ -3710,7 +3725,7 @@ public:
                 d_anchorSequencesLength = batchData.d_anchorSequencesLength.data(),
                 d_accumExtensionsLengths = (int*)d_accumExtensionsLengths,
                 d_inputMateLengths = (int*)d_inputMateLengths,
-                d_abortReasons = (AbortReason*)d_abortReasons,
+                d_abortReasons = (extension::AbortReason*)d_abortReasons,
                 d_accumExtensionsLengthsOUT = (int*)d_accumExtensionsLengthsOUT,
                 d_outputAnchors = (char*)d_outputAnchors,
                 outputAnchorPitchInBytes = batchData.outputAnchorPitchInBytes,
@@ -3770,7 +3785,7 @@ public:
                         const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
                         const char* const decodedMateRevC = d_decodedMatesRevC + t * decodedMatesRevCPitchInBytes;
 
-                        AbortReason* const abortReasonPtr = d_abortReasons + t;
+                        extension::AbortReason* const abortReasonPtr = d_abortReasons + t;
                         char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
                         char* const outputAnchorQuality = d_outputAnchorQualities + t * outputAnchorQualityPitchInBytes;
                         int* const outputAnchorLengthPtr = d_outputAnchorLengths + t;
@@ -3810,7 +3825,7 @@ public:
                         auto makeAnchorForNextIteration = [&](){
                             if(extendBy == 0){
                                 if(threadIdx.x == 0){
-                                    *abortReasonPtr = AbortReason::MsaNotExtended;
+                                    *abortReasonPtr = extension::AbortReason::MsaNotExtended;
                                 }
                             }else{
                                 if(threadIdx.x == 0){
@@ -3918,7 +3933,7 @@ public:
 
                     }else{ //numCandidates == 0
                         if(threadIdx.x == 0){
-                            d_abortReasons[t] = AbortReason::NoPairedCandidatesAfterAlignment;
+                            d_abortReasons[t] = extension::AbortReason::NoPairedCandidatesAfterAlignment;
                         }
                     }
                 }

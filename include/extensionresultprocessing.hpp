@@ -235,14 +235,14 @@ namespace care{
 
     struct ExtendedRead{
 
-        ExtendedReadStatus status;
-        read_number readId;
+        ExtendedReadStatus status{};
+        read_number readId{};
         int read1begin = 0;
         int read1end = 0;
         int read2begin = 0;
         int read2end = 0;
-        std::string extendedSequence;
-        std::string qualityScores;
+        std::string extendedSequence{};
+        std::string qualityScores{};
 
         ExtendedRead() = default;
 
