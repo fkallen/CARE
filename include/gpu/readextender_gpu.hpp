@@ -1338,17 +1338,17 @@ public:
         }
 
 
-        for(int i = 0; i < int(batchData.tasks.size()); i++){
-            const auto& task = batchData.tasks[i];
+        // for(int i = 0; i < int(batchData.tasks.size()); i++){
+        //     const auto& task = batchData.tasks[i];
 
-            std::cerr << "i = " <<i << "\n";
-            std::cerr << "id " << task.id << "\n";
-            std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
-            std::cerr << "iteration " << task.iteration << "\n";
-            std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
-            std::cerr << "abort " << task.abort << "\n";
-            std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
-        }
+        //     std::cerr << "i = " <<i << "\n";
+        //     std::cerr << "id " << task.id << "\n";
+        //     std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
+        //     std::cerr << "iteration " << task.iteration << "\n";
+        //     std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
+        //     std::cerr << "abort " << task.abort << "\n";
+        //     std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
+        // }
 
 
         /*
@@ -2781,6 +2781,34 @@ public:
 
     void filterAlignments(BatchData& batchData, cudaStream_t stream) const{
 
+        // {
+        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     std::vector<read_number> ids(batchData.d_candidateReadIds.size());
+        //     std::vector<int> nums(batchData.d_numCandidatesPerAnchor.size());
+        //     std::vector<int> offsets(batchData.d_numCandidatesPerAnchorPrefixSum.size());
+
+        //     cudaMemcpyAsync(ids.data(), batchData.d_candidateReadIds.data(), batchData.d_candidateReadIds.sizeInBytes(), D2H, stream); CUERR;
+        //     cudaMemcpyAsync(nums.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
+        //     cudaMemcpyAsync(offsets.data(), batchData.d_numCandidatesPerAnchorPrefixSum.data(), batchData.d_numCandidatesPerAnchorPrefixSum.sizeInBytes(), D2H, stream); CUERR;
+
+        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+
+        //     std::cerr << "candidates before:\n";
+        //     for(int i = 0; i < batchData.numTasks; i++){
+        //         std::cerr << "i = " << i << ", taskIndex " << batchData.indicesOfActiveTasks[i] << "\n";
+        //         const int num = nums[i];
+        //         const int offset = offsets[i];
+        //         const auto* myIds = ids.data() + offset;
+
+        //         for(int k = 0; k < num; k++){
+        //             std::cerr << myIds[k] << " ";
+        //         }
+
+        //         std::cerr << "\n";
+        //     }
+        // }
+
+
         const int totalNumCandidates = batchData.totalNumCandidates;
         const int numAnchors = batchData.numTasks;
 
@@ -3171,6 +3199,34 @@ public:
         cubAllocator->DeviceFree(d_candidateSequencesLength2); CUERR;
         cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
         cubAllocator->DeviceFree(d_isPairedCandidate2); CUERR;
+
+
+        // {
+        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     std::vector<read_number> ids(batchData.d_candidateReadIds.size());
+        //     std::vector<int> nums(batchData.d_numCandidatesPerAnchor.size());
+        //     std::vector<int> offsets(batchData.d_numCandidatesPerAnchorPrefixSum.size());
+
+        //     cudaMemcpyAsync(ids.data(), batchData.d_candidateReadIds.data(), batchData.d_candidateReadIds.sizeInBytes(), D2H, stream); CUERR;
+        //     cudaMemcpyAsync(nums.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
+        //     cudaMemcpyAsync(offsets.data(), batchData.d_numCandidatesPerAnchorPrefixSum.data(), batchData.d_numCandidatesPerAnchorPrefixSum.sizeInBytes(), D2H, stream); CUERR;
+
+        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+
+        //     std::cerr << "candidates after:\n";
+        //     for(int i = 0; i < batchData.numTasks; i++){
+        //         std::cerr << "i = " << i << ", taskIndex " << batchData.indicesOfActiveTasks[i] << "\n";
+        //         const int num = nums[i];
+        //         const int offset = offsets[i];
+        //         const auto* myIds = ids.data() + offset;
+
+        //         for(int k = 0; k < num; k++){
+        //             std::cerr << myIds[k] << " ";
+        //         }
+
+        //         std::cerr << "\n";
+        //     }
+        // }
     }
 
     void loadCandidateQualityScores(BatchData& batchData, cudaStream_t stream, char* d_qualityscores) const{
