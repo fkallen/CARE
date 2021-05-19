@@ -205,6 +205,13 @@ private:
     void computePairFlags(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
         const int numTasks = indicesOfActiveTasks.size();
 
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            task.isPairedCandidate.resize(task.candidateReadIds.size());
+            std::fill(task.isPairedCandidate.begin(), task.isPairedCandidate.end(), false);
+        }
+
         for(int first = 0, second = 1; second < numTasks; ){
             const int taskindex1 = indicesOfActiveTasks[first];
             const int taskindex2 = indicesOfActiveTasks[second];
@@ -212,13 +219,8 @@ private:
             const bool areConsecutiveTasks = tasks[taskindex1].id + 1 == tasks[taskindex2].id;
             const bool arePairedTasks = (tasks[taskindex1].id % 2) + 1 == (tasks[taskindex2].id % 2);
 
-            tasks[taskindex1].isPairedCandidate.resize(tasks[taskindex1].candidateReadIds.size());
-
-            std::fill(tasks[taskindex1].isPairedCandidate.begin(), tasks[taskindex1].isPairedCandidate.end(), false);
-
-            tasks[taskindex2].isPairedCandidate.resize(tasks[taskindex2].candidateReadIds.size());
-
-            std::fill(tasks[taskindex2].isPairedCandidate.begin(), tasks[taskindex2].isPairedCandidate.end(), false);
+            assert(tasks[taskindex1].isPairedCandidate.size() ==  tasks[taskindex1].candidateReadIds.size());
+            assert(tasks[taskindex2].isPairedCandidate.size() ==  tasks[taskindex2].candidateReadIds.size());
 
             if(areConsecutiveTasks && arePairedTasks){
                 const int begin1 = 0;
@@ -243,6 +245,7 @@ private:
 
                 pairedPositions.erase(endIters.first, pairedPositions.end());
                 pairedPositions2.erase(endIters.second, pairedPositions2.end());
+                
                 for(auto i : pairedPositions){
                     tasks[taskindex1].isPairedCandidate[begin1 + i] = true;
                 }
@@ -254,6 +257,8 @@ private:
             }else{
                 first += 1; second += 1;
             }
+
+            
         }
     }
 
@@ -305,6 +310,8 @@ private:
                         task.candidateSequencesRevcData.data() + c * encodedSequencePitchInInts
                     );
 
+                    task.isPairedCandidate[c] = task.isPairedCandidate[index];
+
                     
                 }
 
@@ -324,6 +331,10 @@ private:
                 task.candidateSequencesRevcData.erase(
                     task.candidateSequencesRevcData.begin() + toKeep * encodedSequencePitchInInts, 
                     task.candidateSequencesRevcData.end()
+                );
+                task.isPairedCandidate.erase(
+                    task.isPairedCandidate.begin() + toKeep,
+                    task.isPairedCandidate.end()
                 );
 
                 task.mateRemovedFromCandidates = false;
@@ -431,9 +442,6 @@ private:
                         }
                     }
                 }else{
-                    // if(task.candidateReadIds[c] == 22182866){
-                    //     std::cerr << "removed 22182866 in task id" << task.id << "\n";
-                    // }
                     keepflags[c] = false;
                     removed++;
                 }
@@ -448,9 +456,6 @@ private:
                             const float relativeOverlap = overlap / float(task.currentAnchorLength);                
 
                             if(!fgeq(relativeOverlap, relativeOverlapThreshold)){
-                                // if(task.candidateReadIds[c] == 22182866){
-                                //     std::cerr << "removed 22182866 in task id" << task.id << ". relativeOverlap = " << relativeOverlap << ", relativeOverlapThreshold = " << relativeOverlapThreshold << "\n";
-                                // }
                                 keepflags[c] = false;
                                 removed++;
                             }
@@ -462,11 +467,6 @@ private:
                 //if no good alignment exists, no other candidate is removed. we will try to work with the not-so-good alignments
             }
 
-            // std::cerr << "candidates of task " << task.id << " before filter in iteration "<< task.iteration << ":\n";
-            // for(int i = 0; i < int(task.candidateReadIds.size()); i++){
-            //     std::cerr << task.candidateReadIds[i] << " ";
-            // }
-            // std::cerr << "\n";
 
             task.numRemainingCandidates = 0;
 
@@ -1113,11 +1113,11 @@ private:
     CpuMinhasher::QueryHandle minhashHandle;
     cpu::shd::CpuAlignmentHandle alignmentHandle;
 
-    helpers::CpuTimer hashTimer{};
-    helpers::CpuTimer collectTimer{};
-    helpers::CpuTimer alignmentTimer{};
-    helpers::CpuTimer alignmentFilterTimer{};
-    helpers::CpuTimer msaTimer{};
+    helpers::CpuTimer hashTimer{"hashtimer"};
+    helpers::CpuTimer collectTimer{"gathertimer"};
+    helpers::CpuTimer alignmentTimer{"alignmenttimer"};
+    helpers::CpuTimer alignmentFilterTimer{"filtertimer"};
+    helpers::CpuTimer msaTimer{"msatimer"};
 
 };
 
