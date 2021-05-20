@@ -69,13 +69,7 @@ public:
 
     virtual bool isPairedEnd() const = 0;
 
-    virtual void destroy() = 0;
-
-protected:
-    ReadStorageHandle constructHandle(int id) const{
-        return ReadStorageHandle{id};
-    }
-
+    //virtual void destroy() = 0;
 };
 
 

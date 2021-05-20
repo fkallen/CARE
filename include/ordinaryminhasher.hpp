@@ -345,7 +345,7 @@ namespace care{
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
-        void compact() override{
+        void compact() {
             const int num = minhashTables.size();
 
             for(int i = 0, l = 0; i < num; i++){
@@ -396,7 +396,7 @@ namespace care{
             return minhashTables.size();
         }
 
-        void destroy() override{
+        void destroy() {
             minhashTables.clear();
         }
 

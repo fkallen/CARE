@@ -20,8 +20,7 @@
 #include <cub/cub.cuh>
 
 #include <cooperative_groups.h>
-#include <gpu/gpucpureadstorageadapter.cuh>
-#include <gpu/gpucpuminhasheradapter.cuh>
+
 namespace cg = cooperative_groups;
 
 namespace care{

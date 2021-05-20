@@ -422,7 +422,7 @@ namespace gpu{
             handle = constructHandle(std::numeric_limits<int>::max());
         }
 
-        void compact(cudaStream_t stream = 0) override {
+        void compact(cudaStream_t stream = 0) {
             DeviceSwitcher ds(deviceId);
 
             std::size_t required_temp_bytes = 0;
@@ -475,7 +475,7 @@ namespace gpu{
             return gpuHashTables.size();
         }
 
-        void destroy() override{
+        void destroy(){
             DeviceSwitcher sd(getDeviceId());
             gpuHashTables.clear();
         }

@@ -140,7 +140,7 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after cpuminhasher");
 
-        CpuMinhasher* const cpuMinhasher = minhasherAndType.first.get();
+        CpuMinhasher* cpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -208,8 +208,9 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
-        cpuMinhasher->destroy();
-        cpuReadStorage->destroy();
+        minhasherAndType.first.reset();
+        cpuMinhasher = nullptr;        
+        cpuReadStorage.reset();
 
         //Merge corrected reads with input file to generate output file
 

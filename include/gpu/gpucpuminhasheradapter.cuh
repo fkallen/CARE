@@ -19,7 +19,9 @@ public:
 
 public:
 
-    GPUCPUMinhasherAdapter(GpuMinhasher& gpuMinhasher_, MinhasherHandle gpuHandle_, cudaStream_t stream_, cub::CachingDeviceAllocator& cubAllocator_)
+    GPUCPUMinhasherAdapter() = default;
+
+    GPUCPUMinhasherAdapter(const GpuMinhasher& gpuMinhasher_, MinhasherHandle gpuHandle_, cudaStream_t stream_, cub::CachingDeviceAllocator& cubAllocator_)
         : gpuHandle(gpuHandle_), gpuMinhasher(&gpuMinhasher_), stream(stream_), cubAllocator(&cubAllocator_){
 
     }
@@ -45,7 +47,7 @@ public: //inherited interface
     ) const override{
 
         unsigned int* d_sequenceData2Bit = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_sequenceData2Bit, encodedSequencePitchInInts * numSequences, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_sequenceData2Bit, sizeof(unsigned int) * encodedSequencePitchInInts * numSequences, stream); CUERR;
 
         int* d_sequenceLengths;
         cubAllocator->DeviceAllocate((void**)&d_sequenceLengths, sizeof(int) * numSequences, stream); CUERR;
@@ -56,7 +58,7 @@ public: //inherited interface
         cudaMemcpyAsync(
             d_sequenceData2Bit,
             h_sequenceData2Bit,
-            encodedSequencePitchInInts * numSequences,
+            sizeof(unsigned int) * encodedSequencePitchInInts * numSequences,
             H2D,
             stream
         ); CUERR;
@@ -170,10 +172,10 @@ public: //inherited interface
         cudaStreamSynchronize(stream); CUERR;
     }
 
-    void compact() override{
-        gpuMinhasher->compact(stream);
-        cudaStreamSynchronize(stream);
-    }
+    // void compact() override{
+    //     gpuMinhasher->compact(stream);
+    //     cudaStreamSynchronize(stream);
+    // }
 
     MemoryUsage getMemoryInfo() const noexcept override{
         return gpuMinhasher->getMemoryInfo();
@@ -191,13 +193,13 @@ public: //inherited interface
         return gpuMinhasher->getNumberOfMaps();
     }
 
-    void destroy() override{
-        gpuMinhasher->destroy();
-    }
+    // void destroy() override{
+    //     gpuMinhasher->destroy();
+    // }
 
 private:
     MinhasherHandle gpuHandle;
-    GpuMinhasher* gpuMinhasher;
+    const GpuMinhasher* gpuMinhasher;
     cudaStream_t stream;
     cub::CachingDeviceAllocator* cubAllocator;
 
