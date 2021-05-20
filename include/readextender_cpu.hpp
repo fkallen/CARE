@@ -50,10 +50,14 @@ public:
         qualityPitchInBytes(maximumSequenceLength_),
         correctionOptions(coropts),
         goodAlignmentProperties(gap),
-        minhashHandle{mh.makeQueryHandle()}{
+        minhashHandle{mh.makeMinhasherHandle()}{
 
         setActiveReadStorage(readStorage);
         setActiveMinhasher(minhasher);
+    }
+
+    ~ReadExtenderCpu(){
+        minhasher->destroyHandle(minhashHandle);
     }
 
     void printTimers(){
@@ -1454,7 +1458,7 @@ private:
     CorrectionOptions correctionOptions{};
     GoodAlignmentProperties goodAlignmentProperties{};
 
-    mutable CpuMinhasher::QueryHandle minhashHandle;
+    mutable MinhasherHandle minhashHandle;
     mutable cpu::shd::CpuAlignmentHandle alignmentHandle;
 
     mutable helpers::CpuTimer hashTimer{"hashtimer"};

@@ -80,8 +80,6 @@ namespace gpu{
 
     public:
         using Key = kmer_type;
-        using QueryHandle = GpuMinhasher::QueryHandle;
-
 
         SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
             : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey)
@@ -401,19 +399,19 @@ namespace gpu{
             }
         }
 
-        QueryHandle makeQueryHandle() const override {
+        MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
             cudaGetDevice(&data->deviceId); CUERR;
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            QueryHandle h = constructHandle(handleid);
+            MinhasherHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
         }
 
-        void destroyHandle(QueryHandle& handle) const override{
+        void destroyHandle(MinhasherHandle& handle) const override{
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -465,7 +463,7 @@ namespace gpu{
             return mem;
         }
 
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
             return getQueryDataFromHandle(handle)->getMemoryInfo();
         }
 
@@ -483,7 +481,7 @@ namespace gpu{
         }
 
         void determineNumValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -534,7 +532,7 @@ namespace gpu{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -1103,7 +1101,7 @@ private:
             return 0.8f;
         }
 
-        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();

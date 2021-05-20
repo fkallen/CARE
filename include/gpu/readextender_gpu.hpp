@@ -567,7 +567,11 @@ public:
     GpuReadHasher(
         const gpu::GpuMinhasher& mh
     ) : gpuMinhasher(&mh),
-        minhashHandle(gpuMinhasher->makeQueryHandle()) {
+        minhashHandle(gpuMinhasher->makeMinhasherHandle()) {
+    }
+
+    ~GpuReadHasher(){
+        gpuMinhasher->destroyHandle(minhashHandle);
     }
     
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const{
@@ -621,7 +625,7 @@ public:
     }
 
     const gpu::GpuMinhasher* gpuMinhasher{};
-    mutable gpu::GpuMinhasher::QueryHandle minhashHandle;
+    mutable MinhasherHandle minhashHandle;
 };
 
 

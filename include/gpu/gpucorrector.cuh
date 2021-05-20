@@ -232,7 +232,7 @@ namespace gpu{
             gpuReadStorage{&gpuReadStorage_},
             gpuMinhasher{&gpuMinhasher_},
             threadPool{threadPool_},
-            minhashHandle{gpuMinhasher->makeQueryHandle()},
+            minhashHandle{gpuMinhasher->makeMinhasherHandle()},
             readstorageHandle{gpuReadStorage->makeHandle()}
         {
             cudaGetDevice(&deviceId); CUERR;            
@@ -435,7 +435,7 @@ namespace gpu{
         ThreadPool* threadPool;
         ThreadPool::ParallelForHandle pforHandle;
         DistributedReadStorage::GatherHandleSequences anchorSequenceGatherHandle;
-        GpuMinhasher::QueryHandle minhashHandle;
+        MinhasherHandle minhashHandle;
         ReadStorageHandle readstorageHandle;
     };
 
