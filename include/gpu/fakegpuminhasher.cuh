@@ -355,7 +355,7 @@ namespace gpu{
         #undef FAKEGPUMINHASHER_RUN_ON_GPU
         #endif
 
-        void compact(cudaStream_t stream) override{
+        void compact(cudaStream_t stream) {
             int id;
             cudaGetDevice(&id); CUERR;
 
@@ -408,7 +408,7 @@ namespace gpu{
             return minhashTables.size();
         }
 
-        void destroy() override{
+        void destroy() {
             minhashTables.clear();
         }
 

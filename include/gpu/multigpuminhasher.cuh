@@ -592,7 +592,7 @@ namespace gpu{
             }
         }
 
-        void compact(cudaStream_t stream = 0) override{
+        void compact(cudaStream_t stream = 0) {
             for(auto& minhasher : sgpuMinhashers){
                 DeviceSwitcher ds(minhasher->getDeviceId());
 
@@ -626,7 +626,7 @@ namespace gpu{
             return num;
         }
 
-        void destroy() override{
+        void destroy(){
             for(auto& minhasher : sgpuMinhashers){
                 DeviceSwitcher sd(minhasher->getDeviceId());
                 minhasher->destroy();

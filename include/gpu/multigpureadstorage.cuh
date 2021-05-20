@@ -1128,7 +1128,7 @@ public: //inherited GPUReadStorage interface
         return pairedEnd;
     }
 
-    void destroy() override{
+    void destroy(){
         destroyReadData();
 
         destroyTempData();

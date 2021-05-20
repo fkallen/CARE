@@ -492,11 +492,9 @@ extend_gpu_pairedend(
 
         cub::CachingDeviceAllocator cubAllocator;
 
-        GpuReadHasher gpuReadHasher(minhasher);
-
         GpuExtensionStepper gpuExtensionStepper(
             gpuReadStorage,
-            gpuReadHasher, 
+            minhasher, 
             correctionOptions,
             goodAlignmentProperties,
             qualityConversion,
@@ -734,11 +732,9 @@ extend_gpu_pairedend(
             false //debug
         );
 
-        GpuReadHasher gpuReadHasher(minhasher);
-
         GpuExtensionStepper gpuExtensionStepper(
             gpuReadStorage,
-            gpuReadHasher, 
+            minhasher, 
             correctionOptions,
             goodAlignmentProperties,
             qualityConversion,
@@ -817,11 +813,9 @@ extend_gpu_pairedend(
             false //debug
         );
 
-        GpuReadHasher gpuReadHasher(minhasher);
-
         GpuExtensionStepper gpuExtensionStepper(
             gpuReadStorage,
-            gpuReadHasher, 
+            minhasher, 
             correctionOptions,
             goodAlignmentProperties,
             qualityConversion,
@@ -1119,12 +1113,9 @@ extend_gpu_pairedend(
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
-
-        GpuReadHasher gpuReadHasher(minhasher);
-
         GpuExtensionStepper gpuExtensionStepper(
             gpuReadStorage, 
-            gpuReadHasher,
+            minhasher,
             correctionOptions,
             goodAlignmentProperties,
             qualityConversion,

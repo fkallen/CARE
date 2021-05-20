@@ -40,7 +40,7 @@ public:
         int* h_offsets //numSequences + 1
     ) const = 0;
 
-    virtual void compact() = 0;
+    //virtual void compact() = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
@@ -50,7 +50,7 @@ public:
     
     virtual int getNumberOfMaps() const noexcept = 0;
 
-    virtual void destroy() = 0;
+    //virtual void destroy() = 0;
 
 protected:
     MinhasherHandle constructHandle(int id) const{

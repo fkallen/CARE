@@ -47,7 +47,7 @@ public:
         cudaStream_t stream
     ) const = 0;
 
-    virtual void compact(cudaStream_t stream) = 0;
+    //virtual void compact(cudaStream_t stream) = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
@@ -57,7 +57,7 @@ public:
     
     virtual int getNumberOfMaps() const noexcept = 0;
 
-    virtual void destroy() = 0;
+    //virtual void destroy() = 0;
 
 protected:
     MinhasherHandle constructHandle(int id) const{

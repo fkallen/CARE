@@ -27,6 +27,7 @@ struct ReadExtenderCpu{
     friend struct GpuExtensionStepper;
 public:
 
+    ReadExtenderCpu() = default;
 
     ReadExtenderCpu(
         int insertSize_,
@@ -57,7 +58,9 @@ public:
     }
 
     ~ReadExtenderCpu(){
-        minhasher->destroyHandle(minhashHandle);
+        if(minhasher!=nullptr){
+            minhasher->destroyHandle(minhashHandle);
+        }
     }
 
     void printTimers(){

@@ -321,7 +321,7 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
 
-        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+        gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -404,7 +404,7 @@ namespace care{
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
         if(gpuReadStorage.isStandalone()){
-            cpuReadStorage->destroy();
+            cpuReadStorage.reset();
         }
 
 
@@ -438,10 +438,11 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
-        gpuMinhasher->destroy();
-   
+
+        minhasherAndType.first.reset();
+        gpuMinhasher = nullptr;
         gpuReadStorage.destroy();
-        cpuReadStorage->destroy();     
+        cpuReadStorage.reset();
 
         // {
         //     std::cerr << "Saving partialresults\n";
@@ -610,7 +611,7 @@ namespace care{
             gpu::GpuMinhasherType::Multi
         );
 
-        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+        gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -691,7 +692,7 @@ namespace care{
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
         if(gpuReadStorage.isStandalone()){
-            cpuReadStorage->destroy();
+            cpuReadStorage.reset();
         }
 
         std::cout << "STEP 2: Read extension" << std::endl;
@@ -720,10 +721,10 @@ namespace care{
             << numTempInMem << " extensions are stored in memory. "
             << numTempInFile << " extensions are stored in temporary file\n";
 
-        gpuMinhasher->destroy();
-   
+        minhasherAndType.first.reset();
+        gpuMinhasher = nullptr;
         gpuReadStorage.destroy();
-        cpuReadStorage->destroy();     
+        cpuReadStorage.reset();   
 
         //Merge corrected reads with input file to generate output file
 

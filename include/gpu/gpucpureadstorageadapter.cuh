@@ -14,7 +14,9 @@ namespace gpu{
     struct GPUCPUReadStorageAdapter : public CpuReadStorage{
     public:
 
-        GPUCPUReadStorageAdapter(GpuReadStorage& gpuReadStorage_, ReadStorageHandle gpuHandle_, cudaStream_t stream_, cub::CachingDeviceAllocator& cubAllocator_)
+        GPUCPUReadStorageAdapter() = default;
+
+        GPUCPUReadStorageAdapter(const GpuReadStorage& gpuReadStorage_, ReadStorageHandle gpuHandle_, cudaStream_t stream_, cub::CachingDeviceAllocator& cubAllocator_)
             : gpuHandle(gpuHandle_), gpuReadStorage(&gpuReadStorage_), stream(stream_), cubAllocator(&cubAllocator_){
 
         }
@@ -71,7 +73,7 @@ namespace gpu{
             read_number* d_readIds = nullptr;
             cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
             unsigned int* d_sequence_data;
-            cubAllocator->DeviceAllocate((void**)&d_sequence_data, outSequencePitchInInts * numSequences, stream); CUERR;
+            cubAllocator->DeviceAllocate((void**)&d_sequence_data, sizeof(unsigned int) * outSequencePitchInInts * numSequences, stream); CUERR;
 
             cudaMemcpyAsync(
                 d_readIds,
@@ -94,7 +96,7 @@ namespace gpu{
             cudaMemcpyAsync(
                 sequence_data,
                 d_sequence_data,
-                outSequencePitchInInts * numSequences,
+                sizeof(unsigned int) * outSequencePitchInInts * numSequences,
                 D2H,
                 stream
             ); CUERR;
@@ -114,7 +116,7 @@ namespace gpu{
             read_number* d_readIds = nullptr;
             cubAllocator->DeviceAllocate((void**)&d_readIds, sizeof(read_number) * numSequences, stream); CUERR;
             char* d_quality_data;
-            cubAllocator->DeviceAllocate((void**)&d_quality_data, out_quality_pitch * numSequences, stream); CUERR;
+            cubAllocator->DeviceAllocate((void**)&d_quality_data, sizeof(char) * out_quality_pitch * numSequences, stream); CUERR;
 
             cudaMemcpyAsync(
                 d_readIds,
@@ -137,7 +139,7 @@ namespace gpu{
             cudaMemcpyAsync(
                 quality_data,
                 d_quality_data,
-                out_quality_pitch * numSequences,
+                sizeof(char) * out_quality_pitch * numSequences,
                 D2H,
                 stream
             ); CUERR;
@@ -222,13 +224,13 @@ namespace gpu{
             return gpuReadStorage->isPairedEnd();
         }
 
-        void destroy() override{
-            return gpuReadStorage->destroy();
-        }
+        // void destroy() override{
+        //     return gpuReadStorage->destroy();
+        // }
 
     private:
         mutable ReadStorageHandle gpuHandle;
-        GpuReadStorage* gpuReadStorage;
+        const GpuReadStorage* gpuReadStorage;
         cudaStream_t stream;
         cub::CachingDeviceAllocator* cubAllocator;
     };

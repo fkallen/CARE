@@ -13,6 +13,9 @@
 #include <sequencehelpers.hpp>
 #include <hostdevicefunctions.cuh>
 #include <util.hpp>
+#include <gpu/gpucpureadstorageadapter.cuh>
+#include <gpu/gpucpuminhasheradapter.cuh>
+#include <readextender_cpu.hpp>
 
 #include <readextender_common.hpp>
 
@@ -564,16 +567,15 @@ struct BatchData{
 
 struct GpuReadHasher{
 public:
-    GpuReadHasher(
-        const gpu::GpuMinhasher& mh
-    ) : gpuMinhasher(&mh),
-        minhashHandle(gpuMinhasher->makeMinhasherHandle()) {
-    }
 
-    ~GpuReadHasher(){
-        gpuMinhasher->destroyHandle(minhashHandle);
+    GpuReadHasher() = default;
+
+    GpuReadHasher(
+        const gpu::GpuMinhasher& mh, MinhasherHandle minhashHandle_
+    ) : gpuMinhasher(&mh),
+        minhashHandle(minhashHandle_) {
     }
-    
+   
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const{
 
         int totalNumValues = 0;
@@ -640,18 +642,24 @@ public:
     int maxextensionPerStep{};
     cub::CachingDeviceAllocator* cubAllocator{};
     const gpu::GpuReadStorage* gpuReadStorage{};
-    const GpuReadHasher* gpuReadHasher{};
+    const gpu::GpuMinhasher* gpuMinhasher{};
+    mutable MinhasherHandle minhashHandle{};
+    GpuReadHasher gpuReadHasher{};
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
     const cpu::QualityScoreConversion* qualityConversion{};
     mutable ReadStorageHandle readStorageHandle{};
     mutable gpu::KernelLaunchHandle kernelLaunchHandle{};
+
+    gpu::GPUCPUReadStorageAdapter cpuReadStorage;
+    gpu::GPUCPUMinhasherAdapter cpuMinhasher;
+    ReadExtenderCpu cpuExtender{};
     
     GpuExtensionStepper() = default;
 
     GpuExtensionStepper(
         const gpu::GpuReadStorage& rs, 
-        const GpuReadHasher& hasher,
+        const gpu::GpuMinhasher& gpuMinhasher_,
         const CorrectionOptions& coropts,
         const GoodAlignmentProperties& gap,
         const cpu::QualityScoreConversion& qualityConversion_,
@@ -664,22 +672,51 @@ public:
         maxextensionPerStep(maxextensionPerStep_),
         cubAllocator(&cubAllocator_),
         gpuReadStorage(&rs),
-        gpuReadHasher(&hasher),
+        gpuMinhasher(&gpuMinhasher_),
+        minhashHandle(gpuMinhasher->makeMinhasherHandle()),
+        gpuReadHasher{*gpuMinhasher, minhashHandle},
         correctionOptions(&coropts),
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
-        readStorageHandle(gpuReadStorage->makeHandle()){
+        readStorageHandle(gpuReadStorage->makeHandle()),
+        cpuReadStorage(*gpuReadStorage, readStorageHandle, cudaStreamPerThread, *cubAllocator),
+        cpuMinhasher(*gpuMinhasher, minhashHandle, cudaStreamPerThread, *cubAllocator),
+        cpuExtender{
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            gpuReadStorage->getSequenceLengthUpperBound(),
+            cpuReadStorage,
+            cpuMinhasher,
+            *correctionOptions,
+            *goodAlignmentProperties,
+            qualityConversion
+        }
+        {
 
         cudaGetDevice(&deviceId); CUERR;
 
         kernelLaunchHandle = gpu::make_kernel_launch_handle(deviceId);
     }
 
-    constexpr int getNumRefinementIterations() const noexcept{
+    ~GpuExtensionStepper(){
+        gpuMinhasher->destroyHandle(minhashHandle);
+    }
+
+    static constexpr int getNumRefinementIterations() noexcept{
         return 5;
     }
 
-    static constexpr ComputeType typeOfNextStep(BatchData& batchData){
+    //batches with less than getGpuBatchThreshold() tasks are handled on the cpu
+    static constexpr int getGpuBatchThreshold() noexcept{
+        return 1;
+    }
+
+    static ComputeType typeOfNextStep(BatchData& batchData){
+        if(int(batchData.indicesOfActiveTasks.size()) < getGpuBatchThreshold()){
+            return ComputeType::CPU;
+        }
+
         switch(batchData.state){
             case BatchData::State::BeforePrepare: return ComputeType::CPU;
             case BatchData::State::BeforeHash: return ComputeType::CPU;
@@ -700,23 +737,29 @@ public:
     }
 
     void performNextStep(BatchData& batchData) const{
-        switch(batchData.state){
-            case BatchData::State::BeforePrepare: prepareStep(batchData); break;
-            case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
-            case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
-            case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); break;
-            case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); break;
-            case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); break;
-            case BatchData::State::BeforeAlignment: calculateAlignments(batchData); break;
-            case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); break;
-            case BatchData::State::BeforeMSA: computeMSAs(batchData); break;
-            case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); break;
-            case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); break;
-            case BatchData::State::BeforeUnpack: unpackResults(batchData); break;
-            case BatchData::State::Finished: break;
-            case BatchData::State::None: break;
-            default: break;
-        };
+        if(batchData.state == BatchData::State::BeforePrepare && int(batchData.indicesOfActiveTasks.size()) < getGpuBatchThreshold()){
+            processOnCpu(batchData);
+        }else{
+
+            switch(batchData.state){
+                case BatchData::State::BeforePrepare: prepareStep(batchData); break;
+                case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
+                case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
+                case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); break;
+                case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); break;
+                case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); break;
+                case BatchData::State::BeforeAlignment: calculateAlignments(batchData); break;
+                case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); break;
+                case BatchData::State::BeforeMSA: computeMSAs(batchData); break;
+                case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); break;
+                case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); break;
+                case BatchData::State::BeforeUnpack: unpackResults(batchData); break;
+                case BatchData::State::Finished: break;
+                case BatchData::State::None: break;
+                default: break;
+            };
+
+        }
     }
 
     void prepareStep(BatchData& batchData) const{
@@ -1027,7 +1070,7 @@ public:
 
         nvtx::push_range("getCandidateReadIds", 0);
 
-        gpuReadHasher->getCandidateReadIds(batchData, batchData.streams[0]);
+        gpuReadHasher.getCandidateReadIds(batchData, batchData.streams[0]);
         batchData.setState(BatchData::State::BeforeRemoveIds);
 
         nvtx::pop_range();
@@ -1195,6 +1238,35 @@ public:
         while(batchData.state != BatchData::State::Finished){
             performNextStep(batchData);
         }
+    }
+
+    void processOnCpu(BatchData& batchData) const{
+        assert(batchData.state == BatchData::State::BeforePrepare);
+
+        while(batchData.indicesOfActiveTasks.size() > 0){
+            //perform one extension iteration for active tasks
+
+            nvtx::push_range("doOneExtensionIteration", 5);
+
+            cpuExtender.doOneExtensionIteration(batchData.tasks, batchData.indicesOfActiveTasks);
+
+            nvtx::pop_range();
+
+            //update list of active task indices
+
+            batchData.indicesOfActiveTasks.erase(
+                std::remove_if(
+                    batchData.indicesOfActiveTasks.begin(), 
+                    batchData.indicesOfActiveTasks.end(),
+                    [&](int index){
+                        return !batchData.tasks[index].isActive(insertSize, insertSizeStddev);
+                    }
+                ),
+                batchData.indicesOfActiveTasks.end()
+            );
+        }
+
+        batchData.state = BatchData::State::Finished;
     }
 
     void unpackResultsIntoTasks(BatchData& batchData) const{

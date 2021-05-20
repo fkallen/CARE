@@ -57,7 +57,7 @@ public:
 
     virtual bool isPairedEnd() const = 0;
 
-    virtual void destroy() = 0;
+    //virtual void destroy() = 0;
 };
 
 
