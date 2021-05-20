@@ -1778,50 +1778,10 @@ public:
 
         std::fill(batchData.h_isPairedCandidate.begin(), batchData.h_isPairedCandidate.end(), false);
 
-
-        // return;
-
-        std::vector<int> numPairedPerAnchor(batchData.numTasks, 0);
-
         #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
         cudaStreamSynchronize(stream); CUERR;
         #endif
 
-        #if 0 //this assumes all active tasks are paired
-        for(int ap = 0; ap < batchData.numTasks / 2; ap++){
-            const int begin1 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 0];
-            const int end1 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 1];
-            const int begin2 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 1];
-            const int end2 = batchData.h_numCandidatesPerAnchorPrefixSum[2*ap + 2];
-
-            // assert(std::is_sorted(pairIds + begin1, pairIds + end1));
-            // assert(std::is_sorted(pairIds + begin2, pairIds + end2));
-
-            std::vector<int> pairedPositions(std::min(end1-begin1, end2-begin2));
-            std::vector<int> pairedPositions2(std::min(end1-begin1, end2-begin2));
-
-            auto endIters = findPositionsOfPairedReadIds(
-                batchData.h_candidateReadIds.data() + begin1,
-                batchData.h_candidateReadIds.data() + end1,
-                batchData.h_candidateReadIds.data() + begin2,
-                batchData.h_candidateReadIds.data() + end2,
-                pairedPositions.begin(),
-                pairedPositions2.begin()
-            );
-
-            pairedPositions.erase(endIters.first, pairedPositions.end());
-            pairedPositions2.erase(endIters.second, pairedPositions2.end());
-            for(auto i : pairedPositions){
-                batchData.h_isPairedCandidate[begin1 + i] = true;
-            }
-            for(auto i : pairedPositions2){
-                batchData.h_isPairedCandidate[begin2 + i] = true;
-            }
-
-            numPairedPerAnchor[2*ap + 0] = pairedPositions.size();
-            numPairedPerAnchor[2*ap + 1] = pairedPositions2.size();                
-        }
-        #else //this checks if task of anchor mate is active
 
         for(int first = 0, second = 1; second < batchData.numTasks; ){
             const int taskindex1 = batchData.indicesOfActiveTasks[first];
@@ -1859,9 +1819,6 @@ public:
                 for(auto i : pairedPositions2){
                     batchData.h_isPairedCandidate[begin2 + i] = true;
                 }
-
-                numPairedPerAnchor[first] = pairedPositions.size();
-                numPairedPerAnchor[second] = pairedPositions2.size();
                 
                 first += 2; second += 2;
             }else{
@@ -1869,9 +1826,6 @@ public:
             }
         }
         
-
-        #endif
-
         cudaMemcpyAsync(
             batchData.d_isPairedCandidate.data(),
             batchData.h_isPairedCandidate.data(),
