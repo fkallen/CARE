@@ -1,4 +1,3 @@
-#include <readextenderbase.hpp>
 #include <config.hpp>
 
 #include <cpu_alignment.hpp>
@@ -11,8 +10,15 @@
 #include <msa.hpp>
 #include <readextender_common.hpp>
 #include <qualityscoreweights.hpp>
+#include <hostdevicefunctions.cuh>
+
+#include <vector>
+#include <algorithm>
+#include <string>
 
 namespace care{
+
+#define DO_ONLY_REMOVE_MATE_IDS
 
 struct ReadExtenderCpu{
 public:
@@ -79,9 +85,284 @@ public:
      
 private:
 
-    
+    struct ExtendWithMsaResult{
+        bool mateHasBeenFound = false;
+        extension::AbortReason abortReason = extension::AbortReason::None;
+        int newLength = 0;
+        int newAccumExtensionLength = 0;
+        int sizeOfGapToMate = 0;
+        std::string newAnchor = "";
+        std::string newQuality = "";
+    };    
 
-    std::vector<extension::Task>& processPairedEndTasks(std::vector<extension::Task>& tasks);
+    std::vector<extension::Task>& processPairedEndTasks(
+        std::vector<extension::Task>& tasks
+    ) const{
+ 
+        std::vector<int> indicesOfActiveTasks(tasks.size());
+        std::iota(indicesOfActiveTasks.begin(), indicesOfActiveTasks.end(), 0);
+
+        while(indicesOfActiveTasks.size() > 0){
+            //perform one extension iteration for active tasks
+
+            #if 0
+
+            doOneExtensionIteration(tasks, indicesOfActiveTasks);
+
+            #else
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
+
+                task.currentAnchor.resize(SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength));
+
+                SequenceHelpers::encodeSequence2Bit(
+                    task.currentAnchor.data(), 
+                    task.totalDecodedAnchors.back().data(), 
+                    task.currentAnchorLength
+                );
+            }
+
+            hashTimer.start();
+
+            getCandidateReadIds(tasks, indicesOfActiveTasks);
+
+            removeUsedIdsAndMateIds(tasks, indicesOfActiveTasks);
+            
+
+            hashTimer.stop();
+
+            computePairFlags(tasks, indicesOfActiveTasks);                
+
+            collectTimer.start();        
+
+            loadCandidateSequenceData(tasks, indicesOfActiveTasks);
+
+            eraseDataOfRemovedMates(tasks, indicesOfActiveTasks);
+
+
+            collectTimer.stop();
+
+            /*
+                Compute alignments
+            */
+
+            alignmentTimer.start();
+
+            calculateAlignments(tasks, indicesOfActiveTasks);
+
+            alignmentTimer.stop();
+
+            alignmentFilterTimer.start();
+
+            filterAlignments(tasks, indicesOfActiveTasks);
+
+            alignmentFilterTimer.stop();
+
+            msaTimer.start();
+
+            computeMSAsAndExtendTasks(tasks, indicesOfActiveTasks);
+
+            msaTimer.stop();       
+
+            //check early exit for tasks
+
+            for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){ 
+                const int indexOfActiveTask = indicesOfActiveTasks[i];
+                const auto& task = tasks[indexOfActiveTask];
+
+                const int whichtype = task.id % 4;
+
+                assert(indexOfActiveTask % 4 == whichtype);
+
+                if(whichtype == 0){
+                    assert(task.direction == extension::ExtensionDirection::LR);
+                    assert(task.pairedEnd == true);
+
+                    if(task.mateHasBeenFound){                    
+                        tasks[indexOfActiveTask + 1].abort = true;
+                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                        tasks[indexOfActiveTask + 3].abort = true;
+                        tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                    }else if(task.abort){
+                        tasks[indexOfActiveTask + 1].abort = true;
+                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    }
+                }else if(whichtype == 2){
+                    assert(task.direction == extension::ExtensionDirection::RL);
+                    assert(task.pairedEnd == true);
+
+                    if(task.mateHasBeenFound){                    
+                        tasks[indexOfActiveTask - 1].abort = true;
+                        tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                        tasks[indexOfActiveTask + 1].abort = true;
+                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    }else if(task.abort){
+                        tasks[indexOfActiveTask + 1].abort = true;
+                        tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    }
+                }
+            }    
+
+            /*
+                update book-keeping of used candidates
+            */  
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
+
+                std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + task.candidateReadIds.size());
+                auto tmp_end = std::merge(
+                    task.allUsedCandidateReadIdPairs.begin(),
+                    task.allUsedCandidateReadIdPairs.end(),
+                    task.candidateReadIds.begin(),
+                    task.candidateReadIds.end(),
+                    tmp.begin()
+                );
+
+                tmp.erase(tmp_end, tmp.end());
+
+                std::swap(task.allUsedCandidateReadIdPairs, tmp);
+
+                task.iteration++;
+            }
+
+            #endif
+            
+            //update list of active task indices
+
+            indicesOfActiveTasks.erase(
+                std::remove_if(
+                    indicesOfActiveTasks.begin(), 
+                    indicesOfActiveTasks.end(),
+                    [&](int index){
+                        return !tasks[index].isActive(insertSize, insertSizeStddev);
+                    }
+                ),
+                indicesOfActiveTasks.end()
+            );
+        }
+
+        return tasks;
+    }
+
+    void doOneExtensionIteration(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            task.currentAnchor.resize(SequenceHelpers::getEncodedNumInts2Bit(task.currentAnchorLength));
+
+            SequenceHelpers::encodeSequence2Bit(
+                task.currentAnchor.data(), 
+                task.totalDecodedAnchors.back().data(), 
+                task.currentAnchorLength
+            );
+        }
+
+        hashTimer.start();
+
+        getCandidateReadIds(tasks, indicesOfActiveTasks);
+
+        removeUsedIdsAndMateIds(tasks, indicesOfActiveTasks);
+        
+
+        hashTimer.stop();
+
+        computePairFlags(tasks, indicesOfActiveTasks);                
+
+        collectTimer.start();        
+
+        loadCandidateSequenceData(tasks, indicesOfActiveTasks);
+
+        eraseDataOfRemovedMates(tasks, indicesOfActiveTasks);
+
+
+        collectTimer.stop();
+
+        /*
+            Compute alignments
+        */
+
+        alignmentTimer.start();
+
+        calculateAlignments(tasks, indicesOfActiveTasks);
+
+        alignmentTimer.stop();
+
+        alignmentFilterTimer.start();
+
+        filterAlignments(tasks, indicesOfActiveTasks);
+
+        alignmentFilterTimer.stop();
+
+        msaTimer.start();
+
+        computeMSAsAndExtendTasks(tasks, indicesOfActiveTasks);
+
+        msaTimer.stop();       
+
+        //check early exit for tasks
+
+        for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){ 
+            const int indexOfActiveTask = indicesOfActiveTasks[i];
+            const auto& task = tasks[indexOfActiveTask];
+
+            const int whichtype = task.id % 4;
+
+            assert(indexOfActiveTask % 4 == whichtype);
+
+            if(whichtype == 0){
+                assert(task.direction == extension::ExtensionDirection::LR);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){                    
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    tasks[indexOfActiveTask + 3].abort = true;
+                    tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                }else if(task.abort){
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                }
+            }else if(whichtype == 2){
+                assert(task.direction == extension::ExtensionDirection::RL);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){                    
+                    tasks[indexOfActiveTask - 1].abort = true;
+                    tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                }else if(task.abort){
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                }
+            }
+        }    
+
+        /*
+            update book-keeping of used candidates
+        */  
+
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
+
+            std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + task.candidateReadIds.size());
+            auto tmp_end = std::merge(
+                task.allUsedCandidateReadIdPairs.begin(),
+                task.allUsedCandidateReadIdPairs.end(),
+                task.candidateReadIds.begin(),
+                task.candidateReadIds.end(),
+                tmp.begin()
+            );
+
+            tmp.erase(tmp_end, tmp.end());
+
+            std::swap(task.allUsedCandidateReadIdPairs, tmp);
+
+            task.iteration++;
+        }
+    }
 
     void getCandidateReadIdsSingle(
         std::vector<read_number>& result, 
@@ -89,7 +370,7 @@ private:
         int readLength, 
         read_number readId,
         int beginPos = 0 // only positions [beginPos, readLength] are hashed
-    ){
+    ) const{
 
         result.clear();
 
@@ -147,7 +428,7 @@ private:
         }
     }
 
-    void getCandidateReadIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void getCandidateReadIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -161,8 +442,64 @@ private:
         }
     }
 
+    void removeUsedIdsAndMateIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+        for(int indexOfActiveTask : indicesOfActiveTasks){
+            auto& task = tasks[indexOfActiveTask];
 
-    void loadCandidateSequenceData(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+            // remove self from candidate list
+            auto readIdPos = std::lower_bound(
+                task.candidateReadIds.begin(),                                            
+                task.candidateReadIds.end(),
+                task.myReadId
+            );
+
+            if(readIdPos != task.candidateReadIds.end() && *readIdPos == task.myReadId){
+                task.candidateReadIds.erase(readIdPos);
+            }
+
+            if(task.pairedEnd){
+
+                //remove mate of input from candidate list
+                auto mateReadIdPos = std::lower_bound(
+                    task.candidateReadIds.begin(),                                            
+                    task.candidateReadIds.end(),
+                    task.mateReadId
+                );
+
+                if(mateReadIdPos != task.candidateReadIds.end() && *mateReadIdPos == task.mateReadId){
+                    task.candidateReadIds.erase(mateReadIdPos);
+                    task.mateRemovedFromCandidates = true;
+                }
+            }
+
+            /*
+                Remove candidate pairs which have already been used for extension
+            */
+            #ifndef DO_ONLY_REMOVE_MATE_IDS
+
+            for(int indexOfActiveTask : indicesOfActiveTasks){
+                auto& task = tasks[indexOfActiveTask];
+
+                std::vector<read_number> tmp(task.candidateReadIds.size());
+
+                auto end = std::set_difference(
+                    task.candidateReadIds.begin(),
+                    task.candidateReadIds.end(),
+                    task.allUsedCandidateReadIdPairs.begin(),
+                    task.allUsedCandidateReadIdPairs.end(),
+                    tmp.begin()
+                );
+
+                tmp.erase(end, tmp.end());
+
+                std::swap(task.candidateReadIds, tmp);
+            }
+
+            #endif
+        }
+    }
+
+    void loadCandidateSequenceData(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -202,7 +539,7 @@ private:
         }
     }
 
-    void computePairFlags(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void computePairFlags(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         const int numTasks = indicesOfActiveTasks.size();
 
         for(int indexOfActiveTask : indicesOfActiveTasks){
@@ -262,7 +599,7 @@ private:
         }
     }
 
-    void eraseDataOfRemovedMates(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void eraseDataOfRemovedMates(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
@@ -343,7 +680,7 @@ private:
         }
     }
 
-    void calculateAlignments(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void calculateAlignments(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -411,7 +748,7 @@ private:
         }
     }
 
-    void filterAlignments(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void filterAlignments(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -544,7 +881,7 @@ private:
         }
     }
 
-    MultipleSequenceAlignment constructMSA(extension::Task& task){
+    MultipleSequenceAlignment constructMSA(extension::Task& task) const{
         const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
         MultipleSequenceAlignment msa(qualityConversion);
@@ -734,18 +1071,7 @@ private:
         return msa;
     }
 
-    struct ExtendWithMsaResult{
-        bool mateHasBeenFound = false;
-        extension::AbortReason abortReason = extension::AbortReason::None;
-        int newLength = 0;
-        int newAccumExtensionLength = 0;
-        int sizeOfGapToMate = 0;
-        std::string newAnchor = "";
-        std::string newQuality = "";
-
-    };
-
-    ExtendWithMsaResult extendWithMsa(extension::Task& task, const MultipleSequenceAlignment& msa){
+    ExtendWithMsaResult extendWithMsa(extension::Task& task, const MultipleSequenceAlignment& msa) const{
 
         
         const int consensusLength = msa.consensus.size();
@@ -873,7 +1199,7 @@ private:
         }
     }
 
-    void computeMSAsAndExtendTasks(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks){
+    void computeMSAsAndExtendTasks(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -1109,17 +1435,22 @@ private:
     CorrectionOptions correctionOptions{};
     GoodAlignmentProperties goodAlignmentProperties{};
 
-    ReadStorageHandle readStorageHandle;
-    CpuMinhasher::QueryHandle minhashHandle;
-    cpu::shd::CpuAlignmentHandle alignmentHandle;
+    mutable ReadStorageHandle readStorageHandle;
+    mutable CpuMinhasher::QueryHandle minhashHandle;
+    mutable cpu::shd::CpuAlignmentHandle alignmentHandle;
 
-    helpers::CpuTimer hashTimer{"hashtimer"};
-    helpers::CpuTimer collectTimer{"gathertimer"};
-    helpers::CpuTimer alignmentTimer{"alignmenttimer"};
-    helpers::CpuTimer alignmentFilterTimer{"filtertimer"};
-    helpers::CpuTimer msaTimer{"msatimer"};
+    mutable helpers::CpuTimer hashTimer{"hashtimer"};
+    mutable helpers::CpuTimer collectTimer{"gathertimer"};
+    mutable helpers::CpuTimer alignmentTimer{"alignmenttimer"};
+    mutable helpers::CpuTimer alignmentFilterTimer{"filtertimer"};
+    mutable helpers::CpuTimer msaTimer{"msatimer"};
 
 };
+
+
+#ifdef DO_ONLY_REMOVE_MATE_IDS
+#undef DO_ONLY_REMOVE_MATE_IDS
+#endif
 
 }
 
