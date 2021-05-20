@@ -256,7 +256,7 @@ namespace gpu{
 
             std::vector<int> deviceIds{};
 
-            std::unique_ptr<QueryHandle> singlegpuQueryHandle;
+            std::unique_ptr<MinhasherHandle> singlegpuMinhasherHandle;
 
             MemoryUsage getMemoryInfo() const{
                 MemoryUsage mem{};
@@ -375,7 +375,7 @@ namespace gpu{
             return numberOfAvailableHashFunctions; 
         }
 
-        QueryHandle makeQueryHandle() const override{
+        MinhasherHandle makeMinhasherHandle() const override{
             auto ptr = std::make_unique<QueryData>();
 
             const int numMinhashers = sgpuMinhashers.size();
@@ -396,21 +396,21 @@ namespace gpu{
             }
 
             if(numMinhashers == 1){
-                ptr->singlegpuQueryHandle = std::make_unique<QueryHandle>(sgpuMinhashers[0]->makeQueryHandle());
+                ptr->singlegpuMinhasherHandle = std::make_unique<MinhasherHandle>(sgpuMinhashers[0]->makeMinhasherHandle());
             }
 
             CUERR;
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            QueryHandle h = constructHandle(handleid);
+            MinhasherHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(ptr));
 
             return h;
         }
 
-        void destroyHandle(QueryHandle& handle) const override{            
+        void destroyHandle(MinhasherHandle& handle) const override{            
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -419,7 +419,7 @@ namespace gpu{
 
             const int numMinhashers = sgpuMinhashers.size();
             if(numMinhashers == 1){
-                sgpuMinhashers[0]->destroyHandle(*tempdataVector[id]->singlegpuQueryHandle);
+                sgpuMinhashers[0]->destroyHandle(*tempdataVector[id]->singlegpuMinhasherHandle);
             }
             
             tempdataVector[id] = nullptr;
@@ -427,7 +427,7 @@ namespace gpu{
         }
 
         void determineNumValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -508,7 +508,7 @@ namespace gpu{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -610,7 +610,7 @@ namespace gpu{
             return mem;
         }
 
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
             return tempdataVector[handle.getId()]->getMemoryInfo();
         }
 
@@ -642,7 +642,7 @@ namespace gpu{
 private:        
 
         void determineNumValues_singlegpuimpl(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -682,7 +682,7 @@ private:
 
                 const auto& minhasher = *sgpuMinhashers[0];
                 minhasher.determineNumValues(
-                    *queryData->singlegpuQueryHandle,
+                    *queryData->singlegpuMinhasherHandle,
                     d_sequenceData2Bit,
                     encodedSequencePitchInInts,
                     d_sequenceLengths,
@@ -706,7 +706,7 @@ private:
         }
 
         void retrieveValues_singlegpuimpl(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -744,7 +744,7 @@ private:
                 const auto& minhasher = *sgpuMinhashers[d];
                 
                 minhasher.retrieveValues(
-                    *queryData->singlegpuQueryHandle,
+                    *queryData->singlegpuMinhasherHandle,
                     d_readIds,
                     numSequences,              
                     totalNumValues,
@@ -1400,7 +1400,7 @@ private:
             return 0.8f;
         }
 
-        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();

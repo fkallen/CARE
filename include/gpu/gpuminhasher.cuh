@@ -7,6 +7,7 @@
 #include <config.hpp>
 #include <memorymanagement.hpp>
 #include <gpu/distributedreadstorage.hpp>
+#include <minhasherhandle.hpp>
 
 #include <cstdint>
 
@@ -15,32 +16,17 @@ namespace gpu{
 
 class GpuMinhasher{
 public:
-    class QueryHandle{
-    friend class GpuMinhasher;
-    public:
-
-        int getId() const noexcept{
-            return id;
-        }
-
-    private:
-        QueryHandle() = default;
-        QueryHandle(int i) : id(i){}
-
-        int id;
-        //const GpuMinhasher* parent;
-    };
 
     using Key = kmer_type;
 
     virtual ~GpuMinhasher() = default;
 
-    virtual QueryHandle makeQueryHandle() const = 0;
+    virtual MinhasherHandle makeMinhasherHandle() const = 0;
 
-    virtual void destroyHandle(QueryHandle& handle) const = 0;
+    virtual void destroyHandle(MinhasherHandle& handle) const = 0;
 
     virtual void determineNumValues(
-        QueryHandle& queryHandle,
+        MinhasherHandle& queryHandle,
         const unsigned int* d_sequenceData2Bit,
         std::size_t encodedSequencePitchInInts,
         const int* d_sequenceLengths,
@@ -51,7 +37,7 @@ public:
     ) const = 0;
 
     virtual void retrieveValues(
-        QueryHandle& queryHandle,
+        MinhasherHandle& queryHandle,
         const read_number* d_readIds,
         int numSequences,
         int totalNumValues,
@@ -65,7 +51,7 @@ public:
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
-    virtual MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept = 0;
+    virtual MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept = 0;
 
     virtual int getNumResultsPerMapThreshold() const noexcept = 0;
     
@@ -76,8 +62,8 @@ public:
     virtual bool hasGpuTables() const noexcept = 0;
 
 protected:
-    QueryHandle constructHandle(int id) const{
-        return QueryHandle{id};
+    MinhasherHandle constructHandle(int id) const{
+        return MinhasherHandle{id};
     }
 
 };
