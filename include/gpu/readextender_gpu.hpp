@@ -1,7 +1,6 @@
 #ifndef READ_EXTENDER_GPU_HPP
 #define READ_EXTENDER_GPU_HPP
 
-#include <readextenderbase.hpp>
 #include <config.hpp>
 #include <hpc_helpers.cuh>
 

@@ -46,13 +46,8 @@ public:
         qualityPitchInBytes(maximumSequenceLength_),
         correctionOptions(coropts),
         goodAlignmentProperties(gap),
-        readStorageHandle{rs.makeHandle()}, minhashHandle{mh.makeQueryHandle()}{
+        minhashHandle{mh.makeQueryHandle()}{
 
-    }
-
-    ~ReadExtenderCpu(){
-        readStorage->destroyHandle(readStorageHandle);
-        //minhasher->destroyHandle(minhashHandle);
     }
 
     void printTimers(){
@@ -375,7 +370,7 @@ private:
         result.clear();
 
         bool containsN = false;
-        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
+        readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions.excludeAmbiguousReads && containsN)){
@@ -415,7 +410,7 @@ private:
                     result.end(),
                     [&](read_number readId){
                         bool containsN = false;
-                        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
+                        readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
                         return containsN;
                     }
                 );
@@ -510,14 +505,12 @@ private:
             task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
             readStorage->gatherSequenceLengths(
-                readStorageHandle,
                 task.candidateSequenceLengths.data(),
                 task.candidateReadIds.data(),
                 task.candidateReadIds.size()
             );
 
             readStorage->gatherSequences(
-                readStorageHandle,
                 task.candidateSequencesFwdData.data(),
                 encodedSequencePitchInInts,
                 task.candidateReadIds.data(),
@@ -891,7 +884,6 @@ private:
         if(correctionOptions.useQualityScores){
 
             readStorage->gatherQualities(
-                readStorageHandle,
                 candidateQualities.data(),
                 qualityPitchInBytes,
                 task.candidateReadIds.data(),
@@ -1435,7 +1427,6 @@ private:
     CorrectionOptions correctionOptions{};
     GoodAlignmentProperties goodAlignmentProperties{};
 
-    mutable ReadStorageHandle readStorageHandle;
     mutable CpuMinhasher::QueryHandle minhashHandle;
     mutable cpu::shd::CpuAlignmentHandle alignmentHandle;
 

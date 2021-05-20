@@ -37,7 +37,7 @@ public:
 
     struct TempData{
 
-        TempData(ReadStorageHandle cpuHandle) : event{cudaEventDisableTiming}, cpuReadStorageHandle(std::move(cpuHandle)){
+        TempData() : event{cudaEventDisableTiming}{
             cudaGetDevice(&deviceId); CUERR;
         }
 
@@ -64,7 +64,6 @@ public:
         DeviceBuffer<char> tempbuffer{};
         HostBuffer<char> pinnedBuffer{};
         std::array<CudaStream,2> streams{};
-        ReadStorageHandle cpuReadStorageHandle;
 
         typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleSequences{};
         typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleQualities{};
@@ -117,8 +116,6 @@ public:
             )
         );
 
-        ReadStorageHandle readStorageHandle = cpuReadStorage->makeHandle();
-
         {
             constexpr std::size_t batchsize = 1000000;
             const std::size_t numBatches = SDIV(numReads, batchsize);
@@ -134,7 +131,6 @@ public:
                 std::iota(readIds.begin(), readIds.begin() + elements, begin);
 
                 cpuReadStorage->gatherSequenceLengths(
-                    readStorageHandle,
                     lengths.data(),
                     readIds.data(),
                     elements
@@ -181,7 +177,6 @@ public:
 
                 HostBuffer<read_number> h_positions(numAmbiguous);
                 cpuReadStorage->getIdsOfAmbiguousReads(
-                    readStorageHandle,
                     h_positions.data()
                 );
 
@@ -283,7 +278,6 @@ public:
                 );
 
                 cpuReadStorage->gatherSequences(
-                    readStorageHandle,
                     hostdataarray[bufferIndex],
                     numColumnsSequences,
                     indexarray[bufferIndex],
@@ -385,7 +379,6 @@ public:
                     );
 
                     cpuReadStorage->gatherQualities(
-                        readStorageHandle,
                         (char*)hostdataarray[bufferIndex],
                         numColumnsQualitiesInts * sizeof(unsigned int),
                         indexarray[bufferIndex],
@@ -443,7 +436,6 @@ public:
                     std::iota(indices.begin(), indices.end(), sequencesGpu.getNumRows() + i);
 
                     cpuReadStorage->gatherSequences(
-                        readStorageHandle,
                         hostsequences.data() + i * numColumnsSequences,
                         numColumnsSequences,
                         indices.data(),
@@ -466,7 +458,6 @@ public:
                         std::iota(indices.begin(), indices.end(), qualitiesGpu.getNumRows() + i);
 
                         cpuReadStorage->gatherQualities(
-                            readStorageHandle,
                             (char*)(hostqualities.data() + i * numColumnsQualitiesInts),
                             numColumnsQualitiesInts * sizeof(unsigned int),
                             indices.data(),
@@ -476,15 +467,12 @@ public:
                 
                 }
 
-                cpuReadStorage->destroyHandle(readStorageHandle);
                 cpuReadStorage = nullptr;
                 //std::cerr << "GpuReadstorage is standalone\n";
             }else{
                 //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
-                cpuReadStorage->destroyHandle(readStorageHandle);
             }
         }else{
-            cpuReadStorage->destroyHandle(readStorageHandle);
             cpuReadStorage = nullptr;
             //std::cerr << "GpuReadstorage is standalone\n";
         }
@@ -497,12 +485,7 @@ public:
 public: //inherited GPUReadStorage interface
 
     ReadStorageHandle makeHandle() const override {
-        ReadStorageHandle cpuHandle{};
-        if(cpuReadStorage != nullptr){
-            cpuHandle = cpuReadStorage->makeHandle();
-        }
-
-        auto data = std::make_unique<TempData>(cpuHandle);
+        auto data = std::make_unique<TempData>();
         data->handleSequences = sequencesGpu.makeHandle();
         data->handleQualities = qualitiesGpu.makeHandle();
         data->event = CudaEvent{cudaEventDisableTiming};
@@ -516,12 +499,6 @@ public: //inherited GPUReadStorage interface
     }
 
     void destroyHandle(ReadStorageHandle& handle) const override{
-
-        if(cpuReadStorage != nullptr){
-
-            TempData* tempData = getTempDataFromHandle(handle);
-            cpuReadStorage->destroyHandle(tempData->cpuReadStorageHandle);
-        }
 
         std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -1201,7 +1178,6 @@ private:
 
         if(!isStandalone()){
             cpuReadStorage->gatherSequences(
-                tempData->cpuReadStorageHandle,
                 outputarray,
                 outputPitchInInts,
                 readIds,
@@ -1236,7 +1212,6 @@ private:
         if(!isStandalone()){
 
             cpuReadStorage->gatherQualities(
-                tempData->cpuReadStorageHandle,
                 outputarray,
                 outputPitchInBytes,
                 readIds,

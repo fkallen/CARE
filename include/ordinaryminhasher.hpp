@@ -135,8 +135,6 @@ namespace care{
             int remainingHashFunctions = requestedNumberOfMaps;
             bool keepGoing = true;
 
-            ReadStorageHandle readStorageHandle = cpuReadStorage.makeHandle();
-
             std::vector<std::uint64_t> tempvector{};
 
             while(remainingHashFunctions > 0 && keepGoing){
@@ -181,7 +179,6 @@ namespace care{
                     std::iota(currentReadIds.begin(), currentReadIds.end(), beginid);
 
                     readStorage.gatherSequences(
-                        readStorageHandle,
                         sequencedata.data(),
                         encodedSequencePitchInInts,
                         currentReadIds.data(),
@@ -189,7 +186,6 @@ namespace care{
                     );
 
                     readStorage.gatherSequenceLengths(
-                        readStorageHandle,
                         sequencelengths.data(),
                         currentReadIds.data(),
                         currentbatchsize
@@ -223,8 +219,6 @@ namespace care{
             }
 
             setThreadPool(nullptr); 
-
-            cpuReadStorage.destroyHandle(readStorageHandle);
         }
  
 

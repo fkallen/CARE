@@ -160,8 +160,6 @@ extend_cpu_pairedend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
-
         const int batchsizePairs = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(2 * batchsizePairs);
@@ -216,14 +214,12 @@ extend_cpu_pairedend(
             if(numReadsInBatch > 0){
 
                 readStorage.gatherSequenceLengths(
-                    readStorageHandle,
                     currentReadLengths.data(),
                     currentIds.data(),
                     currentIds.size()
                 );
 
                 readStorage.gatherSequences(
-                    readStorageHandle,
                     currentEncodedReads.data(),
                     encodedSequencePitchInInts,
                     currentIds.data(),
@@ -232,7 +228,6 @@ extend_cpu_pairedend(
 
                 if(correctionOptions.useQualityScores){
                     readStorage.gatherQualities(
-                        readStorageHandle,
                         currentQualityScores.data(),
                         qualityPitchInBytes,
                         currentIds.data(),
@@ -398,9 +393,6 @@ extend_cpu_pairedend(
             }      
         }
 
-        
-        readStorage.destroyHandle(readStorageHandle);
-
     } //end omp parallel
 
     progressThread.finished();
@@ -551,8 +543,6 @@ extend_cpu_singleend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
-
         const int batchsize = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(batchsize);
@@ -574,14 +564,12 @@ extend_cpu_singleend(
             }
 
             readStorage.gatherSequenceLengths(
-                readStorageHandle,
                 currentReadLengths.data(),
                 currentIds.data(),
                 currentIds.size()
             );
 
             readStorage.gatherSequences(
-                readStorageHandle,
                 currentEncodedReads.data(),
                 encodedSequencePitchInInts,
                 currentIds.data(),
@@ -670,8 +658,6 @@ extend_cpu_singleend(
             }      
         }
 
-        
-        readStorage.destroyHandle(readStorageHandle);
         
     } //end omp parallel
 
