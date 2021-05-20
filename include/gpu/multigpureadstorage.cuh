@@ -209,6 +209,9 @@ public:
 
                     cudaDeviceSynchronize(); CUERR;
                 }
+
+                ambigReadIds.clear();
+                ambigReadIds.insert(ambigReadIds.end(), h_positions.begin(), h_positions.end());
             }
         }
 
@@ -1065,6 +1068,12 @@ public: //inherited GPUReadStorage interface
 
     }
 
+    void getIdsOfAmbiguousReads(
+        read_number* ids
+    ) const override{
+        std::copy(ambigReadIds.begin(), ambigReadIds.end(), ids);
+    }
+
     std::int64_t getNumberOfReadsWithN() const override{
         return numberOfAmbiguousReads;
     }
@@ -1329,6 +1338,7 @@ private:
     MultiGpu2dArray<unsigned int, IndexType> sequencesGpu{};
     MultiGpu2dArray<unsigned int, IndexType> qualitiesGpu{};
     std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
+    std::vector<read_number> ambigReadIds{};
 
 
     GPULengthStore3<std::uint32_t> gpuLengthStorage{};
