@@ -20,7 +20,11 @@ namespace care{
 
 #define DO_ONLY_REMOVE_MATE_IDS
 
+//forward declaration
+struct GpuExtensionStepper;
+
 struct ReadExtenderCpu{
+    friend struct GpuExtensionStepper;
 public:
 
 
@@ -48,6 +52,8 @@ public:
         goodAlignmentProperties(gap),
         minhashHandle{mh.makeQueryHandle()}{
 
+        setActiveReadStorage(readStorage);
+        setActiveMinhasher(minhasher);
     }
 
     void printTimers(){
@@ -76,6 +82,24 @@ public:
 
     void setMinCoverageForExtension(int c) noexcept{
         minCoverageForExtension = c;
+    }
+
+    void setActiveMinhasher(const CpuMinhasher* active){
+        if(active == nullptr){
+            //reset to default
+            activeMinhasher = minhasher;
+        }else{
+            activeMinhasher = active;
+        }
+    }
+
+    void setActiveReadStorage(const CpuReadStorage* active){
+        if(active == nullptr){
+            //reset to default
+            activeReadStorage = readStorage;
+        }else{
+            activeReadStorage = active;
+        }
     }
      
 private:
@@ -370,7 +394,7 @@ private:
         result.clear();
 
         bool containsN = false;
-        readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
+        activeReadStorage->areSequencesAmbiguous(&containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions.excludeAmbiguousReads && containsN)){
@@ -378,7 +402,7 @@ private:
             int numValuesPerSequence = 0;
             int totalNumValues = 0;
 
-            minhasher->determineNumValues(
+            activeMinhasher->determineNumValues(
                 minhashHandle,encodedRead,
                 encodedSequencePitchInInts,
                 &readLength,
@@ -390,7 +414,7 @@ private:
             result.resize(totalNumValues);
             std::array<int, 2> offsets{};
 
-            minhasher->retrieveValues(
+            activeMinhasher->retrieveValues(
                 minhashHandle,
                 nullptr, //do not remove selfid
                 1,
@@ -410,7 +434,7 @@ private:
                     result.end(),
                     [&](read_number readId){
                         bool containsN = false;
-                        readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
+                        activeReadStorage->areSequencesAmbiguous(&containsN, &readId, 1);
                         return containsN;
                     }
                 );
@@ -504,13 +528,13 @@ private:
             task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
             task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
-            readStorage->gatherSequenceLengths(
+            activeReadStorage->gatherSequenceLengths(
                 task.candidateSequenceLengths.data(),
                 task.candidateReadIds.data(),
                 task.candidateReadIds.size()
             );
 
-            readStorage->gatherSequences(
+            activeReadStorage->gatherSequences(
                 task.candidateSequencesFwdData.data(),
                 encodedSequencePitchInInts,
                 task.candidateReadIds.data(),
@@ -883,7 +907,7 @@ private:
 
         if(correctionOptions.useQualityScores){
 
-            readStorage->gatherQualities(
+            activeReadStorage->gatherQualities(
                 candidateQualities.data(),
                 qualityPitchInBytes,
                 task.candidateReadIds.data(),
@@ -1414,6 +1438,9 @@ private:
     const CpuReadStorage* readStorage{};
     const CpuMinhasher* minhasher{};
     const cpu::QualityScoreConversion* qualityConversion{};
+
+    const CpuReadStorage* activeReadStorage{};
+    const CpuMinhasher* activeMinhasher{};
 
     int insertSize{};
     int insertSizeStddev{};
