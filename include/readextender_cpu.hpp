@@ -131,7 +131,7 @@ private:
         while(indicesOfActiveTasks.size() > 0){
             //perform one extension iteration for active tasks
 
-            #if 0
+            #if 1
 
             doOneExtensionIteration(tasks, indicesOfActiveTasks);
 
@@ -289,7 +289,32 @@ private:
 
         getCandidateReadIds(tasks, indicesOfActiveTasks);
 
+        // for(auto indexOfActiveTask : indicesOfActiveTasks){
+        //     const auto& task = tasks[indexOfActiveTask];
+
+        //     if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+        //         std::cerr << "Anchor: " << task.totalDecodedAnchors.back() << "\n";
+        //         std::cerr << "iteration " << task.iteration << ", candidates raw\n";
+        //         for(auto x : task.candidateReadIds){
+        //             std::cerr << x << " ";
+        //         }
+        //         std::cerr << "\n";
+        //     }
+        // }
+
         removeUsedIdsAndMateIds(tasks, indicesOfActiveTasks);
+
+        // for(auto indexOfActiveTask : indicesOfActiveTasks){
+        //     const auto& task = tasks[indexOfActiveTask];
+
+        //     if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+        //         std::cerr << "iteration " << task.iteration << ", candidates after remove\n";
+        //         for(auto x : task.candidateReadIds){
+        //             std::cerr << x << " ";
+        //         }
+        //         std::cerr << "\n";
+        //     }
+        // }
         
 
         hashTimer.stop();
@@ -320,6 +345,18 @@ private:
         filterAlignments(tasks, indicesOfActiveTasks);
 
         alignmentFilterTimer.stop();
+
+        // for(auto indexOfActiveTask : indicesOfActiveTasks){
+        //     const auto& task = tasks[indexOfActiveTask];
+
+        //     if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+        //         std::cerr << "iteration " << task.iteration << ", candidates after alignment filter\n";
+        //         for(auto x : task.candidateReadIds){
+        //             std::cerr << x << " ";
+        //         }
+        //         std::cerr << "\n";
+        //     }
+        // }
 
         msaTimer.start();
 
@@ -455,6 +492,7 @@ private:
     }
 
     void getCandidateReadIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+        #if 0
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -466,6 +504,55 @@ private:
             );
 
         }
+        #else
+            const int numSequences = indicesOfActiveTasks.size();
+
+            int totalNumValues = 0;
+            std::vector<int> numValuesPerSequence(numSequences);
+
+            {
+                std::vector<unsigned int> sequences(encodedSequencePitchInInts * numSequences);
+                std::vector<int> lengths(numSequences);
+
+                for(int i = 0; i < numSequences; i++){
+                    const auto& task = tasks[indicesOfActiveTasks[i]];
+                    std::copy(task.currentAnchor.begin(), task.currentAnchor.end(), sequences.begin() + i * encodedSequencePitchInInts);
+                    lengths[i] = task.currentAnchorLength;
+                }
+
+
+                activeMinhasher->determineNumValues(
+                    minhashHandle,
+                    sequences.data(),
+                    encodedSequencePitchInInts,
+                    lengths.data(),
+                    numSequences,
+                    numValuesPerSequence.data(),
+                    totalNumValues
+                );
+            }
+
+            std::vector<read_number> allCandidates(totalNumValues);
+            std::vector<int> offsets(numSequences + 1);
+
+            activeMinhasher->retrieveValues(
+                minhashHandle,
+                nullptr, //do not remove selfid
+                numSequences,
+                totalNumValues,
+                allCandidates.data(),
+                numValuesPerSequence.data(),
+                offsets.data()
+            );
+
+            for(int i = 0; i < numSequences; i++){
+                auto& task = tasks[indicesOfActiveTasks[i]];
+
+                task.candidateReadIds.resize(numValuesPerSequence[i]);
+                std::copy_n(allCandidates.begin() + offsets[i], numValuesPerSequence[i], task.candidateReadIds.begin());
+            }
+
+        #endif
     }
 
     void removeUsedIdsAndMateIds(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
@@ -526,6 +613,7 @@ private:
     }
 
     void loadCandidateSequenceData(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
+        #if 0
         for(int indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
@@ -561,6 +649,75 @@ private:
                 );
             }
         }
+        #else
+            const int numSequences = indicesOfActiveTasks.size();
+
+            std::vector<int> offsets(numSequences);
+            offsets[0] = 0;
+
+            int totalNumberOfCandidates = 0;
+            for(int i = 0; i < numSequences; i++){
+                const auto& task = tasks[indicesOfActiveTasks[i]];
+                totalNumberOfCandidates += task.candidateReadIds.size();
+                if(i < numSequences - 1){
+                    offsets[i+1] = totalNumberOfCandidates;
+                }
+            }
+
+            std::vector<read_number> readIds(totalNumberOfCandidates);
+            std::vector<int> lengths(totalNumberOfCandidates);
+            std::vector<unsigned int> forwarddata(totalNumberOfCandidates * encodedSequencePitchInInts);
+
+            for(int i = 0; i < numSequences; i++){
+                const auto& task = tasks[indicesOfActiveTasks[i]];
+                
+                std::copy(task.candidateReadIds.begin(), task.candidateReadIds.end(), readIds.begin() + offsets[i]);
+            }
+
+            activeReadStorage->gatherSequenceLengths(
+                lengths.data(),
+                readIds.data(),
+                totalNumberOfCandidates
+            );
+
+            activeReadStorage->gatherSequences(
+                forwarddata.data(),
+                encodedSequencePitchInInts,
+                readIds.data(),
+                totalNumberOfCandidates
+            );
+
+            for(int i = 0; i < numSequences; i++){
+                auto& task = tasks[indicesOfActiveTasks[i]];
+                const int numCandidates = task.candidateReadIds.size();
+                const int offset = offsets[i];
+
+                task.candidateSequenceLengths.resize(numCandidates);
+                task.candidateSequencesFwdData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
+                
+                std::copy_n(lengths.begin() + offset, numCandidates, task.candidateSequenceLengths.begin());
+                std::copy_n(
+                    forwarddata.begin() + offset * encodedSequencePitchInInts, 
+                    numCandidates * encodedSequencePitchInInts, 
+                    task.candidateSequencesFwdData.begin()
+                );
+
+                for(int c = 0; c < numCandidates; c++){
+                    const unsigned int* const seqPtr = task.candidateSequencesFwdData.data() 
+                                                        + std::size_t(encodedSequencePitchInInts) * c;
+                    unsigned int* const seqrevcPtr = task.candidateSequencesRevcData.data() 
+                                                        + std::size_t(encodedSequencePitchInInts) * c;
+
+                    SequenceHelpers::reverseComplementSequence2Bit(
+                        seqrevcPtr,  
+                        seqPtr,
+                        task.candidateSequenceLengths[c]
+                    );
+                }
+            }
+
+        #endif
     }
 
     void computePairFlags(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
@@ -905,6 +1062,196 @@ private:
         }
     }
 
+    MultipleSequenceAlignment constructMSA(extension::Task& task, char* candidateQualities) const{
+        const std::string& decodedAnchor = task.totalDecodedAnchors.back();
+
+        MultipleSequenceAlignment msa(qualityConversion);
+
+        // std::vector<char> candidateQualities(task.numRemainingCandidates * qualityPitchInBytes);
+
+        // if(correctionOptions.useQualityScores){
+
+        //     activeReadStorage->gatherQualities(
+        //         candidateQualities.data(),
+        //         qualityPitchInBytes,
+        //         task.candidateReadIds.data(),
+        //         task.numRemainingCandidates
+        //     );
+
+        //     for(int c = 0; c < task.numRemainingCandidates; c++){
+        //         if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+        //             std::reverse(
+        //                 candidateQualities.data() + c * qualityPitchInBytes,
+        //                 candidateQualities.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
+        //             );
+        //         }
+        //     }
+
+        // }else{
+        //     std::fill(candidateQualities.begin(), candidateQualities.end(), 'I');
+        // }
+
+        auto build = [&](){
+
+            task.candidateShifts.resize(task.numRemainingCandidates);
+            task.candidateOverlapWeights.resize(task.numRemainingCandidates);
+
+            //gather data required for msa
+            for(int c = 0; c < task.numRemainingCandidates; c++){
+                task.candidateShifts[c] = task.alignments[c].shift;
+
+                task.candidateOverlapWeights[c] = calculateOverlapWeight(
+                    task.currentAnchorLength, 
+                    task.alignments[c].nOps,
+                    task.alignments[c].overlap,
+                    goodAlignmentProperties.maxErrorRate
+                );
+            }
+
+            task.candidateStrings.resize(decodedSequencePitchInBytes * task.numRemainingCandidates, '\0');
+
+            //decode the candidates for msa
+            for(int c = 0; c < task.numRemainingCandidates; c++){
+                SequenceHelpers::decode2BitSequence(
+                    task.candidateStrings.data() + c * decodedSequencePitchInBytes,
+                    task.candidateSequenceData.data() + c * encodedSequencePitchInInts,
+                    task.candidateSequenceLengths[c]
+                );
+            }
+
+            MultipleSequenceAlignment::InputData msaInput;
+            msaInput.useQualityScores = true;
+            msaInput.subjectLength = task.currentAnchorLength;
+            msaInput.nCandidates = task.numRemainingCandidates;
+            msaInput.candidatesPitch = decodedSequencePitchInBytes;
+            msaInput.candidateQualitiesPitch = qualityPitchInBytes;
+            msaInput.subject = decodedAnchor.c_str();
+            msaInput.candidates = task.candidateStrings.data();
+            msaInput.subjectQualities = task.currentQualityScores.c_str();
+            //msaInput.candidateQualities = candidateQualities.data();
+            msaInput.candidateQualities = candidateQualities;
+            msaInput.candidateLengths = task.candidateSequenceLengths.data();
+            msaInput.candidateShifts = task.candidateShifts.data();
+            msaInput.candidateDefaultWeightFactors = task.candidateOverlapWeights.data();                    
+
+            msa.build(msaInput);
+        };
+
+        build();
+
+        #if 1
+
+        auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
+            const int numCandidates = task.candidateReadIds.size();
+
+            int insertpos = 0;
+            for(int i = 0; i < numCandidates; i++){
+                if(!minimizationResult.differentRegionCandidate[i]){               
+                    //keep candidate
+
+                    task.candidateReadIds[insertpos] = task.candidateReadIds[i];
+
+                    std::copy_n(
+                        task.candidateSequenceData.data() + i * size_t(encodedSequencePitchInInts),
+                        encodedSequencePitchInInts,
+                        task.candidateSequenceData.data() + insertpos * size_t(encodedSequencePitchInInts)
+                    );
+
+                    task.candidateSequenceLengths[insertpos] = task.candidateSequenceLengths[i];
+                    task.alignmentFlags[insertpos] = task.alignmentFlags[i];
+                    task.alignments[insertpos] = task.alignments[i];
+                    task.candidateOverlapWeights[insertpos] = task.candidateOverlapWeights[i];
+                    task.candidateShifts[insertpos] = task.candidateShifts[i];
+                    task.isPairedCandidate[insertpos] = task.isPairedCandidate[i];
+
+                    std::copy_n(
+                        task.candidateStrings.data() + i * size_t(decodedSequencePitchInBytes),
+                        decodedSequencePitchInBytes,
+                        task.candidateStrings.data() + insertpos * size_t(decodedSequencePitchInBytes)
+                    );
+
+                    std::copy_n(                        
+                        candidateQualities + i * size_t(qualityPitchInBytes),
+                        qualityPitchInBytes,
+                        candidateQualities + insertpos * size_t(qualityPitchInBytes)
+                    );
+
+                    insertpos++;
+                }
+            }
+
+            task.numRemainingCandidates = insertpos;
+
+            task.candidateReadIds.erase(
+                task.candidateReadIds.begin() + insertpos, 
+                task.candidateReadIds.end()
+            );
+            task.candidateSequenceData.erase(
+                task.candidateSequenceData.begin() + encodedSequencePitchInInts * insertpos, 
+                task.candidateSequenceData.end()
+            );
+            task.candidateSequenceLengths.erase(
+                task.candidateSequenceLengths.begin() + insertpos, 
+                task.candidateSequenceLengths.end()
+            );
+            task.alignmentFlags.erase(
+                task.alignmentFlags.begin() + insertpos, 
+                task.alignmentFlags.end()
+            );
+            task.alignments.erase(
+                task.alignments.begin() + insertpos, 
+                task.alignments.end()
+            );
+
+            task.isPairedCandidate.erase(
+                task.isPairedCandidate.begin() + insertpos, 
+                task.isPairedCandidate.end()
+            );
+
+            // candidateQualities.erase(
+            //     candidateQualities.begin() + qualityPitchInBytes * insertpos, 
+            //     candidateQualities.end()
+            // );
+
+            task.candidateStrings.erase(
+                task.candidateStrings.begin() + decodedSequencePitchInBytes * insertpos, 
+                task.candidateStrings.end()
+            );
+            task.candidateOverlapWeights.erase(
+                task.candidateOverlapWeights.begin() + insertpos, 
+                task.candidateOverlapWeights.end()
+            );
+            task.candidateShifts.erase(
+                task.candidateShifts.begin() + insertpos, 
+                task.candidateShifts.end()
+            );
+            
+        };
+
+        if(getNumRefinementIterations() > 0){                
+
+            for(int numIterations = 0; numIterations < getNumRefinementIterations(); numIterations++){
+                const auto minimizationResult = msa.findCandidatesOfDifferentRegion(
+                    correctionOptions.estimatedCoverage
+                );
+
+                if(minimizationResult.performedMinimization){
+                    removeCandidatesOfDifferentRegion(minimizationResult);
+
+                    //build minimized multiple sequence alignment
+                    build();
+                }else{
+                    break;
+                }               
+                
+            }
+        }   
+
+        #endif
+
+        return msa;
+    }
+
     MultipleSequenceAlignment constructMSA(extension::Task& task) const{
         const std::string& decodedAnchor = task.totalDecodedAnchors.back();
 
@@ -1095,7 +1442,33 @@ private:
     }
 
     ExtendWithMsaResult extendWithMsa(extension::Task& task, const MultipleSequenceAlignment& msa) const{
+        
+        // if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+        //     std::cerr << "task id " << task.id << " myReadId " << task.myReadId << "\n";
+        //     std::cerr << "candidates\n";
+        //     for(auto x : task.candidateReadIds){
+        //         std::cerr << x << " ";
+        //     }
+        //     std::cerr << "\n";
 
+        //     std::cerr << "consensus\n";
+        //     for(auto x : msa.consensus){
+        //         std::cerr << x;
+        //     }
+        //     std::cerr << "\n";
+
+        //     if(task.iteration == 3){
+        //         const int num = task.numRemainingCandidates;
+        //         std::cerr << "cand strings\n";
+        //         for(int k = 0; k < num; k++){
+        //             for(int c = 0; c < task.candidateSequenceLengths[k]; c++){
+        //                 std::cerr << task.candidateStrings[k * decodedSequencePitchInBytes + c];
+        //             }
+        //             std::cerr << " " << task.alignments[k].shift;
+        //             std::cerr << "\n";
+        //         }
+        //     }
+        // }
         
         const int consensusLength = msa.consensus.size();
         const int anchorLength = task.currentAnchorLength;
@@ -1223,11 +1596,98 @@ private:
     }
 
     void computeMSAsAndExtendTasks(std::vector<extension::Task>& tasks, const std::vector<int>& indicesOfActiveTasks) const{
-        for(int indexOfActiveTask : indicesOfActiveTasks){
+        const int numSequences = indicesOfActiveTasks.size();
+
+        std::vector<int> offsets(numSequences);
+        offsets[0] = 0;
+
+        int totalNumberOfCandidates = 0;
+        for(int i = 0; i < numSequences; i++){
+            const auto& task = tasks[indicesOfActiveTasks[i]];
+            totalNumberOfCandidates += task.candidateReadIds.size();
+            if(i < numSequences - 1){
+                offsets[i+1] = totalNumberOfCandidates;
+            }
+        }
+
+        std::vector<read_number> readIds(totalNumberOfCandidates);
+
+        for(int i = 0; i < numSequences; i++){
+            const auto& task = tasks[indicesOfActiveTasks[i]];
+            assert(task.numRemainingCandidates == int(task.candidateReadIds.size()));
+            std::copy(task.candidateReadIds.begin(), task.candidateReadIds.end(), readIds.begin() + offsets[i]);
+        }
+
+        std::vector<char> candidateQualities(totalNumberOfCandidates * qualityPitchInBytes);
+
+        if(correctionOptions.useQualityScores){
+
+            activeReadStorage->gatherQualities(
+                candidateQualities.data(),
+                qualityPitchInBytes,
+                readIds.data(),
+                totalNumberOfCandidates
+            );
+
+            for(int i = 0; i < numSequences; i++){
+                const auto& task = tasks[indicesOfActiveTasks[i]];
+
+                for(int c = 0; c < task.numRemainingCandidates; c++){
+                    if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                        std::reverse(
+                            candidateQualities.data() + (offsets[i] + c) * qualityPitchInBytes,
+                            candidateQualities.data() + (offsets[i] + c) * qualityPitchInBytes + task.candidateSequenceLengths[c]
+                        );
+                    }
+                }
+            }
+
+        }else{
+            std::fill(candidateQualities.begin(), candidateQualities.end(), 'I');
+        }
+
+        // const int numTasks = indicesOfActiveTasks.size();
+        // for(int i = 0; i < numTasks; i++){
+        //     auto& task = tasks[indicesOfActiveTasks[i]];
+
+        // for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){
+        //     auto& task = tasks[indicesOfActiveTasks[i]];
+        for(const auto& indexOfActiveTask : indicesOfActiveTasks){
             auto& task = tasks[indexOfActiveTask];
 
             if(task.numRemainingCandidates > 0){
-                const auto msa = constructMSA(task);
+                // std::vector<char> candidateQualitiesSingle(task.numRemainingCandidates * qualityPitchInBytes);
+
+                // if(correctionOptions.useQualityScores){
+
+                //     activeReadStorage->gatherQualities(
+                //         candidateQualitiesSingle.data(),
+                //         qualityPitchInBytes,
+                //         task.candidateReadIds.data(),
+                //         task.numRemainingCandidates
+                //     );
+
+                //     for(int c = 0; c < task.numRemainingCandidates; c++){
+                //         if(task.alignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                //             std::reverse(
+                //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes,
+                //                 candidateQualitiesSingle.data() + c * qualityPitchInBytes + task.candidateSequenceLengths[c]
+                //             );
+                //         }
+                //     }
+
+                // }else{
+                //     std::fill(candidateQualitiesSingle.begin(), candidateQualitiesSingle.end(), 'I');
+                // }
+
+                // for(int x = 0; x < qualityPitchInBytes * task.numRemainingCandidates){
+                //     assert(candidateQualitiesSingle[x] == )
+                // }
+
+                //const auto msa = constructMSA(task, candidateQualitiesSingle.data());
+                //const auto msa = constructMSA(task, candidateQualities.data() + offsets[i] * qualityPitchInBytes);
+                const auto msa = constructMSA(task, candidateQualities.data() + offsets[&indexOfActiveTask - indicesOfActiveTasks.data()] * qualityPitchInBytes);
+                //const auto msa = constructMSA(task);
                 const auto result = extendWithMsa(task, msa);
 
                 task.abortReason = result.abortReason;
@@ -1266,6 +1726,8 @@ private:
                 }
 
                 task.abort = task.abortReason != extension::AbortReason::None;
+            }else{
+                //std::cerr << "did not extend task id " << task.id << " readid " << task.myReadId << " iteration " << task.iteration << " because no candidates.\n";
             }
         }
     }
@@ -1451,7 +1913,7 @@ private:
 
     int insertSize{};
     int insertSizeStddev{};
-    int maxextensionPerStep{};
+    int maxextensionPerStep{1};
     int minCoverageForExtension{1};
     int maximumSequenceLength{};
     std::size_t encodedSequencePitchInInts{};

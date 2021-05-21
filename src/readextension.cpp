@@ -67,6 +67,64 @@ extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
+    // {
+    //     std::vector<std::string> queries{
+    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTTTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT",
+    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTCTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT"
+    //     };
+
+    //     auto minhashHandle = minhasher.makeMinhasherHandle();
+    //     const int encodedSequencePitchInInts = 16;
+
+    //     for(const auto& q : queries){
+
+    //         std::vector<unsigned int> encodedRead(encodedSequencePitchInInts);
+    //         SequenceHelpers::encodeSequence2Bit(
+    //             encodedRead.data(), 
+    //             q.data(), 
+    //             q.size()
+    //         );
+
+    //         int numValuesPerSequence = 0;
+    //         int totalNumValues = 0;
+    //         int readLength = q.size();
+
+    //         minhasher.determineNumValues(
+    //             minhashHandle,
+    //             encodedRead.data(),
+    //             encodedSequencePitchInInts,
+    //             &readLength,
+    //             1,
+    //             &numValuesPerSequence,
+    //             totalNumValues
+    //         );
+
+    //         std::vector<read_number> result(totalNumValues);
+    //         std::array<int, 2> offsets{};
+
+    //         minhasher.retrieveValues(
+    //             minhashHandle,
+    //             nullptr, //do not remove selfid
+    //             1,
+    //             totalNumValues,
+    //             result.data(),
+    //             &numValuesPerSequence,
+    //             offsets.data()
+    //         );
+
+    //         result.erase(result.begin() + numValuesPerSequence, result.end());
+
+    //         std::cerr << "Query: " << q << "\n";
+    //         std::cerr << numValuesPerSequence << " candidates\n";
+    //         for(int k = 0; k < numValuesPerSequence; k++){
+    //             std::cerr << result[k] << " ";
+    //         }
+    //         std::cerr << "\n";
+    //     }
+
+    //     minhasher.destroyHandle(minhashHandle);
+    // }
+
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
@@ -173,6 +231,9 @@ extend_cpu_pairedend(
 
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;
+
+        readExtender.setMaxExtensionPerStep(fixedStepsize);
+        readExtender.setMinCoverageForExtension(minCoverageForExtension);
 
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
@@ -353,6 +414,7 @@ extend_cpu_pairedend(
         while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
 
             readExtender.setMaxExtensionPerStep(fixedStepsize);
+            //std::cerr << "fixedStepsize = " << fixedStepsize << "\n";
 
             //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 2);

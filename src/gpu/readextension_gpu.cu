@@ -1141,6 +1141,9 @@ extend_gpu_pairedend(
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;
 
+        gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
+        gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
+
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
         bool isLastIteration = false;
@@ -1261,9 +1264,6 @@ extend_gpu_pairedend(
                 );
                 #endif
 
-                batchData->minCoverageForExtension = minCoverageForExtension;
-                batchData->fixedStepsize = fixedStepsize;
-
                 batchData->setState(BatchData::State::BeforePrepare);
             }else{
                 batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
@@ -1370,6 +1370,10 @@ extend_gpu_pairedend(
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
         while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+
+            gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
+            //std::cerr << "fixedStepsize = " << fixedStepsize << "\n"; 
+            //gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
 
             //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 2);
