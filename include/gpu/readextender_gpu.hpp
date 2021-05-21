@@ -3438,6 +3438,8 @@ public:
         multiMSA.origCoverages = d_origCoverages;
         multiMSA.columnProperties = batchData.d_msa_column_properties.get();
 
+        const bool useQualityScoresForMSA = true;
+
         callConstructMultipleSequenceAlignmentsKernel_async(
             multiMSA,
             batchData.d_alignment_overlaps.get(),
@@ -3458,7 +3460,7 @@ public:
             goodAlignmentProperties->maxErrorRate,
             batchData.numTasks,
             batchData.totalNumCandidates,
-            true, //correctionOptions->useQualityScores,
+            useQualityScoresForMSA, //correctionOptions->useQualityScores,
             batchData.encodedSequencePitchInInts,
             batchData.qualityPitchInBytes,
             firstStream,
@@ -3491,7 +3493,7 @@ public:
             goodAlignmentProperties->maxErrorRate,
             batchData.numTasks,
             batchData.totalNumCandidates,
-            true, //correctionOptions->useQualityScores,
+            useQualityScoresForMSA, //correctionOptions->useQualityScores,
             batchData.encodedSequencePitchInInts,
             batchData.qualityPitchInBytes,
             indices1, //d_indices,

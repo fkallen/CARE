@@ -1067,6 +1067,8 @@ private:
 
         MultipleSequenceAlignment msa(qualityConversion);
 
+        const bool useQualityScoresForMSA = true;
+
         // std::vector<char> candidateQualities(task.numRemainingCandidates * qualityPitchInBytes);
 
         // if(correctionOptions.useQualityScores){
@@ -1120,7 +1122,7 @@ private:
             }
 
             MultipleSequenceAlignment::InputData msaInput;
-            msaInput.useQualityScores = true;
+            msaInput.useQualityScores = useQualityScoresForMSA;
             msaInput.subjectLength = task.currentAnchorLength;
             msaInput.nCandidates = task.numRemainingCandidates;
             msaInput.candidatesPitch = decodedSequencePitchInBytes;
