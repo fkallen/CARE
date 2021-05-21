@@ -285,6 +285,26 @@ namespace extension{
         return "INVALID ENUM VALUE to_string(ExtensionDirection)";
     }
 
+    __inline__
+    std::ostream & operator<<(std::ostream &os, const ExtendResult& r){
+        os << "ExtendResult{ "
+            << "found: " << r.mateHasBeenFound
+            << ", success: " << r.success
+            << ", aborted: " << r.aborted
+            << ", numIterations: " << r.numIterations
+            << ", originalLength: " << r.originalLength
+            << ", read1begin: " << r.read1begin
+            << ", read2begin: " << r.read2begin
+            << ", direction: " << to_string(r.direction)
+            << ", abortReason: " << to_string(r.abortReason)
+            << ", readId1: " << r.readId1
+            << ", readId2: " << r.readId2
+            << ", extendedRead: " << r.extendedRead
+            << ", qualityScores: " << r.qualityScores
+            << "}";
+        return os;
+    }
+
 
     template<class InputIter, class TaskOutIter>
     TaskOutIter makePairedEndTasksFromInput4(InputIter inputsBegin, InputIter inputsEnd, TaskOutIter outputBegin){
@@ -498,6 +518,11 @@ namespace extension{
             auto& r2 = combinedResults[4 * i + 1];
             auto& r3 = combinedResults[4 * i + 2];
             auto& r4 = combinedResults[4 * i + 3];
+
+            // std::cerr << r1 << "\n";
+            // std::cerr << r2 << "\n";
+            // std::cerr << r3 << "\n";
+            // std::cerr << r4 << "\n";
 
             if(r1.mateHasBeenFound){
                 merge(r1,r2);
