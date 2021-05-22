@@ -1448,43 +1448,7 @@ public:
 
         assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
 
-        for(int i = 0; i < numActiveTasks; i++){ 
-            const int indexOfActiveTask = batchData.indicesOfActiveTasks[i];
-            const auto& task = batchData.tasks[indexOfActiveTask];
-
-            const int whichtype = task.id % 4;
-
-            assert(indexOfActiveTask % 4 == whichtype);
-
-            if(whichtype == 0){
-                assert(task.direction == extension::ExtensionDirection::LR);
-                assert(task.pairedEnd == true);
-
-                if(task.mateHasBeenFound){                    
-                    batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                    batchData.tasks[indexOfActiveTask + 3].abort = true;
-                    batchData.tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                }else if(task.abort){
-                    batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }
-            }else if(whichtype == 2){
-                assert(task.direction == extension::ExtensionDirection::RL);
-                assert(task.pairedEnd == true);
-
-                if(task.mateHasBeenFound){                    
-                    batchData.tasks[indexOfActiveTask - 1].abort = true;
-                    batchData.tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                    batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }else if(task.abort){
-                    batchData.tasks[indexOfActiveTask + 1].abort = true;
-                    batchData.tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }
-            }
-        }
-
+        handleEarlyExitOfTasks4(batchData.tasks, batchData.indicesOfActiveTasks);
 
         // for(int i = 0; i < int(batchData.tasks.size()); i++){
         //     const auto& task = batchData.tasks[i];

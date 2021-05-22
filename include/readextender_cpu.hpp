@@ -364,44 +364,7 @@ private:
 
         msaTimer.stop();       
 
-        //check early exit for tasks
-
-        for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){ 
-            const int indexOfActiveTask = indicesOfActiveTasks[i];
-            const auto& task = tasks[indexOfActiveTask];
-
-            const int whichtype = task.id % 4;
-
-            assert(indexOfActiveTask % 4 == whichtype);
-
-            if(whichtype == 0){
-                assert(task.direction == extension::ExtensionDirection::LR);
-                assert(task.pairedEnd == true);
-
-                if(task.mateHasBeenFound){                    
-                    tasks[indexOfActiveTask + 1].abort = true;
-                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                    tasks[indexOfActiveTask + 3].abort = true;
-                    tasks[indexOfActiveTask + 3].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                }else if(task.abort){
-                    tasks[indexOfActiveTask + 1].abort = true;
-                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }
-            }else if(whichtype == 2){
-                assert(task.direction == extension::ExtensionDirection::RL);
-                assert(task.pairedEnd == true);
-
-                if(task.mateHasBeenFound){                    
-                    tasks[indexOfActiveTask - 1].abort = true;
-                    tasks[indexOfActiveTask - 1].abortReason = extension::AbortReason::OtherStrandFoundMate;
-                    tasks[indexOfActiveTask + 1].abort = true;
-                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }else if(task.abort){
-                    tasks[indexOfActiveTask + 1].abort = true;
-                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
-                }
-            }
-        }    
+        handleEarlyExitOfTasks4(tasks, indicesOfActiveTasks);
 
         /*
             update book-keeping of used candidates

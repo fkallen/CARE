@@ -2,6 +2,7 @@
 #define CARE_READEXTENDER_COMMON_HPP
 
 #include <stringglueing.hpp>
+#include <cassert>
 
 namespace care{
 namespace extension{
@@ -466,7 +467,56 @@ namespace extension{
     }
 
 
+    __inline__
+    void handleEarlyExitOfTasks4(std::vector<extension::Task>& tasks, const std::vector<int> indicesOfActiveTasks){
+        for(int i = 0; i < int(indicesOfActiveTasks.size()); i++){ 
+            const int indexOfActiveTask = indicesOfActiveTasks[i];
+            const auto& task = tasks[indexOfActiveTask];
+            const int whichtype = task.id % 4;
 
+            assert(indexOfActiveTask % 4 == whichtype);
+
+            //whichtype 0: LR, strand1 searching mate to the right.
+            //whichtype 1: LR, strand1 just extend to the right.
+            //whichtype 2: RL, strand2 searching mate to the right.
+            //whichtype 3: RL, strand2 just extend to the right.
+
+            if(whichtype == 0){
+                assert(task.direction == extension::ExtensionDirection::LR);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){        
+                    //disable LR partner task            
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    //disable RL search task
+                    tasks[indexOfActiveTask + 2].abort = true;
+                    tasks[indexOfActiveTask + 2].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                }else if(task.abort){
+                    //disable LR partner task  
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                }
+            }else if(whichtype == 2){
+                assert(task.direction == extension::ExtensionDirection::RL);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){
+                    //disable RL partner task
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                    //disable LR search task
+                    tasks[indexOfActiveTask - 2].abort = true;
+                    tasks[indexOfActiveTask - 2].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                    
+                }else if(task.abort){
+                    //disable RL partner task
+                    tasks[indexOfActiveTask + 1].abort = true;
+                    tasks[indexOfActiveTask + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                }
+            }
+        }
+    }
 
 
 
