@@ -91,10 +91,8 @@ namespace extension{
         std::vector<std::string> totalDecodedAnchors;
         std::vector<std::string> totalAnchorQualityScores;
         std::vector<int> totalAnchorBeginInExtendedRead;
-        std::vector<std::vector<read_number>> usedCandidateReadIdsPerIteration;
-        std::vector<std::vector<care::cpu::SHDResult>> usedAlignmentsPerIteration;
-        std::vector<std::vector<BestAlignment_t>> usedAlignmentFlagsPerIteration;
         std::vector<read_number> allUsedCandidateReadIdPairs; //sorted
+        std::vector<read_number> allFullyUsedCandidateReadIdPairs;
         std::vector<char> candidateStrings;
         std::vector<int> candidateShifts;
         std::vector<float> candidateOverlapWeights;
@@ -138,10 +136,8 @@ namespace extension{
                 if(totalDecodedAnchors != rhs.totalDecodedAnchors) std::cerr << "totalDecodedAnchors differs\n";
                 if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) std::cerr << "totalAnchorQualityScores differs\n";                
                 if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) std::cerr << "totalAnchorBeginInExtendedRead differs\n";
-                if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) std::cerr << "usedCandidateReadIdsPerIteration differs\n";
-                if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) std::cerr << "usedAlignmentsPerIteration differs\n";
-                if(usedAlignmentFlagsPerIteration != rhs.usedAlignmentFlagsPerIteration) std::cerr << "usedAlignmentFlagsPerIteration differs\n";
                 if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) std::cerr << "allUsedCandidateReadIdPairs differs\n";
+                if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) std::cerr << "allFullyUsedCandidateReadIdPairs differs\n";                
                 if(candidateStrings != rhs.candidateStrings) std::cerr << "candidateStrings differs\n";
                 if(candidateShifts != rhs.candidateShifts) std::cerr << "candidateShifts differs\n";
                 if(candidateOverlapWeights != rhs.candidateOverlapWeights) std::cerr << "candidateOverlapWeights differs\n";
@@ -183,10 +179,8 @@ namespace extension{
             if(totalDecodedAnchors != rhs.totalDecodedAnchors) return false;
             if(totalAnchorQualityScores != rhs.totalAnchorQualityScores) return false;            
             if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead) return false;
-            if(usedCandidateReadIdsPerIteration != rhs.usedCandidateReadIdsPerIteration) return false;
-            if(usedAlignmentsPerIteration != rhs.usedAlignmentsPerIteration) return false;
-            if(usedAlignmentFlagsPerIteration != rhs.usedAlignmentFlagsPerIteration) return false;
             if(allUsedCandidateReadIdPairs != rhs.allUsedCandidateReadIdPairs) return false;
+            if(allFullyUsedCandidateReadIdPairs != rhs.allFullyUsedCandidateReadIdPairs) return false;            
             if(candidateStrings != rhs.candidateStrings) return false;
             if(candidateShifts != rhs.candidateShifts) return false;
             if(candidateOverlapWeights != rhs.candidateOverlapWeights) return false;
@@ -248,10 +242,8 @@ namespace extension{
             clear(totalDecodedAnchors);
             clear(totalAnchorQualityScores);
             clear(totalAnchorBeginInExtendedRead);
-            clear(usedCandidateReadIdsPerIteration);
-            clear(usedAlignmentsPerIteration);
-            clear(usedAlignmentFlagsPerIteration);
             clear(allUsedCandidateReadIdPairs);
+            clear(allFullyUsedCandidateReadIdPairs);
             clear(candidateStrings);
             clear(candidateShifts);
             clear(candidateOverlapWeights);

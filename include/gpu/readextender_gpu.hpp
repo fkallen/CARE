@@ -29,6 +29,7 @@
 
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
 #include <thrust/logical.h>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
@@ -454,6 +455,7 @@ struct BatchData{
 
     int totalNumCandidates = 0;
     int totalNumberOfUsedIds = 0;
+    int totalNumberOfFullyUsedIds = 0;
 
     std::size_t encodedSequencePitchInInts = 0;
     std::size_t decodedSequencePitchInBytes = 0;
@@ -477,9 +479,9 @@ struct BatchData{
     DeviceBuffer<bool> d_isPairedCandidate{};
 
     DeviceBuffer<int> d_anchorIndicesOfCandidates{};
-    DeviceBuffer<int> d_segmentIdsOfUsedReadIds{};
+    DeviceBuffer<int> d_segmentIdsOfFullyUsedReadIds{};
 
-    PinnedBuffer<int> h_segmentIdsOfUsedReadIds{};
+    PinnedBuffer<int> h_segmentIdsOfFullyUsedReadIds{};
     PinnedBuffer<int> h_segmentIdsOfReadIds{};
 
     DeviceBuffer<unsigned int> d_anchormatedata{};
@@ -530,6 +532,14 @@ struct BatchData{
     DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
     DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
 
+    DeviceBuffer<read_number> d_fullyUsedReadIds{};
+    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchor{};
+    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchorPrefixSum{};
+
+    PinnedBuffer<read_number> h_fullyUsedReadIds{};
+    PinnedBuffer<int> h_numFullyUsedReadIdsPerAnchor{};
+    PinnedBuffer<int> h_numFullyUsedReadIdsPerAnchorPrefixSum{};
+
     DeviceBuffer<std::uint8_t> d_consensusEncoded; //encoded , 0-4
     DeviceBuffer<int> d_coverage;
     DeviceBuffer<gpu::MSAColumnProperties> d_msa_column_properties;
@@ -550,6 +560,7 @@ struct BatchData{
     PinnedBuffer<int> h_outputAnchorLengths;
     PinnedBuffer<bool> h_outputMateHasBeenFound;
     PinnedBuffer<int> h_sizeOfGapToMate;
+    PinnedBuffer<bool> h_isFullyUsedCandidate{};
 
     
     std::array<CudaEvent, 1> events{};
@@ -882,6 +893,7 @@ public:
         batchData.h_numCandidatesPerAnchorPrefixSum[0] = 0;
 
         batchData.totalNumberOfUsedIds = 0;
+        batchData.totalNumberOfFullyUsedIds = 0;
 
         for(int t = 0; t < numActiveTasks; t++){
             auto& task = batchData.tasks[batchData.indicesOfActiveTasks[t]];
@@ -890,6 +902,7 @@ public:
             batchData.h_anchorReadIds[t] = task.myReadId;
             batchData.h_mateReadIds[t] = task.mateReadId;
             batchData.totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
+            batchData.totalNumberOfFullyUsedIds += task.allFullyUsedCandidateReadIdPairs.size();
 
             #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
 
@@ -1058,21 +1071,46 @@ public:
             batchData.d_numUsedReadIdsPerAnchor.resize(batchData.numTasks);
             batchData.d_numUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
 
-            batchData.d_segmentIdsOfUsedReadIds.resize(batchData.totalNumberOfUsedIds);
-            batchData.h_segmentIdsOfUsedReadIds.resize(batchData.totalNumberOfUsedIds);
+            batchData.h_fullyUsedReadIds.resize(batchData.totalNumberOfFullyUsedIds);
+            batchData.h_numFullyUsedReadIdsPerAnchor.resize(batchData.numTasks);
+            batchData.h_numFullyUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
+            batchData.d_fullyUsedReadIds.resize(batchData.totalNumberOfFullyUsedIds);
+            batchData.d_numFullyUsedReadIdsPerAnchor.resize(batchData.numTasks);
+            batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(batchData.numTasks);
+
+            batchData.d_segmentIdsOfFullyUsedReadIds.resize(batchData.totalNumberOfFullyUsedIds);
+            batchData.h_segmentIdsOfFullyUsedReadIds.resize(batchData.totalNumberOfFullyUsedIds);
             
             batchData.h_numUsedReadIdsPerAnchorPrefixSum[0] = 0;
+            batchData.h_numFullyUsedReadIdsPerAnchorPrefixSum[0] = 0;
 
-            auto segmentIdsIter = batchData.h_segmentIdsOfUsedReadIds.begin();
+            auto segmentIdsIter = batchData.h_segmentIdsOfFullyUsedReadIds.begin();
             auto h_usedReadIdsIter = batchData.h_usedReadIds.begin();
+            auto h_fullyUsedreadIdsIter = batchData.h_fullyUsedReadIds.begin();
 
             for(int i = 0; i < batchData.numTasks; i++){
                 auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
 
-                const int numUsedIds = task.allUsedCandidateReadIdPairs.size();
+                //handle fully used candidates
+                const int numFullyUsedIds = task.allFullyUsedCandidateReadIdPairs.size();
 
-                std::fill(segmentIdsIter, segmentIdsIter + numUsedIds, i);
-                segmentIdsIter += numUsedIds;
+                std::fill(segmentIdsIter, segmentIdsIter + numFullyUsedIds, i);
+                segmentIdsIter += numFullyUsedIds;
+
+                h_fullyUsedreadIdsIter = std::copy(
+                    task.allFullyUsedCandidateReadIdPairs.begin(),
+                    task.allFullyUsedCandidateReadIdPairs.end(),
+                    h_fullyUsedreadIdsIter
+                );
+                batchData.h_numFullyUsedReadIdsPerAnchor[i] = numFullyUsedIds;
+
+                if(i < batchData.numTasks - 1){
+                    batchData.h_numFullyUsedReadIdsPerAnchorPrefixSum[i+1] 
+                        = batchData.h_numFullyUsedReadIdsPerAnchorPrefixSum[i] + batchData.h_numFullyUsedReadIdsPerAnchor[i];
+                }
+
+                //handle used candidates
+                const int numUsedIds = task.allUsedCandidateReadIdPairs.size();
 
                 h_usedReadIdsIter = std::copy(
                     task.allUsedCandidateReadIdPairs.begin(),
@@ -1089,9 +1127,11 @@ public:
 
             assert(std::distance(batchData.h_usedReadIds.data(), h_usedReadIdsIter) == batchData.totalNumberOfUsedIds);
 
+            //task.allFullyUsedCandidateReadIdPairs
+
             // cudaMemcpyAsync(
-            //     batchData.d_segmentIdsOfUsedReadIds.data(),
-            //     batchData.h_segmentIdsOfUsedReadIds.data(),
+            //     batchData.d_segmentIdsOfFullyUsedReadIds.data(),
+            //     batchData.h_segmentIdsOfFullyUsedReadIds.data(),
             //     sizeof(int) * batchData.totalNumberOfUsedIds,
             //     H2D,
             //     batchData.streams[1]
@@ -1107,12 +1147,23 @@ public:
 
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
-                    batchData.h_segmentIdsOfUsedReadIds.data(),
+                    batchData.h_segmentIdsOfFullyUsedReadIds.data(),
+                    batchData.h_fullyUsedReadIds.data()
+                )),
+                batchData.totalNumberOfFullyUsedIds,
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    batchData.d_segmentIdsOfFullyUsedReadIds.data(),
+                    batchData.d_fullyUsedReadIds.data()
+                )),
+                batchData.streams[1]
+            );
+
+            helpers::call_copy_n_kernel(
+                thrust::make_zip_iterator(thrust::make_tuple(
                     batchData.h_usedReadIds.data()
                 )),
                 batchData.totalNumberOfUsedIds,
                 thrust::make_zip_iterator(thrust::make_tuple(
-                    batchData.d_segmentIdsOfUsedReadIds.data(),
                     batchData.d_usedReadIds.data()
                 )),
                 batchData.streams[1]
@@ -1121,12 +1172,16 @@ public:
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
                     batchData.h_numUsedReadIdsPerAnchorPrefixSum.data(),
-                    batchData.h_numUsedReadIdsPerAnchor.data()
+                    batchData.h_numUsedReadIdsPerAnchor.data(),
+                    batchData.h_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+                    batchData.h_numFullyUsedReadIdsPerAnchor.data()
                 )),
                 batchData.numTasks,
                 thrust::make_zip_iterator(thrust::make_tuple(
                     batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
-                    batchData.d_numUsedReadIdsPerAnchor.data()
+                    batchData.d_numUsedReadIdsPerAnchor.data(),
+                    batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+                    batchData.d_numFullyUsedReadIdsPerAnchor.data()
                 )),
                 batchData.streams[1]
             );
@@ -1473,9 +1528,25 @@ public:
             const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
             const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
             const read_number* ids = &batchData.h_candidateReadIds[offset];
+            const bool* isFullyUsed = &batchData.h_isFullyUsedCandidate[offset];
+
+            //assert(std::all_of(isFullyUsed, isFullyUsed + numCandidates, [](bool b){return !b;}));
 
             assert(std::is_sorted(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end()));
             assert(std::is_sorted(ids, ids + numCandidates));
+
+            // std::cerr << "ids:\n";
+            // for(int x = 0; x < numCandidates; x++){
+            //     std::cerr << ids[x] << " ";
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "task.allUsedCandidateReadIdPairs before:\n";
+            // for(auto x : task.allUsedCandidateReadIdPairs){
+            //     std::cerr << x << " ";
+            // }
+            // std::cerr << "\n";
+            
 
             std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + numCandidates);
             auto tmp_end = std::merge(
@@ -1492,9 +1563,59 @@ public:
 
             assert(std::is_sorted(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end()));
 
-            // task.usedCandidateReadIdsPerIteration.emplace_back(std::move(task.candidateReadIds));
-            // task.usedAlignmentsPerIteration.emplace_back(std::move(task.alignments));
-            // task.usedAlignmentFlagsPerIteration.emplace_back(std::move(task.alignmentFlags));
+            std::vector<read_number> fullyUsedIds(numCandidates);
+            int numFullyUsed = 0;
+            for(int i = 0; i < numCandidates; i++){
+                if(isFullyUsed[i]){
+                    fullyUsedIds[numFullyUsed++] = ids[i];
+                }
+            }
+            fullyUsedIds.erase(fullyUsedIds.begin() + numFullyUsed, fullyUsedIds.end());
+
+            // std::cerr << "fullyUsedIds:\n";
+            // for(auto x : fullyUsedIds){
+            //     std::cerr << x << " ";
+            // }
+            // std::cerr << "\n";
+
+            // std::cerr << "task.allFullyUsedCandidateReadIdPairs before:\n";
+            // for(auto x : task.allFullyUsedCandidateReadIdPairs){
+            //     std::cerr << x << " ";
+            // }
+            // std::cerr << "\n";
+
+            std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + numFullyUsed);
+            auto tmp2_end = std::merge(
+                task.allFullyUsedCandidateReadIdPairs.begin(),
+                task.allFullyUsedCandidateReadIdPairs.end(),
+                fullyUsedIds.begin(),
+                fullyUsedIds.end(),
+                tmp2.begin()
+            );
+
+            tmp2.erase(tmp2_end, tmp2.end());
+
+            std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
+
+            // if(!(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size())){
+                // std::cerr << "task.allFullyUsedCandidateReadIdPairs after:\n";
+                // for(auto x : task.allFullyUsedCandidateReadIdPairs){
+                //     std::cerr << x << " ";
+                // }
+                // std::cerr << "\n";
+
+                // std::cerr << "task.allUsedCandidateReadIdPairs after:\n";
+                // for(auto x : task.allUsedCandidateReadIdPairs){
+                //     std::cerr << x << " ";
+                // }
+                // std::cerr << "\n";
+                // assert(false);
+            // }
+
+            assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
+
+            assert(std::is_sorted(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end()));
+            //assert(task.allFullyUsedCandidateReadIdPairs.size() == 0);
 
             task.iteration++;
         }
@@ -1522,6 +1643,8 @@ public:
         extendResults.reserve(batchData.tasks.size());
 
         for(const auto& task : batchData.tasks){
+
+            //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
 
             extension::ExtendResult extendResult;
             extendResult.direction = task.direction;
@@ -2484,11 +2607,11 @@ public:
             batchData.d_numCandidatesPerAnchorPrefixSum2.data(),
             batchData.d_anchorIndicesOfCandidates.data(),
             batchData.totalNumCandidates,
-            batchData.d_usedReadIds.data(),
-            batchData.d_numUsedReadIdsPerAnchor.data(),
-            batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
-            batchData.d_segmentIdsOfUsedReadIds.data(),
-            batchData.totalNumberOfUsedIds,
+            batchData.d_fullyUsedReadIds.data(),
+            batchData.d_numFullyUsedReadIdsPerAnchor.data(),
+            batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+            batchData.d_segmentIdsOfFullyUsedReadIds.data(),
+            batchData.totalNumberOfFullyUsedIds,
             batchData.numTasks,        
             batchData.d_candidateReadIds.data(),
             batchData.d_numCandidatesPerAnchor.data(),
@@ -3710,6 +3833,7 @@ public:
         batchData.h_decodedMatesRevC.resize(batchData.numTasks * batchData.decodedMatesRevCPitchInBytes);
         batchData.h_outputMateHasBeenFound.resize(batchData.numTasks);
         batchData.h_sizeOfGapToMate.resize(batchData.numTasks);
+        batchData.h_isFullyUsedCandidate.resize(batchData.totalNumCandidates);
 
         batchData.h_scatterMap.resize(batchData.numTasks);
 
@@ -3724,6 +3848,7 @@ public:
         char* d_decodedMatesRevC = nullptr;
         bool* d_outputMateHasBeenFound = nullptr;
         int* d_sizeOfGapToMate = nullptr;
+        bool* d_isFullyUsedCandidate = nullptr;
 
         cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_inputMateLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
@@ -3736,11 +3861,13 @@ public:
         cubAllocator->DeviceAllocate((void**)&d_decodedMatesRevC, sizeof(char) * batchData.numTasks * batchData.decodedMatesRevCPitchInBytes, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_outputMateHasBeenFound, sizeof(bool) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_sizeOfGapToMate, sizeof(int) * batchData.numTasks, stream); CUERR;
+        cubAllocator->DeviceAllocate((void**)&d_isFullyUsedCandidate, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR;
 
 
 
         helpers::call_fill_kernel_async(d_outputMateHasBeenFound, batchData.numTasks, false, stream); CUERR;
         helpers::call_fill_kernel_async(d_abortReasons, batchData.numTasks, extension::AbortReason::None, stream); CUERR;
+        helpers::call_fill_kernel_async(d_isFullyUsedCandidate, batchData.totalNumCandidates, false, stream); CUERR;
 
         // helpers::call_fill_kernel_async(
         //     thrust::make_zip_iterator(thrust::make_tuple(d_outputMateHasBeenFound, d_abortReasons)),
@@ -3913,6 +4040,8 @@ public:
 
         //     cudaDeviceSynchronize(); CUERR;
         // }
+
+        //compute extensions
            
         helpers::lambda_kernel<<<batchData.numTasks, 128, 0, stream>>>(
             [
@@ -4143,6 +4272,48 @@ public:
             }
         );
 
+        //check which candidates are fully used in the extension
+        helpers::lambda_kernel<<<batchData.numTasks, 128, 0, stream>>>(
+            [
+                numTasks = batchData.numTasks,
+                d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
+                d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                d_candidateSequencesLengths = batchData.d_candidateSequencesLength.data(),
+                d_alignment_shifts = batchData.d_alignment_shifts.data(),
+                d_anchorSequencesLength = batchData.d_anchorSequencesLength.data(),
+                d_oldaccumExtensionsLengths = d_accumExtensionsLengths,
+                d_newaccumExtensionsLengths = d_accumExtensionsLengthsOUT,
+                d_abortReasons,
+                d_outputMateHasBeenFound,
+                d_sizeOfGapToMate,
+                d_isFullyUsedCandidate
+            ] __device__ (){
+
+
+                for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
+                    const int numCandidates = d_numCandidatesPerAnchor[task];
+                    const auto abortReason = d_abortReasons[task];
+
+                    if(numCandidates > 0 && abortReason == extension::AbortReason::None){
+                        const int anchorLength = d_anchorSequencesLength[task];
+                        const int offset = d_numCandidatesPerAnchorPrefixSum[task];
+                        const int oldAccumExtensionsLength = d_oldaccumExtensionsLengths[task];
+                        const int newAccumExtensionsLength = d_newaccumExtensionsLengths[task];
+                        const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
+
+                        for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
+                            const int candidateLength = d_candidateSequencesLengths[c];
+                            const int shift = d_alignment_shifts[c];
+
+                            if(candidateLength + shift <= anchorLength + lengthOfExtension){
+                                d_isFullyUsedCandidate[offset + c] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        );
+
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
                 d_accumExtensionsLengthsOUT,
@@ -4178,6 +4349,14 @@ public:
             stream
         ); CUERR;
 
+        cudaMemcpyAsync(
+            batchData.h_isFullyUsedCandidate.data(),
+            d_isFullyUsedCandidate,
+            sizeof(bool) * batchData.totalNumCandidates,
+            D2H,
+            stream
+        ); CUERR;
+
         cubAllocator->DeviceFree(d_accumExtensionsLengths); CUERR;
         cubAllocator->DeviceFree(d_inputMateLengths); CUERR;
         cubAllocator->DeviceFree(d_abortReasons); CUERR;
@@ -4189,6 +4368,7 @@ public:
         cubAllocator->DeviceFree(d_decodedMatesRevC); CUERR;
         cubAllocator->DeviceFree(d_outputMateHasBeenFound); CUERR;
         cubAllocator->DeviceFree(d_sizeOfGapToMate); CUERR;
+        cubAllocator->DeviceFree(d_isFullyUsedCandidate); CUERR;
     }
     
     
