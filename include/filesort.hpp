@@ -510,10 +510,6 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
     };
 
 
-    auto resetState = [&](){
-        memoryStorage.clear();
-    };
-
     T item;
     bool itemProcessed = true;
 
@@ -524,18 +520,50 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
     std::int64_t numtempfiles = 0;
     std::vector<std::string> tempfilenames;
 
+    //lambda sorts memoryStorage and save to temporary file
+    auto executeSort = [&](){
+        std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
+        std::ofstream sortedtempfile(tempfilename);
+
+        //TIMERSTARTCPU(actualsort);
+        std::cerr << "sort " << memoryStorage.getNumStoredElements() << " elements in memory \n";
+
+        try{
+            memoryStorage.sort(0, extractKey, keyComparator);
+        }catch(std::bad_alloc& e){
+            filehelpers::removeFile(tempfilename);
+            throw e;
+        }
+
+        //TIMERSTOPCPU(actualsort);
+
+        //TIMERSTARTCPU(writingsortedbatch);
+        std::cerr << "save " << memoryStorage.getNumStoredElements() << " elements to file " <<  tempfilename << '\n';
+        memoryStorage.forEachPointer([&](const auto ptr){
+            T tmp;
+            tmp.copyFromContiguousMemory(ptr);
+            sortedtempfile << tmp;
+        });
+
+        //TIMERSTOPCPU(writingsortedbatch); 
+
+        //TIMERSTARTCPU(clear);
+
+        tempfilenames.emplace_back(std::move(tempfilename));
+        numtempfiles++;
+        //TIMERSTOPCPU(clear);
+        
+        //TIMERSTARTCPU(flushclose);
+        sortedtempfile.flush();
+        sortedtempfile.close();
+        //TIMERSTOPCPU(flushclose);
+    };
+
     //split input files into sorted temp files
     for(const auto& filename : infilenames){
         std::ifstream istream(filename);
         if(!istream){
             assert(false);
-        }
-
-        //handle item which did not fit into buffer in previous iteration //TODO move to end of while loop
-        if(!itemProcessed){
-            bool ok = tryAddElementToBuffer(item);
-            assert(ok);
-            itemProcessed = true;
         }
 
         while(bool(istream >> item)){
@@ -552,44 +580,24 @@ binKeySplitIntoSortedChunksImpl(const std::vector<std::string>& infilenames,
             }
             //TIMERSTOPCPU(readingbatch);
 
-            std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
-            std::ofstream sortedtempfile(tempfilename);
+            executeSort();
 
-            //TIMERSTARTCPU(actualsort);
-            std::cerr << "sort " << memoryStorage.getNumStoredElements() << " elements in memory \n";
+            memoryStorage.clear();
 
-            try{
-                memoryStorage.sort(0, extractKey, keyComparator);
-            }catch(std::bad_alloc& e){
-                filehelpers::removeFile(tempfilename);
-                throw e;
+            //handle item which did not fit into buffer
+            if(!itemProcessed){
+                bool ok = tryAddElementToBuffer(item);
+                assert(ok);
+                itemProcessed = true;
             }
-
-            //TIMERSTOPCPU(actualsort);
-
-            //TIMERSTARTCPU(writingsortedbatch);
-            std::cerr << "save " << memoryStorage.getNumStoredElements() << " elements to file " <<  tempfilename << '\n';
-            memoryStorage.forEachPointer([&](const auto ptr){
-                T tmp;
-                tmp.copyFromContiguousMemory(ptr);
-                sortedtempfile << tmp;
-            });
-
-            //TIMERSTOPCPU(writingsortedbatch); 
-
-            //TIMERSTARTCPU(clear);
-            resetState();
-
-            tempfilenames.emplace_back(std::move(tempfilename));
-            numtempfiles++;
-            //TIMERSTOPCPU(clear);
-            
-            //TIMERSTARTCPU(flushclose);
-            sortedtempfile.flush();
-            sortedtempfile.close();
-            //TIMERSTOPCPU(flushclose);
         }
     }
+
+    //handle leftover
+    if(memoryStorage.getNumStoredElements() > 0){
+        executeSort();
+    }
+
     return tempfilenames;
 }
 
