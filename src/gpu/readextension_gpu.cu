@@ -275,8 +275,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -1361,11 +1361,11 @@ extend_gpu_pairedend(
                 output();
             }
         }
-
+ 
         // constexpr int increment = 1;
         // constexpr int limit = 10;
 
-        fixedStepsize -= 2;
+        fixedStepsize -= 4;
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
@@ -1375,8 +1375,8 @@ extend_gpu_pairedend(
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n"; 
             //gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
 
-            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-            isLastIteration = (fixedStepsize <= 2);
+            std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (fixedStepsize <= 4);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
                 init();
@@ -1386,7 +1386,7 @@ extend_gpu_pairedend(
                 }
             }
 
-            fixedStepsize -= 2;
+            fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
 
