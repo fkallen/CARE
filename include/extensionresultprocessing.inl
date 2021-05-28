@@ -63,7 +63,10 @@ void writeExtensionResultsToFile(
 
     std::map<ExtendedReadStatus, std::int64_t> statusHistogram;
 
-    while(partialResultsReader.hasNext()){
+    const int expectedNumber = partialResults.getNumElementsInMemory() + partialResults.getNumElementsInFile();
+    int actualNumber = 0;
+
+    while(partialResultsReader.hasNext()){        
 
         ExtendedRead extendedRead = *(partialResultsReader.next());
 
@@ -88,7 +91,11 @@ void writeExtensionResultsToFile(
         writer->writeRead(res.header, res.sequence, res.quality);
 
         statusHistogram[extendedRead.status]++;
+
+        actualNumber++;
     }
+
+    assert(actualNumber == expectedNumber);
 
     for(const auto& pair : statusHistogram){
         switch(pair.first){
