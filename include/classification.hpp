@@ -890,8 +890,8 @@ struct extract_cands_transformed_normed_weights {
 //--------------------------------------------------------------------------------
 
 //using anchor_extractor = detail::extract_anchor_21;
-using anchor_extractor = detail::extract_anchor_transformed;
-using cands_extractor = detail::extract_cands_transformed;
+using anchor_extractor = detail::extract_anchor_transformed_normed_weights;
+using cands_extractor = detail::extract_cands_transformed_normed_weights;
 
 using anchor_clf_t = ForestClf<std::tuple_size<anchor_extractor::features_t>::value>;
 using cands_clf_t = ForestClf<std::tuple_size<cands_extractor::features_t>::value>;

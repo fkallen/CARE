@@ -173,19 +173,25 @@ def extract_node(tree_, i, out_file):
 
 def extract_forest(clf, out_file):
     with open(out_file, "wb") as out_file:
-        out_file.write(struct.pack("B", clf.n_features))
+        out_file.write(struct.pack("B", clf.n_features_))
         out_file.write(struct.pack("I", len(clf.estimators_)))
         for i, tree in enumerate(clf.estimators_):
             out_file.write(struct.pack("I", tree.get_n_leaves()-1))
             print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
             extract_node(tree.tree_, 0, out_file)
 
-def extract_lr(clf, out_file):
+def extract_lr(clf: LogisticRegression, out_file):
     with open(out_file, "wb") as out_file:
         out_file.write(struct.pack("I", clf.coef_.shape[-1]))
-        out_file.write(struct.pack("I", clf.intercept_[0]))
+        out_file.write(struct.pack("I", clf.intercept_))
         for coef in clf.coef_[0]:
             out_file.write(struct.pack("I", coef))
+
+def extract_clf(clf, out_file):
+    if isinstance(clf, RandomForestClassifier):
+        extract_forest(clf, out_file)
+    elif isinstance(clf, LogisticRegression):
+        extract_lr(clf, out_file)
 
 ### main ###
 # def main():
