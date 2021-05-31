@@ -73,6 +73,8 @@ public:
 
     virtual void destroy() = 0;
 
+    virtual bool hasGpuTables() const noexcept = 0;
+
 protected:
     QueryHandle constructHandle(int id) const{
         return QueryHandle{id};

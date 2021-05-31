@@ -482,6 +482,10 @@ namespace gpu{
             gpuHashTables.clear();
         }
 
+        bool hasGpuTables() const noexcept override {
+            return true;
+        }
+
         void determineNumValues(
             QueryHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,

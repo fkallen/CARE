@@ -633,6 +633,10 @@ namespace gpu{
             }
         }
 
+        bool hasGpuTables() const noexcept override {
+            return true;
+        }
+
 
 
 private:        

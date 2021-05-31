@@ -414,6 +414,10 @@ namespace gpu{
             minhashTables.clear();
         }
 
+        bool hasGpuTables() const noexcept override {
+            return false;
+        }
+
         void finalize(cudaStream_t stream = 0){
             compact(stream);
         }
