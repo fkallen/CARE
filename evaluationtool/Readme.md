@@ -27,5 +27,5 @@ jellyfish dump mer_counts.jf > uncorrectedkmers.fasta
 jellyfish count -m 21 -C -s 100M -t 16 tool_correctedreads.fasta
 jellyfish dump mer_counts.jf > tool_correctedkmers.fasta
 
-./findmissingkmers uncorrectedkmersInGenome.fasta tool_correctedreads.fasta 21 10
+./findmissingkmers uncorrectedkmersInGenome.fasta tool_correctedkmers.fasta 21 10
 ```
