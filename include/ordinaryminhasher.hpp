@@ -68,8 +68,6 @@ namespace care{
         
     public:
 
-        using QueryHandle = CpuMinhasher::QueryHandle;
-
         OrdinaryCpuMinhasher() : OrdinaryCpuMinhasher(0, 50, 16){
 
         }
@@ -135,8 +133,6 @@ namespace care{
             int remainingHashFunctions = requestedNumberOfMaps;
             bool keepGoing = true;
 
-            ReadStorageHandle readStorageHandle = cpuReadStorage.makeHandle();
-
             std::vector<std::uint64_t> tempvector{};
 
             while(remainingHashFunctions > 0 && keepGoing){
@@ -181,7 +177,6 @@ namespace care{
                     std::iota(currentReadIds.begin(), currentReadIds.end(), beginid);
 
                     readStorage.gatherSequences(
-                        readStorageHandle,
                         sequencedata.data(),
                         encodedSequencePitchInInts,
                         currentReadIds.data(),
@@ -189,7 +184,6 @@ namespace care{
                     );
 
                     readStorage.gatherSequenceLengths(
-                        readStorageHandle,
                         sequencelengths.data(),
                         currentReadIds.data(),
                         currentbatchsize
@@ -223,25 +217,33 @@ namespace care{
             }
 
             setThreadPool(nullptr); 
-
-            cpuReadStorage.destroyHandle(readStorageHandle);
         }
  
 
-        QueryHandle makeQueryHandle() const override {
+        MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            QueryHandle h = constructHandle(handleid);
+            MinhasherHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
 
             return h;
         }
 
+        void destroyHandle(MinhasherHandle& handle) const override{
+            std::unique_lock<SharedMutex> lock(sharedmutex);
+
+            const int id = handle.getId();
+            assert(id < int(tempdataVector.size()));
+            
+            tempdataVector[id] = nullptr;
+            handle = constructHandle(std::numeric_limits<int>::max());
+        }
+
         void determineNumValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* h_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* h_sequenceLengths,
@@ -297,7 +299,7 @@ namespace care{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* h_readIds,
             int numSequences,
             int totalNumValues,
@@ -337,7 +339,7 @@ namespace care{
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
 
-        void compact() override{
+        void compact() {
             const int num = minhashTables.size();
 
             for(int i = 0, l = 0; i < num; i++){
@@ -376,7 +378,7 @@ namespace care{
             return result;
         }
 
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
             return getQueryDataFromHandle(handle)->getMemoryInfo();
         }
 
@@ -388,7 +390,7 @@ namespace care{
             return minhashTables.size();
         }
 
-        void destroy() override{
+        void destroy() {
             minhashTables.clear();
         }
 
@@ -543,7 +545,7 @@ namespace care{
 
     private:
 
-        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();

@@ -235,12 +235,18 @@ namespace care{
 
     struct ExtendedRead{
 
-        ExtendedReadStatus status;
-        read_number readId;
-        std::string extendedSequence;
+        ExtendedReadStatus status{};
+        read_number readId{};
+        int read1begin = 0;
+        int read1end = 0;
+        int read2begin = 0;
+        int read2end = 0;
+        std::string extendedSequence{};
+        std::string qualityScores{};
 
         ExtendedRead() = default;
 
+        #if 0
         ExtendedRead(const ExtendedReadDebug& rhs){
             *this = rhs;            
         }
@@ -282,11 +288,14 @@ namespace care{
 
             return *this;
         }
+        #endif
 
         std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
-            const std::size_t requiredBytes = sizeof(read_number)
-                + sizeof(ExtendedReadStatus)
-                + sizeof(int) + extendedSequence.length();
+            const std::size_t requiredBytes = sizeof(read_number) //readid
+                + sizeof(ExtendedReadStatus) //status
+                + sizeof(int) * 4  //original ranges
+                + sizeof(int) + extendedSequence.length() //sequence
+                + sizeof(int) + qualityScores.length(); // quality scores
 
             const std::size_t availableBytes = std::distance(ptr, endPtr);
 
@@ -296,12 +305,28 @@ namespace care{
                 std::memcpy(ptr, &status, sizeof(ExtendedReadStatus));
                 ptr += sizeof(ExtendedReadStatus);
 
+                std::memcpy(ptr, &read1begin, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read1end, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read2begin, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, &read2end, sizeof(int));
+                ptr += sizeof(int);
+
                 int l = 0;
                 l = extendedSequence.length();
                 std::memcpy(ptr, &l, sizeof(int));
                 ptr += sizeof(int);
                 std::memcpy(ptr, extendedSequence.c_str(), sizeof(char) * l);
                 ptr += sizeof(char) * l;
+
+                int m = 0;
+                m = qualityScores.length();
+                std::memcpy(ptr, &m, sizeof(int));
+                ptr += sizeof(int);
+                std::memcpy(ptr, qualityScores.c_str(), sizeof(char) * m);
+                ptr += sizeof(char) * m;
 
                 return ptr;
             }else{
@@ -313,7 +338,16 @@ namespace care{
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
             std::memcpy(&status, ptr, sizeof(ExtendedReadStatus));
-            ptr += sizeof(ExtendedReadStatus);    
+            ptr += sizeof(ExtendedReadStatus);
+
+            std::memcpy(&read1begin, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read1end, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read2begin, ptr, sizeof(int));
+            ptr += sizeof(int);
+            std::memcpy(&read2end, ptr, sizeof(int));
+            ptr += sizeof(int);
 
             int l = 0;
             std::memcpy(&l, ptr, sizeof(int));
@@ -321,16 +355,33 @@ namespace care{
             extendedSequence.resize(l);
             std::memcpy(&extendedSequence[0], ptr, sizeof(char) * l);
             ptr += l;
+
+            int m = 0;
+            std::memcpy(&m, ptr, sizeof(int));
+            ptr += sizeof(int);
+            qualityScores.resize(m);
+            std::memcpy(&qualityScores[0], ptr, sizeof(char) * m);
+            ptr += m;
         }
 
         bool writeToBinaryStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
             os.write(reinterpret_cast<const char*>(&status), sizeof(ExtendedReadStatus));
 
+            os.write(reinterpret_cast<const char*>(&read1begin), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read1end), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read2begin), sizeof(int));
+            os.write(reinterpret_cast<const char*>(&read2end), sizeof(int));
+
             int l = 0;
             l = extendedSequence.length();
             os.write(reinterpret_cast<const char*>(&l), sizeof(int));
             os.write(reinterpret_cast<const char*>(extendedSequence.c_str()), sizeof(char) * l);
+
+            int m = 0;
+            m = qualityScores.length();
+            os.write(reinterpret_cast<const char*>(&m), sizeof(int));
+            os.write(reinterpret_cast<const char*>(qualityScores.c_str()), sizeof(char) * m);
 
             return bool(os);
         }
@@ -339,10 +390,20 @@ namespace care{
             is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
             is.read(reinterpret_cast<char*>(&status), sizeof(ExtendedReadStatus));
 
+            is.read(reinterpret_cast<char*>(&read1begin), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read1end), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read2begin), sizeof(int));
+            is.read(reinterpret_cast<char*>(&read2end), sizeof(int));
+
             int l = 0;
             is.read(reinterpret_cast<char*>(&l), sizeof(int));
             extendedSequence.resize(l);
             is.read(reinterpret_cast<char*>(&extendedSequence[0]), sizeof(char) * l);
+
+            int m = 0;
+            is.read(reinterpret_cast<char*>(&m), sizeof(int));
+            qualityScores.resize(m);
+            is.read(reinterpret_cast<char*>(&qualityScores[0]), sizeof(char) * m);
 
             return bool(is);
         }

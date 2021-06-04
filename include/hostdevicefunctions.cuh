@@ -50,6 +50,37 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     INLINEQUALIFIER
+    char getQualityChar(float qualityweight){
+        constexpr int ascii_base = 33;
+
+        auto base10logf = [](float f){
+            #ifdef __CUDA_ARCH__
+            return log10f(f);
+            #else
+            return std::log10(f);
+            #endif
+        };
+
+        auto roundToNearestInt = [](float f){
+            #ifdef __CUDA_ARCH__
+            return rintf(f);
+            #else
+            return std::round(f);
+            #endif
+        };
+
+        const float errorprob = std::max(-(qualityweight - 1.0f), 0.0f);
+        if(feq(0.0f, errorprob)){
+            return 'I';
+        }else{
+            char result = roundToNearestInt(-(base10logf(errorprob) * 10.0f) + ascii_base);
+            result = std::min(std::max('!', result), 'I');
+            return result;
+        }
+    }
+
+    HOSTDEVICEQUALIFIER
+    INLINEQUALIFIER
     float calculateOverlapWeightnew(int anchorlength, int nOps, int overlapsize){
         constexpr float maxErrorPercentInOverlap = 0.2f;
 
@@ -61,6 +92,8 @@ namespace care{
     INLINEQUALIFIER
     float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize, float maxMismatchRatio){
         return 1.0f - sqrtf(nOps / (overlapsize * maxMismatchRatio));
+        //return 1.0f - sqrtf(float(nOps) / float(overlapsize));
+        //return 1.0f - nOps / overlapsize;
     }
 
     HD_WARNING_DISABLE

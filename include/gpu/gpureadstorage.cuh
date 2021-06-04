@@ -59,6 +59,10 @@ public:
         cudaStream_t stream
     ) const = 0;
 
+    virtual void getIdsOfAmbiguousReads(
+        read_number* ids
+    ) const = 0;
+
     virtual std::int64_t getNumberOfReadsWithN() const = 0;
 
     virtual MemoryUsage getMemoryInfo() const = 0;
@@ -73,7 +77,9 @@ public:
 
     virtual int getSequenceLengthUpperBound() const = 0;
 
-    virtual void destroy() = 0;
+    virtual bool isPairedEnd() const = 0;
+
+    //virtual void destroy() = 0;
 
 protected:
     ReadStorageHandle constructHandle(int id) const{

@@ -2892,6 +2892,8 @@ namespace gpu{
                 cudaStream_t stream,
                 KernelLaunchHandle& handle){
 
+        //return;
+
         constexpr int requestedBlocksize = 128;
         const std::size_t smem = 0;
 

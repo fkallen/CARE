@@ -29,6 +29,7 @@
 #include <memoryfile.hpp>
 #include <util.hpp>
 #include <filehelpers.hpp>
+#include <readextender_common.hpp>
 
 #include <omp.h>
 
@@ -66,6 +67,64 @@ extend_cpu_pairedend(
         memoryAvailableBytesHost = 0;
     }
 
+    // {
+    //     std::vector<std::string> queries{
+    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTTTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT",
+    //         "AAAAAGTCGAGATTTTCGCACAAAAAGTTGAATTTTGAAAAACTCAAAACTTTTTCAGCGGTCTCGTTATGAAAATCAGGTAATTTCAGCATCTAAGCAT"
+    //     };
+
+    //     auto minhashHandle = minhasher.makeMinhasherHandle();
+    //     const int encodedSequencePitchInInts = 16;
+
+    //     for(const auto& q : queries){
+
+    //         std::vector<unsigned int> encodedRead(encodedSequencePitchInInts);
+    //         SequenceHelpers::encodeSequence2Bit(
+    //             encodedRead.data(), 
+    //             q.data(), 
+    //             q.size()
+    //         );
+
+    //         int numValuesPerSequence = 0;
+    //         int totalNumValues = 0;
+    //         int readLength = q.size();
+
+    //         minhasher.determineNumValues(
+    //             minhashHandle,
+    //             encodedRead.data(),
+    //             encodedSequencePitchInInts,
+    //             &readLength,
+    //             1,
+    //             &numValuesPerSequence,
+    //             totalNumValues
+    //         );
+
+    //         std::vector<read_number> result(totalNumValues);
+    //         std::array<int, 2> offsets{};
+
+    //         minhasher.retrieveValues(
+    //             minhashHandle,
+    //             nullptr, //do not remove selfid
+    //             1,
+    //             totalNumValues,
+    //             result.data(),
+    //             &numValuesPerSequence,
+    //             offsets.data()
+    //         );
+
+    //         result.erase(result.begin() + numValuesPerSequence, result.end());
+
+    //         std::cerr << "Query: " << q << "\n";
+    //         std::cerr << numValuesPerSequence << " candidates\n";
+    //         for(int k = 0; k < numValuesPerSequence; k++){
+    //             std::cerr << result[k] << " ";
+    //         }
+    //         std::cerr << "\n";
+    //     }
+
+    //     minhasher.destroyHandle(minhashHandle);
+    // }
+
 
     const std::size_t availableMemoryInBytes = memoryAvailableBytesHost; //getAvailableMemoryInKB() * 1024;
     std::size_t memoryForPartialResultsInBytes = 0;
@@ -79,8 +138,8 @@ extend_cpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(readStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 
     BackgroundThread outputThread(true);
 
@@ -114,6 +173,8 @@ extend_cpu_pairedend(
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
+    const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
+    const std::size_t qualityPitchInBytes = 4 * SDIV(maximumSequenceLength, 4);
 
     std::mutex verboseMutex;
 
@@ -135,6 +196,8 @@ extend_cpu_pairedend(
 
         constexpr int maxextensionPerStep = 20;
 
+        cpu::QualityScoreConversion qualityConversion{};
+
         ReadExtenderCpu readExtender{
             insertSize,
             insertSizeStddev,
@@ -143,7 +206,8 @@ extend_cpu_pairedend(
             readStorage, 
             minhasher,
             correctionOptions,
-            goodAlignmentProperties2
+            goodAlignmentProperties2,
+            &qualityConversion
         };
 
         std::int64_t numSuccess0 = 0;
@@ -154,50 +218,88 @@ extend_cpu_pairedend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
-
         const int batchsizePairs = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(2 * batchsizePairs);
         std::vector<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
         std::vector<int> currentReadLengths(2 * batchsizePairs);
-        
+        std::vector<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
 
-        while(!(readIdGenerator.empty())){
+        if(!correctionOptions.useQualityScores){
+            std::fill(currentQualityScores.begin(), currentQualityScores.end(), 'I');
+        }
 
+        int minCoverageForExtension = 3;
+        int fixedStepsize = 20;
+
+        readExtender.setMaxExtensionPerStep(fixedStepsize);
+        readExtender.setMinCoverageForExtension(minCoverageForExtension);
+
+        std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
+        std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
+        bool isLastIteration = true;
+
+        auto init = [&](){
             auto readIdsEnd = readIdGenerator.next_n_into_buffer(
                 batchsizePairs * 2, 
                 currentIds.begin()
             );
 
-            const int numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
+            int numReadsInBatch = std::distance(currentIds.begin(), readIdsEnd);
 
             if(numReadsInBatch % 2 == 1){
                 throw std::runtime_error("Input files not properly paired. Aborting read extension.");
             }
             
-            if(numReadsInBatch == 0){
-                continue; //this should only happen if all reads have been processed
+            if(numReadsInBatch == 0 && pairsWhichShouldBeRepeated.size() > 0){
+
+                const int numPairsToCopy = std::min(batchsizePairs, int(pairsWhichShouldBeRepeated.size()));
+
+                for(int i = 0; i < numPairsToCopy; i++){
+                    currentIds[2*i + 0] = pairsWhichShouldBeRepeated[i].first;
+                    currentIds[2*i + 1] = pairsWhichShouldBeRepeated[i].second;
+                }
+
+                for(int i = 0; i < numPairsToCopy; i++){
+                    if(currentIds[2*i + 0] > currentIds[2*i + 1]){
+                        std::swap(currentIds[2*i + 0], currentIds[2*i + 1]);
+                    }
+                    assert(currentIds[2*i + 1] == currentIds[2*i + 0] + 1);
+                }
+
+                pairsWhichShouldBeRepeated.erase(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.begin() + numPairsToCopy);
+
+                numReadsInBatch = 2 * numPairsToCopy;
             }
 
-            readStorage.gatherSequenceLengths(
-                readStorageHandle,
-                currentReadLengths.data(),
-                currentIds.data(),
-                currentIds.size()
-            );
+            if(numReadsInBatch > 0){
 
-            readStorage.gatherSequences(
-                readStorageHandle,
-                currentEncodedReads.data(),
-                encodedSequencePitchInInts,
-                currentIds.data(),
-                currentIds.size()
-            );
+                readStorage.gatherSequenceLengths(
+                    currentReadLengths.data(),
+                    currentIds.data(),
+                    currentIds.size()
+                );
+
+                readStorage.gatherSequences(
+                    currentEncodedReads.data(),
+                    encodedSequencePitchInInts,
+                    currentIds.data(),
+                    currentIds.size()
+                );
+
+                if(correctionOptions.useQualityScores){
+                    readStorage.gatherQualities(
+                        currentQualityScores.data(),
+                        qualityPitchInBytes,
+                        currentIds.data(),
+                        numReadsInBatch
+                    );
+                }
+            }
 
             const int numReadPairsInBatch = numReadsInBatch / 2;
 
-            std::vector<ExtendInput> inputs(numReadPairsInBatch);
+            std::vector<extension::ExtendInput> inputs(numReadPairsInBatch);
 
             for(int i = 0; i < numReadPairsInBatch; i++){
                 auto& input = inputs[i];
@@ -210,42 +312,77 @@ extend_cpu_pairedend(
                 input.encodedRead2.resize(encodedSequencePitchInInts);
                 std::copy_n(currentEncodedReads.data() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
                 std::copy_n(currentEncodedReads.data() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
+
+                input.qualityScores1.resize(input.readLength1);
+                input.qualityScores2.resize(input.readLength2);
+                std::copy_n(currentQualityScores.data() + (2*i) * qualityPitchInBytes, input.readLength1, input.qualityScores1.begin());
+                std::copy_n(currentQualityScores.data() + (2*i + 1) * qualityPitchInBytes, input.readLength2, input.qualityScores2.begin());
             }
 
-            auto extensionResultsBatch = readExtender.extendPairedReadBatch(inputs);
+            return inputs;
+        };
 
-            //convert results of ReadExtender
-            std::vector<ExtendedRead> resultvector(extensionResultsBatch.size());
+        auto output = [&](auto extensionResults){
+            const int numresults = extensionResults.size();
 
-            for(int i = 0; i < numReadPairsInBatch; i++){
-                auto& extensionOutput = extensionResultsBatch[i];
-                ExtendedRead& er = resultvector[i];
+            std::vector<ExtendedRead> extendedReads;
+            extendedReads.reserve(numresults);
 
-                er.readId = extensionOutput.readId1;
-                er.extendedSequence = std::move(extensionOutput.extendedRead);
+            int repeated = 0;
 
-                if(extensionOutput.mateHasBeenFound){
-                    er.status = ExtendedReadStatus::FoundMate;
+            for(int i = 0; i < numresults; i++){
+                auto& extensionOutput = extensionResults[i];
+                const int extendedReadLength = extensionOutput.extendedRead.size();
+                //if(extendedReadLength == extensionOutput.originalLength){
+                //if(!extensionOutput.mateHasBeenFound){
+                if(extendedReadLength > extensionOutput.originalLength && !extensionOutput.mateHasBeenFound && !isLastIteration){
+                    //do not insert directly into pairsWhichShouldBeRepeated. it causes an infinite loop
+                    pairsWhichShouldBeRepeatedTemp.emplace_back(std::make_pair(extensionOutput.readId1, extensionOutput.readId2));
+                    repeated++;
                 }else{
-                    if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+                    //assert(extensionOutput.extendedRead.size() > extensionOutput.originalLength);
 
-                            er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
-                            er.status = ExtendedReadStatus::MSANoExtension;
-                        }
+                    ExtendedRead er;
+
+                    er.readId = extensionOutput.readId1;
+                    er.extendedSequence = std::move(extensionOutput.extendedRead);
+                    er.qualityScores = std::move(extensionOutput.qualityScores);
+                    er.read1begin = extensionOutput.read1begin;
+                    er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
+                    er.read2begin = extensionOutput.read2begin;
+                    if(er.read2begin != -1){
+                        er.read2end = extensionOutput.read2begin + extensionOutput.originalMateLength;
                     }else{
-                        er.status = ExtendedReadStatus::LengthAbort;
+                        er.read2end = -1;
                     }
-                }  
-                
-                if(extensionOutput.success){
-                    numSuccessRead++;
-                }                
+
+                    if(extensionOutput.mateHasBeenFound){
+                        er.status = ExtendedReadStatus::FoundMate;
+                    }else{
+                        if(extensionOutput.aborted){
+                            if(extensionOutput.abortReason == extension::AbortReason::NoPairedCandidates
+                                    || extensionOutput.abortReason == extension::AbortReason::NoPairedCandidatesAfterAlignment){
+
+                                er.status = ExtendedReadStatus::CandidateAbort;
+                            }else if(extensionOutput.abortReason == extension::AbortReason::MsaNotExtended){
+                                er.status = ExtendedReadStatus::MSANoExtension;
+                            }
+                        }else{
+                            er.status = ExtendedReadStatus::LengthAbort;
+                        }
+                    }  
+                    
+                    if(extensionOutput.success){
+                        numSuccessRead++;
+                    }
+
+                    extendedReads.emplace_back(std::move(er));
+
+                }
+                              
             }
 
-            auto outputfunc = [&, vec = std::move(resultvector)](){
+            auto outputfunc = [&, vec = std::move(extendedReads)](){
                 for(const auto& er : vec){
                     partialResults.storeElement(&er);
                 }
@@ -255,7 +392,45 @@ extend_cpu_pairedend(
                 std::move(outputfunc)
             );
 
-            progressThread.addProgress(numReadPairsInBatch);            
+            progressThread.addProgress(extensionResults.size() - repeated);
+        };
+        
+
+        isLastIteration = false;
+        while(!(readIdGenerator.empty())){
+            auto inputs = init();
+
+            if(inputs.size() > 0){
+                auto extensionResults = readExtender.extend(std::move(inputs));
+
+                output(std::move(extensionResults));
+            }
+        }
+
+        fixedStepsize -= 2;
+        //minCoverageForExtension += increment;
+        std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+
+        while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+
+            readExtender.setMaxExtensionPerStep(fixedStepsize);
+            //std::cerr << "fixedStepsize = " << fixedStepsize << "\n";
+
+            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (fixedStepsize <= 2);
+
+            while(pairsWhichShouldBeRepeated.size() > 0){
+                auto inputs = init();
+
+                if(inputs.size() > 0){
+                    auto extensionResults = readExtender.extend(std::move(inputs));
+
+                    output(std::move(extensionResults));
+                }
+            }
+
+            fixedStepsize -= 2;
+            std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
 
         #pragma omp critical
@@ -279,9 +454,6 @@ extend_cpu_pairedend(
                 readExtender.printTimers();
             }      
         }
-
-        
-        readStorage.destroyHandle(readStorageHandle);
 
     } //end omp parallel
 
@@ -316,7 +488,7 @@ extend_cpu_pairedend(
 }
 
 
-
+#if 0
 
 MemoryFileFixedSize<ExtendedRead> 
 //std::vector<ExtendedRead>
@@ -433,8 +605,6 @@ extend_cpu_singleend(
         std::map<int, int> extensionLengthsMap;
         std::map<int, int> mismatchesBetweenMateExtensions;
 
-        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
-
         const int batchsize = correctionOptions.batchsize;
 
         std::vector<read_number> currentIds(batchsize);
@@ -456,21 +626,19 @@ extend_cpu_singleend(
             }
 
             readStorage.gatherSequenceLengths(
-                readStorageHandle,
                 currentReadLengths.data(),
                 currentIds.data(),
                 currentIds.size()
             );
 
             readStorage.gatherSequences(
-                readStorageHandle,
                 currentEncodedReads.data(),
                 encodedSequencePitchInInts,
                 currentIds.data(),
                 currentIds.size()
             );
 
-            std::vector<ExtendInput> inputs(numReadsInBatch);
+            std::vector<extension::ExtendInput> inputs(numReadsInBatch);
 
             for(int i = 0; i < numReadsInBatch; i++){
                 auto& input = inputs[i];
@@ -500,11 +668,11 @@ extend_cpu_singleend(
                     er.status = ExtendedReadStatus::FoundMate;
                 }else{
                     if(extensionOutput.aborted){
-                        if(extensionOutput.abortReason == AbortReason::NoPairedCandidates
-                                || extensionOutput.abortReason == AbortReason::NoPairedCandidatesAfterAlignment){
+                        if(extensionOutput.abortReason == extension::AbortReason::NoPairedCandidates
+                                || extensionOutput.abortReason == extension::AbortReason::NoPairedCandidatesAfterAlignment){
 
                             er.status = ExtendedReadStatus::CandidateAbort;
-                        }else if(extensionOutput.abortReason == AbortReason::MsaNotExtended){
+                        }else if(extensionOutput.abortReason == extension::AbortReason::MsaNotExtended){
                             er.status = ExtendedReadStatus::MSANoExtension;
                         }
                     }else{
@@ -553,8 +721,6 @@ extend_cpu_singleend(
         }
 
         
-        readStorage.destroyHandle(readStorageHandle);
-        
     } //end omp parallel
 
     progressThread.finished();
@@ -589,6 +755,9 @@ extend_cpu_singleend(
 
 
 
+#endif
+
+
 MemoryFileFixedSize<ExtendedRead> 
 //std::vector<ExtendedRead>
 extend_cpu(
@@ -602,16 +771,17 @@ extend_cpu(
     const CpuReadStorage& readStorage
 ){
     if(fileOptions.pairType == SequencePairType::SingleEnd){
-        return extend_cpu_singleend(
-            goodAlignmentProperties,
-            correctionOptions,
-            extensionOptions,
-            runtimeOptions,
-            fileOptions,
-            memoryOptions,
-            minhasher,
-            readStorage
-        );
+        throw std::runtime_error("single end extension not possible");
+        // return extend_cpu_singleend(
+        //     goodAlignmentProperties,
+        //     correctionOptions,
+        //     extensionOptions,
+        //     runtimeOptions,
+        //     fileOptions,
+        //     memoryOptions,
+        //     minhasher,
+        //     readStorage
+        // );
     }else{
         return extend_cpu_pairedend(
             goodAlignmentProperties,
@@ -625,7 +795,6 @@ extend_cpu(
         );
     }
 }
-
 
 
 

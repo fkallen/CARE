@@ -13,19 +13,6 @@ namespace gpu{
 namespace gpucorrectorkernels{
 
     __global__
-    void copyCandidateCorrectionResultsKernel(
-        char* __restrict__ out_corrected_candidates,
-        TempCorrectedSequence::EncodedEdit* __restrict__ out_editsPerCorrectedCandidate,
-        int* __restrict__ out_numEditsPerCorrectedCandidate,
-        int decodedSequencePitchInBytes,
-        int editsPitchInBytes,
-        const int* __restrict__ numCorrectedCandidates,
-        const char* __restrict__ in_corrected_candidates,
-        const TempCorrectedSequence::EncodedEdit* __restrict__ in_editsPerCorrectedCandidate,
-        const int* __restrict__ in_numEditsPerCorrectedCandidate
-    );
-
-    __global__
     void copyCorrectionInputDeviceData(
         int* __restrict__ output_numAnchors,
         int* __restrict__ output_numCandidates,
@@ -36,8 +23,8 @@ namespace gpucorrectorkernels{
         int* __restrict__ output_candidates_per_anchor,
         int* __restrict__ output_candidates_per_anchor_prefixsum,
         const int encodedSequencePitchInInts,
-        const int* __restrict__ input_numAnchors,
-        const int* __restrict__ input_numCandidates,
+        const int input_numAnchors,
+        const int input_numCandidates,
         const read_number* __restrict__ input_anchor_read_ids,
         const unsigned int* __restrict__ input_anchor_sequences_data,
         const int* __restrict__ input_anchor_sequences_lengths,
@@ -139,15 +126,6 @@ namespace gpucorrectorkernels{
         const int* __restrict__ d_numAnchors,
         int* __restrict__ d_num_corrected_candidates_per_anchor,
         bool* __restrict__ d_candidateCanBeCorrected
-    );
-
-    __global__
-    void copyShiftsAndCorrectedCandidateIndices(
-        int* __restrict__ output_alignment_shifts,
-        int* __restrict__ output_indices_of_corrected_candidates,
-        const int* __restrict__ d_numCandidates,
-        const int* __restrict__ input_alignment_shifts,
-        const int* __restrict__ input_indices_of_corrected_candidates
     );
 
 } //namespace gpucorrectorkernels   

@@ -37,7 +37,7 @@ public:
 
     struct TempData{
 
-        TempData(ReadStorageHandle cpuHandle) : event{cudaEventDisableTiming}, cpuReadStorageHandle(std::move(cpuHandle)){
+        TempData() : event{cudaEventDisableTiming}{
             cudaGetDevice(&deviceId); CUERR;
         }
 
@@ -64,10 +64,9 @@ public:
         DeviceBuffer<char> tempbuffer{};
         HostBuffer<char> pinnedBuffer{};
         std::array<CudaStream,2> streams{};
-        ReadStorageHandle cpuReadStorageHandle;
 
         typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleSequences{};
-        typename MultiGpu2dArray<char, IndexType>::Handle handleQualities{};
+        typename MultiGpu2dArray<unsigned int, IndexType>::Handle handleQualities{};
     };
 
     MultiGpuReadStorage(
@@ -106,6 +105,7 @@ public:
         useQualityScores = cpuReadStorage->canUseQualityScores();
         sequenceLengthLowerBound = cpuReadStorage->getSequenceLengthLowerBound();
         sequenceLengthUpperBound = cpuReadStorage->getSequenceLengthUpperBound();
+        pairedEnd = cpuReadStorage->isPairedEnd();
 
         gpuLengthStorage = std::move(
             GPULengthStore3<std::uint32_t>(
@@ -115,8 +115,6 @@ public:
                 deviceIds
             )
         );
-
-        ReadStorageHandle readStorageHandle = cpuReadStorage->makeHandle();
 
         {
             constexpr std::size_t batchsize = 1000000;
@@ -133,7 +131,6 @@ public:
                 std::iota(readIds.begin(), readIds.begin() + elements, begin);
 
                 cpuReadStorage->gatherSequenceLengths(
-                    readStorageHandle,
                     lengths.data(),
                     readIds.data(),
                     elements
@@ -180,7 +177,6 @@ public:
 
                 HostBuffer<read_number> h_positions(numAmbiguous);
                 cpuReadStorage->getIdsOfAmbiguousReads(
-                    readStorageHandle,
                     h_positions.data()
                 );
 
@@ -213,6 +209,9 @@ public:
 
                     cudaDeviceSynchronize(); CUERR;
                 }
+
+                ambigReadIds.clear();
+                ambigReadIds.insert(ambigReadIds.end(), h_positions.begin(), h_positions.end());
             }
         }
 
@@ -282,7 +281,6 @@ public:
                 );
 
                 cpuReadStorage->gatherSequences(
-                    readStorageHandle,
                     hostdataarray[bufferIndex],
                     numColumnsSequences,
                     indexarray[bufferIndex],
@@ -323,15 +321,15 @@ public:
             }
         }
 
-        const int numColumnsQualities = cpuReadStorage->getSequenceLengthUpperBound();
+        const int numColumnsQualitiesInts = SDIV(cpuReadStorage->getSequenceLengthUpperBound(), sizeof(unsigned int));
 
         if(canUseQualityScores()){
 
             qualitiesGpu = std::move(
-                MultiGpu2dArray<char, IndexType>(
+                MultiGpu2dArray<unsigned int, IndexType>(
                     numReads,
-                    numColumnsQualities,
-                    sizeof(char),
+                    numColumnsQualitiesInts,
+                    sizeof(unsigned int),
                     deviceIds,
                     memoryLimitsPerDevice,
                     MultiGpu2dArrayLayout::FirstFit,
@@ -348,19 +346,19 @@ public:
 
                 std::array<helpers::SimpleAllocationPinnedHost<IndexType>, numbuffers> indexbuffers{};
                 std::array<helpers::SimpleAllocationDevice<IndexType>, numbuffers> deviceindexbuffers{};
-                std::array<helpers::SimpleAllocationPinnedHost<char>, numbuffers> hostdatabuffers{};
-                std::array<helpers::SimpleAllocationDevice<char>, numbuffers> devicedatabuffers{};
+                std::array<helpers::SimpleAllocationPinnedHost<unsigned int>, numbuffers> hostdatabuffers{};
+                std::array<helpers::SimpleAllocationDevice<unsigned int>, numbuffers> devicedatabuffers{};
 
                 std::array<IndexType*, numbuffers> indexarray{};
                 std::array<IndexType*, numbuffers> deviceindexarray{};
-                std::array<char*, numbuffers> hostdataarray{};
-                std::array<char*, numbuffers> dataarray{};
+                std::array<unsigned int*, numbuffers> hostdataarray{};
+                std::array<unsigned int*, numbuffers> dataarray{};
 
                 for(int i = 0; i < numbuffers; i++){
                     indexbuffers[i].resize(batchsize);
                     deviceindexbuffers[i].resize(batchsize);
-                    hostdatabuffers[i].resize(batchsize * numColumnsQualities);
-                    devicedatabuffers[i].resize(batchsize * numColumnsQualities);
+                    hostdatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
+                    devicedatabuffers[i].resize(batchsize * numColumnsQualitiesInts);
 
                     indexarray[i] = indexbuffers[i].data();
                     deviceindexarray[i] = deviceindexbuffers[i].data();
@@ -384,9 +382,8 @@ public:
                     );
 
                     cpuReadStorage->gatherQualities(
-                        readStorageHandle,
-                        hostdataarray[bufferIndex],
-                        numColumnsQualities,
+                        (char*)hostdataarray[bufferIndex],
+                        numColumnsQualitiesInts * sizeof(unsigned int),
                         indexarray[bufferIndex],
                         currentBatchsize
                     );
@@ -394,7 +391,7 @@ public:
                     cudaMemcpyAsync(
                         dataarray[bufferIndex],
                         hostdataarray[bufferIndex],
-                        numColumnsQualities * currentBatchsize * sizeof(char),
+                        numColumnsQualitiesInts * currentBatchsize * sizeof(unsigned int),
                         H2D,
                         streams[bufferIndex]
                     ); CUERR;
@@ -402,7 +399,7 @@ public:
                     qualitiesGpu.scatter(
                         arrayhandle, 
                         dataarray[bufferIndex], 
-                        numColumnsQualities * sizeof(char), 
+                        numColumnsQualitiesInts * sizeof(unsigned int), 
                         deviceindexarray[bufferIndex], 
                         currentBatchsize, 
                         streams[bufferIndex]
@@ -422,7 +419,7 @@ public:
         numHostSequences = numReads - sequencesGpu.getNumRows();
         numHostQualities = canUseQualityScores() ? numReads - qualitiesGpu.getNumRows() : 0;
         hostSequencePitch = numColumnsSequences * sizeof(unsigned int);
-        hostQualityPitch = numColumnsQualities * sizeof(char);
+        hostQualityPitch = numColumnsQualitiesInts * sizeof(unsigned int);
 
         std::size_t memoryOfHostSequences = numHostSequences * hostSequencePitch;
         std::size_t memoryOfHostQualities = numHostQualities * hostQualityPitch;
@@ -442,7 +439,6 @@ public:
                     std::iota(indices.begin(), indices.end(), sequencesGpu.getNumRows() + i);
 
                     cpuReadStorage->gatherSequences(
-                        readStorageHandle,
                         hostsequences.data() + i * numColumnsSequences,
                         numColumnsSequences,
                         indices.data(),
@@ -454,7 +450,7 @@ public:
 
                 if(canUseQualityScores()){
 
-                    hostqualities.resize(numHostQualities * numColumnsQualities);
+                    hostqualities.resize(numHostQualities * numColumnsQualitiesInts);
 
                     const std::size_t numQualitiesToCopy = numReads - qualitiesGpu.getNumRows();
                     const std::size_t batchsizeq = 100000;
@@ -465,9 +461,8 @@ public:
                         std::iota(indices.begin(), indices.end(), qualitiesGpu.getNumRows() + i);
 
                         cpuReadStorage->gatherQualities(
-                            readStorageHandle,
-                            hostqualities.data() + i * numColumnsQualities,
-                            numColumnsQualities,
+                            (char*)(hostqualities.data() + i * numColumnsQualitiesInts),
+                            numColumnsQualitiesInts * sizeof(unsigned int),
                             indices.data(),
                             currentBatchsize
                         );
@@ -475,15 +470,12 @@ public:
                 
                 }
 
-                cpuReadStorage->destroyHandle(readStorageHandle);
                 cpuReadStorage = nullptr;
                 //std::cerr << "GpuReadstorage is standalone\n";
             }else{
                 //std::cerr << "GpuReadstorage cannot be standalone. MemoryLimit: " << memoryLimitHost << ", required: " <<  (memoryOfHostSequences + memoryOfHostQualities) << "\n";
-                cpuReadStorage->destroyHandle(readStorageHandle);
             }
         }else{
-            cpuReadStorage->destroyHandle(readStorageHandle);
             cpuReadStorage = nullptr;
             //std::cerr << "GpuReadstorage is standalone\n";
         }
@@ -496,12 +488,7 @@ public:
 public: //inherited GPUReadStorage interface
 
     ReadStorageHandle makeHandle() const override {
-        ReadStorageHandle cpuHandle{};
-        if(cpuReadStorage != nullptr){
-            cpuHandle = cpuReadStorage->makeHandle();
-        }
-
-        auto data = std::make_unique<TempData>(cpuHandle);
+        auto data = std::make_unique<TempData>();
         data->handleSequences = sequencesGpu.makeHandle();
         data->handleQualities = qualitiesGpu.makeHandle();
         data->event = CudaEvent{cudaEventDisableTiming};
@@ -515,12 +502,6 @@ public: //inherited GPUReadStorage interface
     }
 
     void destroyHandle(ReadStorageHandle& handle) const override{
-
-        if(cpuReadStorage != nullptr){
-
-            TempData* tempData = getTempDataFromHandle(handle);
-            cpuReadStorage->destroyHandle(tempData->cpuReadStorageHandle);
-        }
 
         std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -572,6 +553,8 @@ public: //inherited GPUReadStorage interface
         int numSequences,
         cudaStream_t stream
     ) const override{
+        if(numSequences == 0) return;
+        
         nvtx::push_range("multigpureadstorage::gatherSequences", 4);
 
         int deviceId = 0;
@@ -808,10 +791,9 @@ public: //inherited GPUReadStorage interface
             if(hasHostSequences()){
 
                 hostGather();
-                cudaStreamSynchronize(stream);
+
                 gpuGather();
             }else{
-                cudaStreamSynchronize(stream);
                 gpuGather();
             }
         }else{
@@ -832,6 +814,8 @@ public: //inherited GPUReadStorage interface
         int numSequences,
         cudaStream_t stream
     ) const override{
+        if(numSequences == 0) return;
+        
         nvtx::push_range("multigpureadstorage::gatherQualities", 4);
 
         int deviceId = 0;
@@ -859,7 +843,7 @@ public: //inherited GPUReadStorage interface
 
             qualitiesGpu.gather(
                 tempData->handleQualities,
-                d_quality_data,
+                (unsigned int*)d_quality_data,
                 out_quality_pitch,
                 d_readIds,
                 numSequences,
@@ -1073,6 +1057,8 @@ public: //inherited GPUReadStorage interface
         cudaStream_t stream
     ) const override{
 
+        if(numSequences == 0) return;
+
         gpuLengthStorage.gatherLengthsOnDeviceAsync(
             d_lengths, 
             d_readIds, 
@@ -1080,6 +1066,12 @@ public: //inherited GPUReadStorage interface
             stream
         );
 
+    }
+
+    void getIdsOfAmbiguousReads(
+        read_number* ids
+    ) const override{
+        std::copy(ambigReadIds.begin(), ambigReadIds.end(), ids);
     }
 
     std::int64_t getNumberOfReadsWithN() const override{
@@ -1132,7 +1124,11 @@ public: //inherited GPUReadStorage interface
         return sequenceLengthUpperBound;
     }
 
-    void destroy() override{
+    bool isPairedEnd() const override{
+        return pairedEnd;
+    }
+
+    void destroy(){
         destroyReadData();
 
         destroyTempData();
@@ -1187,9 +1183,10 @@ private:
         unsigned int* outputarray,
         std::size_t outputPitchInInts
     ) const {
+        if(numSequences == 0) return;
+
         if(!isStandalone()){
             cpuReadStorage->gatherSequences(
-                tempData->cpuReadStorageHandle,
                 outputarray,
                 outputPitchInInts,
                 readIds,
@@ -1220,10 +1217,10 @@ private:
         char* outputarray,
         std::size_t outputPitchInBytes
     ) const {
+        if(numSequences == 0) return;
         if(!isStandalone()){
 
             cpuReadStorage->gatherQualities(
-                tempData->cpuReadStorageHandle,
                 outputarray,
                 outputPitchInBytes,
                 readIds,
@@ -1237,7 +1234,7 @@ private:
             };
 
             gatherHostStandaloneImpl(
-                hostqualities.data(),
+                (char*)hostqualities.data(),
                 hostQualityPitch,
                 hostQualityPitch,
                 indexGenerator,
@@ -1325,6 +1322,7 @@ private:
         deallocVector(tempdataVector);
     }
     
+    bool pairedEnd{};
     bool useQualityScores{};
     int sequenceLengthLowerBound{};
     int sequenceLengthUpperBound{};
@@ -1338,13 +1336,14 @@ private:
     const CpuReadStorage* cpuReadStorage{};
 
     MultiGpu2dArray<unsigned int, IndexType> sequencesGpu{};
-    MultiGpu2dArray<char, IndexType> qualitiesGpu{};
+    MultiGpu2dArray<unsigned int, IndexType> qualitiesGpu{};
     std::map<int, GpuBitArray<read_number>> bitArraysUndeterminedBase;
+    std::vector<read_number> ambigReadIds{};
 
 
     GPULengthStore3<std::uint32_t> gpuLengthStorage{};
     std::vector<unsigned int> hostsequences{};
-    std::vector<char> hostqualities{};
+    std::vector<unsigned int> hostqualities{};
 
     std::vector<int> deviceIds{};
 

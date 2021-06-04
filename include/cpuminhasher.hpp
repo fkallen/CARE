@@ -3,35 +3,25 @@
 
 #include <config.hpp>
 #include <memorymanagement.hpp>
+#include <minhasherhandle.hpp>
+
 #include <cstdint>
 
 namespace care{
 
 class CpuMinhasher{
 public:
-    class QueryHandle{
-    friend class CpuMinhasher;
-    public:
-
-        int getId() const noexcept{
-            return id;
-        }
-
-    private:
-        QueryHandle() = default;
-        QueryHandle(int i) : id(i){}
-
-        int id;
-    };
 
     using Key = kmer_type;
 
     virtual ~CpuMinhasher() = default;
 
-    virtual QueryHandle makeQueryHandle() const = 0;
+    virtual MinhasherHandle makeMinhasherHandle() const = 0;
+
+    virtual void destroyHandle(MinhasherHandle& handle) const = 0;
 
     virtual void determineNumValues(
-        QueryHandle& queryHandle,
+        MinhasherHandle& queryHandle,
         const unsigned int* h_sequenceData2Bit,
         std::size_t encodedSequencePitchInInts,
         const int* h_sequenceLengths,
@@ -41,7 +31,7 @@ public:
     ) const = 0;
 
     virtual void retrieveValues(
-        QueryHandle& queryHandle,
+        MinhasherHandle& queryHandle,
         const read_number* h_readIds,
         int numSequences,
         int totalNumValues,
@@ -50,21 +40,21 @@ public:
         int* h_offsets //numSequences + 1
     ) const = 0;
 
-    virtual void compact() = 0;
+    //virtual void compact() = 0;
 
     virtual MemoryUsage getMemoryInfo() const noexcept = 0;
 
-    virtual MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept = 0;
+    virtual MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept = 0;
 
     virtual int getNumResultsPerMapThreshold() const noexcept = 0;
     
     virtual int getNumberOfMaps() const noexcept = 0;
 
-    virtual void destroy() = 0;
+    //virtual void destroy() = 0;
 
 protected:
-    QueryHandle constructHandle(int id) const{
-        return QueryHandle{id};
+    MinhasherHandle constructHandle(int id) const{
+        return MinhasherHandle{id};
     }
 
 };

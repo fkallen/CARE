@@ -8,6 +8,8 @@
 #include <memorymanagement.hpp>
 #include <gpu/correct_gpu.hpp>
 #include <correctionresultprocessing.hpp>
+#include <classification.hpp>
+#include <gpu/forest_gpu.cuh>
 
 #include <gpu/multigpureadstorage.cuh>
 #include <chunkedreadstorageconstruction.hpp>
@@ -189,6 +191,13 @@ namespace care{
             return;
         }
 
+        if(correctionOptions.correctionType == CorrectionType::Print 
+            || correctionOptions.correctionTypeCands == CorrectionType::Print){
+
+            std::cout << "CorrectionType Print is not supported in CARE GPU. Please use CARE CPU instead to print features. Abort!" << std::endl;
+            return;
+        }
+
         cudaSetDevice(runtimeOptions.deviceIds[0]); CUERR;
 
         helpers::PeerAccessDebug peerAccess(runtimeOptions.deviceIds, true);
@@ -280,6 +289,25 @@ namespace care{
             0
         );
 
+        std::vector<gpu::GpuForest> anchorForests;
+        std::vector<gpu::GpuForest> candidateForests;
+
+        {
+            ClfAgent clfAgent_(correctionOptions, fileOptions);
+
+            for(int deviceId : runtimeOptions.deviceIds){
+                cub::SwitchDevice sd{deviceId};
+                if(correctionOptions.correctionType == CorrectionType::Forest){
+                    anchorForests.emplace_back(*clfAgent_.classifier_anchor, deviceId);
+                }
+
+                if(correctionOptions.correctionTypeCands == CorrectionType::Forest){
+                    candidateForests.emplace_back(*clfAgent_.classifier_cands, deviceId);
+                }
+            }
+
+        }
+
         helpers::CpuTimer buildMinhasherTimer("build_minhasher");
 
         auto minhasherAndType = gpu::constructGpuMinhasherFromGpuReadStorage(
@@ -293,7 +321,7 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after gpuminhasher");
 
-        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+        gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -376,7 +404,7 @@ namespace care{
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
         if(gpuReadStorage.isStandalone()){
-            cpuReadStorage->destroy();
+            cpuReadStorage.reset();
         }
 
 
@@ -392,7 +420,9 @@ namespace care{
             fileOptions, 
             memoryOptions,
             *gpuMinhasher, 
-            gpuReadStorage            
+            gpuReadStorage,
+            anchorForests,
+            candidateForests
         );
 
         step2timer.print();
@@ -408,10 +438,11 @@ namespace care{
 
         //compareMaxRssToLimit(memoryOptions.memoryTotalLimit, "Error memorylimit after correction");
 
-        gpuMinhasher->destroy();
-   
+
+        minhasherAndType.first.reset();
+        gpuMinhasher = nullptr;
         gpuReadStorage.destroy();
-        cpuReadStorage->destroy();     
+        cpuReadStorage.reset();
 
         // {
         //     std::cerr << "Saving partialresults\n";
@@ -577,10 +608,10 @@ namespace care{
             memoryOptions,
             correctionOptions,
             gpuReadStorage,
-            gpu::GpuMinhasherType::Single
+            gpu::GpuMinhasherType::Multi
         );
 
-        gpu::GpuMinhasher* const gpuMinhasher = minhasherAndType.first.get();
+        gpu::GpuMinhasher* gpuMinhasher = minhasherAndType.first.get();
 
         buildMinhasherTimer.print();
 
@@ -661,7 +692,7 @@ namespace care{
         printDataStructureMemoryUsage(gpuReadStorage, "reads");
 
         if(gpuReadStorage.isStandalone()){
-            cpuReadStorage->destroy();
+            cpuReadStorage.reset();
         }
 
         std::cout << "STEP 2: Read extension" << std::endl;
@@ -690,10 +721,10 @@ namespace care{
             << numTempInMem << " extensions are stored in memory. "
             << numTempInFile << " extensions are stored in temporary file\n";
 
-        gpuMinhasher->destroy();
-   
+        minhasherAndType.first.reset();
+        gpuMinhasher = nullptr;
         gpuReadStorage.destroy();
-        cpuReadStorage->destroy();     
+        cpuReadStorage.reset();   
 
         //Merge corrected reads with input file to generate output file
 

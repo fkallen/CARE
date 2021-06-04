@@ -80,8 +80,6 @@ namespace gpu{
 
     public:
         using Key = kmer_type;
-        using QueryHandle = GpuMinhasher::QueryHandle;
-
 
         SingleGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
             : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey)
@@ -253,6 +251,22 @@ namespace gpu{
 
             gpuReadStorage.destroyHandle(sequencehandle);
 
+            std::vector<GpuTable::DeviceTableView> views;
+            for(const auto& ptr : gpuHashTables){
+                views.emplace_back(ptr->makeDeviceView());
+            }
+
+            d_deviceAccessibleTableViews.resize(numberOfAvailableHashFunctions);
+            cudaMemcpyAsync(
+                d_deviceAccessibleTableViews.data(),
+                views.data(),
+                sizeof(GpuTable::DeviceTableView) * numberOfAvailableHashFunctions,
+                H2D,
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
             return numberOfAvailableHashFunctions; 
         }
 
@@ -385,19 +399,19 @@ namespace gpu{
             }
         }
 
-        QueryHandle makeQueryHandle() const override {
+        MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
             cudaGetDevice(&data->deviceId); CUERR;
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            QueryHandle h = constructHandle(handleid);
+            MinhasherHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
         }
 
-        void destroyHandle(QueryHandle& handle) const override{
+        void destroyHandle(MinhasherHandle& handle) const override{
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -408,7 +422,7 @@ namespace gpu{
             handle = constructHandle(std::numeric_limits<int>::max());
         }
 
-        void compact(cudaStream_t stream = 0) override {
+        void compact(cudaStream_t stream = 0) {
             DeviceSwitcher ds(deviceId);
 
             std::size_t required_temp_bytes = 0;
@@ -449,7 +463,7 @@ namespace gpu{
             return mem;
         }
 
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
             return getQueryDataFromHandle(handle)->getMemoryInfo();
         }
 
@@ -461,13 +475,13 @@ namespace gpu{
             return gpuHashTables.size();
         }
 
-        void destroy() override{
+        void destroy(){
             DeviceSwitcher sd(getDeviceId());
             gpuHashTables.clear();
         }
 
         void determineNumValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -518,7 +532,7 @@ namespace gpu{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -708,6 +722,33 @@ namespace gpu{
             fixKeysForGpuHashTable(d_signatures_transposed, numSequences * numHashfunctions, stream);
 
             //determine number of values per hashfunction per sequence
+            #if 1
+
+            {
+
+            const int signaturesPitchInElements = numSequences;
+            const int numValuesPerKeyPitchInElements = numSequences;
+            constexpr int cgsize = GpuTable::DeviceTableView::cg_size();
+
+            dim3 block(256, 1, 1);
+            const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+
+            gpuhashtablekernels::numValuesPerKeyCompactMultiTableKernel<<<grid, block, 0, stream>>>(
+                d_deviceAccessibleTableViews.data(),
+                numHashfunctions,
+                resultsPerMapThreshold,
+                d_signatures_transposed,
+                signaturesPitchInElements,
+                numSequences,
+                d_numValuesPerSequencePerHash,
+                numValuesPerKeyPitchInElements
+            );
+
+            }
+            #else
+
+            
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[i]->numValuesPerKeyCompact(
                     d_signatures_transposed + i * numSequences,
@@ -716,6 +757,8 @@ namespace gpu{
                     stream
                 );
             }
+
+            #endif
 
             // accumulate number of values per sequence in d_numValuesPerSequence
             // calculate vertical exclusive prefix sum
@@ -916,6 +959,33 @@ namespace gpu{
 
             //retrieve values
 
+            #if 1
+            {
+            const int signaturesPitchInElements = numSequences;
+            const int numValuesPerKeyPitchInElements = numSequences;
+            const int beginOffsetsPitchInElements = numSequences;
+            constexpr int cgsize = GpuTable::DeviceTableView::cg_size();
+
+            dim3 block(256, 1, 1);
+            const int numBlocksPerTable = SDIV(numSequences, (block.x / cgsize));
+            dim3 grid(numBlocksPerTable, std::min(65535, numHashfunctions), 1);
+
+            gpuhashtablekernels::retrieveCompactKernel<<<grid, block, 0, stream>>>(
+                d_deviceAccessibleTableViews.data(),
+                numHashfunctions,
+                d_signatures_transposed,
+                signaturesPitchInElements,
+                d_queryOffsetsPerSequencePerHash,
+                beginOffsetsPitchInElements,
+                d_numValuesPerSequencePerHash,
+                numValuesPerKeyPitchInElements,
+                resultsPerMapThreshold,
+                numSequences,
+                d_values_dblbuf.Current()
+            );
+            }
+            #else
+
             for(int i = 0; i < numHashfunctions; i++){
                 gpuHashTables[i]->retrieveCompact(
                     d_signatures_transposed + i * numSequences,
@@ -926,6 +996,8 @@ namespace gpu{
                     stream
                 );
             }
+
+            #endif
 
             // all values for the same key are stored in consecutive locations in d_values_tmp.
             // now, make value ranges unique
@@ -1029,7 +1101,7 @@ private:
             return 0.8f;
         }
 
-        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();
@@ -1045,6 +1117,7 @@ private:
         int resultsPerMapThreshold{};
         HostBuffer<int> h_currentHashFunctionNumbers{};
         std::vector<std::unique_ptr<GpuTable>> gpuHashTables{};
+        DeviceBuffer<GpuTable::DeviceTableView> d_deviceAccessibleTableViews{};
         mutable std::vector<std::unique_ptr<QueryData>> tempdataVector{};
     };
 

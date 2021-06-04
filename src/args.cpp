@@ -61,6 +61,16 @@ namespace args{
             result.correctCandidates = pr["candidateCorrection"].as<bool>();
         }
 
+        if(pr.count("correctionTypeCands")){
+            const int val = pr["correctionTypeCands"].as<int>();
+
+            switch(val){
+                case 1: result.correctionTypeCands = CorrectionType::Forest; break;
+                case 2: result.correctionTypeCands = CorrectionType::Print; break;
+                default: result.correctionTypeCands = CorrectionType::Classic; break;
+            }
+        }
+
         if(pr.count("useQualityScores")){
             result.useQualityScores = pr["useQualityScores"].as<bool>();
         }
@@ -98,6 +108,38 @@ namespace args{
         }
         if(pr.count("candidateCorrectionNewColumns")){
             result.new_columns_to_correct = pr["candidateCorrectionNewColumns"].as<int>();
+        }
+        if(pr.count("correctionType")){
+            const int val = pr["correctionType"].as<int>();
+
+            switch(val){
+                case 1: result.correctionType = CorrectionType::Forest; break;
+                case 2: result.correctionType = CorrectionType::Print; break;
+                default: result.correctionType = CorrectionType::Classic; break;
+            }
+        }
+        if(pr.count("thresholdAnchor")){
+            float t = pr["thresholdAnchor"].as<float>();
+            result.thresholdAnchor = t>1.0?t/100:t;
+        }
+
+        if(pr.count("thresholdCands")){
+            float t = pr["thresholdCands"].as<float>();
+            result.thresholdCands = t>1.0?t/100:t;
+        }
+
+        if(pr.count("samplingRateAnchor")){
+            float t = pr["samplingRateAnchor"].as<float>();
+            result.sampleRateAnchor = t>1.0?t/100:t;
+        }
+
+        if(pr.count("samplingRateCands")){
+            float t = pr["samplingRateCands"].as<float>();
+            result.sampleRateCands = t>1.0?t/100:t;
+        }
+
+        if(pr.count("pairedthreshold1")){
+            result.pairedthreshold1 = pr["pairedthreshold1"].as<float>();
         }
 
         return result;
@@ -217,7 +259,6 @@ namespace args{
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
         FileOptions result{};
 
-
         if(pr.count("outdir")){
 		    result.outputdirectory = pr["outdir"].as<std::string>();
         }
@@ -261,6 +302,14 @@ namespace args{
             result.tempdirectory = pr["tempdir"].as<std::string>();
         }else{
             result.tempdirectory = result.outputdirectory;
+        }
+
+        if(pr.count("ml-forestfile")){
+            result.mlForestfileAnchor = pr["ml-forestfile"].as<std::string>();
+        }
+
+        if(pr.count("ml-cands-forestfile")){
+            result.mlForestfileCands = pr["ml-cands-forestfile"].as<std::string>();
         }
 
         if(pr.count("inputfiles")){

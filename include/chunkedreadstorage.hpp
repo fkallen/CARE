@@ -10,7 +10,6 @@
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
 #include <cpureadstorage.hpp>
-#include <readstoragehandle.hpp>
 #include <memorymanagement.hpp>
 
 #include <unordered_set>
@@ -30,7 +29,8 @@ namespace care{
 
 class ChunkedReadStorage : public CpuReadStorage{
 public:
-    ChunkedReadStorage(bool hasQualityScores_ = false) : hasQualityScores(hasQualityScores_){
+    ChunkedReadStorage(bool pairedEnd_, bool hasQualityScores_) 
+    : pairedEnd(pairedEnd_), hasQualityScores(hasQualityScores_){
         offsetsPrefixSum.emplace_back(0);
     }
 
@@ -385,27 +385,7 @@ public:
 
 public: //inherited interface
 
-    ReadStorageHandle makeHandle() const override {
-
-        std::unique_lock<SharedMutex> lock(sharedmutex);
-        const int handleid = counter++;
-        ReadStorageHandle h = constructHandle(handleid);
-
-        return h;
-    }
-
-    void destroyHandle(ReadStorageHandle& handle) const override{
-        //std::unique_lock<SharedMutex> lock(sharedmutex);
-
-        //const int id = handle.getId();
-        //assert(id < int(tempdataVector.size()));
-        
-        //tempdataVector[id] = nullptr;
-        handle = constructHandle(std::numeric_limits<int>::max());
-    };
-
     void areSequencesAmbiguous(
-        ReadStorageHandle& handle,
         bool* result, 
         const read_number* readIds, 
         int numSequences
@@ -426,7 +406,6 @@ public: //inherited interface
     }
 
     void gatherSequences(
-        ReadStorageHandle& handle,
         unsigned int* sequence_data,
         size_t outSequencePitchInInts,
         const read_number* readIds,
@@ -497,7 +476,6 @@ public: //inherited interface
     }
 
     void gatherQualities(
-        ReadStorageHandle& handle,
         char* quality_data,
         size_t out_quality_pitch,
         const read_number* readIds,
@@ -568,18 +546,18 @@ public: //inherited interface
     }
 
     void gatherSequenceLengths(
-        ReadStorageHandle& handle,
         int* lengths,
         const read_number* readIds,
         int numSequences
     ) const override{
+        if(numSequences == 0) return;
+        
         for(int i = 0; i < numSequences; i++){
             lengths[i] = lengthStorage.getLength(readIds[i]);
         }
     }
 
     void getIdsOfAmbiguousReads(
-        ReadStorageHandle& handle,
         read_number* ids
     ) const override{
         std::copy(ambigReadIds.begin(), ambigReadIds.end(), ids);
@@ -611,12 +589,6 @@ public: //inherited interface
         return result;
     }
 
-    MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
-        //no data associated with handle
-        MemoryUsage result{};
-        return result;
-    }
-
     read_number getNumberOfReads() const override{
         return totalNumberOfReads;
     }
@@ -633,7 +605,11 @@ public: //inherited interface
         return lengthStorage.getMaxLength();
     }
 
-    void destroy() override{
+    bool isPairedEnd() const override{
+        return pairedEnd;
+    }
+
+    void destroy() {
         auto deallocVector = [](auto& vec){
             using T = typename std::remove_reference<decltype(vec)>::type;
             T tmp{};
@@ -823,6 +799,8 @@ private:
         int numReads = 0;
         StoredQualities data;
     };
+
+    bool pairedEnd{};
 
     bool hasQualityScores{};
     std::size_t totalNumberOfReads{};

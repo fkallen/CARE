@@ -228,8 +228,6 @@ namespace gpu{
         
     public:
 
-        using QueryHandle = GpuMinhasher::QueryHandle;
-
         FakeGpuMinhasher() : FakeGpuMinhasher(0, 50, 16){
 
         }
@@ -255,7 +253,7 @@ namespace gpu{
         );
  
 
-        QueryHandle makeQueryHandle() const override {
+        MinhasherHandle makeMinhasherHandle() const override {
             auto data = std::make_unique<QueryData>();
             data->segmentedUniqueHandle = GpuSegmentedUnique::makeHandle();
             cudaGetDevice(&data->deviceId); CUERR;
@@ -264,13 +262,13 @@ namespace gpu{
             //std::unique_lock<std::shared_mutex> lock(sharedmutex);
             std::unique_lock<SharedMutex> lock(sharedmutex);
             const int handleid = counter++;
-            QueryHandle h = constructHandle(handleid);
+            MinhasherHandle h = constructHandle(handleid);
 
             tempdataVector.emplace_back(std::move(data));
             return h;
         }
 
-        void destroyHandle(QueryHandle& handle) const override{
+        void destroyHandle(MinhasherHandle& handle) const override{
 
             std::unique_lock<SharedMutex> lock(sharedmutex);
 
@@ -284,7 +282,7 @@ namespace gpu{
         #define FAKEGPUMINHASHER_RUN_ON_GPU
 
         void determineNumValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -319,7 +317,7 @@ namespace gpu{
         }
 
         void retrieveValues(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -357,7 +355,7 @@ namespace gpu{
         #undef FAKEGPUMINHASHER_RUN_ON_GPU
         #endif
 
-        void compact(cudaStream_t stream) override{
+        void compact(cudaStream_t stream) {
             int id;
             cudaGetDevice(&id); CUERR;
 
@@ -398,7 +396,7 @@ namespace gpu{
             return result;
         }
 
-        MemoryUsage getMemoryInfo(const QueryHandle& handle) const noexcept override{
+        MemoryUsage getMemoryInfo(const MinhasherHandle& handle) const noexcept override{
             return getQueryDataFromHandle(handle)->getMemoryInfo();
         }
 
@@ -410,7 +408,7 @@ namespace gpu{
             return minhashTables.size();
         }
 
-        void destroy() override{
+        void destroy() {
             minhashTables.clear();
         }
 
@@ -604,7 +602,7 @@ namespace gpu{
     public: //should be private, but lambda kernel....
 
         void retrieveValuesOnGpu(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -834,7 +832,7 @@ namespace gpu{
         }
 
         void retrieveValuesOnCpu(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const read_number* d_readIds,
             int numSequences,
             int totalNumValues,
@@ -923,7 +921,7 @@ namespace gpu{
     private:
 
         void determineNumValuesOnGpu(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -1024,7 +1022,7 @@ namespace gpu{
         }
 
         void determineNumValuesOnCpu(
-            QueryHandle& queryHandle,
+            MinhasherHandle& queryHandle,
             const unsigned int* d_sequenceData2Bit,
             std::size_t encodedSequencePitchInInts,
             const int* d_sequenceLengths,
@@ -1114,7 +1112,7 @@ namespace gpu{
             queryData->previousStage = QueryData::Stage::NumValues;
         }
 
-        QueryData* getQueryDataFromHandle(const QueryHandle& queryHandle) const{
+        QueryData* getQueryDataFromHandle(const MinhasherHandle& queryHandle) const{
             std::shared_lock<SharedMutex> lock(sharedmutex);
 
             return tempdataVector[queryHandle.getId()].get();

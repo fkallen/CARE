@@ -26,6 +26,19 @@ namespace care{
         }
     }
 
+
+    enum class CorrectionType : int {Classic, Forest, Print};
+
+    __inline__
+    std::string to_string(CorrectionType t){
+        switch(t){
+            case CorrectionType::Classic: return "Classic"; break;
+            case CorrectionType::Forest: return "Forest"; break;
+            case CorrectionType::Print: return "Print"; break;
+            default: return "Forgot to name correction type"; break;
+        }
+    }
+
 	//Options which can be parsed from command-line arguments
 
     struct GoodAlignmentProperties{
@@ -47,6 +60,13 @@ namespace care{
         int new_columns_to_correct = 15;
         int kmerlength = 20;
         int numHashFunctions = 48;
+        CorrectionType correctionType = CorrectionType::Classic;
+        CorrectionType correctionTypeCands = CorrectionType::Classic;
+        float thresholdAnchor = .5f; // threshold for anchor classifier
+        float thresholdCands = .5f; // threshold for cands classifier
+        float sampleRateAnchor = 1.f;
+        float sampleRateCands = 0.01f;
+        float pairedthreshold1 = 0.06f;
     };
 
     struct ExtensionOptions{
@@ -69,7 +89,7 @@ namespace care{
 
 	struct FileOptions{
         bool mergedoutput = false;
-        SequencePairType pairType = SequencePairType::Invalid;
+        SequencePairType pairType = SequencePairType::SingleEnd;
 		std::string outputdirectory = "";
 		std::uint64_t nReads = 0;
         int minimum_sequence_length = 0;
@@ -80,6 +100,8 @@ namespace care{
         std::string load_hashtables_from = "";
         std::string tempdirectory = "";
         std::string extendedReadsOutputfilename = "UNSET_";
+        std::string mlForestfileAnchor = "";
+        std::string mlForestfileCands = "";
         std::vector<std::string> inputfiles;
         std::vector<std::string> outputfilenames;
 	};

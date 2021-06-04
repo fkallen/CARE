@@ -55,41 +55,10 @@ namespace gpu{
             }
         }
 
-        // template<class CompactTableView, class Key, class Value, class Offset>
-        // __global__
-        // void retrieveCompactKernel(
-        //     CompactTableView table,
-        //     const Key* __restrict__ querykeys,
-        //     const int numKeys,
-        //     Value* __restrict__ outValues,
-        //     int valueOffset, // values for key i begin at valueOffset * i
-        //     Offset* __restrict__ numValuesPerKey
-        // ){
-        //     const int tid = threadIdx.x + blockDim.x * blockIdx.x;
-        //     const int stride = blockDim.x * gridDim.x;
-
-        //     constexpr int tilesize = CompactTableView::cg_size();
-
-        //     assert(stride % tilesize == 0);
-
-        //     auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
-        //     const int tileId = tid / tilesize;
-        //     const int numTiles = stride / tilesize;
-
-        //     for(int k = tileId; k < numKeys; k += numTiles){
-        //         const Key key = querykeys[k];
-
-        //         const int num = table.retrieve(tile, key, outValues + size_t(k) * valueOffset);
-        //         if(tile.thread_rank() == 0){
-        //             numValuesPerKey[k] = num;
-        //         }    
-        //     }
-        // }
-
-        template<class CompactTableView, class Key, class Value, class Offset>
+        template<class DeviceTableView, class Key, class Value, class Offset>
         __global__
         void retrieveCompactKernel(
-            CompactTableView table,
+            DeviceTableView table,
             const Key* __restrict__ querykeys,
             const Offset* __restrict__ beginOffsets,
             const int* __restrict__ numValuesPerKey,
@@ -100,7 +69,7 @@ namespace gpu{
             const int tid = threadIdx.x + blockDim.x * blockIdx.x;
             const int stride = blockDim.x * gridDim.x;
 
-            constexpr int tilesize = CompactTableView::cg_size();
+            constexpr int tilesize = DeviceTableView::cg_size();
 
             assert(stride % tilesize == 0);
 
@@ -120,12 +89,10 @@ namespace gpu{
         }
 
 
-        
-
-        template<class CompactTableView, class Key, class Offset>
+        template<class DeviceTableView, class Key, class Offset>
         __global__
-        void numValuePerKeyCompactKernel(
-            const CompactTableView table,
+        void numValuesPerKeyCompactKernel(
+            const DeviceTableView table,
             int maxValuesPerKey,
             const Key* const __restrict__ querykeys,
             const int numKeys,
@@ -134,7 +101,7 @@ namespace gpu{
             const int tid = threadIdx.x + blockDim.x * blockIdx.x;
             const int stride = blockDim.x * gridDim.x;
 
-            constexpr int tilesize = CompactTableView::cg_size();
+            constexpr int tilesize = DeviceTableView::cg_size();
 
             assert(stride % tilesize == 0);
 
@@ -151,6 +118,100 @@ namespace gpu{
                 }    
             }
         }
+
+
+        //query the same number of keys in multiple tables
+        //The output buffer of values is shared among all tables. the destination offset within the buffer is given by beginOffsets
+        //This kernel expects a 2D grid of thread blocks. y dimension selects the table
+        template<class DeviceTableView, class Key, class Value, class Offset>
+        __global__
+        void retrieveCompactKernel(
+            const DeviceTableView* __restrict__ tables,
+            const int numTables,
+            const Key* __restrict__ querykeys,
+            const int querykeysPitchInElements,
+            const Offset* __restrict__ beginOffsets,
+            const int beginOffsetsPitchInElements,
+            const int* __restrict__ numValuesPerKey,
+            const int numValuesPerKeyPitchInElements,
+            const int maxValuesPerKey,
+            const int numKeys,
+            Value* __restrict__ outValues
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = DeviceTableView::cg_size();
+
+            assert(stride % tilesize == 0);
+
+            auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+            const int tileId = tid / tilesize;
+            const int numTiles = stride / tilesize;
+
+            for(int tableid = blockIdx.y; tableid < numTables; tableid += gridDim.y){
+
+                const DeviceTableView table = tables[tableid];
+                const Key* const myQueryKeys = querykeys + querykeysPitchInElements * tableid;
+                const int* const myNumValuesPerKey = numValuesPerKey + numValuesPerKeyPitchInElements * tableid;
+                const Offset* const myBeginOffsets = beginOffsets + beginOffsetsPitchInElements * tableid;
+                //Value* const myOutValues = outValues + outValuesPitchInElements * tableid;
+
+                for(int k = tileId; k < numKeys; k += numTiles){
+                    const Key key = myQueryKeys[k];
+                    const auto beginOffset = myBeginOffsets[k];
+                    const int num = myNumValuesPerKey[k];
+
+                    if(num != 0){
+                        table.retrieve(tile, key, outValues + beginOffset);
+                    }
+                }
+
+            }
+        }
+
+        //query the same number of keys in multiple tables
+        //This kernel expects a 2D grid of thread blocks. y dimension selects the table
+        template<class DeviceTableView, class Key, class Offset>
+        __global__
+        void numValuesPerKeyCompactMultiTableKernel(
+            const DeviceTableView* __restrict__ tables,
+            const int numTables,
+            const int maxValuesPerKey,
+            const Key* const __restrict__ querykeys,
+            const int querykeysPitchInElements,
+            const int numKeys,
+            Offset* const __restrict__ numValuesPerKey,
+            const int numValuesPerKeyPitchInElements
+        ){
+            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+            const int stride = blockDim.x * gridDim.x;
+
+            constexpr int tilesize = DeviceTableView::cg_size();
+
+            assert(stride % tilesize == 0);
+
+            auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+            const int tileId = tid / tilesize;
+            const int numTiles = stride / tilesize;
+
+            for(int tableid = blockIdx.y; tableid < numTables; tableid += gridDim.y){
+                const DeviceTableView table = tables[tableid];
+                const Key* const myQueryKeys = querykeys + querykeysPitchInElements * tableid;
+                Offset* const myNumValuesPerKey = numValuesPerKey + numValuesPerKeyPitchInElements * tableid;
+
+                for(int k = tileId; k < numKeys; k += numTiles){
+                    const Key key = myQueryKeys[k];
+
+                    const int num = table.numValues(tile, key);
+                    if(tile.thread_rank() == 0){
+                        myNumValuesPerKey[k] = num > maxValuesPerKey ? 0 : num;
+                    }    
+                }
+            }
+        }
+
+
     }
 
 
@@ -179,6 +240,75 @@ namespace gpu{
                 warpcore::defaults::probing_scheme_t<Key, 8>,
                 warpcore::defaults::table_storage_t<Key, int>,
                 warpcore::defaults::temp_memory_bytes()>;
+
+        struct DeviceTableView{
+            CompactKeyIndexTable core;
+            const int* offsets;
+            const Value* values;
+
+            DeviceTableView(const DeviceTableView&) = default;
+            DeviceTableView(DeviceTableView&&) = default;
+
+            DeviceTableView& operator=(DeviceTableView rhs){
+                std::swap(*this, rhs);
+                return *this;
+            }
+
+
+            DEVICEQUALIFIER
+            int retrieve(
+                cg::thread_block_tile<CompactKeyIndexTable::cg_size()> group,
+                Key key,
+                Value* outValues
+            ) const noexcept{
+
+                int keyIndex = 0;
+                auto status = core.retrieve(
+                    key,
+                    keyIndex,
+                    group
+                );
+                
+                const int begin = offsets[keyIndex];
+                const int end = offsets[keyIndex+1];
+                const int num = end - begin;
+
+                for(int p = group.thread_rank(); p < num; p += group.size()){
+                    outValues[p] = values[begin + p];
+                }
+
+                return num;
+            }
+
+            DEVICEQUALIFIER
+            int numValues(
+                cg::thread_block_tile<CompactKeyIndexTable::cg_size()> group,
+                Key key
+            ) const noexcept{
+
+                int keyIndex = 0;
+                auto status = core.retrieve(
+                    key,
+                    keyIndex,
+                    group
+                );
+                
+                const int begin = offsets[keyIndex];
+                const int end = offsets[keyIndex+1];
+                const int num = end - begin;
+
+                return num;
+            }
+        
+            HOSTDEVICEQUALIFIER
+            static constexpr int cg_size() noexcept{
+                return CompactKeyIndexTable::cg_size();
+            }
+        };
+
+        DeviceTableView makeDeviceView() const noexcept{
+            return DeviceTableView{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
+        }
 
         // constexpr Key empty_key() noexcept{
         //     return MultiValueHashTable::empty_key();
@@ -313,7 +443,7 @@ namespace gpu{
         // ) const {
         //     assert(isCompact);
 
-        //     CompactTableView table{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
+        //     DeviceTableView table = makeDeviceView();
 
         //     gpuhashtablekernels::retrieveCompactKernel<<<1024, 256, 0, stream>>>(
         //         table,
@@ -336,7 +466,7 @@ namespace gpu{
         ) const {
             assert(isCompact);
 
-            CompactTableView table{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
+            DeviceTableView table = makeDeviceView();
 
             gpuhashtablekernels::retrieveCompactKernel<<<1024, 256, 0, stream>>>(
                 table,
@@ -359,9 +489,9 @@ namespace gpu{
         ) const {
             assert(isCompact);
 
-            CompactTableView table{*gpuKeyIndexTable, d_compactOffsets.data(), d_compactValues.data()};
+            DeviceTableView table = makeDeviceView();
 
-            gpuhashtablekernels::numValuePerKeyCompactKernel<<<1024, 256, 0, stream>>>(
+            gpuhashtablekernels::numValuesPerKeyCompactKernel<<<1024, 256, 0, stream>>>(
                 table,
                 maxValuesPerKey,
                 d_keys,
@@ -702,61 +832,7 @@ namespace gpu{
             // std::copy(h_compactOffsetTmp.begin(), h_compactOffsetTmp.end(), out_offsets);
         }
 
-        struct CompactTableView{
-            CompactKeyIndexTable core;
-            const int* offsets;
-            const Value* values;
-
-            DEVICEQUALIFIER
-            int retrieve(
-                cg::thread_block_tile<CompactKeyIndexTable::cg_size()> group,
-                Key key,
-                Value* outValues
-            ) const noexcept{
-
-                int keyIndex = 0;
-                auto status = core.retrieve(
-                    key,
-                    keyIndex,
-                    group
-                );
-                
-                const int begin = offsets[keyIndex];
-                const int end = offsets[keyIndex+1];
-                const int num = end - begin;
-
-                for(int p = group.thread_rank(); p < num; p += group.size()){
-                    outValues[p] = values[begin + p];
-                }
-
-                return num;
-            }
-
-            DEVICEQUALIFIER
-            int numValues(
-                cg::thread_block_tile<CompactKeyIndexTable::cg_size()> group,
-                Key key
-            ) const noexcept{
-
-                int keyIndex = 0;
-                auto status = core.retrieve(
-                    key,
-                    keyIndex,
-                    group
-                );
-                
-                const int begin = offsets[keyIndex];
-                const int end = offsets[keyIndex+1];
-                const int num = end - begin;
-
-                return num;
-            }
         
-            HOSTDEVICEQUALIFIER
-            static constexpr int cg_size() noexcept{
-                return CompactKeyIndexTable::cg_size();
-            }
-        };
 
         bool isCompact = false;
         int deviceId{};

@@ -213,6 +213,7 @@ namespace care{
 
                     while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
                         std::swap(batch->items[batchsize], multiInputReader.getCurrent());
+                        
                         batchsize++;
                     }
 
@@ -247,10 +248,13 @@ namespace care{
 
                 std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
+                assert(originalReadFiles.size() == outputfiles.size() || outputfiles.size() == 1);
 
                 for(const auto& outputfile : outputfiles){
                     writerVector.emplace_back(makeSequenceWriter(outputfile, format));
                 }
+
+                const int numOutputfiles = outputfiles.size();
 
                 // TIMERSTARTCPU(outputwriting);
 
@@ -267,8 +271,10 @@ namespace care{
                     const int valid = outputBatch->validItems;
                     while(processed < valid){
                         const auto& readWithId = outputBatch->items[processed];
+                        const int writerIndex = numOutputfiles == 1 ? 0 : readWithId.fileId;
+                        assert(writerIndex < numOutputfiles);
 
-                        writerVector[readWithId.fileId]->writeRead(readWithId.read);
+                        writerVector[writerIndex]->writeRead(readWithId.read);
 
                         processed++;
                     }
@@ -325,7 +331,28 @@ namespace care{
                 auto last2 = tcsBatch->items.begin() + tcsBatch->validItems;
 
                 auto first1 = inputBatch->items.begin()+ inputBatch->processedItems;
-                auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;      
+                auto first2 = tcsBatch->items.begin()+ tcsBatch->processedItems;    
+
+                // assert(std::is_sorted(
+                //     first1,
+                //     last1,
+                //     [](const auto& l, const auto& r){
+                //         if(l.fileId < r.fileId) return true;
+                //         if(l.fileId > r.fileId) return false;
+                //         if(l.readIdInFile < r.readIdInFile) return true;
+                //         if(l.readIdInFile > r.readIdInFile) return false;
+                        
+                //         return l.globalReadId < r.globalReadId;
+                //     }
+                // ));
+
+                // assert(std::is_sorted(
+                //     first2,
+                //     last2,
+                //     [](const auto& l, const auto& r){
+                //         return l.readId < r.readId;
+                //     }
+                // ));
 
                 while(first1 != last1) {
                     if(first2 == last2){
@@ -571,10 +598,9 @@ namespace care{
         struct ReadBatch{
             int validItems = 0;
             int processedItems = 0;
-            std::vector<int> isExtended;
             std::vector<ReadWithId> items;
             std::vector<ReadWithId> items2;
-            std::vector<std::string> extendedSequences;
+            std::vector<std::optional<Read>> extendedReads;
         };
 
         std::array<ReadBatch, 4> readBatches;
@@ -599,17 +625,18 @@ namespace care{
 
                 ReadBatch* batch = freeReadBatches.pop();
 
-                batch->isExtended.resize(inputreader_maxbatchsize);
                 batch->items.resize(inputreader_maxbatchsize);
                 //batch->items2.resize(inputreader_maxbatchsize);
-                batch->extendedSequences.resize(inputreader_maxbatchsize);
+                batch->extendedReads.resize(inputreader_maxbatchsize);
+
+                for(auto& optional : batch->extendedReads){
+                    optional.reset();
+                }
 
                 std::swap(batch->items[0], multiInputReader.getCurrent()); //process element from outer loop next() call
-                batch->isExtended[0] = 0;
                 int batchsize = 1;
 
                 while(batchsize < inputreader_maxbatchsize && multiInputReader.next() >= 0){
-                    batch->isExtended[batchsize] = 0;
                     std::swap(batch->items[batchsize], multiInputReader.getCurrent());
                     batchsize++;
                 }
@@ -632,16 +659,17 @@ namespace care{
 
                 batch->items.resize(inputreader_maxbatchsize);
                 batch->items2.resize(inputreader_maxbatchsize);
-                batch->isExtended.resize(inputreader_maxbatchsize);
-                batch->extendedSequences.resize(inputreader_maxbatchsize);
+                batch->extendedReads.resize(inputreader_maxbatchsize);
 
-                batch->isExtended[0] = 0;
+                for(auto& optional : batch->extendedReads){
+                    optional.reset();
+                }
+
                 std::swap(batch->items[0], pairedInputReader.getCurrent1()); //process element from outer loop next() call
                 std::swap(batch->items2[0], pairedInputReader.getCurrent2()); //process element from outer loop next() call
                 int batchsize = 1;
 
                 while(batchsize < inputreader_maxbatchsize && pairedInputReader.next() >= 0){
-                    batch->isExtended[batchsize] = 0;
                     std::swap(batch->items[batchsize], pairedInputReader.getCurrent1());
                     std::swap(batch->items2[batchsize], pairedInputReader.getCurrent2());
                     batchsize++;
@@ -678,10 +706,10 @@ namespace care{
                 if(format == FileFormat::FASTAGZ)
                     format = FileFormat::FASTA;
 
-                auto extendedformat = FileFormat::FASTA; //extended reads are stored as fasta. No qualities available for gap.
+                //auto extendedformat = FileFormat::FASTA; //extended reads are stored as fasta. No qualities available for gap.
 
-                std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, extendedformat);
-                std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", extendedformat);
+                std::unique_ptr<SequenceFileWriter> extendedReadWriter = makeSequenceWriter(extendedOutputfile, format);
+                std::unique_ptr<SequenceFileWriter> extendedOrigReadWriter = makeSequenceWriter(extendedOutputfile + "_origs", format);
 
                 std::vector<std::unique_ptr<SequenceFileWriter>> writerVector;
 
@@ -696,13 +724,13 @@ namespace care{
                     int processed = outputBatch->processedItems;
                     const int valid = outputBatch->validItems;
                     while(processed < valid){
-                        const bool extended = outputBatch->isExtended[processed];                       
+                        const bool extended = outputBatch->extendedReads[processed].has_value(); 
 
                         if(extended){
                             const auto& readWithId1 = outputBatch->items[processed];
-                            const auto& str = outputBatch->extendedSequences[processed];
+                            const Read& read = *outputBatch->extendedReads[processed];
                             //extendedReadWriter->writeRead(str);
-                            extendedReadWriter->writeRead(readWithId1.read.header, str, readWithId1.read.quality);
+                            extendedReadWriter->writeRead(read.header, read.sequence, read.quality);
 
                             #if 1                         
 
@@ -813,9 +841,8 @@ namespace care{
                             matePtr = inputBatch->items2.data() + inputBatch->processedItems + dist;
                         }
 
-                        auto& extendedSequence = inputBatch->extendedSequences[inputBatch->processedItems + dist];
-
-                        inputBatch->isExtended[inputBatch->processedItems + dist] = combineResultsWithRead(buffer, readWithId, matePtr, extendedSequence);
+                        inputBatch->extendedReads[inputBatch->processedItems + dist] 
+                            = combineResultsWithRead(buffer, readWithId, matePtr);
 
                         ++first1;
                     }
