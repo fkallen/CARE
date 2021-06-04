@@ -658,8 +658,6 @@ namespace gpu{
 
             void* d_temp = queryData->d_minhashSignatures.data();
 
-            std::vector<Range_t>& allRanges = queryData->allRanges;
-
             //std::cerr << "totalNumValues: " << totalNumValues << "\n";
 
             if(totalNumValues == 0){
@@ -677,66 +675,76 @@ namespace gpu{
             //results will be in Current() buffer
             cub::DoubleBuffer<read_number> d_values_dblbuf(d_values, queryData->d_candidate_read_ids_tmp.data());
 
-            read_number* hostdatabegin = queryData->h_candidate_read_ids_tmp.get();
 
-            Range_t* const myRanges = allRanges.data();
-            const std::uint64_t* const mySignatures = queryData->h_minhashSignatures;
-            int* const h_my_begin_offsets = queryData->h_begin_offsets;
-            int* const h_my_end_offsets = queryData->h_end_offsets;
-            int* const d_my_begin_offsets = queryData->d_begin_offsets;
-            int* const d_my_end_offsets = queryData->d_end_offsets;
+            auto copyHitsToPinnedMemory = [queryData, numSequences, minhasher = this](){
+                auto* dest = queryData->h_candidate_read_ids_tmp.data();    
+                const int lmax = numSequences * minhasher->getNumberOfMaps();
 
-            //copy hits from hash tables to pinned memory
-            auto* dest = hostdatabegin;    
-            const int lmax = numSequences * getNumberOfMaps();
+                //helpers::CpuTimer timer("old");
 
-            for(int sequenceIndex = 0; sequenceIndex < numSequences; sequenceIndex++){
+                for(int sequenceIndex = 0; sequenceIndex < numSequences; sequenceIndex++){
 
-                h_my_begin_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
-                queryData->h_global_begin_offsets[sequenceIndex] = std::distance(queryData->h_candidate_read_ids_tmp.get(), dest);
+                    queryData->h_begin_offsets[sequenceIndex] = std::distance(queryData->h_candidate_read_ids_tmp.data(), dest);
 
-                for(int mapIndex = 0; mapIndex < getNumberOfMaps(); mapIndex++){
-                    const int k = sequenceIndex * getNumberOfMaps() + mapIndex;
-                    
-                    constexpr int nextprefetch = 2;
+                    for(int mapIndex = 0; mapIndex < minhasher->getNumberOfMaps(); mapIndex++){
+                        const int k = sequenceIndex * minhasher->getNumberOfMaps() + mapIndex;
+                        
+                        constexpr int nextprefetch = 2;
 
-                    //prefetch first element of next range if the next range is not empty
-                    if(k+nextprefetch < lmax){
-                        if(myRanges[k+nextprefetch].first != myRanges[k+nextprefetch].second){
-                            __builtin_prefetch(myRanges[k+nextprefetch].first, 0, 0);
+                        //prefetch first element of next range if the next range is not empty
+                        if(k+nextprefetch < lmax){
+                            if(queryData->allRanges[k+nextprefetch].first != queryData->allRanges[k+nextprefetch].second){
+                                __builtin_prefetch(queryData->allRanges[k+nextprefetch].first, 0, 0);
+                            }
                         }
+                        const auto& range = queryData->allRanges[k];
+                        if(std::distance(range.first, range.second) <= minhasher->getNumResultsPerMapThreshold())
+                            dest = std::copy(range.first, range.second, dest);
                     }
-                    const auto& range = myRanges[k];
-                    if(std::distance(range.first, range.second) <= getNumResultsPerMapThreshold())
-                        dest = std::copy(range.first, range.second, dest);
-                }
 
-                h_my_end_offsets[sequenceIndex] = std::distance(hostdatabegin, dest);
-            }
+                    queryData->h_end_offsets[sequenceIndex] = std::distance(queryData->h_candidate_read_ids_tmp.data(), dest);
+                }
+            };
+
+            copyHitsToPinnedMemory();
 
             cudaMemcpyAsync(
                 d_values_dblbuf.Current(),
-                hostdatabegin,
+                queryData->h_candidate_read_ids_tmp.data(),
                 sizeof(read_number) * totalNumValues,
                 H2D,
                 stream
             ); CUERR;
 
-            cudaMemcpyAsync(
-                d_my_begin_offsets,
-                h_my_begin_offsets,
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ); CUERR;
+            //copy h_endoffsets to d_endoffsets
+            //copy d_endoffsets to d_begin_offsets shifted to the right by 1
+            //copy d_begin_offsets to d_global_begin_offsets
+            helpers::lambda_kernel<<<SDIV(numSequences, 1024), 1024, 0, stream>>>(
+                [
+                    numSequences,
+                    h_end_offsets = queryData->h_end_offsets.data(),
+                    d_end_offsets = queryData->d_end_offsets.data(),
+                    d_begin_offsets = queryData->d_begin_offsets.data(),
+                    d_global_begin_offsets = queryData->d_global_begin_offsets.data()
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-            cudaMemcpyAsync(
-                d_my_end_offsets,
-                h_my_end_offsets,
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ); CUERR;
+                    if(tid < numSequences){
+                        const int data = h_end_offsets[tid];
+                        d_end_offsets[tid] = data;
+
+                        if(tid < numSequences - 1){
+                            d_begin_offsets[tid + 1] = data;
+                            d_global_begin_offsets[tid + 1] = data;
+                        }
+                        
+                        if(tid == 0){
+                            d_begin_offsets[0] = 0;
+                            d_global_begin_offsets[0] = 0;
+                        }
+                    }
+                }
+            );
 
             /*
             GpuSegmentedUnique::unique(
@@ -763,22 +771,22 @@ namespace gpu{
                 d_values_dblbuf.Alternate(), //output
                 d_numValuesPerSequence,
                 numSequences,
-                d_my_begin_offsets, //device accessible
-                d_my_end_offsets, //device accessible
-                h_my_begin_offsets,
-                h_my_end_offsets,
+                queryData->d_begin_offsets, //device accessible
+                queryData->d_end_offsets, //device accessible
+                queryData->h_begin_offsets,
+                queryData->h_end_offsets,
                 0,
                 sizeof(read_number) * 8,
                 stream
             );
 
-            cudaMemcpyAsync(
-                queryData->d_global_begin_offsets.get(),
-                queryData->h_global_begin_offsets.get(),
-                sizeof(int) * numSequences,
-                H2D,
-                stream
-            ); CUERR;
+            // cudaMemcpyAsync(
+            //     queryData->d_global_begin_offsets.get(),
+            //     queryData->h_global_begin_offsets.get(),
+            //     sizeof(int) * numSequences,
+            //     H2D,
+            //     stream
+            // ); CUERR;
 
             if(d_readIds != nullptr){
 
