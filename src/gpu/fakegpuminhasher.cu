@@ -39,6 +39,7 @@ void FakeGpuMinhasher::writeToStream(std::ostream& os) const{
 
     os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
     os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
+    os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
 
     const int numTables = getNumberOfMaps();
     os.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
@@ -53,6 +54,7 @@ int FakeGpuMinhasher::loadFromStream(std::ifstream& is, int numMapsUpperLimit){
 
     is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
     is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+    is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
 
     int numMaps = 0;
 

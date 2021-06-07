@@ -22,10 +22,13 @@ namespace care{
             const MemoryOptions& memoryOptions,
             const CpuReadStorage& cpuReadStorage
         ){
+            constexpr float loadfactor = 0.8f;
+
             auto cpuMinhasher = std::make_unique<OrdinaryCpuMinhasher>(
                 cpuReadStorage.getNumberOfReads(),
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength
+                correctionOptions.kmerlength,
+                loadfactor
             );
 
             if(fileOptions.load_hashtables_from != ""){

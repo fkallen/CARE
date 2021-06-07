@@ -8,6 +8,7 @@
 #include <gpu/minhashingkernels.cuh>
 #include <cpuhashtable.hpp>
 #include <gpu/gpuminhasher.cuh>
+#include <groupbykey.hpp>
 
 #include "minhashing.hpp"
 
@@ -228,12 +229,12 @@ namespace gpu{
         
     public:
 
-        FakeGpuMinhasher() : FakeGpuMinhasher(0, 50, 16){
+        FakeGpuMinhasher() : FakeGpuMinhasher(0, 50, 16, 0.8f){
 
         }
 
-        FakeGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
-            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey){
+        FakeGpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k, float loadfactor_)
+            : loadfactor(loadfactor_), maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey){
 
         }
 
@@ -359,6 +360,24 @@ namespace gpu{
             int id;
             cudaGetDevice(&id); CUERR;
 
+            auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
+                constexpr bool valuesOfSameKeyMustBeSorted = false;
+                const int maxValuesPerKey = getNumResultsPerMapThreshold();
+
+                bool success = false;
+
+                using GroupByKeyCpuOp = GroupByKeyCpu<Key_t, Value_t, read_number>;
+                using GroupByKeyGpuOp = GroupByKeyGpu<Key_t, Value_t, read_number>;
+                
+                GroupByKeyGpuOp groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                success = groupByKeyGpu.execute(keys, values, countsPrefixSum);         
+
+                if(!success){
+                    GroupByKeyCpuOp groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    groupByKeyCpu.execute(keys, values, countsPrefixSum);
+                }
+            };
+
             const int num = minhashTables.size();
             for(int i = 0, l = 0; i < num; i++){
                 auto& ptr = minhashTables[i];
@@ -366,9 +385,9 @@ namespace gpu{
                 if(!ptr->isInitialized()){
                     //after processing 3 tables, available memory should be sufficient for multithreading
                     if(l >= 3){
-                        ptr->finalize(getNumResultsPerMapThreshold(), threadPool, false, {id});
+                        ptr->finalize(groupByKey, threadPool);
                     }else{
-                        ptr->finalize(getNumResultsPerMapThreshold(), nullptr, false, {id});
+                        ptr->finalize(groupByKey, nullptr);
                     }
                     l++;
                 }                
@@ -462,7 +481,7 @@ namespace gpu{
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{
-                    auto ptr = std::make_unique<HashTable>(maxNumKeys);
+                    auto ptr = std::make_unique<HashTable>(maxNumKeys, loadfactor);
 
                     minhashTables.emplace_back(std::move(ptr));
                     added++;
@@ -1137,6 +1156,7 @@ namespace gpu{
         mutable int counter = 0;
         mutable SharedMutex sharedmutex{};
 
+        float loadfactor = 0.8f;
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};

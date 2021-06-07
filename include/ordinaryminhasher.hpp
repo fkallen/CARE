@@ -4,7 +4,7 @@
 
 #include <cpuminhasher.hpp>
 #include <cpureadstorage.hpp>
-
+#include <groupbykey.hpp>
 
 
 #include <config.hpp>
@@ -68,12 +68,12 @@ namespace care{
         
     public:
 
-        OrdinaryCpuMinhasher() : OrdinaryCpuMinhasher(0, 50, 16){
+        OrdinaryCpuMinhasher() : OrdinaryCpuMinhasher(0, 50, 16, 0.8f){
 
         }
 
-        OrdinaryCpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k)
-            : maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey){
+        OrdinaryCpuMinhasher(int maxNumKeys_, int maxValuesPerKey, int k, float loadfactor_)
+            : loadfactor(loadfactor_), maxNumKeys(maxNumKeys_), kmerSize(k), resultsPerMapThreshold(maxValuesPerKey){
 
         }
 
@@ -348,15 +348,23 @@ namespace care{
         void compact() {
             const int num = minhashTables.size();
 
+            auto groupByKey = [&](auto& keys, auto& values, auto& countsPrefixSum){
+                constexpr bool valuesOfSameKeyMustBeSorted = true;
+                const int maxValuesPerKey = getNumResultsPerMapThreshold();
+
+                care::GroupByKeyCpu<Key_t, Value_t, read_number> groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                groupByKey.execute(keys, values, countsPrefixSum);
+            };
+
             for(int i = 0, l = 0; i < num; i++){
                 auto& ptr = minhashTables[i];
             
                 if(!ptr->isInitialized()){
                     //after processing 3 tables, available memory should be sufficient for multithreading
                     if(l >= 3){
-                        ptr->finalize(getNumResultsPerMapThreshold(), threadPool, true, {});
+                        ptr->finalize(groupByKey, threadPool);
                     }else{
-                        ptr->finalize(getNumResultsPerMapThreshold(), nullptr, true, {});
+                        ptr->finalize(groupByKey, nullptr);
                     }
                     l++;
                 }                
@@ -420,6 +428,8 @@ namespace care{
             os.write(reinterpret_cast<const char*>(&kmerSize), sizeof(int));
             os.write(reinterpret_cast<const char*>(&resultsPerMapThreshold), sizeof(int));
 
+            os.write(reinterpret_cast<const char*>(&loadfactor), sizeof(float));
+
             const int numTables = getNumberOfMaps();
             os.write(reinterpret_cast<const char*>(&numTables), sizeof(int));
 
@@ -433,6 +443,8 @@ namespace care{
 
             is.read(reinterpret_cast<char*>(&kmerSize), sizeof(int));
             is.read(reinterpret_cast<char*>(&resultsPerMapThreshold), sizeof(int));
+
+            is.read(reinterpret_cast<char*>(&loadfactor), sizeof(float));
 
             int numMaps = 0;
 
@@ -470,7 +482,7 @@ namespace care{
 
             for(int i = 0; i < numTablesToConstruct; i++){
                 try{
-                    auto ptr = std::make_unique<HashTable>(maxNumKeys);
+                    auto ptr = std::make_unique<HashTable>(maxNumKeys, loadfactor);
 
                     minhashTables.emplace_back(std::move(ptr));
                     added++;
@@ -575,6 +587,7 @@ namespace care{
         mutable int counter = 0;
         mutable SharedMutex sharedmutex{};
 
+        float loadfactor = 0.8f;
         int maxNumKeys{};
         int kmerSize{};
         int resultsPerMapThreshold{};
