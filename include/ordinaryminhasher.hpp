@@ -266,14 +266,13 @@ namespace care{
 
             totalNumValues = 0;
 
+            std::vector<std::uint64_t> allHashValues(numSequences * getNumberOfMaps());
+
             for(int s = 0; s < numSequences; s++){
                 const int length = h_sequenceLengths[s];
                 const unsigned int* sequence = h_sequenceData2Bit + encodedSequencePitchInInts * s;
 
-                if(length < getKmerSize()){
-                    h_numValuesPerSequence[s] = 0;
-                }else{                    
-
+                if(length >= getKmerSize()){               
                     auto hashValues = calculateMinhashSignature(
                         sequence, 
                         length, 
@@ -282,21 +281,31 @@ namespace care{
                         0
                     );
 
-                    std::for_each(
-                        hashValues.begin(), hashValues.end(),
-                        [kmermask = getKmerMask()](auto& hash){
-                            hash &= kmermask;
+                    std::transform(
+                        hashValues.begin(), hashValues.begin() + getNumberOfMaps(),
+                        allHashValues.begin() + getNumberOfMaps() * s,
+                        [kmermask = getKmerMask()](const auto& hash){
+                            return hash & kmermask;
                         }
                     );
+                }
+            }
 
-                    for(int map = 0; map < getNumberOfMaps(); ++map){
-                        const kmer_type key = hashValues[map];
+            queryData->ranges.resize(numSequences * getNumberOfMaps());
+
+            std::fill(h_numValuesPerSequence, h_numValuesPerSequence + numSequences, 0);
+
+            for(int map = 0; map < getNumberOfMaps(); ++map){
+                for(int s = 0; s < numSequences; s++){
+                    const int length = h_sequenceLengths[s];
+
+                    if(length >= getKmerSize()){
+                        const kmer_type key = allHashValues[s * getNumberOfMaps() + map];
                         auto entries_range = queryMap(map, key);
                         const int n_entries = std::distance(entries_range.first, entries_range.second);
-                        if(n_entries > 0){
-                            totalNumValues += n_entries;
-                        }
-                        queryData->ranges.emplace_back(entries_range);
+                        totalNumValues += n_entries;
+                        h_numValuesPerSequence[s] += n_entries;
+                        queryData->ranges[s * getNumberOfMaps() + map] = entries_range;
                     }
                 }
             }
