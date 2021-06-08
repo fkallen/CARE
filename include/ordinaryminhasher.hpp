@@ -305,7 +305,8 @@ namespace care{
                         const int n_entries = std::distance(entries_range.first, entries_range.second);
                         totalNumValues += n_entries;
                         h_numValuesPerSequence[s] += n_entries;
-                        queryData->ranges[s * getNumberOfMaps() + map] = entries_range;
+                        //queryData->ranges[s * getNumberOfMaps() + map] = entries_range;
+                        queryData->ranges[map * numSequences + s] = entries_range;
                     }
                 }
             }
@@ -328,6 +329,7 @@ namespace care{
 
             assert(queryData->previousStage == QueryData::Stage::NumValues);
 
+            #if 0
             h_offsets[0] = 0;
             auto first = h_values;
 
@@ -350,6 +352,56 @@ namespace care{
                 h_offsets[s+1] = h_offsets[s] + std::distance(first, end);
                 first = end;
             }
+            #else
+
+            h_offsets[0] = 0;
+
+            std::vector<Value_t> valuestmp(totalNumValues);
+            std::vector<Range_t> rangestmp(numSequences * getNumberOfMaps());
+
+            //std::cerr << numSequences << "\n";
+
+            auto iter = valuestmp.begin();
+            int counter = 0;
+            for(int map = 0; map < getNumberOfMaps(); ++map){
+                for(int s = 0; s < numSequences; s++){
+                    //const auto& range = queryData->ranges[s * getNumberOfMaps() + map];
+                    const auto& range = queryData->ranges[map * numSequences + s];
+                    auto& newrange = rangestmp[s * getNumberOfMaps() + map];
+
+                    newrange.first = valuestmp.data() + counter;
+
+                    iter = std::copy(range.first, range.second, iter);
+                    counter += std::distance(range.first, range.second);
+
+                    newrange.second = valuestmp.data() + counter;
+                }
+            }
+
+            
+            auto first = h_values;
+
+
+            for(int s = 0; s < numSequences; s++){
+                auto rangesbegin = rangestmp.data() + s * getNumberOfMaps();
+
+                auto end = k_way_set_union(queryData->suHandle, first, rangesbegin, getNumberOfMaps());
+                if(h_readIds != nullptr){
+                    auto readIdPos = std::lower_bound(
+                        first,
+                        end,
+                        h_readIds[s]
+                    );
+
+                    if(readIdPos != end && *readIdPos == h_readIds[s]){
+                        end = std::copy(readIdPos + 1, end, readIdPos);
+                    }
+                }
+                h_numValuesPerSequence[s] = std::distance(first, end);
+                h_offsets[s+1] = h_offsets[s] + std::distance(first, end);
+                first = end;
+            }
+            #endif
 
             queryData->previousStage = QueryData::Stage::Retrieve;
         }
