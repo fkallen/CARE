@@ -6,33 +6,6 @@ namespace care{
     namespace gpu{
 
 
-        
-
-
-void FakeGpuMinhasher::queryPrecalculatedSignatures(
-    const std::uint64_t* signatures, //getNumberOfMaps() elements per sequence
-    FakeGpuMinhasher::Range_t* ranges, //getNumberOfMaps() elements per sequence
-    int* totalNumResultsInRanges, 
-    int numSequences) const{ 
-    
-    int numResults = 0;
-    const std::uint64_t kmer_mask = getKmerMask();
-
-    for(int i = 0; i < numSequences; i++){
-        const std::uint64_t* const signature = &signatures[i * getNumberOfMaps()];
-        FakeGpuMinhasher::Range_t* const range = &ranges[i * getNumberOfMaps()];            
-
-        for(int map = 0; map < getNumberOfMaps(); ++map){
-            kmer_type key = signature[map] & kmer_mask;
-            auto entries_range = queryMap(map, key);
-            numResults += std::distance(entries_range.first, entries_range.second);
-            range[map] = entries_range;
-        }
-    }   
-
-    *totalNumResultsInRanges = numResults;   
-}
-
 
 
 void FakeGpuMinhasher::writeToStream(std::ostream& os) const{
