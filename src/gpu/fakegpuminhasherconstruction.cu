@@ -22,7 +22,7 @@ namespace gpu{
             const MemoryOptions& memoryOptions,
             const GpuReadStorage& gpuReadStorage
         ){
-            constexpr float loadfactor = 0.8;
+            float loadfactor = memoryOptions.hashtableLoadfactor;
             
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
                 gpuReadStorage.getNumberOfReads(),

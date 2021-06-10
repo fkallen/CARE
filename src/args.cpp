@@ -233,6 +233,10 @@ namespace args{
         }
 
         result.memoryForHashtables = std::min(result.memoryForHashtables, result.memoryTotalLimit);
+
+        if(pr.count("hashloadfactor")){
+            result.hashtableLoadfactor = pr["hashloadfactor"].as<float>();
+        }
         
 
         

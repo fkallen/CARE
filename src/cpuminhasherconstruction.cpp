@@ -22,7 +22,7 @@ namespace care{
             const MemoryOptions& memoryOptions,
             const CpuReadStorage& cpuReadStorage
         ){
-            constexpr float loadfactor = 0.8f;
+            float loadfactor = memoryOptions.hashtableLoadfactor;
 
             auto cpuMinhasher = std::make_unique<OrdinaryCpuMinhasher>(
                 cpuReadStorage.getNumberOfReads(),
