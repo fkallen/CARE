@@ -52,29 +52,10 @@ run_clf() {
 	rm ${prefixes[${1}]}_${2}-${3}-${4}${CARE_FILEENDING}
 }
 
-run_clf_cpu() {
-	echo $CARE -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_${2}-${3}-${4}$CARE_FILEENDING $CARE_FLAGS \
-		--correctionType 1 --ml-forestfile ${2}_anchor.rf \
-		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.rf \
-		--thresholdAnchor ${3} --thresholdCands ${4} \
-		$(auto_preprocess ${prefixes[${1}]})
-
-	$ARTEVAL ${files[${1}]} ${files_ef[${1}]} ${prefixes[${1}]}_${2}-${3}-${4}${CARE_FILEENDING} >> ${prefixes[${1}]}_${2}_eval
-	rm ${prefixes[${1}]}_${2}-${3}-${4}${CARE_FILEENDING}
-}
-
 grid_search() {
     for (( THRESH="${3}"; THRESH<="${4}"; THRESH+="${5}" )); do
         for (( THRESHC="${6}"; THRESHC<="${7}"; THRESHC+="${8}" )); do
 			run_clf ${1} ${2} ${THRESH} ${THRESHC}
-        done
-    done
-}
-
-grid_search_cpu() {
-    for (( THRESH="${3}"; THRESH<="${4}"; THRESH+="${5}" )); do
-        for (( THRESHC="${6}"; THRESHC<="${7}"; THRESHC+="${8}" )); do
-			run_clf_cpu ${1} ${2} ${THRESH} ${THRESHC}
         done
     done
 }
@@ -144,11 +125,6 @@ files_ef[8]=/share/errorcorrection/datasets/artpairedelegans/elegans30cov_500_10
 cov[8]=30
 prefixes[8]=pair_ele30_500_10_inter
 
-files[9]=/share/errorcorrection/datasets/arthiseq2000bumblebee/bumblebee30cov.fq
-files_ef[9]=/share/errorcorrection/datasets/arthiseq2000bumblebee/bumblebee30cov_errFree.fastq
-cov[9]=30
-prefixes[9]=bumbl-30
-
 
 
 ### run
@@ -169,36 +145,35 @@ cp $SCRIPTPATH $SCRIPTNAME.log.${num}
 
 # # ## comparison
 
-# run_classic 0
-# run_classic_cpu 0
+run_classic 0
+run_classic_cpu 0
 
 # print runs
 
-# for (( i="0"; i<="1"; i+="1" )); do
+# for (( i="0"; i<="5"; i+="1" )); do
 # 	run_print $i
 # done
 
-prefixes_joined=$(printf ",\"%s\"" "${prefixes[@]:0:2}")
-prefixes_joined=${prefixes_joined:1}
+# prefixes_joined=$(printf ",\"%s\"" "${prefixes[@]:0:6}")
+# prefixes_joined=${prefixes_joined:1}
 
-files_ef_joined=$(printf ",\"%s\"" "${files_ef[@]:0:2}")
-files_ef_joined=${files_ef_joined:1}
+# files_ef_joined=$(printf ",\"%s\"" "${files_ef[@]:0:6}")
+# files_ef_joined=${files_ef_joined:1}
 
-python3 - <<EOF
+# python3 - <<EOF
 
-import sys
-sys.path.append("$MLCDIR")
-from gpusearch import main
+# import sys
+# sys.path.append("$MLCDIR")
+# from gpusearch import main
 
-prefixes = [${prefixes_joined}]
-effiles = [${files_ef_joined}]
+# prefixes = [${prefixes_joined}]
+# effiles = [${files_ef_joined}]
 
-main(prefixes, effiles, 0)
+# main(prefixes, effiles, 3)
 
-EOF
+# EOF
 
-grid_search 0 0 30 30 10 30 30 10
-# grid_search 0 0_depth22 30 90 10 30 90 10
+grid_search 0 0 30 90 10 30 90 10
 
 echo "done."
 

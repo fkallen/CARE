@@ -1,20 +1,19 @@
 #!/bin/bash
 
-module load cuda/11.1
+module load cuda/11.2
 
 
 auto_preprocess() {
-	# if [ -f "${1}_ht" ]; then
-    # 	echo "--load-hashtables-from ${1}_ht"
-	# else
-	# 	echo "--save-hashtables-to ${1}_ht"
-	# fi
-	# if [ -f "${1}_pr" ]; then
-    # 	echo "--load-preprocessedreads-from ${1}_pr"
-	# else
-	# 	echo "--save-preprocessedreads-to ${1}_pr"
-	# fi
-    echo ""
+	if [ -f "${1}_ht" ]; then
+    	echo "--load-hashtables-from ${1}_ht"
+	else
+		echo "--save-hashtables-to ${1}_ht"
+	fi
+	if [ -f "${1}_pr" ]; then
+    	echo "--load-preprocessedreads-from ${1}_pr"
+	else
+		echo "--save-preprocessedreads-to ${1}_pr"
+	fi
 }
 
 run_classic() {
@@ -44,8 +43,8 @@ run_print() {
 
 run_clf() {
 	$CAREGPU -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_${2}-${3}-${4}$CARE_FILEENDING $CARE_FLAGS \
-		--correctionType 1 --ml-forestfile ${2}_anchor.rf \
-		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.rf \
+		--correctionType 1 --ml-forestfile ${2}_anchor.lr \
+		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.lr \
 		--thresholdAnchor ${3} --thresholdCands ${4} \
 		$(auto_preprocess ${prefixes[${1}]})
 
@@ -55,8 +54,8 @@ run_clf() {
 
 run_clf_cpu() {
 	$CARE -i ${files[${1}]} -c ${cov[${1}]} -o ${prefixes[${1}]}_${2}-${3}-${4}$CARE_FILEENDING $CARE_FLAGS \
-		--correctionType 1 --ml-forestfile ${2}_anchor.rf \
-		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.rf \
+		--correctionType 1 --ml-forestfile ${2}_anchor.lr \
+		--candidateCorrection --correctionTypeCands 1 --ml-cands-forestfile ${2}_cands.lr \
 		--thresholdAnchor ${3} --thresholdCands ${4} \
 		$(auto_preprocess ${prefixes[${1}]})
 
@@ -72,6 +71,14 @@ grid_search() {
     done
 }
 
+grid_search_cpu() {
+    for (( THRESH="${3}"; THRESH<="${4}"; THRESH+="${5}" )); do
+        for (( THRESHC="${6}"; THRESHC<="${7}"; THRESHC+="${8}" )); do
+			run_clf_cpu ${1} ${2} ${THRESH} ${THRESHC}
+        done
+    done
+}
+
 
 
 ### settings
@@ -79,11 +86,11 @@ grid_search() {
 SCRIPTPATH=$(readlink -nf $0)
 
 MLCDIR=/home/jcascitt/errorcorrector/ml
-EVALDIR=/home/jcascitt/ec/gpucheck_new
+EVALDIR=/home/jcascitt/ec/${1}
 
 CARE=/home/jcascitt/errorcorrector/care-cpu
-CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 0"
-CARE_FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 64G -p -t 64 --samplingRateAnchor 1 --samplingRateCands 1"
+CAREGPU="/home/jcascitt/errorcorrector/care-gpu -g 1"
+CARE_FLAGS="-d . -h 48 -q --excludeAmbiguous --minalignmentoverlap 30 --minalignmentoverlapratio 0.3 -m 32G -p -t 64 --samplingRateAnchor 0.1 --samplingRateCands 0.004"
 
 ARTEVAL=/home/jcascitt/errorcorrector/evaluationtool/arteval
 
@@ -97,11 +104,30 @@ files_ef[0]=/share/errorcorrection/datasets/arthiseq2000humanchr14/humanchr1430c
 cov[0]=30
 prefixes[0]=humanchr14-30
 
-files[1]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
-files_ef[1]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
+files[1]=/share/errorcorrection/datasets/arthiseq2000humanchr15/humanchr1530cov.fq
+files_ef[1]=/share/errorcorrection/datasets/arthiseq2000humanchr15/humanchr1530cov_errFree.fq
 cov[1]=30
-prefixes[1]=atha-30
+prefixes[1]=humanchr15-30
 
+files[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov.fq
+files_ef[2]=/share/errorcorrection/datasets/arthiseq2000athaliana/athaliana30cov_errFree.fq
+cov[2]=30
+prefixes[2]=atha-30
+
+files[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov.fq
+files_ef[3]=/share/errorcorrection/datasets/arthiseq2000elegans/elegans30cov_errFree.fq
+cov[3]=30
+prefixes[3]=ele-30
+
+files[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov.fq
+files_ef[4]=/share/errorcorrection/datasets/arthiseq2000melanogaster/melanogaster30cov_errFree.fq
+cov[4]=30
+prefixes[4]=melan-30
+
+files[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov.fq
+files_ef[5]=/share/errorcorrection/datasets/arthiseq2000mus/mus_chr15_30cov_errFree.fq
+cov[5]=30
+prefixes[5]=muschr15-30
 
 ### run
 
@@ -119,14 +145,14 @@ cp $SCRIPTPATH $SCRIPTNAME.log.${num}
 
 
 
-## comparison
+# ## comparison
 
 # run_classic 0
 # run_classic_cpu 0
 
-### print runs
+## print runs
 
-# for (( i="0"; i<="1"; i+="1" )); do
+# for (( i="0"; i<="5"; i+="1" )); do
 # 	run_print $i
 # done
 
@@ -139,9 +165,8 @@ files_ef_joined=${files_ef_joined:1}
 python3 - <<EOF
 
 import sys
-print("$MLCDIR")
 sys.path.append("$MLCDIR")
-from gpucheck import main
+from logreg import main
 
 prefixes = [${prefixes_joined}]
 effiles = [${files_ef_joined}]
@@ -150,10 +175,8 @@ main(prefixes, effiles, 0)
 
 EOF
 
-# run_clf 0 0 70 70
-# run_clf_cpu 0 0 70 70
+# 0
 
-
-#echo "done."
+echo "done."
 
 

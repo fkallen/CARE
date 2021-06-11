@@ -25,7 +25,7 @@ public:
         thresh_(logit(thresh)) 
     {
         std::ifstream is(path, std::ios::binary);
-        if (read_one<size_t>(is) != num_features)
+        if (read_one<uint32_t>(is) != num_features)
             throw std::runtime_error("Could not load LogRegClf! Feature shape does not match!");
 
         read_one<weights_t>(is, w_);
@@ -44,7 +44,7 @@ public:
     template<typename features_t>
     bool decide(const features_t& features) const {
         float z = b_;
-        for (size_t i = 0; i < num_features, ++i)
+        for (size_t i = 0; i < num_features; ++i)
             z += w_[i] * features[i];
         return z >= thresh_;
     }

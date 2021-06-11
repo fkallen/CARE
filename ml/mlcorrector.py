@@ -3,8 +3,9 @@
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
 from sklearn import metrics
 from sklearn import tree
 import numpy as np
@@ -34,13 +35,16 @@ def onehot_(enc):
 def read_data(paths):    
     ### get X
     if "np" in paths[0] and os.path.isfile(paths[0]["np"]):
-        num_features = np.load(paths[0]["np"]).dtype['atts'].shape[0]
+        with np.load(paths[0]["np"]) as infile:
+            descriptor, num_features = infile["desc"], infile["samples"].dtype['atts'].shape[0]
     else:
-        num_features = len(open(paths[0]["X"], "r").readline().split()) - 2
+        with open(paths[0]["X"], "r", encoding="utf-8") as infile:
+            descriptor = infile.readline()[:-1]
+            num_features = len(infile.readline().split()) - 2
     
     row_t = np.dtype([("fileId", "u1"), ("readId", "u4"), ("col", "i2"), ('atts', '('+str(int(num_features))+',)f4'), ('class', bool)])
 
-    linecounts = [np.load(path["np"]).shape[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for line in open(path["X"], "r")) for path in paths]
+    linecounts = [np.load(path["np"])["samples"].shape[0] if "np" in path and os.path.isfile(path["np"]) else sum(1 for line in open(path["X"], "r"))-1 for path in paths]
     tqdm.write("# files: "+str(len(linecounts)))
     tqdm.write("lengths: "+str(linecounts))
     tqdm.write("total: "+str(sum(linecounts)))
@@ -51,16 +55,24 @@ def read_data(paths):
     for file_id, path in tqdm(enumerate(paths), total=len(paths), colour="blue", miniters=1, mininterval=0, leave=False):
         if "np" in path and os.path.isfile(path["np"]):
             tqdm.write("load: "+path["np"])
-            samples[offsets[file_id]:offsets[file_id+1]] = np.load(path["np"])
+            with np.load(path["np"]) as infile:
+                if descriptor != infile["desc"]:
+                    raise ValueError("Data descriptors do not match!")
+
+                samples[offsets[file_id]:offsets[file_id+1]] = infile["samples"]
         else:
             tqdm.write("parse: "+path["X"])
-            for i, line in tqdm(enumerate(open(path["X"], "r")), total=linecounts[file_id], colour="cyan", leave=False):
-                s = samples[i+offsets[file_id]]
-                splt = line.split()
-                s['fileId'] = file_id
-                s['readId'] = splt[0]
-                s['col'] = splt[1]
-                s['atts'] = tuple(splt[2:])
+            with open(path["X"], "r", encoding="utf-8") as infile:
+                if descriptor != infile.readline()[:-1]:
+                    raise ValueError("Data descriptors do not match!")
+
+                for i, line in tqdm(enumerate(infile), total=linecounts[file_id], colour="cyan", leave=False):
+                    s = samples[i+offsets[file_id]]
+                    splt = line.split()
+                    s['fileId'] = file_id
+                    s['readId'] = splt[0]
+                    s['col'] = splt[1]
+                    s['atts'] = tuple(splt[2:])
 
     # print(samples[0:10])
     # print(samples.shape)
@@ -87,69 +99,17 @@ def read_data(paths):
                             filepos += 1
                         trueseq = truthfile.readline()
                         filepos += 1
-                    try:
-                        if s['col']>=0:
-                            s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
-                        else:
-                            s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
-                    except:
-                        print("!!!!##!#!#!#!#!#!#!")
-                        print(s, s.dtype)
-                        print(len(trueseq), trueseq)
-                        print()
-                        return
+                    if s['col']>=0:
+                        s['class'] = onehot_(s['atts'][4:8])==trueseq[s['col']]
+                    else:
+                        s['class'] = onehot_(s['atts'][7:3:-1])==trueseq[s['col']-1] # -1 because last character is newline
 
             if "np" in path:
                 tqdm.write("save: "+path["np"])
-                np.save(path["np"], samples[offsets[file_id]:offsets[file_id]+linecounts[file_id]])
+                np.savez_compressed(path["np"], desc=descriptor, samples=samples[offsets[file_id]:offsets[file_id]+linecounts[file_id]])
 
     # print(samples[0:10])
-    return samples
-
-def train(train_data, clf="rf"):
-    X_train, y_train = train_data['atts'], train_data['class']
-
-    # print("\nTest Ratio:")
-    # print(y_test.shape[0], "/", y_test.shape[0]+y_train.shape[0], "=" , 100*y_test.shape[0]/(y_train.shape[0]+y_test.shape[0]), "%\n")
-
-    # print("Class Balance:")
-    # print(np.sum(y_train)+np.sum(y_test), "/", y_train.shape[0]+y_test.shape[0], "=" , 100*(np.sum(y_train)+np.sum(y_test))/(y_train.shape[0]+y_test.shape[0]), "%\n")
-
-    # print("Stratification:")
-    # print(np.sum(y_train), "/", y_train.shape[0], "=" , 100*np.sum(y_train)/y_train.shape[0], "%")
-    # print(np.sum(y_test), "/", y_test.shape[0], "=" , 100*np.sum(y_test)/y_test.shape[0], "%\n")
-
-    print("training...")
-
-    if clf == "rf":
-        return RandomForestClassifier(n_jobs=44).fit(X_train, y_train)
-    elif clf == "lr":
-        return LogisticRegression(n_jobs=44).fit(X_train, y_train)
-        # return LogisticRegression(solver='saga', penalty='l1').fit(X_train, y_train)
-
-
-    # clf = tree.DecisionTreeClassifier(max_depth=3).fit(X_train, y_train) 
-    # extract_forest(clf, out_file='ml/forest.bin')
-    # tree.export_graphviz(clf.estimators_[0], out_file='ml/tree.dot')
-
-def test(test_data, clf, roc_file):
-    print("predicting...")
-
-    X_test, y_test = test_data['atts'], test_data['class']
-    probs = clf.predict_proba(X_test)
-    
-    fpr, tpr, thresholds = metrics.roc_curve(y_test, probs[:,1], pos_label=True)
-    plt.plot(fpr, tpr, label="ROC curve (area = %.2f)" % metrics.roc_auc_score(y_test, probs[:,1]))
-    # print(thresholds)
-    # for i, txt in enumerate(thresholds):
-    #     plt.annotate("{:4.3f}".format(txt), (fpr[i], tpr[i]))
-
-    plt.plot([0, 1], [0, 1], linestyle="dashed", color='gray')
-    plt.title("Receiver Operating Characteristic")
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.legend()
-    plt.savefig(roc_file)
+    return descriptor, samples
 
 def extract_node(tree_, i, out_file):
     if tree_.children_left[i] == tree._tree.TREE_LEAF:
@@ -172,42 +132,55 @@ def extract_node(tree_, i, out_file):
         extract_node(tree_, rhs, out_file)
 
 def extract_forest(clf, out_file):
-    with open(out_file, "wb") as out_file:
-        out_file.write(struct.pack("B", clf.n_features_))
-        out_file.write(struct.pack("I", len(clf.estimators_)))
-        for i, tree in enumerate(clf.estimators_):
-            out_file.write(struct.pack("I", tree.get_n_leaves()-1))
-            print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
-            extract_node(tree.tree_, 0, out_file)
+    out_file.write(struct.pack("I", len(clf.estimators_)))
+    for i, tree in enumerate(clf.estimators_):
+        out_file.write(struct.pack("I", tree.get_n_leaves()-1))
+        print("Tree", i, "Nodes:", tree.get_n_leaves()-1)
+        extract_node(tree.tree_, 0, out_file)
 
 def extract_lr(clf: LogisticRegression, out_file):
-    with open(out_file, "wb") as out_file:
-        out_file.write(struct.pack("I", clf.coef_.shape[-1]))
-        out_file.write(struct.pack("I", clf.intercept_))
-        for coef in clf.coef_[0]:
-            out_file.write(struct.pack("I", coef))
+    print(clf.coef_.shape[-1])
+    out_file.write(struct.pack("I", clf.coef_.shape[-1]))
+    for coef in clf.coef_[0]:
+        print(coef)
+        out_file.write(struct.pack("f", coef))
+    print(clf.intercept_[0])
+    out_file.write(struct.pack("f", clf.intercept_[0]))
 
-def extract_clf(clf, out_file):
-    if isinstance(clf, RandomForestClassifier):
-        extract_forest(clf, out_file)
-    elif isinstance(clf, LogisticRegression):
-        extract_lr(clf, out_file)
+np.array("asdf").__str__()
 
-### main ###
-# def main():
-#     plans = json.load(open(sys.argv[1]))
-#     for plan in plans:
-#         data = {}
-#         disp = {
-#             "load": read_data,
-#             "save": lambda d, f: np.save(f,data[d]),
-#             "extract": lambda clf, f: extract_forest(data[clf], f),
-#             "train": lambda trn, *args: train(data[trn], *args),
-#             "test": lambda tst, clf: test(data[tst], clf)
-#         }
-#         for ins in plan:
-#             ret, cmd, args = ins[0], ins[1], ins[2:]
-#             data[ret] = disp[cmd](*args)
+
+def extract_clf(clf, out_file_path):
+    with open(out_file_path, "wb") as out_file:
+        desc = clf.CARE_desc.encode("utf-8")
+        out_file.write(struct.pack("Q", len(desc)))
+        out_file.write(desc)
+        if isinstance(clf, RandomForestClassifier):
+            extract_forest(clf, out_file)
+        elif isinstance(clf, LogisticRegression):
+            extract_lr(clf, out_file)
+
+def process(data_map, clf_t, clf_args, suffix, test_index):
+    tqdm.write("### data sets: "+str(len(data_map))+"\n")
+    tqdm.write("### leave index "+str(test_index)+" out:\n")
+    train_map = list(data_map)
+    train_map.pop(test_index)
+    train_desc, train_data = read_data(train_map)
+
+    X_train, y_train = train_data['atts'], train_data['class']
+
+    tqdm.write("### training classifier(s):")
+    clf = clf_t(**clf_args).fit(X_train, y_train)
+    clf.CARE_desc = str(train_desc)
+    extract_clf(clf, str(test_index)+suffix)
+
+    for i in range(len(data_map)):
+        test_map = [data_map[i]]
+        test_desc, test_data = read_data(test_map)
+        if train_desc != test_desc:
+            raise ValueError("Train and test data descriptors do not match!")
+        X_test, y_test = test_data['atts'], test_data['class']
+        tqdm.write("AUROC ("+str(i+1)+")  : "+str(metrics.roc_auc_score(y_test, clf.predict_proba(X_test)[:,1])))
 
 ### stuff ###
 
