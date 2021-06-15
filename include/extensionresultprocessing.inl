@@ -100,7 +100,11 @@ void writeExtensionResultsToFile(
         actualNumber++;
     }
 
-    assert(actualNumber == expectedNumber);
+    if(actualNumber != expectedNumber){
+        std::cerr << "Error actualNumber " << actualNumber << ", expectedNumber " << expectedNumber << "\n";
+    }
+
+    //assert(actualNumber == expectedNumber);
 
     for(const auto& pair : statusHistogram){
         switch(pair.first){
