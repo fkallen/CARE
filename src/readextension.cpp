@@ -347,7 +347,7 @@ extend_cpu_pairedend(
                     er.readId = extensionOutput.readId1;
                     er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                     er.extendedSequence = std::move(extensionOutput.extendedRead);
-                    er.qualityScores = std::move(extensionOutput.qualityScores);
+                    //er.qualityScores = std::move(extensionOutput.qualityScores);
                     er.read1begin = extensionOutput.read1begin;
                     er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                     er.read2begin = extensionOutput.read2begin;
