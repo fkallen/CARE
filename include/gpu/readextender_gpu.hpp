@@ -39,6 +39,18 @@
 
 #define DO_ONLY_REMOVE_MATE_IDS
 
+
+
+#if 0
+    #define DEBUGDEVICESYNC { \
+        cudaDeviceSynchronize(); CUERR; \
+    }
+
+#else 
+    #define DEBUGDEVICESYNC {}
+
+#endif
+
 namespace care{
 
 
@@ -1818,9 +1830,13 @@ public:
     }
 
     void computePairFlagsGpu(BatchData& batchData, cudaStream_t stream) const{
+        DEBUGDEVICESYNC
+
         batchData.d_isPairedCandidate.resize(batchData.totalNumCandidates);
 
         helpers::call_fill_kernel_async(batchData.d_isPairedCandidate.data(), batchData.totalNumCandidates, false, stream);
+
+        DEBUGDEVICESYNC
 
         batchData.h_firstTasksOfPairsToCheck.resize(batchData.numTasks);
         int numChecks = 0;
@@ -1847,6 +1863,8 @@ public:
             int* d_firstTasksOfPairsToCheck = nullptr;
             cubAllocator->DeviceAllocate((void**)&d_firstTasksOfPairsToCheck, sizeof(int) * numChecks); CUERR;
 
+            DEBUGDEVICESYNC
+
             // int* d_status = nullptr;
             // //cubAllocator->DeviceAllocate((void**)&d_status, sizeof(int) * numChecks); CUERR;
             // cudaMallocHost(&d_status, sizeof(int) * numChecks); CUERR;
@@ -1860,6 +1878,156 @@ public:
                 H2D,
                 stream
             ); CUERR;
+
+            DEBUGDEVICESYNC
+
+            // {
+            //     cudaDeviceSynchronize(); CUERR;
+
+            //     std::cerr << "numChecks = " << numChecks << "\n";
+            //     for(int i = 0; i < numChecks; i++){
+            //         std::cerr << batchData.h_firstTasksOfPairsToCheck[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     // std::vector<read_number> readids(batchData.totalNumCandidates);
+            //     // cudaMemcpyAsync(
+            //     //     readids.data(),
+            //     //     batchData.d_candidateReadIds.data(),
+            //     //     sizeof(read_number) * batchData.totalNumCandidates,
+            //     //     D2H,
+            //     //     stream
+            //     // );
+
+            //     // std::vector<std::uint8_t> consensusEncoded(batchData.msaColumnPitchInElements * batchData.numTasks);
+            //     // cudaMemcpyAsync(
+            //     //     consensusEncoded.data(),
+            //     //     batchData.d_consensusEncoded.data(),
+            //     //     sizeof(std::uint8_t) * batchData.msaColumnPitchInElements * batchData.numTasks,
+            //     //     D2H,
+            //     //     stream
+            //     // );
+            //     std::cerr << "batchData.numTasks = " << batchData.numTasks << "\n";
+            //     std::vector<int> nums(batchData.numTasks);
+            //     cudaMemcpyAsync(
+            //         nums.data(),
+            //         batchData.d_numCandidatesPerAnchor.data(),
+            //         sizeof(int) * batchData.numTasks,
+            //         D2H,
+            //         stream
+            //     );
+
+            //     std::vector<int> offsets(batchData.numTasks);
+            //     cudaMemcpyAsync(
+            //         offsets.data(),
+            //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+            //         sizeof(int) * batchData.numTasks,
+            //         D2H,
+            //         stream
+            //     );
+
+            //     std::vector<int> usednums(batchData.numTasks);
+            //     cudaMemcpyAsync(
+            //         usednums.data(),
+            //         batchData.d_numUsedReadIdsPerAnchor.data(),
+            //         sizeof(int) * batchData.numTasks,
+            //         D2H,
+            //         stream
+            //     );
+
+            //     std::vector<int> usedoffsets(batchData.numTasks);
+            //     cudaMemcpyAsync(
+            //         usedoffsets.data(),
+            //         batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
+            //         sizeof(int) * batchData.numTasks,
+            //         D2H,
+            //         stream
+            //     );
+
+            //     cudaDeviceSynchronize(); CUERR;
+
+            //     std::cerr << "nums:\n";
+            //     for(int i = 0; i < batchData.numTasks; i++){
+            //         std::cerr << nums[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "offsets:\n";
+            //     for(int i = 0; i < batchData.numTasks; i++){
+            //         std::cerr << offsets[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "usednums:\n";
+            //     for(int i = 0; i < batchData.numTasks; i++){
+            //         std::cerr << usednums[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     std::cerr << "usedoffsets:\n";
+            //     for(int i = 0; i < batchData.numTasks; i++){
+            //         std::cerr << usedoffsets[i] << " ";
+            //     }
+            //     std::cerr << "\n";
+
+            //     // std::vector<char> consensusDecoded(consensusEncoded.size());
+            //     // std::transform(consensusEncoded.begin(), consensusEncoded.end(), consensusDecoded.begin(),
+            //     //     [](const std::uint8_t encoded){
+            //     //         char decoded = 'F';
+            //     //         if(encoded == std::uint8_t{0}){
+            //     //             decoded = 'A';
+            //     //         }else if(encoded == std::uint8_t{1}){
+            //     //             decoded = 'C';
+            //     //         }else if(encoded == std::uint8_t{2}){
+            //     //             decoded = 'G';
+            //     //         }else if(encoded == std::uint8_t{3}){
+            //     //             decoded = 'T';
+            //     //         }
+            //     //         return decoded;
+            //     //     }
+            //     // );
+
+            //     // for(int i = 0; i < batchData.numTasks; i++){
+            //     //     const int index = batchData.indicesOfActiveTasks[i];
+            //     //     const auto& task = batchData.tasks[index];
+
+            //     //     if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+            //     //         std::cerr << "task id " << task.id << " myReadId " << task.myReadId << "\n";
+            //     //         std::cerr << "candidates\n";
+            //     //         for(int k = 0; k < nums[i]; k++){
+            //     //             std::cerr << readids[offsets[i] + k] << " ";
+            //     //         }
+            //     //         std::cerr << "\n";
+
+            //     //         std::cerr << "consensus\n";
+            //     //         for(int k = 0; k < batchData.msaColumnPitchInElements; k++){
+            //     //             std::cerr << consensusDecoded[i * batchData.msaColumnPitchInElements + k];
+            //     //         }
+            //     //         std::cerr << "\n";
+            //     //     }
+
+            //     // }
+
+            //     std::cerr << "batchData.d_numCandidatesPerAnchor.size(): " << batchData.d_numCandidatesPerAnchor.size() << "\n";
+            //     std::cerr << "batchData.d_numCandidatesPerAnchorPrefixSum.size(): " << batchData.d_numCandidatesPerAnchorPrefixSum.size() << "\n";
+            //     std::cerr << "batchData.d_candidateReadIds.size(): " << batchData.d_candidateReadIds.size() << "\n";
+            //     std::cerr << "batchData.d_numUsedReadIdsPerAnchor.size(): " << batchData.d_numUsedReadIdsPerAnchor.size() << "\n";
+            //     std::cerr << "batchData.d_numUsedReadIdsPerAnchorPrefixSum.size(): " << batchData.d_numUsedReadIdsPerAnchorPrefixSum.size() << "\n";
+            //     std::cerr << "batchData.d_usedReadIds.size(): " << batchData.d_usedReadIds.size() << "\n";
+            //     std::cerr << "batchData.d_isPairedCandidate.size(): " << batchData.d_isPairedCandidate.size() << "\n";
+
+            //     std::cerr << "batchData.d_numCandidatesPerAnchor.data(): " << batchData.d_numCandidatesPerAnchor.data() << "\n";
+            //     std::cerr << "batchData.d_numCandidatesPerAnchorPrefixSum.data(): " << batchData.d_numCandidatesPerAnchorPrefixSum.data() << "\n";
+            //     std::cerr << "batchData.d_candidateReadIds.data(): " << batchData.d_candidateReadIds.data() << "\n";
+            //     std::cerr << "batchData.d_numUsedReadIdsPerAnchor.data(): " << batchData.d_numUsedReadIdsPerAnchor.data() << "\n";
+            //     std::cerr << "batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(): " << batchData.d_numUsedReadIdsPerAnchorPrefixSum.data() << "\n";
+            //     std::cerr << "batchData.d_usedReadIds.data(): " << batchData.d_usedReadIds.data() << "\n";
+            //     std::cerr << "batchData.d_isPairedCandidate.data(): " << batchData.d_isPairedCandidate.data() << "\n";
+
+                
+
+            //     cudaDeviceSynchronize(); CUERR;
+            // }
             
 
             dim3 block = 128;
@@ -1870,10 +2038,10 @@ public:
                     numChecks,
                     d_firstTasksOfPairsToCheck,
                     d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
-                    d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+                    d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(), // numTasks + 1
                     d_candidateReadIds = batchData.d_candidateReadIds.data(),
                     d_numUsedReadIdsPerAnchor = batchData.d_numUsedReadIdsPerAnchor.data(),
-                    d_numUsedReadIdsPerAnchorPrefixSum = batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
+                    d_numUsedReadIdsPerAnchorPrefixSum = batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(), // numTasks
                     d_usedReadIds = batchData.d_usedReadIds.data(),
                     d_isPairedCandidate = batchData.d_isPairedCandidate.data()
                 ] __device__ (){
@@ -1953,7 +2121,7 @@ public:
 
                         const int usedRangeBegin = d_numUsedReadIdsPerAnchorPrefixSum[firstTask];                        
                         const int usedRangeMid = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 1];
-                        const int usedRangeEnd = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 2];
+                        const int usedRangeEnd = usedRangeMid + d_numUsedReadIdsPerAnchor[firstTask + 1];
 
                         process(
                             d_candidateReadIds + rangeBegin,
@@ -1974,7 +2142,11 @@ public:
                 }
             ); CUERR;
 
+            DEBUGDEVICESYNC
+
             cubAllocator->DeviceFree(d_firstTasksOfPairsToCheck); CUERR;
+
+            DEBUGDEVICESYNC
 
         }
 
@@ -2968,8 +3140,12 @@ public:
 
     void filterAlignments(BatchData& batchData, cudaStream_t stream) const{
 
+        DEBUGDEVICESYNC
+
+
+
         // {
-        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     DEBUGDEVICESYNC
         //     std::vector<read_number> ids(batchData.d_candidateReadIds.size());
         //     std::vector<int> nums(batchData.d_numCandidatesPerAnchor.size());
         //     std::vector<int> offsets(batchData.d_numCandidatesPerAnchorPrefixSum.size());
@@ -2978,7 +3154,7 @@ public:
         //     cudaMemcpyAsync(nums.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
         //     cudaMemcpyAsync(offsets.data(), batchData.d_numCandidatesPerAnchorPrefixSum.data(), batchData.d_numCandidatesPerAnchorPrefixSum.sizeInBytes(), D2H, stream); CUERR;
 
-        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     DEBUGDEVICESYNC
 
         //     std::cerr << "candidates before:\n";
         //     for(int i = 0; i < batchData.numTasks; i++){
@@ -3008,6 +3184,8 @@ public:
         cubAllocator->DeviceAllocate((void**)&d_keepflags, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR; 
 
         helpers::call_fill_kernel_async(d_keepflags, batchData.totalNumCandidates, true, stream);
+
+        DEBUGDEVICESYNC
 
         dim3 block(128,1,1);
         dim3 grid(numAnchors, 1, 1);
@@ -3204,6 +3382,8 @@ public:
         ); CUERR;
         #endif
 
+        DEBUGDEVICESYNC
+
         auto d_zip_data = thrust::make_zip_iterator(
             thrust::make_tuple(
                 batchData.d_alignment_nOps.data(),
@@ -3236,6 +3416,8 @@ public:
 
         bool* d_isPairedCandidate2 = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * batchData.totalNumCandidates, stream); CUERR;
+
+        DEBUGDEVICESYNC
 
         auto d_zip_data_tmp = thrust::make_zip_iterator(
             thrust::make_tuple(
@@ -3283,6 +3465,8 @@ public:
         );
         assert(cubstatus == cudaSuccess);
 
+        DEBUGDEVICESYNC
+
         cubAllocator->DeviceAllocate((void**)&cubTemp, cubTempSize, stream); CUERR;
 
         cubstatus = cub::DeviceSelect::Flagged(
@@ -3296,6 +3480,8 @@ public:
             stream
         );
         assert(cubstatus == cudaSuccess);
+
+        DEBUGDEVICESYNC
 
         cubAllocator->DeviceFree(cubTemp); CUERR;
 
@@ -3319,6 +3505,8 @@ public:
 
         cubAllocator->DeviceAllocate((void**)&cubTemp, cubTempSize, stream); CUERR;
 
+        DEBUGDEVICESYNC
+
         cubstatus = cub::DeviceSelect::Flagged(
             cubTemp,
             cubTempSize,
@@ -3338,6 +3526,8 @@ public:
         std::swap(batchData.d_candidateSequencesData2, batchData.d_candidateSequencesData);
 
         cubAllocator->DeviceFree(d_keepflags); CUERR;
+
+        DEBUGDEVICESYNC
 
 
         //compute prefix sum of new number of candidates per anchor
@@ -3366,6 +3556,8 @@ public:
         cubAllocator->DeviceFree(cubTemp); CUERR;
 
         std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
+
+        DEBUGDEVICESYNC
         
 
 
@@ -3379,6 +3571,8 @@ public:
             stream
         ); CUERR;
 
+        DEBUGDEVICESYNC
+
         cubAllocator->DeviceFree(d_alignment_overlaps2); CUERR;
         cubAllocator->DeviceFree(d_alignment_shifts2); CUERR;
         cubAllocator->DeviceFree(d_alignment_nOps2); CUERR;
@@ -3389,7 +3583,7 @@ public:
 
 
         // {
-        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     DEBUGDEVICESYNC
         //     std::vector<read_number> ids(batchData.d_candidateReadIds.size());
         //     std::vector<int> nums(batchData.d_numCandidatesPerAnchor.size());
         //     std::vector<int> offsets(batchData.d_numCandidatesPerAnchorPrefixSum.size());
@@ -3398,7 +3592,7 @@ public:
         //     cudaMemcpyAsync(nums.data(), batchData.d_numCandidatesPerAnchor.data(), batchData.d_numCandidatesPerAnchor.sizeInBytes(), D2H, stream); CUERR;
         //     cudaMemcpyAsync(offsets.data(), batchData.d_numCandidatesPerAnchorPrefixSum.data(), batchData.d_numCandidatesPerAnchorPrefixSum.sizeInBytes(), D2H, stream); CUERR;
 
-        //     cudaDeviceSynchronize(); CUERR; //DEBUG
+        //     DEBUGDEVICESYNC
 
         //     std::cerr << "candidates after:\n";
         //     for(int i = 0; i < batchData.numTasks; i++){
@@ -3959,23 +4153,24 @@ public:
         // {
         //     cudaDeviceSynchronize(); CUERR;
 
-        //     std::vector<read_number> readids(batchData.totalNumCandidates);
-        //     cudaMemcpyAsync(
-        //         readids.data(),
-        //         batchData.d_candidateReadIds.data(),
-        //         sizeof(read_number) * batchData.totalNumCandidates,
-        //         D2H,
-        //         stream
-        //     );
+        //     // std::vector<read_number> readids(batchData.totalNumCandidates);
+        //     // cudaMemcpyAsync(
+        //     //     readids.data(),
+        //     //     batchData.d_candidateReadIds.data(),
+        //     //     sizeof(read_number) * batchData.totalNumCandidates,
+        //     //     D2H,
+        //     //     stream
+        //     // );
 
-        //     std::vector<std::uint8_t> consensusEncoded(batchData.msaColumnPitchInElements * batchData.numTasks);
-        //     cudaMemcpyAsync(
-        //         consensusEncoded.data(),
-        //         batchData.d_consensusEncoded.data(),
-        //         sizeof(std::uint8_t) * batchData.msaColumnPitchInElements * batchData.numTasks,
-        //         D2H,
-        //         stream
-        //     );
+        //     // std::vector<std::uint8_t> consensusEncoded(batchData.msaColumnPitchInElements * batchData.numTasks);
+        //     // cudaMemcpyAsync(
+        //     //     consensusEncoded.data(),
+        //     //     batchData.d_consensusEncoded.data(),
+        //     //     sizeof(std::uint8_t) * batchData.msaColumnPitchInElements * batchData.numTasks,
+        //     //     D2H,
+        //     //     stream
+        //     // );
+        //     std::cerr << "batchData.numTasks = " << batchData.numTasks << "\n";
         //     std::vector<int> nums(batchData.numTasks);
         //     cudaMemcpyAsync(
         //         nums.data(),
@@ -3996,43 +4191,55 @@ public:
 
         //     cudaDeviceSynchronize(); CUERR;
 
-        //     std::vector<char> consensusDecoded(consensusEncoded.size());
-        //     std::transform(consensusEncoded.begin(), consensusEncoded.end(), consensusDecoded.begin(),
-        //         [](const std::uint8_t encoded){
-        //             char decoded = 'F';
-        //             if(encoded == std::uint8_t{0}){
-        //                 decoded = 'A';
-        //             }else if(encoded == std::uint8_t{1}){
-        //                 decoded = 'C';
-        //             }else if(encoded == std::uint8_t{2}){
-        //                 decoded = 'G';
-        //             }else if(encoded == std::uint8_t{3}){
-        //                 decoded = 'T';
-        //             }
-        //             return decoded;
-        //         }
-        //     );
-
+        //     std::cerr << "nums:\n";
         //     for(int i = 0; i < batchData.numTasks; i++){
-        //         const int index = batchData.indicesOfActiveTasks[i];
-        //         const auto& task = batchData.tasks[index];
-
-        //         if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
-        //             std::cerr << "task id " << task.id << " myReadId " << task.myReadId << "\n";
-        //             std::cerr << "candidates\n";
-        //             for(int k = 0; k < nums[i]; k++){
-        //                 std::cerr << readids[offsets[i] + k] << " ";
-        //             }
-        //             std::cerr << "\n";
-
-        //             std::cerr << "consensus\n";
-        //             for(int k = 0; k < batchData.msaColumnPitchInElements; k++){
-        //                 std::cerr << consensusDecoded[i * batchData.msaColumnPitchInElements + k];
-        //             }
-        //             std::cerr << "\n";
-        //         }
-
+        //         std::cerr << nums[i] << " ";
         //     }
+        //     std::cerr << "\n";
+
+        //     std::cerr << "offsets:\n";
+        //     for(int i = 0; i < batchData.numTasks; i++){
+        //         std::cerr << offsets[i] << " ";
+        //     }
+        //     std::cerr << "\n";
+
+        //     // std::vector<char> consensusDecoded(consensusEncoded.size());
+        //     // std::transform(consensusEncoded.begin(), consensusEncoded.end(), consensusDecoded.begin(),
+        //     //     [](const std::uint8_t encoded){
+        //     //         char decoded = 'F';
+        //     //         if(encoded == std::uint8_t{0}){
+        //     //             decoded = 'A';
+        //     //         }else if(encoded == std::uint8_t{1}){
+        //     //             decoded = 'C';
+        //     //         }else if(encoded == std::uint8_t{2}){
+        //     //             decoded = 'G';
+        //     //         }else if(encoded == std::uint8_t{3}){
+        //     //             decoded = 'T';
+        //     //         }
+        //     //         return decoded;
+        //     //     }
+        //     // );
+
+        //     // for(int i = 0; i < batchData.numTasks; i++){
+        //     //     const int index = batchData.indicesOfActiveTasks[i];
+        //     //     const auto& task = batchData.tasks[index];
+
+        //     //     if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
+        //     //         std::cerr << "task id " << task.id << " myReadId " << task.myReadId << "\n";
+        //     //         std::cerr << "candidates\n";
+        //     //         for(int k = 0; k < nums[i]; k++){
+        //     //             std::cerr << readids[offsets[i] + k] << " ";
+        //     //         }
+        //     //         std::cerr << "\n";
+
+        //     //         std::cerr << "consensus\n";
+        //     //         for(int k = 0; k < batchData.msaColumnPitchInElements; k++){
+        //     //             std::cerr << consensusDecoded[i * batchData.msaColumnPitchInElements + k];
+        //     //         }
+        //     //         std::cerr << "\n";
+        //     //     }
+
+        //     // }
 
             
 
