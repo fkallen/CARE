@@ -275,8 +275,8 @@ extend_gpu_pairedend(
 
     std::vector<ExtendedRead> resultExtendedReads;
 
-    cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
+    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -637,7 +637,7 @@ extend_gpu_pairedend(
                 er.readId = extensionOutput.readId1;
                 er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
-                er.qualityScores = std::move(extensionOutput.qualityScores);
+                //er.qualityScores = std::move(extensionOutput.qualityScores);
                 er.read1begin = extensionOutput.read1begin;
                 er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                 er.read2begin = extensionOutput.read2begin;
@@ -953,8 +953,9 @@ extend_gpu_pairedend(
                 ExtendedRead& er = extendedReads[i];
 
                 er.readId = extensionOutput.readId1;
+                er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
-                er.qualityScores = std::move(extensionOutput.qualityScores);
+                //er.qualityScores = std::move(extensionOutput.qualityScores);
                 er.read1begin = extensionOutput.read1begin;
                 er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                 er.read2begin = extensionOutput.read2begin;
@@ -1296,8 +1297,9 @@ extend_gpu_pairedend(
                     ExtendedRead er;
 
                     er.readId = extensionOutput.readId1;
+                    er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                     er.extendedSequence = std::move(extensionOutput.extendedRead);
-                    er.qualityScores = std::move(extensionOutput.qualityScores);
+                    //er.qualityScores = std::move(extensionOutput.qualityScores);
                     er.read1begin = extensionOutput.read1begin;
                     er.read1end = extensionOutput.read1begin + extensionOutput.originalLength;
                     er.read2begin = extensionOutput.read2begin;
