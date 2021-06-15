@@ -561,12 +561,7 @@ namespace extension{
             auto& r3 = combinedResults[4 * i + 2];
             auto& r4 = combinedResults[4 * i + 3];
 
-            // std::cerr << r1 << "\n";
-            // std::cerr << r2 << "\n";
-            // std::cerr << r3 << "\n";
-            // std::cerr << r4 << "\n";
-
-            if(r1.mateHasBeenFound){
+            auto r1matefoundfunc = [&](){
                 merge(r1,r2);
 
                 if(int(r4.extendedRead.size()) > r4.originalLength){
@@ -591,8 +586,9 @@ namespace extension{
                 }
                 
                 ++dest;
-            }else if(r3.mateHasBeenFound){
+            };
 
+            auto r3matefoundfunc = [&](){
                 merge(r3,r4);
 
                 int extlength = r3.extendedRead.size();
@@ -631,6 +627,40 @@ namespace extension{
                     *dest = std::move(r3);
                 }
                 ++dest;
+            };
+
+            // std::cerr << r1 << "\n";
+            // std::cerr << r2 << "\n";
+            // std::cerr << r3 << "\n";
+            // std::cerr << r4 << "\n";
+
+            if(r1.mateHasBeenFound && r3.mateHasBeenFound){
+                // auto r1copy = r1;
+                // auto r2copy = r2;
+                // auto r3copy = r3;
+                // auto r4copy = r4;
+
+                int r1s = r1.extendedRead.size();
+                int r3s = r3.extendedRead.size();
+
+                // if(std::abs(r1s-r3s) >= 5){
+                //     std::cerr << r1.readId1 << " LR\n";
+                //     std::cerr << r1.extendedRead << "\n";
+
+                //     std::cerr << r3.readId1 << " RL\n";
+                //     std::string r3revc = SequenceHelpers::reverseComplementSequenceDecoded(r3.extendedRead.data(), r3.extendedRead.size());
+                //     std::cerr << r3revc << "\n";
+                // }
+
+                if(r1s <= r3s){
+                    r1matefoundfunc();
+                }else{
+                    r3matefoundfunc();
+                }
+            }else if(r1.mateHasBeenFound){
+                r1matefoundfunc();
+            }else if(r3.mateHasBeenFound){
+                r3matefoundfunc();                
             }else if(false /*r1.mateHasBeenFound && r3.mateHasBeenFound*/){
                 merge(r1,r2);
 
