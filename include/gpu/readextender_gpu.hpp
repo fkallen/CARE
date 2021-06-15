@@ -644,6 +644,26 @@ public:
         cudaStreamSynchronize(stream); CUERR;
 
         batchData.totalNumCandidates = *batchData.h_numCandidates;
+
+        // {
+
+        //     std::vector<int> offsets(batchData.numTasks + 1);
+        //     cudaMemcpyAsync(
+        //         offsets.data(),
+        //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //         sizeof(int) * (batchData.numTasks + 1),
+        //         D2H,
+        //         stream
+        //     );
+
+        //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "Offsets after retrieveValues:\n";
+        //     for(int i = 0; i < batchData.numTasks+1; i++){
+        //         std::cerr << offsets[i] << " ";
+        //     }
+        //     std::cerr << "\n";
+
+        // }
     }
 
     const gpu::GpuMinhasher* gpuMinhasher{};
@@ -2820,6 +2840,27 @@ public:
         );
         assert(cubstatus == cudaSuccess);
 
+        // {
+        //     cudaDeviceSynchronize(); CUERR; 
+
+        //     std::vector<int> offsets(batchData.numTasks + 1);
+        //     cudaMemcpyAsync(
+        //         offsets.data(),
+        //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //         sizeof(int) * (batchData.numTasks + 1),
+        //         D2H,
+        //         firstStream
+        //     );
+
+        //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "Offsets after removeusedidsandmateids:\n";
+        //     for(int i = 0; i < batchData.numTasks+1; i++){
+        //         std::cerr << offsets[i] << " ";
+        //     }
+        //     std::cerr << "\n";
+
+        // }
+
         if(batchData.numTasksWithMateRemoved > 0){
             cudaEventRecord(batchData.events[0], secondStream);
             cudaStreamWaitEvent(firstStream, batchData.events[0], 0); CUERR;
@@ -3033,6 +3074,27 @@ public:
         ); CUERR;
 
         cudaStreamSynchronize(stream); CUERR;
+
+        // {
+        //     cudaDeviceSynchronize(); CUERR; 
+
+        //     std::vector<int> offsets(batchData.numTasks + 1);
+        //     cudaMemcpyAsync(
+        //         offsets.data(),
+        //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //         sizeof(int) * (batchData.numTasks + 1),
+        //         D2H,
+        //         stream
+        //     );
+
+        //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "Offsets after erasedataofremovedmates:\n";
+        //     for(int i = 0; i < batchData.numTasks+1; i++){
+        //         std::cerr << offsets[i] << " ";
+        //     }
+        //     std::cerr << "\n";
+
+        // }
 
         batchData.totalNumCandidates = *batchData.h_numCandidates;
 
@@ -3558,6 +3620,27 @@ public:
         std::swap(batchData.d_numCandidatesPerAnchor2, batchData.d_numCandidatesPerAnchor);
 
         DEBUGDEVICESYNC
+
+        // {
+        //     cudaDeviceSynchronize(); CUERR; 
+
+        //     std::vector<int> offsets(batchData.numTasks + 1);
+        //     cudaMemcpyAsync(
+        //         offsets.data(),
+        //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
+        //         sizeof(int) * (batchData.numTasks + 1),
+        //         D2H,
+        //         stream
+        //     );
+
+        //     cudaDeviceSynchronize(); CUERR;
+        //     std::cerr << "Offsets after filteralignment:\n";
+        //     for(int i = 0; i < batchData.numTasks+1; i++){
+        //         std::cerr << offsets[i] << " ";
+        //     }
+        //     std::cerr << "\n";
+
+        // }
         
 
 
@@ -3910,7 +3993,7 @@ public:
             nullptr,
             cubBytes,
             batchData.d_numCandidatesPerAnchor2.get(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum2.get() + 1, 
+            batchData.d_numCandidatesPerAnchorPrefixSum.get() + 1, 
             batchData.numTasks, 
             firstStream
         );
@@ -3922,7 +4005,7 @@ public:
             cubtemp,
             cubBytes,
             batchData.d_numCandidatesPerAnchor2.get(), 
-            batchData.d_numCandidatesPerAnchorPrefixSum2.get() + 1, 
+            batchData.d_numCandidatesPerAnchorPrefixSum.get() + 1, 
             batchData.numTasks, 
             firstStream
         );
@@ -3956,10 +4039,7 @@ public:
         //auto oldnum = batchData.totalNumCandidates;
         batchData.totalNumCandidates = *batchData.h_numCandidates; 
 
-        std::swap(batchData.d_numCandidatesPerAnchor, batchData.d_numCandidatesPerAnchor2);
-        std::swap(batchData.d_numCandidatesPerAnchorPrefixSum, batchData.d_numCandidatesPerAnchorPrefixSum2); 
-
-        
+        std::swap(batchData.d_numCandidatesPerAnchor, batchData.d_numCandidatesPerAnchor2);        
 
         cudaMemcpyAsync(
             batchData.d_candidateReadIds.data(),
