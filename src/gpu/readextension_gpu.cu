@@ -635,6 +635,7 @@ extend_gpu_pairedend(
                 ExtendedRead& er = extendedReads[i];
 
                 er.readId = extensionOutput.readId1;
+                er.mergedFromReadsWithoutMate = extensionOutput.mergedFromReadsWithoutMate;
                 er.extendedSequence = std::move(extensionOutput.extendedRead);
                 er.qualityScores = std::move(extensionOutput.qualityScores);
                 er.read1begin = extensionOutput.read1begin;
@@ -660,11 +661,7 @@ extend_gpu_pairedend(
                     }else{
                         er.status = ExtendedReadStatus::LengthAbort;
                     }
-                }  
-                
-                if(extensionOutput.success){
-                    numSuccessRead++;
-                }                
+                }                 
             }
 
             auto outputfunc = [&, vec = std::move(extendedReads)](){
@@ -1326,10 +1323,6 @@ extend_gpu_pairedend(
                         }
                     }  
                     
-                    if(extensionOutput.success){
-                        numSuccessRead++;
-                    }
-
                     extendedReads.emplace_back(std::move(er));
 
                 }

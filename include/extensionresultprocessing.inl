@@ -73,6 +73,7 @@ void writeExtensionResultsToFile(
         std::stringstream sstream;
         sstream << extendedRead.readId;
         sstream << ' ' << (extendedRead.status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
+        sstream << ' ' << (extendedRead.mergedFromReadsWithoutMate ? "m:1" : "m:0");
         sstream << ' ';
         sstream << "lens:" << extendedRead.read1begin << ',' << extendedRead.read1end << ',' << extendedRead.read2begin << ',' << extendedRead.read2end;
         // if(extendedRead.status == ExtendedReadStatus::LengthAbort){
@@ -141,6 +142,7 @@ std::optional<Read> combineExtendedReadWithOriginalRead(
         std::stringstream sstream;
         sstream << readWithId.globalReadId << ' ';
         sstream << (tmpresults[0].status == ExtendedReadStatus::FoundMate ? "reached:1" : "reached:0");
+        sstream << ' ' << (tmpresults[0].mergedFromReadsWithoutMate ? "m:1" : "m:0");
         sstream << ' ';
         sstream << "lens:" << tmpresults[0].read1begin << ',' << tmpresults[0].read1end << ',' << tmpresults[0].read2begin << ',' << tmpresults[0].read2end;
 

@@ -234,7 +234,7 @@ namespace care{
 
 
     struct ExtendedRead{
-
+        bool mergedFromReadsWithoutMate = false;
         ExtendedReadStatus status{};
         read_number readId{};
         int read1begin = 0;
@@ -291,8 +291,10 @@ namespace care{
         #endif
 
         std::uint8_t* copyToContiguousMemory(std::uint8_t* ptr, std::uint8_t* endPtr) const{
-            const std::size_t requiredBytes = sizeof(read_number) //readid
+            const std::size_t requiredBytes = 
+                sizeof(bool) // mergedFromReadsWithoutMate
                 + sizeof(ExtendedReadStatus) //status
+                + sizeof(read_number) //readid
                 + sizeof(int) * 4  //original ranges
                 + sizeof(int) + extendedSequence.length() //sequence
                 + sizeof(int) + qualityScores.length(); // quality scores
@@ -302,6 +304,8 @@ namespace care{
             if(requiredBytes <= availableBytes){                
                 std::memcpy(ptr, &readId, sizeof(read_number));
                 ptr += sizeof(read_number);
+                std::memcpy(ptr, &mergedFromReadsWithoutMate, sizeof(bool));
+                ptr += sizeof(bool);
                 std::memcpy(ptr, &status, sizeof(ExtendedReadStatus));
                 ptr += sizeof(ExtendedReadStatus);
 
@@ -337,6 +341,8 @@ namespace care{
         void copyFromContiguousMemory(const std::uint8_t* ptr){
             std::memcpy(&readId, ptr, sizeof(read_number));
             ptr += sizeof(read_number);
+            std::memcpy(&mergedFromReadsWithoutMate, ptr, sizeof(bool));
+            ptr += sizeof(bool);
             std::memcpy(&status, ptr, sizeof(ExtendedReadStatus));
             ptr += sizeof(ExtendedReadStatus);
 
@@ -366,6 +372,7 @@ namespace care{
 
         bool writeToBinaryStream(std::ostream& os) const{
             os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
+            os.write(reinterpret_cast<const char*>(&mergedFromReadsWithoutMate), sizeof(bool));
             os.write(reinterpret_cast<const char*>(&status), sizeof(ExtendedReadStatus));
 
             os.write(reinterpret_cast<const char*>(&read1begin), sizeof(int));
@@ -388,6 +395,7 @@ namespace care{
 
         bool readFromBinaryStream(std::istream& is){
             is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
+            is.read(reinterpret_cast<char*>(&mergedFromReadsWithoutMate), sizeof(bool));
             is.read(reinterpret_cast<char*>(&status), sizeof(ExtendedReadStatus));
 
             is.read(reinterpret_cast<char*>(&read1begin), sizeof(int));

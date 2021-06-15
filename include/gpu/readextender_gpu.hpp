@@ -1715,8 +1715,6 @@ public:
 
             //msa.print(std::cerr);
 
-            extendResult.success = true;
-
             std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
             std::string extendedReadQuality(msa.consensus.size(), '\0');
             std::transform(msa.support.begin(), msa.support.end(), extendedReadQuality.begin(),

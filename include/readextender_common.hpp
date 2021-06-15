@@ -31,7 +31,7 @@ namespace extension{
 
     struct ExtendResult{
         bool mateHasBeenFound = false;
-        bool success = false;
+        bool mergedFromReadsWithoutMate = false;
         bool aborted = false;
         int numIterations = 0;
         int originalLength = 0;
@@ -282,7 +282,7 @@ namespace extension{
     std::ostream & operator<<(std::ostream &os, const ExtendResult& r){
         os << "ExtendResult{ "
             << "found: " << r.mateHasBeenFound
-            << ", success: " << r.success
+            << ", mergedFromReadsWithoutMate: " << r.mergedFromReadsWithoutMate
             << ", aborted: " << r.aborted
             << ", numIterations: " << r.numIterations
             << ", originalLength: " << r.originalLength
@@ -583,6 +583,8 @@ namespace extension{
                     r1.read2begin += r4revcNewPositions.size();
                 }
 
+                r1.mergedFromReadsWithoutMate = false;
+
                 //avoid self move
                 if(&(*dest) != &r1){
                     *dest = std::move(r1);
@@ -621,7 +623,9 @@ namespace extension{
                     //insert extensions of r2 at end of r3
                     r3.extendedRead.insert(r3.extendedRead.end(), r2.extendedRead.begin() + r2.originalLength, r2.extendedRead.end());
                     r3.qualityScores.insert(r3.qualityScores.end(), r2.qualityScores.begin() + r2.originalLength, r2.qualityScores.end());
-                }                       
+                }
+                
+                r3.mergedFromReadsWithoutMate = false;
 
                 if(&(*dest) != &r3){
                     *dest = std::move(r3);
@@ -629,6 +633,8 @@ namespace extension{
                 ++dest;
             }else if(false /*r1.mateHasBeenFound && r3.mateHasBeenFound*/){
                 merge(r1,r2);
+
+                r1.mergedFromReadsWithoutMate = false;
 
                 //avoid self move
                 if(&(*dest) != &r1){
@@ -640,6 +646,7 @@ namespace extension{
                 assert(int(r1.extendedRead.size()) >= r1.originalLength);
                 #if 0
                 r1.extendedRead.erase(r1.extendedRead.begin() + r1.originalLength, r1.extendedRead.end());
+                r1.mergedFromReadsWithoutMate = false;
                 #else
 
                 //try to find an overlap between r1 and r3 to create an extended read with proper length which reaches the mate
@@ -719,6 +726,8 @@ namespace extension{
                 }
 
                 #endif
+
+                r1.mergedFromReadsWithoutMate = didMergeDifferentStrands;
 
                 if(&(*dest) != &r1){
                     *dest = std::move(r1);
