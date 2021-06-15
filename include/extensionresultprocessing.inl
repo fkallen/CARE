@@ -173,7 +173,7 @@ void constructOutputFileFromExtensionResults(
             tempdir, 
             partialResults, 
             memoryForSorting, 
-            outputFormat,
+            FileFormat::FASTA, //outputFormat,
             extendedOutputfile, 
             isSorted
         );

@@ -766,9 +766,8 @@ namespace care{
             outputFormat = FileFormat::FASTA;
 
         //read extender does not produce longer quality scores -> only output fasta format
-        if(outputFormat == FileFormat::FASTQGZ)
-            outputFormat = FileFormat::FASTQ;
-
+        //if(outputFormat == FileFormat::FASTQGZ)
+           // outputFormat = FileFormat::FASTQ;
 
         const std::string extendedOutputfile = fileOptions.outputdirectory + "/" + fileOptions.extendedReadsOutputfilename;
 
