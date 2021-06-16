@@ -128,6 +128,15 @@ public: //inherited interface
         int* d_offsets = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_offsets, sizeof(int) * (numSequences + 1), stream); CUERR;
 
+        //TODO THIS MEMCPY IS ONLY NECCESSARY BECAUSE OF MY STUPID WARPCORE MINHASHER INTERFACE. It needs to be refactored
+        cudaMemcpyAsync(
+            d_numValuesPerSequence,
+            h_numValuesPerSequence,
+            sizeof(int) * numSequences,
+            H2D,
+            stream
+        ); CUERR;
+
         gpuMinhasher->retrieveValues(
             queryHandle,
             d_readIds,

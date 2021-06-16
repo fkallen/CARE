@@ -544,7 +544,8 @@ namespace gpu{
             QueryData* const queryData = getQueryDataFromHandle(queryHandle);
 
             assert(queryData->previousStage == QueryData::Stage::NumValues);
-            assert(queryData->d_numValuesPerSequence = d_numValuesPerSequence);
+            //STUPID INTERFACE EXPECTS d_numValuesPerSequence TO CONTAIN THE SAME VALUES AS RETURNED BY determineNumValues. This needs to be refactored. 
+            //assert(queryData->d_numValuesPerSequence = d_numValuesPerSequence);
 
             std::size_t persistent_storage_bytes = queryData->d_singlepersistentbuffer.size();
             std::size_t temp_storage_bytes = 0;
