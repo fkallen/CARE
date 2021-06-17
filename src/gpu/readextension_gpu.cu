@@ -215,6 +215,22 @@ void initializePairedEndExtensionBatchData4(
     }
 
     batchData.pairedEnd = true;
+
+    const int numAnchors = batchsizePairs * 4;
+
+    //initialize buffers
+    batchData.d_numUsedReadIdsPerAnchor.resize(numAnchors);
+    batchData.d_numUsedReadIdsPerAnchorPrefixSum.resize(numAnchors);
+    batchData.h_numUsedReadIds.resize(1);
+    batchData.localActiveIndices.resize(numAnchors);
+    std::iota(batchData.localActiveIndices.begin(), batchData.localActiveIndices.end(), 0);
+    *batchData.h_numUsedReadIds = 0;
+
+    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchor.data(), 0, sizeof(int) * numAnchors, cudaStreamPerThread);
+    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(), 0, sizeof(int) * numAnchors, cudaStreamPerThread);
+
+
+    cudaStreamSynchronize(cudaStreamPerThread);
 }
 
 

@@ -584,6 +584,7 @@ struct BatchData{
     std::array<CudaEvent, 1> events{};
     std::array<CudaStream, 4> streams{};
     std::vector<int> indicesOfActiveTasks{};
+    std::vector<int> localActiveIndices{};
     std::vector<extension::Task> tasks;
 
 };
@@ -1095,7 +1096,7 @@ public:
 
         batchData.h_numCandidatesPerAnchorPrefixSum[0] = 0;
 
-        batchData.totalNumberOfUsedIds = 0;
+        //batchData.totalNumberOfUsedIds = 0;
         batchData.totalNumberOfFullyUsedIds = 0;
 
         for(int t = 0; t < numActiveTasks; t++){
@@ -1104,7 +1105,7 @@ public:
 
             batchData.h_anchorReadIds[t] = task.myReadId;
             batchData.h_mateReadIds[t] = task.mateReadId;
-            batchData.totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
+            //batchData.totalNumberOfUsedIds += task.allUsedCandidateReadIdPairs.size();
             batchData.totalNumberOfFullyUsedIds += task.allFullyUsedCandidateReadIdPairs.size();
 
             #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
@@ -1306,17 +1307,6 @@ public:
 
             }
 
-            //task.allFullyUsedCandidateReadIdPairs
-
-            // cudaMemcpyAsync(
-            //     batchData.d_segmentIdsOfFullyUsedReadIds.data(),
-            //     batchData.h_segmentIdsOfFullyUsedReadIds.data(),
-            //     sizeof(int) * batchData.totalNumberOfUsedIds,
-            //     H2D,
-            //     batchData.streams[1]
-            // ); CUERR;
-
-
             helpers::call_copy_n_kernel(
                 thrust::make_zip_iterator(thrust::make_tuple(
                     batchData.h_segmentIdsOfFullyUsedReadIds.data(),
@@ -1345,6 +1335,7 @@ public:
         }
         #endif
 
+        //TODO move code to end of iteration instead of beginning
 
         //compact used candidate ids of active indices
         batchData.h_firstTasksOfPairsToCheck.resize(numActiveTasks);
@@ -1355,7 +1346,11 @@ public:
         batchData.d_segmentIdsOfUsedReadIds2.resize(batchData.d_segmentIdsOfUsedReadIds.size());
 
 
-        std::copy(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), batchData.h_firstTasksOfPairsToCheck.begin());
+        std::copy(
+            batchData.localActiveIndices.begin(), 
+            batchData.localActiveIndices.end(), 
+            batchData.h_firstTasksOfPairsToCheck.begin()
+        );
 
         int* d_indicesOfActiveTasks = batchData.d_numCandidatesPerAnchor.data();
 
@@ -1806,6 +1801,34 @@ public:
         //     std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
         // }
 
+        // std::vector<read_number> gpuusedids(*batchData.h_numUsedReadIds);
+        // cudaMemcpyAsync(
+        //     gpuusedids.data(),
+        //     batchData.d_usedReadIds.data(),
+        //     sizeof(read_number) * (*batchData.h_numUsedReadIds),
+        //     D2H,
+        //     0
+        // );
+
+        // std::vector<int> gpunumusedidsperanchor(batchData.numTasks);
+        // cudaMemcpyAsync(
+        //     gpunumusedidsperanchor.data(),
+        //     batchData.d_numUsedReadIdsPerAnchor.data(),
+        //     sizeof(int) * (batchData.numTasks),
+        //     D2H,
+        //     0
+        // );
+
+        // std::vector<int> gpunumusedidsperanchorPS(batchData.numTasks);
+        // cudaMemcpyAsync(
+        //     gpunumusedidsperanchorPS.data(),
+        //     batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
+        //     sizeof(int) * (batchData.numTasks),
+        //     D2H,
+        //     0
+        // );
+
+        // cudaDeviceSynchronize(); CUERR;
 
         /*
             update book-keeping of used candidates
@@ -1819,17 +1842,38 @@ public:
             const read_number* ids = &batchData.h_candidateReadIds[offset];
             const bool* isFullyUsed = &batchData.h_isFullyUsedCandidate[offset];
 
-            std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + numCandidates);
-            auto tmp_end = std::set_union(
-                task.allUsedCandidateReadIdPairs.begin(),
-                task.allUsedCandidateReadIdPairs.end(),
-                ids,
-                ids + numCandidates,
-                tmp.begin()
-            );
+            // std::cerr << "on cpu: set_union \n";
+            // std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+            // std::cerr << "\n and \n";
+            // std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
+            // std::cerr << "\n";
 
-            tmp.erase(tmp_end, tmp.end());
-            std::swap(task.allUsedCandidateReadIdPairs, tmp);
+            // std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + numCandidates);
+            // auto tmp_end = std::set_union(
+            //     task.allUsedCandidateReadIdPairs.begin(),
+            //     task.allUsedCandidateReadIdPairs.end(),
+            //     ids,
+            //     ids + numCandidates,
+            //     tmp.begin()
+            // );
+
+            // tmp.erase(tmp_end, tmp.end());
+            // std::swap(task.allUsedCandidateReadIdPairs, tmp);
+
+            // std::vector<read_number> mygpuids(gpuusedids.begin() + gpunumusedidsperanchorPS[i], gpuusedids.begin() + gpunumusedidsperanchorPS[i] + gpunumusedidsperanchor[i]);
+
+            // if(mygpuids != task.allUsedCandidateReadIdPairs){
+            //     std::cerr << "error i = " << i << " batchData.indicesOfActiveTasks[i] = " << batchData.indicesOfActiveTasks[i] << " task.myReadId = " << task.myReadId << ", iteration " << task.iteration << "\n";
+            //     std::cerr << "cpu ids\n";
+            //     std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+            //     std::cerr << "\n";
+
+            //     std::cerr << "gpu ids\n";
+            //     std::copy(mygpuids.begin(), mygpuids.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+            //     std::cerr << "\n";
+
+            //     assert(false);
+            // }
 
             std::vector<read_number> fullyUsedIds(numCandidates);
             int numFullyUsed = 0;
@@ -1853,7 +1897,7 @@ public:
             tmp2.erase(tmp2_end, tmp2.end());
             std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
 
-            assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
+            //assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
 
             // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
             // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
@@ -1865,6 +1909,13 @@ public:
         nvtx::pop_range();
         
         //update list of active task indices
+
+        batchData.localActiveIndices.clear();
+        for(int i = 0; i < batchData.numTasks; i++){
+            if(batchData.tasks[batchData.indicesOfActiveTasks[i]].isActive(insertSize, insertSizeStddev)){
+                batchData.localActiveIndices.emplace_back(i);
+            }
+        }
 
        
         batchData.indicesOfActiveTasks.erase(
