@@ -119,17 +119,22 @@ struct GpuSegmentedSetOperation{
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream
     ){
+
+        const int expectedNumOutputSegments = numSegments1;
+        assert(numOutputSegments == expectedNumOutputSegments);
 
         auto executeSetOperation = [](
             auto& policy, 
@@ -150,15 +155,17 @@ struct GpuSegmentedSetOperation{
             d_segmentBeginOffsets1,
             d_segmentIds1,
             numElements1,
+            numSegments1,
             d_input2,
             d_segmentSizes2,
             d_segmentBeginOffsets2,
             d_segmentIds2,
             numElements2,
-            numSegments,
+            numSegments2,
             d_output,
             d_outputSegmentSizes,
             d_outputSegmentIds,
+            expectedNumOutputSegments,
             stream,
             executeSetOperation
         );
@@ -173,17 +180,22 @@ struct GpuSegmentedSetOperation{
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream
     ){
+
+        const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
+        assert(numOutputSegments == expectedNumOutputSegments);
 
         auto executeSetOperation = [](
             auto& policy, 
@@ -204,15 +216,17 @@ struct GpuSegmentedSetOperation{
             d_segmentBeginOffsets1,
             d_segmentIds1,
             numElements1,
+            numSegments1,
             d_input2,
             d_segmentSizes2,
             d_segmentBeginOffsets2,
             d_segmentIds2,
             numElements2,
-            numSegments,
+            numSegments2,
             d_output,
             d_outputSegmentSizes,
             d_outputSegmentIds,
+            expectedNumOutputSegments,
             stream,
             executeSetOperation
         );
@@ -227,17 +241,22 @@ struct GpuSegmentedSetOperation{
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream
     ){
+
+        const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
+        assert(numOutputSegments == expectedNumOutputSegments);
 
         auto executeSetOperation = [](
             auto& policy, 
@@ -258,15 +277,17 @@ struct GpuSegmentedSetOperation{
             d_segmentBeginOffsets1,
             d_segmentIds1,
             numElements1,
+            numSegments1,
             d_input2,
             d_segmentSizes2,
             d_segmentBeginOffsets2,
             d_segmentIds2,
             numElements2,
-            numSegments,
+            numSegments2,
             d_output,
             d_outputSegmentSizes,
             d_outputSegmentIds,
+            expectedNumOutputSegments,
             stream,
             executeSetOperation
         );
@@ -281,17 +302,22 @@ struct GpuSegmentedSetOperation{
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream
     ){
+
+        const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
+        assert(numOutputSegments == expectedNumOutputSegments);
 
         auto executeSetOperation = [](
             auto& policy, 
@@ -312,15 +338,17 @@ struct GpuSegmentedSetOperation{
             d_segmentBeginOffsets1,
             d_segmentIds1,
             numElements1,
+            numSegments1,
             d_input2,
             d_segmentSizes2,
             d_segmentBeginOffsets2,
             d_segmentIds2,
             numElements2,
-            numSegments,
+            numSegments2,
             d_output,
             d_outputSegmentSizes,
             d_outputSegmentIds,
+            expectedNumOutputSegments,
             stream,
             executeSetOperation
         );
@@ -335,17 +363,22 @@ struct GpuSegmentedSetOperation{
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream
     ){
+
+        const int expectedNumOutputSegments = std::max(numSegments1, numSegments2);
+        assert(numOutputSegments == expectedNumOutputSegments);
 
         auto executeSetOperation = [](
             auto& policy, 
@@ -366,15 +399,17 @@ struct GpuSegmentedSetOperation{
             d_segmentBeginOffsets1,
             d_segmentIds1,
             numElements1,
+            numSegments1,
             d_input2,
             d_segmentSizes2,
             d_segmentBeginOffsets2,
             d_segmentIds2,
             numElements2,
-            numSegments,
+            numSegments2,
             d_output,
             d_outputSegmentSizes,
             d_outputSegmentIds,
+            expectedNumOutputSegments,
             stream,
             executeSetOperation
         );
@@ -391,15 +426,17 @@ private:
         const int* d_segmentBeginOffsets1,
         SegmentIdIter1 d_segmentIds1,
         int numElements1,
+        int numSegments1,
         const T* d_input2,
         const int* d_segmentSizes2,
         const int* d_segmentBeginOffsets2,
         SegmentIdIter2 d_segmentIds2,
         int numElements2,
-        int numSegments,        
+        int numSegments2,        
         T* d_output,
         int* d_outputSegmentSizes,
         int* d_outputSegmentIds,
+        int numOutputSegments,
         cudaStream_t stream,
         ThrustSetOpFunc executeSetOperation
     ){
@@ -407,15 +444,118 @@ private:
 
         auto policy = thrust::cuda::par(allocator).on(stream);
 
-        // auto comp = [] __device__ (const auto& t1, const auto& t2){
-        //     const int idl = thrust::get<0>(t1);
-        //     const int idr = thrust::get<0>(t2);
+        // cudaDeviceSynchronize(); CUERR; 
 
-        //     if(idl < idr) return true;
-        //     if(idl > idr) return false;
+        // std::vector<int> input1(numElements1);
+        // cudaMemcpyAsync(
+        //     input1.data(),
+        //     d_input1,
+        //     sizeof(T) * (numElements1),
+        //     D2H,
+        //     stream
+        // ); CUERR;
 
-        //     return thrust::get<1>(t1) < thrust::get<1>(t2);
-        // };
+        // std::vector<int> segmentIds1(numElements1);
+        // cudaMemcpyAsync(
+        //     segmentIds1.data(),
+        //     d_segmentIds1,
+        //     sizeof(int) * (numElements1),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> segmentSizes1(numSegments1);
+        // cudaMemcpyAsync(
+        //     segmentSizes1.data(),
+        //     d_segmentSizes1,
+        //     sizeof(int) * (numSegments1),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> segmentBeginOffsets1(numSegments1);
+        // cudaMemcpyAsync(
+        //     segmentBeginOffsets1.data(),
+        //     d_segmentBeginOffsets1,
+        //     sizeof(int) * (numSegments1),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+
+        // std::vector<int> input2(numElements2);
+        // cudaMemcpyAsync(
+        //     input2.data(),
+        //     d_input2,
+        //     sizeof(T) * (numElements2),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> segmentIds2(numElements2);
+        // cudaMemcpyAsync(
+        //     segmentIds2.data(),
+        //     d_segmentIds2,
+        //     sizeof(int) * (numElements2),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> segmentSizes2(numSegments2);
+        // cudaMemcpyAsync(
+        //     segmentSizes2.data(),
+        //     d_segmentSizes2,
+        //     sizeof(int) * (numSegments2),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> segmentBeginOffsets2(numSegments2);
+        // cudaMemcpyAsync(
+        //     segmentBeginOffsets2.data(),
+        //     d_segmentBeginOffsets2,
+        //     sizeof(int) * (numSegments2),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::cerr << "input1\n";
+        // std::copy(input1.begin(), input1.end(), std::ostream_iterator<T>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentIds1\n";
+        // std::copy(segmentIds1.begin(), segmentIds1.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentSizes1\n";
+        // std::copy(segmentSizes1.begin(), segmentSizes1.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentBeginOffsets1\n";
+        // std::copy(segmentBeginOffsets1.begin(), segmentBeginOffsets1.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "input2\n";
+        // std::copy(input2.begin(), input2.end(), std::ostream_iterator<T>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentIds2\n";
+        // std::copy(segmentIds2.begin(), segmentIds2.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentSizes2\n";
+        // std::copy(segmentSizes2.begin(), segmentSizes2.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "segmentBeginOffsets2\n";
+        // std::copy(segmentBeginOffsets2.begin(), segmentBeginOffsets2.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+
+
+
 
         auto first1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1, d_input1));
         auto last1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1 + numElements1, d_input1 + numElements1));
@@ -428,6 +568,9 @@ private:
         auto outputZipEnd = executeSetOperation(policy, first1, last1, first2, last2, outputZip, ValueSegmentIdComparator{});
 
         int outputsize = thrust::distance(outputZip, outputZipEnd);
+
+    
+
 
         std::size_t cubbytes = 0;
 
@@ -446,8 +589,8 @@ private:
         void* temp_allocations[4];
         std::size_t temp_allocation_sizes[4];
         
-        temp_allocation_sizes[0] = sizeof(int) * numSegments;
-        temp_allocation_sizes[1] = sizeof(int) * numSegments;
+        temp_allocation_sizes[0] = sizeof(int) * numOutputSegments;
+        temp_allocation_sizes[1] = sizeof(int) * numOutputSegments;
         temp_allocation_sizes[2] = sizeof(int);
         temp_allocation_sizes[3] = cubbytes;
         
@@ -487,14 +630,14 @@ private:
         );
         assert(cubstatus == cudaSuccess);
 
-        if(numSegments <= 4096){
+        if(numOutputSegments <= 4096){
 
             initAndSetOutputSegmentSizesSingleBlockKernel<<<1, 1024, 0, stream>>>(
                 uniqueIds,
                 reducedCounts,
                 numRuns,
                 d_outputSegmentSizes,
-                numSegments
+                numOutputSegments
             );
 
         }else{
@@ -502,11 +645,11 @@ private:
             cudaMemsetAsync(
                 d_outputSegmentSizes,
                 0,
-                sizeof(int) * numSegments,
+                sizeof(int) * numOutputSegments,
                 stream
             );
 
-            setOutputSegmentSizesKernel<<<SDIV(numSegments, 256), 256, 0, stream>>>(
+            setOutputSegmentSizesKernel<<<SDIV(numOutputSegments, 256), 256, 0, stream>>>(
                 uniqueIds,
                 reducedCounts,
                 numRuns,
@@ -515,7 +658,48 @@ private:
 
         }
 
-        allocator.deallocate(tempPtr, sizeof(char) * temp_storage_bytes);        
+        allocator.deallocate(tempPtr, sizeof(char) * temp_storage_bytes);
+
+        // std::vector<int> output(outputsize);
+        // cudaMemcpyAsync(
+        //     output.data(),
+        //     d_output,
+        //     sizeof(T) * (outputsize),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> outputSegmentIds(outputsize);
+        // cudaMemcpyAsync(
+        //     outputSegmentIds.data(),
+        //     d_outputSegmentIds,
+        //     sizeof(int) * (outputsize),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // std::vector<int> outputSegmentSizes(numOutputSegments);
+        // cudaMemcpyAsync(
+        //     outputSegmentSizes.data(),
+        //     d_outputSegmentSizes,
+        //     sizeof(int) * (numOutputSegments),
+        //     D2H,
+        //     stream
+        // ); CUERR;
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::cerr << "output\n";
+        // std::copy(output.begin(), output.end(), std::ostream_iterator<T>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "outputSegmentIds\n";
+        // std::copy(outputSegmentIds.begin(), outputSegmentIds.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";
+
+        // std::cerr << "outputSegmentSizes\n";
+        // std::copy(outputSegmentSizes.begin(), outputSegmentSizes.end(), std::ostream_iterator<int>(std::cerr, " "));
+        // std::cerr << "\n";        
 
         return d_output + outputsize;
     }
