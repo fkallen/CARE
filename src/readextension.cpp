@@ -404,7 +404,7 @@ extend_cpu_pairedend(
             }
         }
 
-        fixedStepsize -= 2;
+        fixedStepsize -= 4;
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
@@ -413,8 +413,8 @@ extend_cpu_pairedend(
             readExtender.setMaxExtensionPerStep(fixedStepsize);
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n";
 
-            //std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
-            isLastIteration = (fixedStepsize <= 2);
+            std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            isLastIteration = (fixedStepsize <= 4);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
                 auto inputs = init();
@@ -426,7 +426,7 @@ extend_cpu_pairedend(
                 }
             }
 
-            fixedStepsize -= 2;
+            fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
 
