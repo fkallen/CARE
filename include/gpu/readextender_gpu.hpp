@@ -1598,6 +1598,10 @@ public:
 
             assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
 
+            // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
+            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+            // std::cerr << "\n";
+
             task.iteration++;
         }
 

@@ -386,6 +386,45 @@ private:
 
             std::swap(task.allUsedCandidateReadIdPairs, tmp);
 
+            const int numCandidates = task.candidateReadIds.size();
+
+            if(numCandidates > 0 && task.abortReason == extension::AbortReason::None){
+                assert(task.totalAnchorBeginInExtendedRead.size() >= 2);
+                const int oldAccumExtensionsLength 
+                    = task.totalAnchorBeginInExtendedRead[task.totalAnchorBeginInExtendedRead.size() - 2];
+                const int newAccumExtensionsLength = task.totalAnchorBeginInExtendedRead.back();
+                const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
+
+                std::vector<read_number> fullyUsedIds;
+
+                for(int c = 0; c < numCandidates; c += 1){
+                    const int candidateLength = task.candidateSequenceLengths[c];
+                    const int shift = task.alignments[c].shift;
+
+                    if(candidateLength + shift <= task.currentAnchorLength + lengthOfExtension){
+                        fullyUsedIds.emplace_back(task.candidateReadIds[c]);
+                    }
+                }
+
+                std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + fullyUsedIds.size());
+                auto tmp2_end = std::set_union(
+                    task.allFullyUsedCandidateReadIdPairs.begin(),
+                    task.allFullyUsedCandidateReadIdPairs.end(),
+                    fullyUsedIds.begin(),
+                    fullyUsedIds.end(),
+                    tmp2.begin()
+                );
+
+                tmp2.erase(tmp2_end, tmp2.end());
+                std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
+
+                assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
+            }
+
+            // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
+            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+            // std::cerr << "\n";
+
             task.iteration++;
         }
     }
@@ -561,8 +600,8 @@ private:
                 auto end = std::set_difference(
                     task.candidateReadIds.begin(),
                     task.candidateReadIds.end(),
-                    task.allUsedCandidateReadIdPairs.begin(),
-                    task.allUsedCandidateReadIdPairs.end(),
+                    task.allFullyUsedCandidateReadIdPairs.begin(),
+                    task.allFullyUsedCandidateReadIdPairs.end(),
                     tmp.begin()
                 );
 
