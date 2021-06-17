@@ -93,11 +93,26 @@ void initAndSetOutputSegmentSizesSingleBlockKernel(
     }
 }
 
+struct ValueSegmentIdComparator{
+    template<class T>
+    __host__ __device__
+    bool operator()(const T& t1, const T& t2){
+        const int idl = thrust::get<0>(t1);
+        const int idr = thrust::get<0>(t2);
+
+        if(idl < idr) return true;
+        if(idl > idr) return false;
+
+        return thrust::get<1>(t1) < thrust::get<1>(t2);
+    };
+};
+
 struct GpuSegmentedSetOperation{
+
 
     //result = input1 - input2, per segment
     template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
-    T* difference(
+    static T* set_difference(
         ThrustAllocator& allocator,
         const T* d_input1,
         const int* d_segmentSizes1,
@@ -115,19 +130,292 @@ struct GpuSegmentedSetOperation{
         int* d_outputSegmentIds,
         cudaStream_t stream
     ){
+
+        auto executeSetOperation = [](
+            auto& policy, 
+            auto first1, 
+            auto last1, 
+            auto first2, 
+            auto last2, 
+            auto output, 
+            auto comp
+        ){
+            return thrust::set_difference(policy, first1, last1, first2, last2, output, comp);
+        };
+
+        return setOperation_impl(
+            allocator,
+            d_input1,
+            d_segmentSizes1,
+            d_segmentBeginOffsets1,
+            d_segmentIds1,
+            numElements1,
+            d_input2,
+            d_segmentSizes2,
+            d_segmentBeginOffsets2,
+            d_segmentIds2,
+            numElements2,
+            numSegments,
+            d_output,
+            d_outputSegmentSizes,
+            d_outputSegmentIds,
+            stream,
+            executeSetOperation
+        );
+    }
+
+    //result = input1 \cap input2, per segment
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
+    static T* set_intersection(
+        ThrustAllocator& allocator,
+        const T* d_input1,
+        const int* d_segmentSizes1,
+        const int* d_segmentBeginOffsets1,
+        SegmentIdIter1 d_segmentIds1,
+        int numElements1,
+        const T* d_input2,
+        const int* d_segmentSizes2,
+        const int* d_segmentBeginOffsets2,
+        SegmentIdIter2 d_segmentIds2,
+        int numElements2,
+        int numSegments,        
+        T* d_output,
+        int* d_outputSegmentSizes,
+        int* d_outputSegmentIds,
+        cudaStream_t stream
+    ){
+
+        auto executeSetOperation = [](
+            auto& policy, 
+            auto first1, 
+            auto last1, 
+            auto first2, 
+            auto last2, 
+            auto output, 
+            auto comp
+        ){
+            return thrust::set_intersection(policy, first1, last1, first2, last2, output, comp);
+        };
+
+        return setOperation_impl(
+            allocator,
+            d_input1,
+            d_segmentSizes1,
+            d_segmentBeginOffsets1,
+            d_segmentIds1,
+            numElements1,
+            d_input2,
+            d_segmentSizes2,
+            d_segmentBeginOffsets2,
+            d_segmentIds2,
+            numElements2,
+            numSegments,
+            d_output,
+            d_outputSegmentSizes,
+            d_outputSegmentIds,
+            stream,
+            executeSetOperation
+        );
+    }
+
+    //result = (input1 \cup input2) - (input1 \cap input2), per segment
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
+    static T* set_symmetric_difference(
+        ThrustAllocator& allocator,
+        const T* d_input1,
+        const int* d_segmentSizes1,
+        const int* d_segmentBeginOffsets1,
+        SegmentIdIter1 d_segmentIds1,
+        int numElements1,
+        const T* d_input2,
+        const int* d_segmentSizes2,
+        const int* d_segmentBeginOffsets2,
+        SegmentIdIter2 d_segmentIds2,
+        int numElements2,
+        int numSegments,        
+        T* d_output,
+        int* d_outputSegmentSizes,
+        int* d_outputSegmentIds,
+        cudaStream_t stream
+    ){
+
+        auto executeSetOperation = [](
+            auto& policy, 
+            auto first1, 
+            auto last1, 
+            auto first2, 
+            auto last2, 
+            auto output, 
+            auto comp
+        ){
+            return thrust::set_symmetric_difference(policy, first1, last1, first2, last2, output, comp);
+        };
+
+        return setOperation_impl(
+            allocator,
+            d_input1,
+            d_segmentSizes1,
+            d_segmentBeginOffsets1,
+            d_segmentIds1,
+            numElements1,
+            d_input2,
+            d_segmentSizes2,
+            d_segmentBeginOffsets2,
+            d_segmentIds2,
+            numElements2,
+            numSegments,
+            d_output,
+            d_outputSegmentSizes,
+            d_outputSegmentIds,
+            stream,
+            executeSetOperation
+        );
+    }
+
+    //result = input1 \cup input2, per segment
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
+    static T* set_union(
+        ThrustAllocator& allocator,
+        const T* d_input1,
+        const int* d_segmentSizes1,
+        const int* d_segmentBeginOffsets1,
+        SegmentIdIter1 d_segmentIds1,
+        int numElements1,
+        const T* d_input2,
+        const int* d_segmentSizes2,
+        const int* d_segmentBeginOffsets2,
+        SegmentIdIter2 d_segmentIds2,
+        int numElements2,
+        int numSegments,        
+        T* d_output,
+        int* d_outputSegmentSizes,
+        int* d_outputSegmentIds,
+        cudaStream_t stream
+    ){
+
+        auto executeSetOperation = [](
+            auto& policy, 
+            auto first1, 
+            auto last1, 
+            auto first2, 
+            auto last2, 
+            auto output, 
+            auto comp
+        ){
+            return thrust::set_union(policy, first1, last1, first2, last2, output, comp);
+        };
+
+        return setOperation_impl(
+            allocator,
+            d_input1,
+            d_segmentSizes1,
+            d_segmentBeginOffsets1,
+            d_segmentIds1,
+            numElements1,
+            d_input2,
+            d_segmentSizes2,
+            d_segmentBeginOffsets2,
+            d_segmentIds2,
+            numElements2,
+            numSegments,
+            d_output,
+            d_outputSegmentSizes,
+            d_outputSegmentIds,
+            stream,
+            executeSetOperation
+        );
+    }
+
+    //result = input1 \cap input2, per segment
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2>
+    static T* merge(
+        ThrustAllocator& allocator,
+        const T* d_input1,
+        const int* d_segmentSizes1,
+        const int* d_segmentBeginOffsets1,
+        SegmentIdIter1 d_segmentIds1,
+        int numElements1,
+        const T* d_input2,
+        const int* d_segmentSizes2,
+        const int* d_segmentBeginOffsets2,
+        SegmentIdIter2 d_segmentIds2,
+        int numElements2,
+        int numSegments,        
+        T* d_output,
+        int* d_outputSegmentSizes,
+        int* d_outputSegmentIds,
+        cudaStream_t stream
+    ){
+
+        auto executeSetOperation = [](
+            auto& policy, 
+            auto first1, 
+            auto last1, 
+            auto first2, 
+            auto last2, 
+            auto output, 
+            auto comp
+        ){
+            return thrust::merge(policy, first1, last1, first2, last2, output, comp);
+        };
+
+        return setOperation_impl(
+            allocator,
+            d_input1,
+            d_segmentSizes1,
+            d_segmentBeginOffsets1,
+            d_segmentIds1,
+            numElements1,
+            d_input2,
+            d_segmentSizes2,
+            d_segmentBeginOffsets2,
+            d_segmentIds2,
+            numElements2,
+            numSegments,
+            d_output,
+            d_outputSegmentSizes,
+            d_outputSegmentIds,
+            stream,
+            executeSetOperation
+        );
+    }
+
+private:
+
+    //result = input1 OP input2, per segment
+    template<class ThrustAllocator, class T, class SegmentIdIter1, class SegmentIdIter2, class ThrustSetOpFunc>
+    static T* setOperation_impl(
+        ThrustAllocator& allocator,
+        const T* d_input1,
+        const int* d_segmentSizes1,
+        const int* d_segmentBeginOffsets1,
+        SegmentIdIter1 d_segmentIds1,
+        int numElements1,
+        const T* d_input2,
+        const int* d_segmentSizes2,
+        const int* d_segmentBeginOffsets2,
+        SegmentIdIter2 d_segmentIds2,
+        int numElements2,
+        int numSegments,        
+        T* d_output,
+        int* d_outputSegmentSizes,
+        int* d_outputSegmentIds,
+        cudaStream_t stream,
+        ThrustSetOpFunc executeSetOperation
+    ){
         static_assert(sizeof(typename ThrustAllocator::value_type) == 1, "Allocator for GpuSegmentedSetOperation difference must allocate bytes.");
 
         auto policy = thrust::cuda::par(allocator).on(stream);
 
-        auto comp = [] __device__ (const auto& t1, const auto& t2){
-            const int idl = thrust::get<0>(t1);
-            const int idr = thrust::get<0>(t2);
+        // auto comp = [] __device__ (const auto& t1, const auto& t2){
+        //     const int idl = thrust::get<0>(t1);
+        //     const int idr = thrust::get<0>(t2);
 
-            if(idl < idr) return true;
-            if(idl > idr) return false;
+        //     if(idl < idr) return true;
+        //     if(idl > idr) return false;
 
-            return thrust::get<1>(t1) < thrust::get<1>(t2);
-        };
+        //     return thrust::get<1>(t1) < thrust::get<1>(t2);
+        // };
 
         auto first1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1, d_input1));
         auto last1 = thrust::make_zip_iterator(thrust::make_tuple(d_segmentIds1 + numElements1, d_input1 + numElements1));
@@ -137,7 +425,7 @@ struct GpuSegmentedSetOperation{
 
         auto outputZip = thrust::make_zip_iterator(thrust::make_tuple(d_outputSegmentIds, d_output));
 
-        auto outputZipEnd = thrust::set_difference(policy, first1, last1, first2, last2, outputZip, comp);
+        auto outputZipEnd = executeSetOperation(policy, first1, last1, first2, last2, outputZip, ValueSegmentIdComparator{});
 
         int outputsize = thrust::distance(outputZip, outputZipEnd);
 
@@ -199,35 +487,33 @@ struct GpuSegmentedSetOperation{
         );
         assert(cubstatus == cudaSuccess);
 
-        #if 1
+        if(numSegments <= 4096){
 
-        initAndSetOutputSegmentSizesSingleBlockKernel<<<1, 1024, 0, stream>>>(
-            uniqueIds,
-            reducedCounts,
-            numRuns,
-            d_outputSegmentSizes,
-            numSegments
-        );
+            initAndSetOutputSegmentSizesSingleBlockKernel<<<1, 1024, 0, stream>>>(
+                uniqueIds,
+                reducedCounts,
+                numRuns,
+                d_outputSegmentSizes,
+                numSegments
+            );
 
-        #else
+        }else{
 
-        cudaMemsetAsync(
-            d_outputSegmentSizes,
-            0,
-            sizeof(int) * numSegments,
-            stream
-        );
+            cudaMemsetAsync(
+                d_outputSegmentSizes,
+                0,
+                sizeof(int) * numSegments,
+                stream
+            );
 
-        setOutputSegmentSizesKernel<<<SDIV(numSegments, 256), 256, 0, stream>>>(
-            uniqueIds,
-            reducedCounts,
-            numRuns,
-            d_outputSegmentSizes
-        );
+            setOutputSegmentSizesKernel<<<SDIV(numSegments, 256), 256, 0, stream>>>(
+                uniqueIds,
+                reducedCounts,
+                numRuns,
+                d_outputSegmentSizes
+            );
 
-        #endif
-
-        //cudaStreamSynchronize(stream); CUERR;
+        }
 
         allocator.deallocate(tempPtr, sizeof(char) * temp_storage_bytes);        
 

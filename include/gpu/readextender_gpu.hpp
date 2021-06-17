@@ -2387,8 +2387,8 @@ public:
             auto end = std::set_difference(
                 myIds,
                 myIds + num,
-                task.allUsedCandidateReadIdPairs.begin(),
-                task.allUsedCandidateReadIdPairs.end(),
+                task.allFullyUsedCandidateReadIdPairs.begin(),
+                task.allFullyUsedCandidateReadIdPairs.end(),
                 destids
             );            
             #endif
@@ -2790,7 +2790,7 @@ public:
         #else
         
         //compute segmented set difference.  batchData.d_candidateReadIds = d_candidateReadIds2 \ batchData.d_usedReadIds
-        auto d_candidateReadIds_end = GpuSegmentedSetOperation{}.difference(
+        auto d_candidateReadIds_end = GpuSegmentedSetOperation::set_difference(
             thrustCachingAllocator1,
             d_candidateReadIds2,
             batchData.d_numCandidatesPerAnchor2.data(),
