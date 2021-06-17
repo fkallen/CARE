@@ -2750,6 +2750,7 @@ public:
             batchData.d_numCandidatesPerAnchorPrefixSum2.data(),
             batchData.d_anchorIndicesOfCandidates.data(),
             batchData.totalNumCandidates,
+            batchData.numTasks,
             batchData.d_fullyUsedReadIds.data(),
             batchData.d_numFullyUsedReadIdsPerAnchor.data(),
             batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
