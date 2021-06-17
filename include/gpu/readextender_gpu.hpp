@@ -1562,26 +1562,8 @@ public:
             const read_number* ids = &batchData.h_candidateReadIds[offset];
             const bool* isFullyUsed = &batchData.h_isFullyUsedCandidate[offset];
 
-            //assert(std::all_of(isFullyUsed, isFullyUsed + numCandidates, [](bool b){return !b;}));
-
-            assert(std::is_sorted(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end()));
-            assert(std::is_sorted(ids, ids + numCandidates));
-
-            // std::cerr << "ids:\n";
-            // for(int x = 0; x < numCandidates; x++){
-            //     std::cerr << ids[x] << " ";
-            // }
-            // std::cerr << "\n";
-
-            // std::cerr << "task.allUsedCandidateReadIdPairs before:\n";
-            // for(auto x : task.allUsedCandidateReadIdPairs){
-            //     std::cerr << x << " ";
-            // }
-            // std::cerr << "\n";
-            
-
             std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + numCandidates);
-            auto tmp_end = std::merge(
+            auto tmp_end = std::set_union(
                 task.allUsedCandidateReadIdPairs.begin(),
                 task.allUsedCandidateReadIdPairs.end(),
                 ids,
@@ -1590,10 +1572,7 @@ public:
             );
 
             tmp.erase(tmp_end, tmp.end());
-
             std::swap(task.allUsedCandidateReadIdPairs, tmp);
-
-            assert(std::is_sorted(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end()));
 
             std::vector<read_number> fullyUsedIds(numCandidates);
             int numFullyUsed = 0;
@@ -1604,20 +1583,9 @@ public:
             }
             fullyUsedIds.erase(fullyUsedIds.begin() + numFullyUsed, fullyUsedIds.end());
 
-            // std::cerr << "fullyUsedIds:\n";
-            // for(auto x : fullyUsedIds){
-            //     std::cerr << x << " ";
-            // }
-            // std::cerr << "\n";
-
-            // std::cerr << "task.allFullyUsedCandidateReadIdPairs before:\n";
-            // for(auto x : task.allFullyUsedCandidateReadIdPairs){
-            //     std::cerr << x << " ";
-            // }
-            // std::cerr << "\n";
 
             std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + numFullyUsed);
-            auto tmp2_end = std::merge(
+            auto tmp2_end = std::set_union(
                 task.allFullyUsedCandidateReadIdPairs.begin(),
                 task.allFullyUsedCandidateReadIdPairs.end(),
                 fullyUsedIds.begin(),
@@ -1626,28 +1594,9 @@ public:
             );
 
             tmp2.erase(tmp2_end, tmp2.end());
-
             std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
 
-            // if(!(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size())){
-                // std::cerr << "task.allFullyUsedCandidateReadIdPairs after:\n";
-                // for(auto x : task.allFullyUsedCandidateReadIdPairs){
-                //     std::cerr << x << " ";
-                // }
-                // std::cerr << "\n";
-
-                // std::cerr << "task.allUsedCandidateReadIdPairs after:\n";
-                // for(auto x : task.allUsedCandidateReadIdPairs){
-                //     std::cerr << x << " ";
-                // }
-                // std::cerr << "\n";
-                // assert(false);
-            // }
-
             assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
-
-            assert(std::is_sorted(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end()));
-            //assert(task.allFullyUsedCandidateReadIdPairs.size() == 0);
 
             task.iteration++;
         }

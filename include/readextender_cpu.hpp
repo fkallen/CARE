@@ -374,7 +374,7 @@ private:
             auto& task = tasks[indexOfActiveTask];
 
             std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + task.candidateReadIds.size());
-            auto tmp_end = std::merge(
+            auto tmp_end = std::set_union(
                 task.allUsedCandidateReadIdPairs.begin(),
                 task.allUsedCandidateReadIdPairs.end(),
                 task.candidateReadIds.begin(),
