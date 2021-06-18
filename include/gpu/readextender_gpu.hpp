@@ -1451,7 +1451,7 @@ public:
                     batchData.d_segmentIdsOfFullyUsedReadIds.data(),
                     batchData.d_fullyUsedReadIds.data()
                 )),
-                batchData.streams[1]
+                batchData.streams[0]
             );
 
             helpers::call_copy_n_kernel(
@@ -1464,7 +1464,7 @@ public:
                     batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
                     batchData.d_numFullyUsedReadIdsPerAnchor.data()
                 )),
-                batchData.streams[1]
+                batchData.streams[0]
             );
         }
         #endif
@@ -1496,11 +1496,11 @@ public:
 
         #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
 
-        removeUsedIdsAndMateIds(batchData, batchData.streams[0], batchData.streams[1]);  
+        removeUsedIdsAndMateIds(batchData, batchData.streams[0], batchData.streams[0]);  
 
         #else 
 
-        removeUsedIdsAndMateIdsCPU(batchData, batchData.streams[0], batchData.streams[1]);    
+        removeUsedIdsAndMateIdsCPU(batchData, batchData.streams[0], batchData.streams[0]);    
         
         #endif
 
@@ -1594,7 +1594,7 @@ public:
         nvtx::push_range("computeMSAs", 6);
 
         //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
-        computeMSAs(batchData, batchData.streams[0], batchData.streams[1]);
+        computeMSAs(batchData, batchData.streams[0], batchData.streams[0]);
 
         nvtx::pop_range();
 
@@ -1624,7 +1624,7 @@ public:
 
         nvtx::push_range("copyBuffersToHost", 8);
 
-        copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[1]);
+        copyBuffersToHost(batchData, batchData.streams[0], batchData.streams[0]);
 
         cudaStreamSynchronize(batchData.streams[0]); CUERR;
         cudaStreamSynchronize(batchData.streams[1]); CUERR;
@@ -1642,6 +1642,12 @@ public:
         unpackResultsIntoTasks(batchData);
 
         nvtx::pop_range();
+
+        // nvtx::push_range("removeUsedIdsOfFinishedTasks", 9);
+        
+        // removeUsedIdsOfFinishedTasks(batchData);
+
+        // nvtx::pop_range();
 
         if(!batchData.isEmpty()){
             batchData.setState(BatchData::State::BeforePrepare);
@@ -2375,10 +2381,16 @@ public:
                     d_firstTasksOfPairsToCheck,
                     d_numCandidatesPerAnchor = batchData.d_numCandidatesPerAnchor.data(),
                     d_numCandidatesPerAnchorPrefixSum = batchData.d_numCandidatesPerAnchorPrefixSum.data(), // numTasks + 1
+                    d_numCandidatesPerAnchorPrefixSumsize = batchData.d_numCandidatesPerAnchorPrefixSum.size(),
                     d_candidateReadIds = batchData.d_candidateReadIds.data(),
+                    d_candidateReadIdssize = batchData.d_candidateReadIds.size(),
                     d_numUsedReadIdsPerAnchor = batchData.d_numUsedReadIdsPerAnchor.data(),
+                    d_numUsedReadIdsPerAnchorsize = batchData.d_numUsedReadIdsPerAnchor.size(),
                     d_numUsedReadIdsPerAnchorPrefixSum = batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(), // numTasks
+                    d_numUsedReadIdsPerAnchorPrefixSumsize = batchData.d_numUsedReadIdsPerAnchorPrefixSum.size(), // numTasks
                     d_usedReadIds = batchData.d_usedReadIds.data(),
+                    d_usedReadIdssize = batchData.d_usedReadIds.size(),
+
                     d_isPairedCandidate = batchData.d_isPairedCandidate.data()
                 ] __device__ (){
 
@@ -2393,7 +2405,10 @@ public:
                         int numElements1,
                         const read_number* array2,
                         int numElements2,
-                        bool* output
+                        bool* output,
+                        const read_number* boundary1,
+                        const read_number* boundary2,
+                        const bool* boundaryoutput
                     ){
                         const int numIterations = SDIV(numElements2, numSharedElements);
 
@@ -2404,6 +2419,7 @@ public:
                             const int num = end - begin;
 
                             for(int i = threadIdx.x; i < num; i += blockDim.x){
+                                assert(array2 + begin + i < boundary2);
                                 sharedElements[i] = array2[begin + i];
                             }
 
@@ -2412,7 +2428,54 @@ public:
                             //TODO in iteration > 0, we may skip elements at the beginning of first range
 
                             for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
+                                assert(output + i < boundaryoutput);
                                 if(!output[i]){
+                                    assert(array1 + i < boundary1);
+                                    const read_number readId = array1[i];
+                                    const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                                    const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                                    if(found){
+                                        output[i] = true;
+                                    }
+                                }
+                            }
+
+                            __syncthreads();
+                        }
+                    };
+
+                    auto process2 = [&](
+                        const read_number* array1,
+                        int numElements1,
+                        const read_number* array2,
+                        int numElements2,
+                        bool* output,
+                        const read_number* boundary1,
+                        const read_number* boundary2,
+                        const bool* boundaryoutput
+                    ){
+                        const int numIterations = SDIV(numElements2, numSharedElements);
+
+                        for(int iteration = 0; iteration < numIterations; iteration++){
+
+                            const int begin = iteration * numSharedElements;
+                            const int end = min((iteration+1) * numSharedElements, numElements2);
+                            const int num = end - begin;
+
+                            for(int i = threadIdx.x; i < num; i += blockDim.x){
+                                assert(array2 + begin + i < boundary2);
+                                sharedElements[i] = array2[begin + i];
+                            }
+
+                            __syncthreads();
+
+                            //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                            for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
+                                assert(output + i < boundaryoutput);
+                                if(!output[i]){
+                                    assert(array1 + i < boundary1);
                                     const read_number readId = array1[i];
                                     const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
 
@@ -2432,7 +2495,9 @@ public:
                         //const int secondTask = firstTask + 1;
 
                         //check for pairs in current candidates
-
+                        assert(firstTask < d_numCandidatesPerAnchorPrefixSumsize);
+                        assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
+                        assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
                         const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
                         const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
                         const int rangeEnd = d_numCandidatesPerAnchorPrefixSum[firstTask + 2];
@@ -2442,7 +2507,10 @@ public:
                             rangeMid - rangeBegin,
                             d_candidateReadIds + rangeMid,
                             rangeEnd - rangeMid,
-                            d_isPairedCandidate + rangeBegin
+                            d_isPairedCandidate + rangeBegin,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_isPairedCandidate + d_candidateReadIdssize
                         );
 
                         process(
@@ -2450,29 +2518,42 @@ public:
                             rangeEnd - rangeMid,
                             d_candidateReadIds + rangeBegin,
                             rangeMid - rangeBegin,
-                            d_isPairedCandidate + rangeMid
+                            d_isPairedCandidate + rangeMid,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_isPairedCandidate + d_candidateReadIdssize
                         );
 
                         //check for pairs in candidates of previous extension iterations
+
+                        assert(firstTask < d_numUsedReadIdsPerAnchorPrefixSumsize);
+                        assert(firstTask+1 < d_numUsedReadIdsPerAnchorPrefixSumsize);
+                        assert(firstTask+1 < d_numUsedReadIdsPerAnchorsize);
 
                         const int usedRangeBegin = d_numUsedReadIdsPerAnchorPrefixSum[firstTask];                        
                         const int usedRangeMid = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 1];
                         const int usedRangeEnd = usedRangeMid + d_numUsedReadIdsPerAnchor[firstTask + 1];
 
-                        process(
+                        process2(
                             d_candidateReadIds + rangeBegin,
                             rangeMid - rangeBegin,
                             d_usedReadIds + usedRangeMid,
                             usedRangeEnd - usedRangeMid,
-                            d_isPairedCandidate + rangeBegin
+                            d_isPairedCandidate + rangeBegin,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_usedReadIds + d_usedReadIdssize,
+                            d_isPairedCandidate + d_candidateReadIdssize
                         );
 
-                        process(
+                        process2(
                             d_candidateReadIds + rangeMid,
                             rangeEnd - rangeMid,
                             d_usedReadIds + usedRangeBegin,
                             usedRangeMid - usedRangeBegin,
-                            d_isPairedCandidate + rangeMid
+                            d_isPairedCandidate + rangeMid,
+                            d_candidateReadIds + d_candidateReadIdssize,
+                            d_usedReadIds + d_usedReadIdssize,
+                            d_isPairedCandidate + d_candidateReadIdssize
                         );
                     }
                 }
