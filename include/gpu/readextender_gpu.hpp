@@ -438,6 +438,37 @@ namespace readextendergpukernels{
             }
         }
     }
+
+    template<int groupsize>
+    __global__
+    void compactUsedIdsOfSelectedTasks(
+        const int* __restrict__ indices,
+        int numIndices,
+        const read_number* __restrict__ d_usedReadIdsIn,
+        read_number* __restrict__ d_usedReadIdsOut,
+        int* __restrict__ segmentIdsOut,
+        const int* __restrict__ d_numUsedReadIdsPerAnchor,
+        const int* __restrict__ inputSegmentOffsets,
+        const int* __restrict__ outputSegmentOffsets
+    ){
+        const int warpid = (threadIdx.x + blockDim.x * blockIdx.x) / groupsize;
+        const int numwarps = (blockDim.x * gridDim.x) / groupsize;
+        const int lane = threadIdx.x % groupsize;
+
+        for(int t = warpid; t < numIndices; t += numwarps){
+            const int activeIndex = indices[t];
+            const int num = d_numUsedReadIdsPerAnchor[t];
+            const int inputOffset = inputSegmentOffsets[activeIndex];
+            const int outputOffset = outputSegmentOffsets[t];
+
+            for(int i = lane; i < num; i += groupsize){
+                //copy read id
+                d_usedReadIdsOut[outputOffset + i] = d_usedReadIdsIn[inputOffset + i];
+                //set new segment id
+                segmentIdsOut[outputOffset + i] = t;
+            }
+        }
+    }
 }
 
 
@@ -4022,41 +4053,19 @@ struct BatchData{
             d_usedReadIds2.resize(*h_numUsedReadIds);
             d_segmentIdsOfUsedReadIds2.resize(*h_numUsedReadIds);            
 
-            const int possibleNumWarps = SDIV(newNumActiveTasks, 32);
+            const int possibleNumWarps = newNumActiveTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
-            helpers::lambda_kernel<<<numBlocks, 128, 0, streams[0]>>>(
-                [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
-                    d_usedReadIdsIn = d_usedReadIds.data(),
-                    d_usedReadIdsOut = d_usedReadIds2.data(),
-                    d_segmentIdsOfUsedIdsOut = d_segmentIdsOfUsedReadIds2.data(),
-                    d_numUsedReadIdsPerActiveTask = d_numUsedReadIdsPerAnchor2.data(),
-                    inputOffsets = d_numUsedReadIdsPerAnchorPrefixSum.data(), 
-                    outputOffsets = d_numUsedReadIdsPerAnchorPrefixSum2.data()
-                ] __device__ (){
-                    //use one warp per segment
-
-                    const int warpid = (threadIdx.x + blockDim.x * blockIdx.x) / 32;
-                    const int numwarps = (blockDim.x * gridDim.x) / 32;
-                    const int lane = threadIdx.x % 32;
-
-                    for(int t = warpid; t < newNumActiveTasks; t += numwarps){
-                        const int activeIndex = indicesOfActiveTasks[t];
-                        const int num = d_numUsedReadIdsPerActiveTask[t];
-                        const int inputOffset = inputOffsets[activeIndex];
-                        const int outputOffset = outputOffsets[t];
-
-                        for(int i = lane; i < num; i += 32){
-                            //copy read id
-                            d_usedReadIdsOut[outputOffset + i] = d_usedReadIdsIn[inputOffset + i];
-                            //set new segment id
-                            d_segmentIdsOfUsedIdsOut[outputOffset + i] = t;
-                        }
-                    }
-                }
+            readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
+                d_newPositionsOfActiveTasks.data(),
+                newNumActiveTasks,
+                d_usedReadIds.data(),
+                d_usedReadIds2.data(),
+                d_segmentIdsOfUsedReadIds2.data(),
+                d_numUsedReadIdsPerAnchor2.data(),
+                d_numUsedReadIdsPerAnchorPrefixSum.data(), 
+                d_numUsedReadIdsPerAnchorPrefixSum2.data()
             ); CUERR;
 
             std::swap(d_usedReadIds, d_usedReadIds2);
@@ -4154,47 +4163,19 @@ struct BatchData{
             d_fullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
             d_segmentIdsOfFullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
 
-            const int possibleNumWarps = SDIV(newNumActiveTasks, 32);
+            const int possibleNumWarps = newNumActiveTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
-            helpers::lambda_kernel<<<numBlocks, 128, 0, streams[0]>>>(
-                [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
-                    d_fullyUsedReadIdsIn = d_fullyUsedReadIds.data(),
-                    d_fullyUsedReadIdsOut = d_fullyUsedReadIds2.data(),
-                    d_fullyUsedReadIdsInsize = d_fullyUsedReadIds.size(),
-                    d_fullyUsedReadIdsOutsize = d_fullyUsedReadIds2.size(),
-                    d_segmentIdsOfFullyUsedIdsOut = d_segmentIdsOfFullyUsedReadIds2.data(),
-                    d_segmentIdsOfFullyUsedIdsOutsize = d_segmentIdsOfFullyUsedReadIds2.size(),
-                    d_numFullyUsedReadIdsPerActiveTask = d_numFullyUsedReadIdsPerAnchor2.data(),
-                    inputOffsets = d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
-                    outputOffsets = d_numFullyUsedReadIdsPerAnchorPrefixSum2.data()
-                ] __device__ (){
-                    //use one warp per segment
-
-                    const int warpid = (threadIdx.x + blockDim.x * blockIdx.x) / 32;
-                    const int numwarps = (blockDim.x * gridDim.x) / 32;
-                    const int lane = threadIdx.x % 32;
-
-                    for(int t = warpid; t < newNumActiveTasks; t += numwarps){
-                        const int activeIndex = indicesOfActiveTasks[t];
-                        const int num = d_numFullyUsedReadIdsPerActiveTask[t];
-                        const int inputOffset = inputOffsets[activeIndex];
-                        const int outputOffset = outputOffsets[t];
-
-                        for(int i = lane; i < num; i += 32){
-                            //copy read id
-                            // assert(inputOffset + i < d_fullyUsedReadIdsInsize);
-                            // assert(outputOffset + i < d_fullyUsedReadIdsOutsize);
-                            d_fullyUsedReadIdsOut[outputOffset + i] = d_fullyUsedReadIdsIn[inputOffset + i];
-                            //set new segment id
-                            //assert(outputOffset + i < d_segmentIdsOfFullyUsedIdsOutsize);
-                            d_segmentIdsOfFullyUsedIdsOut[outputOffset + i] = t;
-                        }
-                    }
-                }
+            readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
+                d_newPositionsOfActiveTasks.data(),
+                newNumActiveTasks,
+                d_fullyUsedReadIds.data(),
+                d_fullyUsedReadIds2.data(),
+                d_segmentIdsOfFullyUsedReadIds2.data(),
+                d_numFullyUsedReadIdsPerAnchor2.data(),
+                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
+                d_numFullyUsedReadIdsPerAnchorPrefixSum2.data()
             ); CUERR;
 
             std::swap(d_fullyUsedReadIds, d_fullyUsedReadIds2);

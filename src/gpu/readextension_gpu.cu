@@ -1571,7 +1571,7 @@ extend_gpu_pairedend(
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n"; 
             //gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
 
-            //std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 4);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
