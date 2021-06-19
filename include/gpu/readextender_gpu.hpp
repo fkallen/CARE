@@ -538,9 +538,16 @@ struct BatchData{
     template<class TaskIter>
     void addTasks(TaskIter tasksBegin, TaskIter tasksEnd){
         const int numAdditionalTasks = std::distance(tasksBegin, tasksEnd);
+        assert(numAdditionalTasks % 4 == 0);
+        if(numAdditionalTasks == 0) return;
+
         const int currentNumTasks = tasks.size();
         const int currentNumActiveTasks = indicesOfActiveTasks.size();
         const int newNumActiveTasks = currentNumActiveTasks + numAdditionalTasks;
+
+        std::cerr << "currentNumTasks = " << currentNumTasks << ", currentNumActiveTasks = " << currentNumActiveTasks
+            << "newNumActiveTasks = " << newNumActiveTasks << "\n";
+
 
         void* cubTemp = nullptr;
         std::size_t cubTempSize = 0;
@@ -563,6 +570,7 @@ struct BatchData{
 
         d_anchorReadIds2.resize(newNumActiveTasks);
         d_mateReadIds2.resize(newNumActiveTasks);
+        d_subjectSequencesData2.resize(newNumActiveTasks * encodedSequencePitchInInts);
         d_subjectSequencesDataDecoded2.resize(newNumActiveTasks * decodedSequencePitchInBytes);
         d_anchorSequencesLength2.resize(newNumActiveTasks);
         d_anchorQualityScores2.resize(newNumActiveTasks * qualityPitchInBytes);
@@ -594,6 +602,15 @@ struct BatchData{
             streams[0]
         ); CUERR;
         std::swap(d_subjectSequencesDataDecoded, d_subjectSequencesDataDecoded2);
+
+        cudaMemcpyAsync(
+            d_subjectSequencesData2.data(), 
+            d_subjectSequencesData.data(),
+            sizeof(unsigned int) * currentNumActiveTasks * encodedSequencePitchInInts,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_subjectSequencesData, d_subjectSequencesData2);
 
         cudaMemcpyAsync(
             d_anchorSequencesLength2.data(), 
@@ -788,6 +805,13 @@ struct BatchData{
         //save tasks and update indices of active tasks
 
         tasks.insert(tasks.end(), std::make_move_iterator(tasksBegin), std::make_move_iterator(tasksEnd));
+        assert(tasks.size() % 4 == 0);
+
+        
+
+        for(int i = currentNumTasks; i < int(tasks.size()); i++){
+            tasks[i].id = i;
+        }
 
         indicesOfActiveTasks.resize(currentNumActiveTasks + numAdditionalTasks);
         std::iota(
@@ -795,9 +819,20 @@ struct BatchData{
             indicesOfActiveTasks.end(),
             currentNumTasks
         );
+        assert(indicesOfActiveTasks.size() == newNumActiveTasks);
 
+        numTasks = indicesOfActiveTasks.size();
+        numReadPairs = tasks.size() / 4;
 
         state = State::BeforeHash;
+    }
+
+    void resetTasks(){
+        state = State::BeforeHash;
+        numTasks = 0;
+        numReadPairs = 0;
+        tasks.clear();
+        indicesOfActiveTasks.clear();
     }
 
 
@@ -864,6 +899,7 @@ struct BatchData{
     DeviceBuffer<unsigned int> d_candidateSequencesData2{};
 
     DeviceBuffer<unsigned int> d_subjectSequencesData{};
+    DeviceBuffer<unsigned int> d_subjectSequencesData2{};
     DeviceBuffer<unsigned int> d_candidateSequencesData{};
 
     
@@ -2400,8 +2436,6 @@ public:
 
         // nvtx::pop_range();
 
-        assert(batchData.tasks.size() / 4 == batchData.numReadPairs);
-
         handleEarlyExitOfTasks4(batchData.tasks, batchData.indicesOfActiveTasks);
 
         for(int i = 0; i < numActiveTasks; i++){
@@ -3527,6 +3561,8 @@ public:
         //std::cerr << "new numTasksWithMateRemoved = " << batchData.numTasksWithMateRemoved << ", totalNumCandidates = " << batchData.totalNumCandidates << "\n";
 
         if(batchData.numTasksWithMateRemoved > 0){
+
+            batchData.d_anchormatedata.resize(batchData.numTasks * batchData.encodedSequencePitchInInts);
 
             //copy mate sequence data of removed mates
 

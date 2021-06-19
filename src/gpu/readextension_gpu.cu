@@ -177,6 +177,26 @@ void initializePairedEndExtensionBatchData4(
     std::size_t msaColumnPitchInElements,
     std::size_t qualityPitchInBytes
 ){
+
+
+#if 1
+    const int batchsizePairs = inputs.size();
+
+    if(batchsizePairs == 0) return;
+
+    batchData.pairedEnd = true;
+    batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
+    batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
+    batchData.msaColumnPitchInElements = msaColumnPitchInElements;
+    batchData.qualityPitchInBytes = qualityPitchInBytes;
+
+    std::vector<extension::Task> tasks(batchsizePairs * 4);
+    auto endIter = makePairedEndTasksFromInput4(inputs.begin(), inputs.end(), tasks.begin());
+    assert(endIter == tasks.end());
+
+    batchData.addTasks(std::make_move_iterator(tasks.begin()), std::make_move_iterator(tasks.end()));
+
+#else
     const int batchsizePairs = inputs.size();
     batchData.numReadPairs = batchsizePairs ;
     if(batchsizePairs == 0){
@@ -365,6 +385,7 @@ void initializePairedEndExtensionBatchData4(
     ); CUERR;
 
     cudaStreamSynchronize(batchData.streams[0]); CUERR;
+#endif    
 }
 
 
@@ -1498,6 +1519,8 @@ extend_gpu_pairedend(
             nvtx::pop_range();
 
             progressThread.addProgress(batchData->numReadPairs - repeated);
+
+            batchData->resetTasks();
         };
 
         isLastIteration = false;
