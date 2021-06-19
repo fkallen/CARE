@@ -545,8 +545,8 @@ struct BatchData{
         const int currentNumActiveTasks = indicesOfActiveTasks.size();
         const int newNumActiveTasks = currentNumActiveTasks + numAdditionalTasks;
 
-        std::cerr << "currentNumTasks = " << currentNumTasks << ", currentNumActiveTasks = " << currentNumActiveTasks
-            << "newNumActiveTasks = " << newNumActiveTasks << "\n";
+        // std::cerr << "currentNumTasks = " << currentNumTasks << ", currentNumActiveTasks = " << currentNumActiveTasks
+        //     << "newNumActiveTasks = " << newNumActiveTasks << "\n";
 
 
         void* cubTemp = nullptr;
@@ -1834,6 +1834,14 @@ public:
  
     void performNextStep(BatchData& batchData) const{
 
+        const auto name = BatchData::to_string(batchData.state);
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before " << name << " " << free << "\n";
+        // }
+
         switch(batchData.state){
             case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
             case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
@@ -1851,22 +1859,13 @@ public:
             case BatchData::State::None: break;
             default: break;
         };
-        // switch(batchData.state){
-        //     case BatchData::State::BeforeHash: getCandidateReadIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeAlignment: calculateAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeMSA: computeMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::BeforeUnpack: unpackResults(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-        //     case BatchData::State::Finished: break;
-        //     case BatchData::State::None: break;
-        //     default: break;
-        // };
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after " << name << " " << free << "\n";
+        // }
+
     }
 
 
@@ -1983,6 +1982,12 @@ public:
     void computeMSAs(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforeMSA);
 
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before computeMSAs " << free << "\n";
+        // }
+
         nvtx::push_range("computeMSAs", 6);
 
         //Sets batchData.totalNumCandidates to the sum of number of candidates for all tasks. (msa refinement can remove candidates)
@@ -1990,11 +1995,23 @@ public:
 
         nvtx::pop_range();
 
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after computeMSAs " << free << "\n";
+        // }
+
         batchData.setState(BatchData::State::BeforeExtend);
     }
 
     void computeExtendedSequencesFromMSAs(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforeExtend);
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before computeExtendedSequencesFromMSAs " << free << "\n";
+        // }
 
         nvtx::push_range("computeExtendedSequences", 7);
 
@@ -2002,11 +2019,29 @@ public:
 
         nvtx::pop_range();
 
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after computeExtendedSequencesFromMSAs " << free << "\n";
+        // }
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before updateUsedCandidateIds " << free << "\n";
+        // }
+
         nvtx::push_range("updateUsedCandidateIds", 2);
 
         updateUsedCandidateIds(batchData);
 
         nvtx::pop_range();
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after updateUsedCandidateIds " << free << "\n";
+        // }
 
         batchData.setState(BatchData::State::BeforeCopyToHost);
     }
@@ -2029,6 +2064,12 @@ public:
     void unpackResults(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforeUnpack);
 
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before unpackResults " << free << "\n";
+        // }
+
         nvtx::push_range("unpackResults", 9);
 
         unpackResultsIntoTasks(batchData);
@@ -2036,6 +2077,12 @@ public:
         nvtx::pop_range();
 
         batchData.setState(BatchData::State::BeforePrepareNextIteration);
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after unpackResults " << free << "\n";
+        // }
     }
 
     void prepareNextIteration(BatchData& batchData) const{
@@ -2076,11 +2123,23 @@ public:
                 batchData.streams[0]
             ); CUERR;
 
+            // {
+            //     std::size_t free, total;
+            //     cudaMemGetInfo(&free, &total);
+            //     std::cerr << "before updateBuffersForNextIteration " << free << "\n";
+            // }
+
             nvtx::push_range("updateBuffersForNextIteration", 6);
 
             updateBuffersForNextIteration(batchData);
 
             nvtx::pop_range();
+
+            // {
+            //     std::size_t free, total;
+            //     cudaMemGetInfo(&free, &total);
+            //     std::cerr << "after updateBuffersForNextIteration " << free << "\n";
+            // }
 
         }
 
@@ -5044,7 +5103,7 @@ public:
         cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengthsOUT, sizeof(int) * batchData.numTasks, stream); CUERR;
         //cubAllocator->DeviceAllocate((void**)&d_outputAnchors, sizeof(char) * batchData.numTasks * batchData.outputAnchorPitchInBytes, stream); CUERR;
         //cubAllocator->DeviceAllocate((void**)&d_outputAnchorQualities, sizeof(char) * batchData.numTasks * batchData.outputAnchorQualityPitchInBytes, stream); CUERR;
-        cubAllocator->DeviceAllocate((void**)&d_outputAnchorLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
+        //cubAllocator->DeviceAllocate((void**)&d_outputAnchorLengths, sizeof(int) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_isPairedTask, sizeof(bool) * batchData.numTasks, stream); CUERR;
         cubAllocator->DeviceAllocate((void**)&d_decodedMatesRevC, sizeof(char) * batchData.numTasks * batchData.decodedMatesRevCPitchInBytes, stream); CUERR;
         //cubAllocator->DeviceAllocate((void**)&d_outputMateHasBeenFound, sizeof(bool) * batchData.numTasks, stream); CUERR;
@@ -5623,6 +5682,14 @@ public:
 
         if(newNumActiveTasks == 0) return;
 
+        assert(newNumActiveTasks <= batchData.numTasks);
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "before removeUsedIdsOfFinishedTasks " << free << "\n";
+        // }
+
 
         //update used ids
 
@@ -5891,6 +5958,12 @@ public:
             std::swap(batchData.d_segmentIdsOfFullyUsedReadIds, batchData.d_segmentIdsOfFullyUsedReadIds2);
 
         }
+
+        // {
+        //     std::size_t free, total;
+        //     cudaMemGetInfo(&free, &total);
+        //     std::cerr << "after removeUsedIdsOfFinishedTasks " << free << "\n";
+        // }
 
     }
 
