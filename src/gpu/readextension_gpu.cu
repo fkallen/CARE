@@ -189,6 +189,10 @@ void initializePairedEndExtensionBatchData4(
     auto endIter = makePairedEndTasksFromInput4(inputs.begin(), inputs.end(), batchData.tasks.begin());
     assert(endIter == batchData.tasks.end());
 
+    for(int i = 0; i < batchsizePairs * 4; i++){
+        batchData.tasks[i].id = i;
+    }
+
 
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
@@ -210,9 +214,7 @@ void initializePairedEndExtensionBatchData4(
     }
     #endif
 
-    for(int i = 0; i < batchsizePairs * 4; i++){
-        batchData.tasks[i].id = i;
-    }
+
 
     batchData.pairedEnd = true;
 
@@ -221,21 +223,21 @@ void initializePairedEndExtensionBatchData4(
     //initialize buffers
     batchData.d_numUsedReadIdsPerAnchor.resize(numAnchors);
     batchData.d_numUsedReadIdsPerAnchorPrefixSum.resize(numAnchors);
-    batchData.h_numUsedReadIds.resize(1);
+    batchData.h_numUsedReadIds.resize(1); // <---
     batchData.d_numFullyUsedReadIdsPerAnchor.resize(numAnchors);
     batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(numAnchors);
-    batchData.h_numFullyUsedReadIds.resize(1);
+    batchData.h_numFullyUsedReadIds.resize(1); // <---
 
     batchData.numTasks = numAnchors;
 
-    batchData.h_numAnchors.resize(1);
-    batchData.d_numAnchors.resize(1);
-    batchData.h_numCandidates.resize(1);
-    batchData.d_numCandidates.resize(1);
-    batchData.d_numCandidates2.resize(1);
-    batchData.h_numAnchorsWithRemovedMates.resize(1);
+    batchData.h_numAnchors.resize(1);// <---
+    batchData.d_numAnchors.resize(1);// <---
+    batchData.h_numCandidates.resize(1);// <---
+    batchData.d_numCandidates.resize(1);// <---
+    batchData.d_numCandidates2.resize(1);// <---
+    batchData.h_numAnchorsWithRemovedMates.resize(1);// <---
 
-    batchData.h_numUsedReadIds.resize(1);
+    batchData.h_numUsedReadIds.resize(1);// <---
 
     batchData.h_anchorReadIds.resize(numAnchors);
     batchData.d_anchorReadIds.resize(numAnchors);
@@ -266,8 +268,6 @@ void initializePairedEndExtensionBatchData4(
 
     batchData.d_anchorIndicesWithRemovedMates.resize(numAnchors);
 
-    batchData.h_newPositionsOfActiveTasks.resize(numAnchors);
-    std::iota(batchData.h_newPositionsOfActiveTasks.begin(), batchData.h_newPositionsOfActiveTasks.end(), 0);
     *batchData.h_numUsedReadIds = 0;
     *batchData.h_numFullyUsedReadIds = 0;
 
@@ -361,70 +361,8 @@ void initializePairedEndExtensionBatchData4(
         batchData.d_anchorSequencesLength.data(),
         batchData.decodedSequencePitchInBytes,
         batchData.encodedSequencePitchInInts,
-        batchData.h_newPositionsOfActiveTasks.size()
+        numAnchors
     ); CUERR;
-
-    // helpers::lambda_kernel<<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
-    //     [
-    //         decodedSequencePitchInBytes = batchData.decodedSequencePitchInBytes,
-    //         encodedSequencePitchInInts = batchData.encodedSequencePitchInInts,
-    //         numTasks = batchData.numTasks,
-    //         encodedSequences = batchData.d_subjectSequencesData.data(),
-    //         decodedSequences = batchData.d_subjectSequencesDataDecoded.data(),
-    //         sequenceLengths = batchData.d_anchorSequencesLength.data()
-    //     ] __device__ (){
-
-    //         auto group = cg::tiled_partition<8>(cg::this_thread_block());
-    //         const int numGroups = (blockDim.x * gridDim.x) / group.size();
-    //         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
-
-    //         for(int a = groupId; a < numTasks; a += numGroups){
-    //             unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
-    //             const char* const in = decodedSequences + a * decodedSequencePitchInBytes;
-    //             const int length = sequenceLengths[a];
-
-    //             const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
-    //             constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
-
-    //             for(int i = group.thread_rank(); i < nInts; i += group.size()){
-    //                 unsigned int data = 0;
-
-    //                 const int loopend = min((i+1) * basesPerInt, length);
-                    
-    //                 for(int nucIndex = i * basesPerInt; nucIndex < loopend; nucIndex++){
-    //                     switch(in[nucIndex]) {
-    //                     case 'A':
-    //                         data = (data << 2) | SequenceHelpers::encodedbaseA();
-    //                         break;
-    //                     case 'C':
-    //                         data = (data << 2) | SequenceHelpers::encodedbaseC();
-    //                         break;
-    //                     case 'G':
-    //                         data = (data << 2) | SequenceHelpers::encodedbaseG();
-    //                         break;
-    //                     case 'T':
-    //                         data = (data << 2) | SequenceHelpers::encodedbaseT();
-    //                         break;
-    //                     default:
-    //                         data = (data << 2) | SequenceHelpers::encodedbaseA();
-    //                         break;
-    //                     }
-    //                 }
-
-    //                 if(i == nInts-1){
-    //                     //pack bits of last integer into higher order bits
-    //                     int leftoverbits = 2 * (nInts * basesPerInt - length);
-    //                     if(leftoverbits > 0){
-    //                         data <<= leftoverbits;
-    //                     }
-    //                 }
-
-    //                 out[i] = data;
-    //             }
-    //         }
-    //     }
-    // );
-
 
     cudaStreamSynchronize(batchData.streams[0]); CUERR;
 }
@@ -1346,7 +1284,7 @@ extend_gpu_pairedend(
 
         CudaStream stream;
 
-        auto batchData = std::make_unique<BatchData>();
+        auto batchData = std::make_unique<BatchData>(myCubAllocator);
 
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;

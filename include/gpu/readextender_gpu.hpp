@@ -514,10 +514,293 @@ struct BatchData{
         state = newstate;
     }
 
+    BatchData(cub::CachingDeviceAllocator& cubAllocator_)
+        : cubAllocator(&cubAllocator_){
+        h_numUsedReadIds.resize(1);
+        h_numFullyUsedReadIds.resize(1);
+        h_numAnchors.resize(1);
+        h_numCandidates.resize(1);
+        h_numAnchorsWithRemovedMates.resize(1);
+
+        d_numAnchors.resize(1);
+        d_numCandidates.resize(1);
+        d_numCandidates2.resize(1);
+
+        *h_numUsedReadIds = 0;
+        *h_numFullyUsedReadIds = 0;
+        *h_numAnchors = 0;
+        *h_numCandidates = 0;
+        *h_numAnchorsWithRemovedMates = 0;
+
+        numTasks = 0;
+    }
+
+    template<class TaskIter>
+    void addTasks(TaskIter tasksBegin, TaskIter tasksEnd){
+        const int numAdditionalTasks = std::distance(tasksBegin, tasksEnd);
+        const int currentNumTasks = tasks.size();
+        const int currentNumActiveTasks = indicesOfActiveTasks.size();
+        const int newNumActiveTasks = currentNumActiveTasks + numAdditionalTasks;
+
+        void* cubTemp = nullptr;
+        std::size_t cubTempSize = 0;
+        cudaError_t cubstatus = cudaSuccess;
+
+        h_anchorReadIds.resize(newNumActiveTasks);
+        h_mateReadIds.resize(newNumActiveTasks);
+        h_subjectSequencesDataDecoded.resize(newNumActiveTasks * decodedSequencePitchInBytes);
+        h_anchorSequencesLength.resize(newNumActiveTasks);
+        h_anchorQualityScores.resize(newNumActiveTasks * qualityPitchInBytes);
+        h_inputanchormatedata.resize(newNumActiveTasks * encodedSequencePitchInInts);
+
+
+        d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks); // ???
+
+        d_numUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
+        d_numUsedReadIdsPerAnchorPrefixSum.resize(newNumActiveTasks);
+        d_numFullyUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
+        d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(newNumActiveTasks);
+
+        d_anchorReadIds2.resize(newNumActiveTasks);
+        d_mateReadIds2.resize(newNumActiveTasks);
+        d_subjectSequencesDataDecoded2.resize(newNumActiveTasks * decodedSequencePitchInBytes);
+        d_anchorSequencesLength2.resize(newNumActiveTasks);
+        d_anchorQualityScores2.resize(newNumActiveTasks * qualityPitchInBytes);
+        d_inputanchormatedata2.resize(newNumActiveTasks * encodedSequencePitchInInts);
+
+        cudaMemcpyAsync(
+            d_anchorReadIds2.data(), 
+            d_anchorReadIds.data(),
+            sizeof(int) * currentNumActiveTasks,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_anchorReadIds, d_anchorReadIds2);
+
+        cudaMemcpyAsync(
+            d_mateReadIds2.data(), 
+            d_mateReadIds.data(),
+            sizeof(int) * currentNumActiveTasks,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_mateReadIds, d_mateReadIds2);
+
+        cudaMemcpyAsync(
+            d_subjectSequencesDataDecoded2.data(), 
+            d_subjectSequencesDataDecoded.data(),
+            sizeof(char) * currentNumActiveTasks * decodedSequencePitchInBytes,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_subjectSequencesDataDecoded, d_subjectSequencesDataDecoded2);
+
+        cudaMemcpyAsync(
+            d_anchorSequencesLength2.data(), 
+            d_anchorSequencesLength.data(),
+            sizeof(int) * currentNumActiveTasks,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_anchorSequencesLength, d_anchorSequencesLength2);
+
+        cudaMemcpyAsync(
+            d_anchorQualityScores2.data(), 
+            d_anchorQualityScores.data(),
+            sizeof(char) * currentNumActiveTasks * qualityPitchInBytes,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_anchorQualityScores, d_anchorQualityScores2);
+
+        cudaMemcpyAsync(
+            d_inputanchormatedata2.data(), 
+            d_inputanchormatedata.data(),
+            sizeof(unsigned int) * currentNumActiveTasks * encodedSequencePitchInInts,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_inputanchormatedata, d_inputanchormatedata2);
+
+        cudaMemcpyAsync(
+            d_numUsedReadIdsPerAnchor2.data(), 
+            d_numUsedReadIdsPerAnchor.data(),
+            sizeof(int) * currentNumActiveTasks,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_numUsedReadIdsPerAnchor, d_numUsedReadIdsPerAnchor2);
+
+        cudaMemcpyAsync(
+            d_numFullyUsedReadIdsPerAnchor2.data(), 
+            d_numFullyUsedReadIdsPerAnchor.data(),
+            sizeof(int) * currentNumActiveTasks,
+            D2D,
+            streams[0]
+        ); CUERR;
+        std::swap(d_numFullyUsedReadIdsPerAnchor, d_numFullyUsedReadIdsPerAnchor2);
+
+        cudaMemsetAsync(d_numUsedReadIdsPerAnchor.data() + currentNumActiveTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+        cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumActiveTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+
+        cubstatus = cub::DeviceScan::ExclusiveSum(
+            nullptr,
+            cubTempSize,
+            d_numUsedReadIdsPerAnchor.data(), 
+            d_numUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumActiveTasks, 
+            streams[0]
+        );
+        assert(cudaSuccess == cubstatus);
+
+        cubAllocator->DeviceAllocate((void**)&cubTemp, cubTempSize, streams[0]);  CUERR;
+
+        cubstatus = cub::DeviceScan::ExclusiveSum(
+            cubTemp,
+            cubTempSize,
+            d_numUsedReadIdsPerAnchor.data(), 
+            d_numUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumActiveTasks, 
+            streams[0]
+        );
+        assert(cudaSuccess == cubstatus);
+
+        cubAllocator->DeviceFree(cubTemp); CUERR;
 
 
 
-    bool needPrepareStep = false;
+        cubstatus = cub::DeviceScan::ExclusiveSum(
+            nullptr,
+            cubTempSize,
+            d_numFullyUsedReadIdsPerAnchor.data(), 
+            d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumActiveTasks, 
+            streams[0]
+        );
+        assert(cudaSuccess == cubstatus);
+
+        cubAllocator->DeviceAllocate((void**)&cubTemp, cubTempSize, streams[0]);  CUERR;
+
+        cubstatus = cub::DeviceScan::ExclusiveSum(
+            cubTemp,
+            cubTempSize,
+            d_numFullyUsedReadIdsPerAnchor.data(), 
+            d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumActiveTasks, 
+            streams[0]
+        );
+        assert(cudaSuccess == cubstatus);
+
+        cubAllocator->DeviceFree(cubTemp); CUERR;
+
+
+
+        for(int t = 0; t < numAdditionalTasks; t++){
+            const auto& task = *(tasksBegin + t);
+
+            h_anchorReadIds[t] = task.myReadId;
+            h_mateReadIds[t] = task.mateReadId;
+
+            std::copy(
+                task.encodedMate.begin(),
+                task.encodedMate.end(),
+                h_inputanchormatedata.begin() + t * encodedSequencePitchInInts
+            );
+
+            h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+            std::copy(
+                task.totalDecodedAnchors.back().begin(),
+                task.totalDecodedAnchors.back().end(),
+                h_subjectSequencesDataDecoded.begin() + t * decodedSequencePitchInBytes
+            );
+
+            assert(h_anchorQualityScores.size() >= (t+1) * qualityPitchInBytes);
+
+            std::copy(
+                task.currentQualityScores.begin(),
+                task.currentQualityScores.end(),
+                h_anchorQualityScores.begin() + t * qualityPitchInBytes
+            );
+        }
+
+        cudaMemcpyAsync(
+            d_inputanchormatedata.data() + currentNumActiveTasks * encodedSequencePitchInInts,
+            h_inputanchormatedata.data(),
+            sizeof(unsigned int) * encodedSequencePitchInInts * numAdditionalTasks,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_anchorSequencesLength.data() + currentNumActiveTasks,
+            h_anchorSequencesLength.data(),
+            sizeof(int) * numAdditionalTasks,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_anchorReadIds.data() + currentNumActiveTasks,
+            h_anchorReadIds.data(),
+            sizeof(read_number) * numAdditionalTasks,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_mateReadIds.data() + currentNumActiveTasks,
+            h_mateReadIds.data(),
+            sizeof(read_number) * numAdditionalTasks,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_subjectSequencesDataDecoded.data() + currentNumActiveTasks * decodedSequencePitchInBytes,
+            h_subjectSequencesDataDecoded.data(),
+            sizeof(char) * numAdditionalTasks * decodedSequencePitchInBytes,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            d_anchorQualityScores.data() + currentNumActiveTasks * qualityPitchInBytes,
+            h_anchorQualityScores.data(),
+            sizeof(char) * numAdditionalTasks * qualityPitchInBytes,
+            H2D,
+            streams[0]
+        ); CUERR;
+
+        readextendergpukernels::encodeSequencesTo2BitKernel<8>
+        <<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+            d_subjectSequencesData.data() + currentNumActiveTasks * encodedSequencePitchInInts,
+            d_subjectSequencesDataDecoded.data() + currentNumActiveTasks * decodedSequencePitchInBytes,
+            d_anchorSequencesLength.data() + currentNumActiveTasks,
+            decodedSequencePitchInBytes,
+            encodedSequencePitchInInts,
+            numAdditionalTasks
+        ); CUERR;
+
+
+
+
+        //save tasks and update indices of active tasks
+
+        tasks.insert(tasks.end(), std::make_move_iterator(tasksBegin), std::make_move_iterator(tasksEnd));
+
+        indicesOfActiveTasks.resize(currentNumActiveTasks + numAdditionalTasks);
+        std::iota(
+            indicesOfActiveTasks.begin() + currentNumActiveTasks, 
+            indicesOfActiveTasks.end(),
+            currentNumTasks
+        );
+
+
+        state = State::BeforeHash;
+    }
+
+
     bool pairedEnd = false;
     State state = State::None;
     int numTasks = 0;
@@ -526,6 +809,8 @@ struct BatchData{
     int numReadPairs = 0;
 
     int totalNumCandidates = 0;
+
+    cub::CachingDeviceAllocator* cubAllocator;
 
     std::size_t encodedSequencePitchInInts = 0;
     std::size_t decodedSequencePitchInBytes = 0;
@@ -537,8 +822,6 @@ struct BatchData{
     std::size_t decodedMatesRevCPitchInBytes = 0;
 
     
-    DeviceBuffer<read_number> d_anchorReadIds2{};
-    DeviceBuffer<read_number> d_mateReadIds2{};
     PinnedBuffer<read_number> h_candidateReadIds{};
     DeviceBuffer<read_number> d_candidateReadIds{};
 
@@ -552,9 +835,6 @@ struct BatchData{
     PinnedBuffer<int> h_segmentIdsOfReadIds{};
 
     DeviceBuffer<unsigned int> d_anchormatedata{};
-
-    
-    DeviceBuffer<unsigned int> d_inputanchormatedata2{};
 
     DeviceBuffer<int> d_anchorIndicesWithRemovedMates{};
 
@@ -605,6 +885,13 @@ struct BatchData{
     DeviceBuffer<int> d_anchorSequencesLength{};
     DeviceBuffer<read_number> d_anchorReadIds{};
     DeviceBuffer<read_number> d_mateReadIds{};
+
+    DeviceBuffer<unsigned int> d_inputanchormatedata2{};
+    DeviceBuffer<char> d_subjectSequencesDataDecoded2{};
+    DeviceBuffer<char> d_anchorQualityScores2{};
+    DeviceBuffer<int> d_anchorSequencesLength2{};
+    DeviceBuffer<read_number> d_anchorReadIds2{};
+    DeviceBuffer<read_number> d_mateReadIds2{};
 
     // -----
 
