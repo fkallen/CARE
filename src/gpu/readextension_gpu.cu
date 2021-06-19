@@ -259,14 +259,14 @@ void initializePairedEndExtensionBatchData4(
     batchData.h_inputanchormatedata.resize(numAnchors * batchData.encodedSequencePitchInInts);
     batchData.d_inputanchormatedata.resize(numAnchors * batchData.encodedSequencePitchInInts);
 
-    batchData.h_numCandidatesPerAnchor.resize(numAnchors);
-    batchData.d_numCandidatesPerAnchor.resize(numAnchors);
-    batchData.d_numCandidatesPerAnchor2.resize(numAnchors);
-    batchData.h_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
-    batchData.d_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
-    batchData.d_numCandidatesPerAnchorPrefixSum2.resize(numAnchors+1);
+    // batchData.h_numCandidatesPerAnchor.resize(numAnchors);
+    // batchData.d_numCandidatesPerAnchor.resize(numAnchors);
+    // batchData.d_numCandidatesPerAnchor2.resize(numAnchors);
+    // batchData.h_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
+    // batchData.d_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
+    // batchData.d_numCandidatesPerAnchorPrefixSum2.resize(numAnchors+1);
 
-    batchData.d_anchorIndicesWithRemovedMates.resize(numAnchors);
+    // batchData.d_anchorIndicesWithRemovedMates.resize(numAnchors);
 
     *batchData.h_numUsedReadIds = 0;
     *batchData.h_numFullyUsedReadIds = 0;

@@ -554,7 +554,7 @@ struct BatchData{
         h_inputanchormatedata.resize(newNumActiveTasks * encodedSequencePitchInInts);
 
 
-        d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks); // ???
+        //d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks); // ???
 
         d_numUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
         d_numUsedReadIdsPerAnchorPrefixSum.resize(newNumActiveTasks);
@@ -773,7 +773,7 @@ struct BatchData{
         ); CUERR;
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
-        <<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+        <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
             d_subjectSequencesData.data() + currentNumActiveTasks * encodedSequencePitchInInts,
             d_subjectSequencesDataDecoded.data() + currentNumActiveTasks * decodedSequencePitchInBytes,
             d_anchorSequencesLength.data() + currentNumActiveTasks,
@@ -972,6 +972,8 @@ public:
     }
    
     void getCandidateReadIds(BatchData& batchData, cudaStream_t stream) const{
+        batchData.d_numCandidatesPerAnchor.resize(batchData.numTasks);
+        batchData.d_numCandidatesPerAnchorPrefixSum.resize(batchData.numTasks + 1);
 
         int totalNumValues = 0;
 
@@ -3353,6 +3355,8 @@ public:
                 firstStream
             );
 
+            batchData.d_anchorIndicesWithRemovedMates.resize(batchData.numTasksWithMateRemoved);
+
             cudaMemcpyAsync(
                 batchData.d_anchorIndicesWithRemovedMates.data(),
                 batchData.h_segmentIdsOfReadIds.data(),
@@ -3376,6 +3380,8 @@ public:
         batchData.h_segmentIdsOfReadIds.resize(batchData.totalNumCandidates);
 
         batchData.h_numCandidatesPerAnchor.resize(batchData.numTasks);
+
+        batchData.d_anchorIndicesWithRemovedMates.resize(batchData.numTasks);
 
         bool* d_shouldBeKept = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_shouldBeKept, sizeof(bool) * batchData.totalNumCandidates, firstStream);   
@@ -3445,6 +3451,9 @@ public:
         void* cubtempstorage; cubAllocator->DeviceAllocate((void**)&cubtempstorage, cubBytes, firstStream);   
         
         helpers::call_fill_kernel_async(d_shouldBeKept, batchData.totalNumCandidates, false, firstStream);
+
+        batchData.d_numCandidatesPerAnchor2.resize(batchData.numTasks);
+
         
         //flag candidates ids to remove because they are equal to anchor id or equal to mate id
         readextendergpukernels::flagCandidateIdsWhichAreEqualToAnchorOrMateKernel<<<batchData.numTasks, 128, 0, firstStream>>>(
@@ -3511,6 +3520,8 @@ public:
         batchData.numTasksWithMateRemoved = *batchData.h_numAnchorsWithRemovedMates;
         batchData.totalNumCandidates = *batchData.h_numCandidates;
 
+        batchData.d_anchorIndicesWithRemovedMates.resize(batchData.numTasksWithMateRemoved);
+
         cubAllocator->DeviceFree(d_shouldBeKept); CUERR;
 
         //std::cerr << "new numTasksWithMateRemoved = " << batchData.numTasksWithMateRemoved << ", totalNumCandidates = " << batchData.totalNumCandidates << "\n";
@@ -3558,6 +3569,8 @@ public:
         }
 
         cubAllocator->DeviceFree(d_anchorFlags); CUERR;
+
+        batchData.d_numCandidatesPerAnchorPrefixSum2.resize(batchData.numTasks + 1);
 
         // //compute prefix sum of number of candidates per anchor
         helpers::call_set_kernel_async(batchData.d_numCandidatesPerAnchorPrefixSum2.data(), 0, 0, firstStream);
