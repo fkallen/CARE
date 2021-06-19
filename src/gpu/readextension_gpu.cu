@@ -242,7 +242,6 @@ void initializePairedEndExtensionBatchData4(
     batchData.h_mateReadIds.resize(numAnchors);
     batchData.d_mateReadIds.resize(numAnchors);
     
-    batchData.h_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numAnchors);
     batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numAnchors);
     batchData.h_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numAnchors);   
     batchData.d_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numAnchors);

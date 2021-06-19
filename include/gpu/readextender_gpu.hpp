@@ -37,7 +37,7 @@
 
 #define DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
 
-//#define DO_ONLY_REMOVE_MATE_IDS
+#define DO_ONLY_REMOVE_MATE_IDS
 
 
 
@@ -536,11 +536,8 @@ struct BatchData{
     std::size_t outputAnchorQualityPitchInBytes = 0;
     std::size_t decodedMatesRevCPitchInBytes = 0;
 
-    PinnedBuffer<read_number> h_anchorReadIds{};
-    DeviceBuffer<read_number> d_anchorReadIds{};
+    
     DeviceBuffer<read_number> d_anchorReadIds2{};
-    PinnedBuffer<read_number> h_mateReadIds{};
-    DeviceBuffer<read_number> d_mateReadIds{};
     DeviceBuffer<read_number> d_mateReadIds2{};
     PinnedBuffer<read_number> h_candidateReadIds{};
     DeviceBuffer<read_number> d_candidateReadIds{};
@@ -556,8 +553,7 @@ struct BatchData{
 
     DeviceBuffer<unsigned int> d_anchormatedata{};
 
-    PinnedBuffer<unsigned int> h_inputanchormatedata{};
-    DeviceBuffer<unsigned int> d_inputanchormatedata{};
+    
     DeviceBuffer<unsigned int> d_inputanchormatedata2{};
 
     DeviceBuffer<int> d_anchorIndicesWithRemovedMates{};
@@ -581,24 +577,36 @@ struct BatchData{
     DeviceBuffer<int> d_numCandidates2{};
     PinnedBuffer<int> h_numAnchorsWithRemovedMates{};
 
-    PinnedBuffer<int> h_anchorSequencesLength{};
-    DeviceBuffer<int> d_anchorSequencesLength{};
+    
     DeviceBuffer<int> d_candidateSequencesLength{};
-    PinnedBuffer<unsigned int> h_subjectSequencesData{};
-    PinnedBuffer<char> h_subjectSequencesDataDecoded{};
-    DeviceBuffer<char> d_subjectSequencesDataDecoded{};
+    
 
     DeviceBuffer<unsigned int> d_candidateSequencesData2{};
 
     DeviceBuffer<unsigned int> d_subjectSequencesData{};
     DeviceBuffer<unsigned int> d_candidateSequencesData{};
 
-    PinnedBuffer<char> h_anchorQualityScores{};
-    DeviceBuffer<char> d_anchorQualityScores{};
+    
 
-    PinnedBuffer<read_number> h_usedReadIds{};
-    PinnedBuffer<int> h_numUsedReadIdsPerAnchor{};
-    PinnedBuffer<int> h_numUsedReadIdsPerAnchorPrefixSum{};
+    // ----- staging buffers for input
+    PinnedBuffer<char> h_anchorQualityScores{};
+    PinnedBuffer<char> h_subjectSequencesDataDecoded{};
+    PinnedBuffer<read_number> h_anchorReadIds{};
+    PinnedBuffer<read_number> h_mateReadIds{};
+    PinnedBuffer<int> h_anchorSequencesLength{};
+    PinnedBuffer<unsigned int> h_inputanchormatedata{};
+    // ----- 
+
+    // ----- input data
+
+    DeviceBuffer<unsigned int> d_inputanchormatedata{};
+    DeviceBuffer<char> d_subjectSequencesDataDecoded{};
+    DeviceBuffer<char> d_anchorQualityScores{};
+    DeviceBuffer<int> d_anchorSequencesLength{};
+    DeviceBuffer<read_number> d_anchorReadIds{};
+    DeviceBuffer<read_number> d_mateReadIds{};
+
+    // -----
 
     DeviceBuffer<read_number> d_usedReadIds{};
     DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
@@ -620,7 +628,7 @@ struct BatchData{
     DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchorPrefixSum2{};
     DeviceBuffer<int> d_segmentIdsOfFullyUsedReadIds2{};
     PinnedBuffer<int> h_numFullyUsedReadIds{};
-    DeviceBuffer<bool> d_isFullyUsedCandidate{};
+    
 
     PinnedBuffer<int> h_newPositionsOfActiveTasks{};
     PinnedBuffer<int> d_newPositionsOfActiveTasks{};
@@ -636,6 +644,7 @@ struct BatchData{
     DeviceBuffer<bool> d_outputMateHasBeenFound;
     DeviceBuffer<extension::AbortReason> d_abortReasons;
     DeviceBuffer<int> d_outputAnchorLengths{};
+    DeviceBuffer<bool> d_isFullyUsedCandidate{};
 
     PinnedBuffer<int> h_firstTasksOfPairsToCheck;
 
@@ -2106,191 +2115,11 @@ public:
 
         handleEarlyExitOfTasks4(batchData.tasks, batchData.indicesOfActiveTasks);
 
-        // for(int i = 0; i < int(batchData.tasks.size()); i++){
-        //     const auto& task = batchData.tasks[i];
-
-        //     std::cerr << "i = " <<i << "\n";
-        //     std::cerr << "id " << task.id << "\n";
-        //     std::cerr << "numRemainingCandidates " << task.numRemainingCandidates << "\n";
-        //     std::cerr << "iteration " << task.iteration << "\n";
-        //     std::cerr << "mateHasBeenFound " << task.mateHasBeenFound << "\n";
-        //     std::cerr << "abort " << task.abort << "\n";
-        //     std::cerr << "abortReason " << to_string(task.abortReason) << "\n";
-        // }
-
-        // std::vector<read_number> gpuusedids(*batchData.h_numUsedReadIds);
-        // cudaMemcpyAsync(
-        //     gpuusedids.data(),
-        //     batchData.d_usedReadIds.data(),
-        //     sizeof(read_number) * (*batchData.h_numUsedReadIds),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // std::vector<int> gpunumusedidsperanchor(batchData.numTasks);
-        // cudaMemcpyAsync(
-        //     gpunumusedidsperanchor.data(),
-        //     batchData.d_numUsedReadIdsPerAnchor.data(),
-        //     sizeof(int) * (batchData.numTasks),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // std::vector<int> gpunumusedidsperanchorPS(batchData.numTasks);
-        // cudaMemcpyAsync(
-        //     gpunumusedidsperanchorPS.data(),
-        //     batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(),
-        //     sizeof(int) * (batchData.numTasks),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // cudaStreamSynchronize(batchData.streams[0]); CUERR;
-
-        // std::vector<read_number> gpufullyusedids(*batchData.h_numFullyUsedReadIds);
-        // cudaMemcpyAsync(
-        //     gpufullyusedids.data(),
-        //     batchData.d_fullyUsedReadIds.data(),
-        //     sizeof(read_number) * (*batchData.h_numFullyUsedReadIds),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // std::vector<int> gpunumfullyusedidsperanchor(batchData.numTasks);
-        // cudaMemcpyAsync(
-        //     gpunumfullyusedidsperanchor.data(),
-        //     batchData.d_numFullyUsedReadIdsPerAnchor.data(),
-        //     sizeof(int) * (batchData.numTasks),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // std::vector<int> gpunumfullyusedidsperanchorPS(batchData.numTasks);
-        // cudaMemcpyAsync(
-        //     gpunumfullyusedidsperanchorPS.data(),
-        //     batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-        //     sizeof(int) * (batchData.numTasks),
-        //     D2H,
-        //     batchData.streams[0]
-        // );
-
-        // cudaStreamSynchronize(batchData.streams[0]); CUERR;
-
-        /*
-            update book-keeping of used candidates
-        */  
-        //nvtx::push_range("usedcandidates", 6);
         for(int i = 0; i < numActiveTasks; i++){
             auto& task = batchData.tasks[batchData.indicesOfActiveTasks[i]];
 
-            // const int numCandidates = batchData.h_numCandidatesPerAnchor[i];
-            // const int offset = batchData.h_numCandidatesPerAnchorPrefixSum[i];
-            // const read_number* ids = &batchData.h_candidateReadIds[offset];
-            // const bool* isFullyUsed = &batchData.h_isFullyUsedCandidate[offset];
-
-            // std::cerr << "on cpu: set_union \n";
-            // std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            // std::cerr << "\n and \n";
-            // std::copy(ids, ids + numCandidates, std::ostream_iterator<read_number>(std::cerr, " "));
-            // std::cerr << "\n";
-
-            // std::vector<read_number> tmp(task.allUsedCandidateReadIdPairs.size() + numCandidates);
-            // auto tmp_end = std::set_union(
-            //     task.allUsedCandidateReadIdPairs.begin(),
-            //     task.allUsedCandidateReadIdPairs.end(),
-            //     ids,
-            //     ids + numCandidates,
-            //     tmp.begin()
-            // );
-
-            // tmp.erase(tmp_end, tmp.end());
-            // std::swap(task.allUsedCandidateReadIdPairs, tmp);
-
-            // std::vector<read_number> mygpuids(gpuusedids.begin() + gpunumusedidsperanchorPS[i], gpuusedids.begin() + gpunumusedidsperanchorPS[i] + gpunumusedidsperanchor[i]);
-
-            // if(mygpuids != task.allUsedCandidateReadIdPairs){
-            //     std::cerr << "error i = " << i << " batchData.indicesOfActiveTasks[i] = " << batchData.indicesOfActiveTasks[i] << " task.myReadId = " << task.myReadId << ", iteration " << task.iteration << "\n";
-            //     std::cerr << "cpu ids\n";
-            //     std::copy(task.allUsedCandidateReadIdPairs.begin(), task.allUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            //     std::cerr << "\n";
-
-            //     std::cerr << "gpu ids\n";
-            //     std::copy(mygpuids.begin(), mygpuids.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            //     std::cerr << "\n";
-
-            //     assert(false);
-            // }
-
-            // std::vector<read_number> fullyUsedIds(numCandidates);
-            // int numFullyUsed = 0;
-            // for(int k = 0; k < numCandidates; k++){
-            //     if(isFullyUsed[k]){
-            //         fullyUsedIds[numFullyUsed++] = ids[k];
-            //     }
-            // }
-            // fullyUsedIds.erase(fullyUsedIds.begin() + numFullyUsed, fullyUsedIds.end());
-
-
-            // std::vector<read_number> tmp2(task.allFullyUsedCandidateReadIdPairs.size() + numFullyUsed);
-            // auto tmp2_end = std::set_union(
-            //     task.allFullyUsedCandidateReadIdPairs.begin(),
-            //     task.allFullyUsedCandidateReadIdPairs.end(),
-            //     fullyUsedIds.begin(),
-            //     fullyUsedIds.end(),
-            //     tmp2.begin()
-            // );
-
-            // tmp2.erase(tmp2_end, tmp2.end());
-            // std::swap(task.allFullyUsedCandidateReadIdPairs, tmp2);
-
-            // std::vector<read_number> myfullygpuids(gpufullyusedids.begin() + gpunumfullyusedidsperanchorPS[i], gpufullyusedids.begin() + gpunumfullyusedidsperanchorPS[i] + gpunumfullyusedidsperanchor[i]);
-
-            // if(myfullygpuids != task.allFullyUsedCandidateReadIdPairs){
-            //     std::cerr << "error i = " << i << " batchData.indicesOfActiveTasks[i] = " << batchData.indicesOfActiveTasks[i] << " task.myReadId = " << task.myReadId << ", iteration " << task.iteration << "\n";
-            //     std::cerr << "cpu ids\n";
-            //     std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            //     std::cerr << "\n";
-
-            //     std::cerr << "gpu ids\n";
-            //     std::copy(myfullygpuids.begin(), myfullygpuids.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            //     std::cerr << "\n";
-
-            //     assert(false);
-            // }
-
-            //assert(task.allFullyUsedCandidateReadIdPairs.size() <= task.allUsedCandidateReadIdPairs.size());
-
-            // std::cerr << "task readid " << task.myReadId << "iteration " << task.iteration << " fullyused\n";
-            // std::copy(task.allFullyUsedCandidateReadIdPairs.begin(), task.allFullyUsedCandidateReadIdPairs.end(), std::ostream_iterator<read_number>(std::cerr, " "));
-            // std::cerr << "\n";
-
             task.iteration++;
         }
-
-        //nvtx::pop_range();
-        
-        // //update list of active task indices
-        // batchData.h_newPositionsOfActiveTasks.resize(batchData.numTasks);
-        // int newPosSize = 0;
-
-        // for(int i = 0; i < batchData.numTasks; i++){
-        //     if(batchData.tasks[batchData.indicesOfActiveTasks[i]].isActive(insertSize, insertSizeStddev)){
-        //         batchData.h_newPositionsOfActiveTasks[newPosSize++] = i;
-        //     }
-        // }
-        // batchData.h_newPositionsOfActiveTasks.resize(newPosSize);
-
-       
-        // batchData.indicesOfActiveTasks.erase(
-        //     std::remove_if(
-        //         batchData.indicesOfActiveTasks.begin(), 
-        //         batchData.indicesOfActiveTasks.end(),
-        //         [&](int index){
-        //             return !batchData.tasks[index].isActive(insertSize, insertSizeStddev);
-        //         }
-        //     ),
-        //     batchData.indicesOfActiveTasks.end()
-        // );
     }
 
 
