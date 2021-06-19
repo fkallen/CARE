@@ -222,15 +222,212 @@ void initializePairedEndExtensionBatchData4(
     batchData.d_numUsedReadIdsPerAnchor.resize(numAnchors);
     batchData.d_numUsedReadIdsPerAnchorPrefixSum.resize(numAnchors);
     batchData.h_numUsedReadIds.resize(1);
-    batchData.localActiveIndices.resize(numAnchors);
-    std::iota(batchData.localActiveIndices.begin(), batchData.localActiveIndices.end(), 0);
+    batchData.d_numFullyUsedReadIdsPerAnchor.resize(numAnchors);
+    batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(numAnchors);
+    batchData.h_numFullyUsedReadIds.resize(1);
+
+    batchData.numTasks = numAnchors;
+
+    batchData.h_numAnchors.resize(1);
+    batchData.d_numAnchors.resize(1);
+    batchData.h_numCandidates.resize(1);
+    batchData.d_numCandidates.resize(1);
+    batchData.d_numCandidates2.resize(1);
+    batchData.h_numAnchorsWithRemovedMates.resize(1);
+
+    batchData.h_numUsedReadIds.resize(1);
+
+    batchData.h_anchorReadIds.resize(numAnchors);
+    batchData.d_anchorReadIds.resize(numAnchors);
+    batchData.h_mateReadIds.resize(numAnchors);
+    batchData.d_mateReadIds.resize(numAnchors);
+    
+    batchData.h_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numAnchors);
+    batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numAnchors);
+    batchData.h_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numAnchors);   
+    batchData.d_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numAnchors);
+
+    batchData.h_anchorSequencesLength.resize(numAnchors);
+    batchData.d_anchorSequencesLength.resize(numAnchors);
+
+    batchData.h_anchorQualityScores.resize(batchData.qualityPitchInBytes * numAnchors);
+    batchData.d_anchorQualityScores.resize(batchData.qualityPitchInBytes * numAnchors);
+
+    batchData.d_anchormatedata.resize(numAnchors * batchData.encodedSequencePitchInInts);
+
+    batchData.h_inputanchormatedata.resize(numAnchors * batchData.encodedSequencePitchInInts);
+    batchData.d_inputanchormatedata.resize(numAnchors * batchData.encodedSequencePitchInInts);
+
+    batchData.h_numCandidatesPerAnchor.resize(numAnchors);
+    batchData.d_numCandidatesPerAnchor.resize(numAnchors);
+    batchData.d_numCandidatesPerAnchor2.resize(numAnchors);
+    batchData.h_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
+    batchData.d_numCandidatesPerAnchorPrefixSum.resize(numAnchors+1);
+    batchData.d_numCandidatesPerAnchorPrefixSum2.resize(numAnchors+1);
+
+    batchData.d_anchorIndicesWithRemovedMates.resize(numAnchors);
+
+    batchData.h_newPositionsOfActiveTasks.resize(numAnchors);
+    std::iota(batchData.h_newPositionsOfActiveTasks.begin(), batchData.h_newPositionsOfActiveTasks.end(), 0);
     *batchData.h_numUsedReadIds = 0;
+    *batchData.h_numFullyUsedReadIds = 0;
 
-    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchor.data(), 0, sizeof(int) * numAnchors, cudaStreamPerThread);
-    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(), 0, sizeof(int) * numAnchors, cudaStreamPerThread);
+    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchor.data(), 0, sizeof(int) * numAnchors, batchData.streams[0]);
+    cudaMemsetAsync(batchData.d_numUsedReadIdsPerAnchorPrefixSum.data(), 0, sizeof(int) * numAnchors, batchData.streams[0]);
+    cudaMemsetAsync(batchData.d_numFullyUsedReadIdsPerAnchor.data(), 0, sizeof(int) * numAnchors, batchData.streams[0]);
+    cudaMemsetAsync(batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 0, sizeof(int) * numAnchors, batchData.streams[0]);
+
+    for(int t = 0; t < numAnchors; t++){
+        auto& task = batchData.tasks[t];
+        task.dataIsAvailable = false;
+
+        batchData.h_anchorReadIds[t] = task.myReadId;
+        batchData.h_mateReadIds[t] = task.mateReadId;
+
+        std::copy(
+            task.encodedMate.begin(),
+            task.encodedMate.end(),
+            batchData.h_inputanchormatedata.begin() + t * batchData.encodedSequencePitchInInts
+        );
+
+        batchData.h_anchorSequencesLength[t] = task.currentAnchorLength;
+
+        std::copy(
+            task.totalDecodedAnchors.back().begin(),
+            task.totalDecodedAnchors.back().end(),
+            batchData.h_subjectSequencesDataDecoded.begin() + t * batchData.decodedSequencePitchInBytes
+        );
+
+        assert(batchData.h_anchorQualityScores.size() >= (t+1) * batchData.qualityPitchInBytes);
+
+        std::copy(
+            task.currentQualityScores.begin(),
+            task.currentQualityScores.end(),
+            batchData.h_anchorQualityScores.begin() + t * batchData.qualityPitchInBytes
+        );
+    }
+
+    cudaMemcpyAsync(
+        batchData.d_inputanchormatedata.data(),
+        batchData.h_inputanchormatedata.data(),
+        sizeof(unsigned int) * batchData.encodedSequencePitchInInts * batchData.numTasks,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    cudaMemcpyAsync(
+        batchData.d_anchorSequencesLength.data(),
+        batchData.h_anchorSequencesLength.data(),
+        sizeof(int) * batchData.numTasks,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    cudaMemcpyAsync(
+        batchData.d_anchorReadIds.data(),
+        batchData.h_anchorReadIds.data(),
+        sizeof(read_number) * batchData.numTasks,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    cudaMemcpyAsync(
+        batchData.d_mateReadIds.data(),
+        batchData.h_mateReadIds.data(),
+        sizeof(read_number) * batchData.numTasks,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    cudaMemcpyAsync(
+        batchData.d_subjectSequencesDataDecoded.data(),
+        batchData.h_subjectSequencesDataDecoded.data(),
+        batchData.numTasks * batchData.decodedSequencePitchInBytes,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    cudaMemcpyAsync(
+        batchData.d_anchorQualityScores.data(),
+        batchData.h_anchorQualityScores.data(),
+        batchData.numTasks * batchData.qualityPitchInBytes,
+        H2D,
+        batchData.streams[0]
+    ); CUERR;
+
+    readextendergpukernels::encodeSequencesTo2BitKernel<8>
+    <<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+        batchData.d_subjectSequencesData.data(),
+        batchData.d_subjectSequencesDataDecoded.data(),
+        batchData.d_anchorSequencesLength.data(),
+        batchData.decodedSequencePitchInBytes,
+        batchData.encodedSequencePitchInInts,
+        batchData.h_newPositionsOfActiveTasks.size()
+    ); CUERR;
+
+    // helpers::lambda_kernel<<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+    //     [
+    //         decodedSequencePitchInBytes = batchData.decodedSequencePitchInBytes,
+    //         encodedSequencePitchInInts = batchData.encodedSequencePitchInInts,
+    //         numTasks = batchData.numTasks,
+    //         encodedSequences = batchData.d_subjectSequencesData.data(),
+    //         decodedSequences = batchData.d_subjectSequencesDataDecoded.data(),
+    //         sequenceLengths = batchData.d_anchorSequencesLength.data()
+    //     ] __device__ (){
+
+    //         auto group = cg::tiled_partition<8>(cg::this_thread_block());
+    //         const int numGroups = (blockDim.x * gridDim.x) / group.size();
+    //         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
+
+    //         for(int a = groupId; a < numTasks; a += numGroups){
+    //             unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
+    //             const char* const in = decodedSequences + a * decodedSequencePitchInBytes;
+    //             const int length = sequenceLengths[a];
+
+    //             const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+    //             constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+    //             for(int i = group.thread_rank(); i < nInts; i += group.size()){
+    //                 unsigned int data = 0;
+
+    //                 const int loopend = min((i+1) * basesPerInt, length);
+                    
+    //                 for(int nucIndex = i * basesPerInt; nucIndex < loopend; nucIndex++){
+    //                     switch(in[nucIndex]) {
+    //                     case 'A':
+    //                         data = (data << 2) | SequenceHelpers::encodedbaseA();
+    //                         break;
+    //                     case 'C':
+    //                         data = (data << 2) | SequenceHelpers::encodedbaseC();
+    //                         break;
+    //                     case 'G':
+    //                         data = (data << 2) | SequenceHelpers::encodedbaseG();
+    //                         break;
+    //                     case 'T':
+    //                         data = (data << 2) | SequenceHelpers::encodedbaseT();
+    //                         break;
+    //                     default:
+    //                         data = (data << 2) | SequenceHelpers::encodedbaseA();
+    //                         break;
+    //                     }
+    //                 }
+
+    //                 if(i == nInts-1){
+    //                     //pack bits of last integer into higher order bits
+    //                     int leftoverbits = 2 * (nInts * basesPerInt - length);
+    //                     if(leftoverbits > 0){
+    //                         data <<= leftoverbits;
+    //                     }
+    //                 }
+
+    //                 out[i] = data;
+    //             }
+    //         }
+    //     }
+    // );
 
 
-    cudaStreamSynchronize(cudaStreamPerThread);
+    cudaStreamSynchronize(batchData.streams[0]); CUERR;
 }
 
 
@@ -292,7 +489,7 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(1000000);
+    cpu::RangeGenerator<read_number> readIdGenerator(500000);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
@@ -328,8 +525,8 @@ extend_gpu_pairedend(
     const int insertSizeStddev = extensionOptions.insertSizeStddev;
     const int maximumSequenceLength = gpuReadStorage.getSequenceLengthUpperBound();
     const std::size_t encodedSequencePitchInInts = SequenceHelpers::getEncodedNumInts2Bit(maximumSequenceLength);
-    const std::size_t decodedSequencePitchInBytes = maximumSequenceLength;
-    const std::size_t qualityPitchInBytes = 4 * SDIV(maximumSequenceLength, 4);
+    const std::size_t decodedSequencePitchInBytes = SDIV(maximumSequenceLength, 128) * 128;
+    const std::size_t qualityPitchInBytes = SDIV(maximumSequenceLength, 128) * 128;
 
     const std::size_t min_overlap = std::max(
         1, 
@@ -1162,6 +1359,8 @@ extend_gpu_pairedend(
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
         bool isLastIteration = false;
 
+        std::vector<extension::ExtendInput> inputs;
+
         auto init = [&](){
             nvtx::push_range("init", 2);
 
@@ -1235,7 +1434,7 @@ extend_gpu_pairedend(
 
                 const int numReadPairsInBatch = numReadsInBatch / 2;
 
-                std::vector<extension::ExtendInput> inputs(numReadPairsInBatch); 
+                inputs.resize(numReadPairsInBatch); 
 
                 for(int i = 0; i < numReadPairsInBatch; i++){
                     auto& input = inputs[i];
