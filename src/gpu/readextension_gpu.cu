@@ -667,7 +667,7 @@ extend_gpu_pairedend(
                 qualityPitchInBytes
             );
 
-            batchData->setState(BatchData::State::BeforePrepare);
+            batchData->setState(BatchData::State::BeforeHash);
 
             nvtx::pop_range();
 
@@ -827,7 +827,7 @@ extend_gpu_pairedend(
                 );
                 #endif
 
-                batchData->setState(BatchData::State::BeforePrepare);
+                batchData->setState(BatchData::State::BeforeHash);
             }else{
                 batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
             }
@@ -898,7 +898,7 @@ extend_gpu_pairedend(
 
             if(batchData->state == BatchData::State::None){
                 init();   
-                if(batchData->state == BatchData::State::BeforePrepare){
+                if(batchData->state == BatchData::State::BeforeHash){
                     chooseWorkerQueue(batchData);
                 }
             }else if(batchData->state == BatchData::State::Finished){
@@ -1145,7 +1145,7 @@ extend_gpu_pairedend(
                 );
                 #endif
 
-                batchData->setState(BatchData::State::BeforePrepare);
+                batchData->setState(BatchData::State::BeforeHash);
             }else{
                 batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
             }
@@ -1222,7 +1222,7 @@ extend_gpu_pairedend(
 
             if(batchData->state == BatchData::State::None){
                 init();   
-                if(batchData->state == BatchData::State::BeforePrepare){
+                if(batchData->state == BatchData::State::BeforeHash){
                     workBatchesQueue.push(batchData);
                 }
             }else if(batchData->state == BatchData::State::Finished){
@@ -1477,7 +1477,7 @@ extend_gpu_pairedend(
                 );
                 #endif
 
-                batchData->setState(BatchData::State::BeforePrepare);
+                batchData->setState(BatchData::State::BeforeHash);
             }else{
                 batchData->setState(BatchData::State::None); //this should only happen if all reads have been processed
             }

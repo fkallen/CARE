@@ -466,7 +466,6 @@ struct BatchData{
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
     enum class State{
-        BeforePrepare,
         BeforeHash,
         BeforeRemoveIds,
         BeforeComputePairFlags,
@@ -485,7 +484,6 @@ struct BatchData{
 
     static std::string to_string(State s){
         switch(s){
-            case State::BeforePrepare: return "BeforePrepare";
             case State::BeforeHash: return "BeforeHash";
             case State::BeforeRemoveIds: return "BeforeRemoveIds";
             case State::BeforeComputePairFlags: return "BeforeComputePairFlags";
@@ -852,7 +850,6 @@ public:
         }
 
         switch(batchData.state){
-            case BatchData::State::BeforePrepare: return ComputeType::CPU;
             case BatchData::State::BeforeHash: return ComputeType::CPU;
             case BatchData::State::BeforeRemoveIds: return ComputeType::CPU;
             case BatchData::State::BeforeComputePairFlags: return ComputeType::GPU;
@@ -1502,343 +1499,42 @@ public:
 
  
     void performNextStep(BatchData& batchData) const{
-        if(batchData.state == BatchData::State::BeforePrepare && int(batchData.indicesOfActiveTasks.size()) < getGpuBatchThreshold()){
-            assert(false);
-            processOnCpu(batchData);
-        }else{
 
-            // if((batchData.state == BatchData::State::BeforeRemoveIds) || (batchData.state == BatchData::State::BeforeComputePairFlags)
-            //     || (batchData.state == BatchData::State::BeforeMSA)){
-
-            //     std::string what = "";
-            //     if((batchData.state == BatchData::State::BeforeRemoveIds)){
-            //         what = "raw";
-            //     }
-            //     if((batchData.state == BatchData::State::BeforeComputePairFlags)){
-            //         what = "after remove";
-            //     }
-            //     if((batchData.state == BatchData::State::BeforeMSA)){
-            //         what = "after filter";
-            //     }
-            //     cudaDeviceSynchronize(); CUERR;
-
-            //     std::vector<read_number> readids(batchData.totalNumCandidates);
-            //     cudaMemcpyAsync(
-            //         readids.data(),
-            //         batchData.d_candidateReadIds.data(),
-            //         sizeof(read_number) * batchData.totalNumCandidates,
-            //         D2H,
-            //         cudaStreamPerThread
-            //     );
-
-            //     std::vector<int> nums(batchData.numTasks);
-            //     cudaMemcpyAsync(
-            //         nums.data(),
-            //         batchData.d_numCandidatesPerAnchor.data(),
-            //         sizeof(int) * batchData.numTasks,
-            //         D2H,
-            //         cudaStreamPerThread
-            //     );
-
-            //     std::vector<int> offsets(batchData.numTasks);
-            //     cudaMemcpyAsync(
-            //         offsets.data(),
-            //         batchData.d_numCandidatesPerAnchorPrefixSum.data(),
-            //         sizeof(int) * batchData.numTasks,
-            //         D2H,
-            //         cudaStreamPerThread
-            //     );
-
-            //     cudaDeviceSynchronize(); CUERR;
-
-            //     for(int i = 0; i < batchData.numTasks; i++){
-            //         const int index = batchData.indicesOfActiveTasks[i];
-            //         const auto& task = batchData.tasks[index];
-
-            //         if(task.myReadId == 0 && task.id == 3 && maxextensionPerStep == 6){
-            //             if(batchData.state == BatchData::State::BeforeRemoveIds){
-            //                 std::cerr << "Anchor: " << task.totalDecodedAnchors.back() << "\n";
-            //             }
-            //             std::cerr << "iteration " << task.iteration << ", candidates " << what << "\n";
-            //             for(int k = 0; k < nums[i]; k++){
-            //                 std::cerr << readids[offsets[i] + k] << " ";
-            //             }
-            //             std::cerr << "\n";
-            //         }
-
-            //     }
-            //     cudaDeviceSynchronize(); CUERR;
-            // }
-
-            switch(batchData.state){
-                case BatchData::State::BeforePrepare: prepareStep(batchData); break;
-                case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
-                case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
-                case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); break;
-                case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); break;
-                case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); break;
-                case BatchData::State::BeforeAlignment: calculateAlignments(batchData); break;
-                case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); break;
-                case BatchData::State::BeforeMSA: computeMSAs(batchData); break;
-                case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); break;
-                case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); break;
-                case BatchData::State::BeforeUnpack: unpackResults(batchData); break;
-                case BatchData::State::BeforePrepareNextIteration: prepareNextIteration(batchData); break;
-                case BatchData::State::Finished: break;
-                case BatchData::State::None: break;
-                default: break;
-            };
-            // switch(batchData.state){
-            //     case BatchData::State::BeforePrepare: prepareStep(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeHash: getCandidateReadIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeAlignment: calculateAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeMSA: computeMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::BeforeUnpack: unpackResults(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
-            //     case BatchData::State::Finished: break;
-            //     case BatchData::State::None: break;
-            //     default: break;
-            // };
-
-        }
+        switch(batchData.state){
+            case BatchData::State::BeforeHash: getCandidateReadIds(batchData); break;
+            case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); break;
+            case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); break;
+            case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); break;
+            case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); break;
+            case BatchData::State::BeforeAlignment: calculateAlignments(batchData); break;
+            case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); break;
+            case BatchData::State::BeforeMSA: computeMSAs(batchData); break;
+            case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); break;
+            case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); break;
+            case BatchData::State::BeforeUnpack: unpackResults(batchData); break;
+            case BatchData::State::BeforePrepareNextIteration: prepareNextIteration(batchData); break;
+            case BatchData::State::Finished: break;
+            case BatchData::State::None: break;
+            default: break;
+        };
+        // switch(batchData.state){
+        //     case BatchData::State::BeforeHash: getCandidateReadIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeComputePairFlags: computePairFlags(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeAlignment: calculateAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeAlignmentFilter: filterAlignments(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeMSA: computeMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeCopyToHost: copyBuffersToHost(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::BeforeUnpack: unpackResults(batchData); cudaStreamSynchronize(batchData.streams[0]); CUERR; cudaStreamSynchronize(batchData.streams[1]); CUERR;break;
+        //     case BatchData::State::Finished: break;
+        //     case BatchData::State::None: break;
+        //     default: break;
+        // };
     }
 
-    void prepareStep(BatchData& batchData) const{
-        assert(batchData.state == BatchData::State::BeforePrepare);
-        
-        nvtx::push_range("prepareStep", 1);
-
-        //const int numActiveTasks = batchData.indicesOfActiveTasks.size();
-        //batchData.numTasks = numActiveTasks;
-
-        // batchData.h_numAnchors.resize(1);
-        // batchData.d_numAnchors.resize(1);
-        // batchData.h_numCandidates.resize(1);
-        // batchData.d_numCandidates.resize(1);
-        // batchData.d_numCandidates2.resize(1);
-        // batchData.h_numAnchorsWithRemovedMates.resize(1);
-
-        // batchData.h_numUsedReadIds.resize(1);
-
-        // batchData.h_anchorReadIds.resize(numActiveTasks);
-        // batchData.d_anchorReadIds.resize(numActiveTasks);
-        // batchData.h_mateReadIds.resize(numActiveTasks);
-        // batchData.d_mateReadIds.resize(numActiveTasks);
-        
-        //batchData.h_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
-        //batchData.d_subjectSequencesData.resize(batchData.encodedSequencePitchInInts * numActiveTasks);
-        //batchData.h_subjectSequencesDataDecoded.resize(batchData.decodedSequencePitchInBytes * numActiveTasks);   
-
-        // batchData.h_anchorSequencesLength.resize(numActiveTasks);
-        // batchData.d_anchorSequencesLength.resize(numActiveTasks);
-
-        // batchData.h_anchorQualityScores.resize(batchData.qualityPitchInBytes * numActiveTasks);
-        // batchData.d_anchorQualityScores.resize(batchData.qualityPitchInBytes * numActiveTasks);
-
-        //batchData.d_anchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
-
-        //batchData.h_inputanchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
-        //batchData.d_inputanchormatedata.resize(numActiveTasks * batchData.encodedSequencePitchInInts);
-
-        // batchData.h_numCandidatesPerAnchor.resize(numActiveTasks);
-        // batchData.d_numCandidatesPerAnchor.resize(numActiveTasks);
-        // batchData.d_numCandidatesPerAnchor2.resize(numActiveTasks);
-        // batchData.h_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);
-        // batchData.d_numCandidatesPerAnchorPrefixSum.resize(numActiveTasks+1);
-        // batchData.d_numCandidatesPerAnchorPrefixSum2.resize(numActiveTasks+1);
-
-        // batchData.d_anchorIndicesWithRemovedMates.resize(numActiveTasks);
-        //batchData.d_subjectSequencesDataDecoded.resize(numActiveTasks * batchData.decodedSequencePitchInBytes);
-
-        //batchData.h_numCandidatesPerAnchorPrefixSum[0] = 0;
-
-
-        // for(int t = 0; t < numActiveTasks; t++){
-        //     auto& task = batchData.tasks[batchData.indicesOfActiveTasks[t]];
-        //     task.dataIsAvailable = false;
-
-        //     // batchData.h_anchorReadIds[t] = task.myReadId;
-        //     // batchData.h_mateReadIds[t] = task.mateReadId;
-
-        //     #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
-
-        //     // std::copy(
-        //     //     task.encodedMate.begin(),
-        //     //     task.encodedMate.end(),
-        //     //     batchData.h_inputanchormatedata.begin() + t * batchData.encodedSequencePitchInInts
-        //     // );
-
-        //     #endif
-
-        //     //batchData.h_anchorSequencesLength[t] = task.currentAnchorLength;
-
-        //     // std::copy(
-        //     //     task.currentAnchor.begin(),
-        //     //     task.currentAnchor.end(),
-        //     //     batchData.h_subjectSequencesData.begin() + t * batchData.encodedSequencePitchInInts
-        //     // );
-
-        //     // std::copy(
-        //     //     task.totalDecodedAnchors.back().begin(),
-        //     //     task.totalDecodedAnchors.back().end(),
-        //     //     batchData.h_subjectSequencesDataDecoded.begin() + t * batchData.decodedSequencePitchInBytes
-        //     // );
-
-        //     // assert(batchData.h_anchorQualityScores.size() >= (t+1) * batchData.qualityPitchInBytes);
-
-        //     // std::copy(
-        //     //     task.currentQualityScores.begin(),
-        //     //     task.currentQualityScores.end(),
-        //     //     batchData.h_anchorQualityScores.begin() + t * batchData.qualityPitchInBytes
-        //     // );
-        // }
-
-        // helpers::call_copy_n_kernel(
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         //batchData.h_inputanchormatedata.data(),
-        //         batchData.h_subjectSequencesData.data()
-        //     )),
-        //     batchData.numTasks * batchData.encodedSequencePitchInInts,
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         //batchData.d_inputanchormatedata.data(),
-        //         batchData.d_subjectSequencesData.data()
-        //     )),
-        //     batchData.streams[0]
-        // );
-
-        #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
-        // cudaMemcpyAsync(
-        //     batchData.d_inputanchormatedata.data(),
-        //     batchData.h_inputanchormatedata.data(),
-        //     sizeof(unsigned int) * batchData.encodedSequencePitchInInts * batchData.numTasks,
-        //     H2D,
-        //     batchData.streams[0]
-        // );
-        #endif
-
-        // cudaMemcpyAsync(
-        //     batchData.d_subjectSequencesDataDecoded.data(),
-        //     batchData.h_subjectSequencesDataDecoded.data(),
-        //     sizeof(char) * batchData.decodedSequencePitchInBytes * batchData.numTasks,
-        //     H2D,
-        //     batchData.streams[0]
-        // );
-
-        // helpers::call_copy_n_kernel(
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         batchData.h_anchorQualityScores.data()
-        //     )),
-        //     batchData.numTasks * batchData.qualityPitchInBytes,
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         batchData.d_anchorQualityScores.data()
-        //     )),
-        //     batchData.streams[0]
-        // );
-
-        // helpers::call_copy_n_kernel(
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         batchData.h_anchorSequencesLength.data(),
-        //         batchData.h_anchorReadIds.data(),
-        //         batchData.h_mateReadIds.data()
-        //     )),
-        //     batchData.numTasks,
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         batchData.d_anchorSequencesLength.data(),
-        //         batchData.d_anchorReadIds.data(),
-        //         batchData.d_mateReadIds.data()
-        //     )),
-        //     batchData.streams[0]
-        // );
-
-        //2-bit encode anchorsequences
-
-        // readextendergpukernels::encodeSequencesTo2BitKernel<8>
-        // <<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
-        //     batchData.d_subjectSequencesData.data(),
-        //     batchData.d_subjectSequencesDataDecoded.data(),
-        //     batchData.d_anchorSequencesLength.data(),
-        //     batchData.decodedSequencePitchInBytes,
-        //     batchData.encodedSequencePitchInInts,
-        //     batchData.numTasks
-        // ); CUERR;
-
-#if 0        
-        helpers::lambda_kernel<<<SDIV(batchData.numTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
-            [
-                decodedSequencePitchInBytes = batchData.decodedSequencePitchInBytes,
-                encodedSequencePitchInInts = batchData.encodedSequencePitchInInts,
-                numTasks = batchData.numTasks,
-                encodedSequences = batchData.d_subjectSequencesData.data(),
-                decodedSequences = batchData.d_subjectSequencesDataDecoded.data(),
-                sequenceLengths = batchData.d_anchorSequencesLength.data()
-            ] __device__ (){
-
-                auto group = cg::tiled_partition<8>(cg::this_thread_block());
-                const int numGroups = (blockDim.x * gridDim.x) / group.size();
-                const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
-
-                for(int a = groupId; a < numTasks; a += numGroups){
-                    unsigned int* const out = encodedSequences + a * encodedSequencePitchInInts;
-                    const char* const in = decodedSequences + a * decodedSequencePitchInBytes;
-                    const int length = sequenceLengths[a];
-
-                    const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
-                    constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
-
-                    for(int i = group.thread_rank(); i < nInts; i += group.size()){
-                        unsigned int data = 0;
-
-                        const int loopend = min((i+1) * basesPerInt, length);
-                        
-                        for(int nucIndex = i * basesPerInt; nucIndex < loopend; nucIndex++){
-                            switch(in[nucIndex]) {
-                            case 'A':
-                                data = (data << 2) | SequenceHelpers::encodedbaseA();
-                                break;
-                            case 'C':
-                                data = (data << 2) | SequenceHelpers::encodedbaseC();
-                                break;
-                            case 'G':
-                                data = (data << 2) | SequenceHelpers::encodedbaseG();
-                                break;
-                            case 'T':
-                                data = (data << 2) | SequenceHelpers::encodedbaseT();
-                                break;
-                            default:
-                                data = (data << 2) | SequenceHelpers::encodedbaseA();
-                                break;
-                            }
-                        }
-
-                        if(i == nInts-1){
-                            //pack bits of last integer into higher order bits
-                            int leftoverbits = 2 * (nInts * basesPerInt - length);
-                            if(leftoverbits > 0){
-                                data <<= leftoverbits;
-                            }
-                        }
-
-                        out[i] = data;
-                    }
-                }
-            }
-        );
-#endif
-
-        //removeUsedIdsOfFinishedTasks(batchData);
-
-        
-        
-        batchData.setState(BatchData::State::BeforeHash);
-
-        nvtx::pop_range();
-    }
 
     void getCandidateReadIds(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforeHash);
@@ -2005,18 +1701,6 @@ public:
 
         nvtx::pop_range();
 
-        // nvtx::push_range("removeUsedIdsOfFinishedTasks", 6);
-
-        // removeUsedIdsOfFinishedTasks(batchData);
-
-        // nvtx::pop_range();
-
-        // if(!batchData.isEmpty()){
-        //     batchData.setState(BatchData::State::BeforePrepare);
-        // }else{
-        //     batchData.setState(BatchData::State::Finished);
-        // }
-
         batchData.setState(BatchData::State::BeforePrepareNextIteration);
     }
 
@@ -2069,7 +1753,7 @@ public:
         batchData.numTasks = batchData.indicesOfActiveTasks.size();
 
         if(!batchData.isEmpty()){
-            batchData.setState(BatchData::State::BeforePrepare);
+            batchData.setState(BatchData::State::BeforeHash);
         }else{
             batchData.setState(BatchData::State::Finished);
         }
@@ -2307,40 +1991,11 @@ public:
 
 
     void process(BatchData& batchData) const{
-        assert(batchData.state == BatchData::State::BeforePrepare);
+        assert(batchData.state == BatchData::State::BeforeHash);
 
         while(batchData.state != BatchData::State::Finished){
             performNextStep(batchData);
         }
-    }
-
-    void processOnCpu(BatchData& batchData) const{
-        assert(batchData.state == BatchData::State::BeforePrepare);
-
-        while(batchData.indicesOfActiveTasks.size() > 0){
-            //perform one extension iteration for active tasks
-
-            nvtx::push_range("doOneExtensionIteration", 5);
-
-            cpuExtender.doOneExtensionIteration(batchData.tasks, batchData.indicesOfActiveTasks);
-
-            nvtx::pop_range();
-
-            //update list of active task indices
-
-            batchData.indicesOfActiveTasks.erase(
-                std::remove_if(
-                    batchData.indicesOfActiveTasks.begin(), 
-                    batchData.indicesOfActiveTasks.end(),
-                    [&](int index){
-                        return !batchData.tasks[index].isActive(insertSize, insertSizeStddev);
-                    }
-                ),
-                batchData.indicesOfActiveTasks.end()
-            );
-        }
-
-        batchData.state = BatchData::State::Finished;
     }
 
     void unpackResultsIntoTasks(BatchData& batchData) const{
@@ -3267,6 +2922,7 @@ public:
 
     void computePairFlagsCpu(BatchData& batchData, cudaStream_t stream) const{
         //computed in removeUsedIdsAndMateIdsCPU
+        assert(false && "computePairFlagsCpu cannot be used");
 
         #ifdef DO_REMOVE_USED_IDS_AND_MATE_IDS_ON_GPU
 
