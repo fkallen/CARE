@@ -184,7 +184,7 @@ void initializePairedEndExtensionBatchData4(
 
     if(batchsizePairs == 0) return;
 
-    batchData.pairedEnd = true;
+    //batchData.pairedEnd = true;
     batchData.encodedSequencePitchInInts = encodedSequencePitchInInts;
     batchData.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
@@ -1282,17 +1282,17 @@ extend_gpu_pairedend(
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
-        GpuExtensionStepper gpuExtensionStepper(
-            gpuReadStorage, 
-            minhasher,
-            correctionOptions,
-            goodAlignmentProperties,
-            qualityConversion,
-            insertSize,
-            insertSizeStddev,
-            maxextensionPerStep,
-            myCubAllocator
-        );
+        // GpuExtensionStepper gpuExtensionStepper(
+        //     gpuReadStorage, 
+        //     minhasher,
+        //     correctionOptions,
+        //     goodAlignmentProperties,
+        //     qualityConversion,
+        //     insertSize,
+        //     insertSizeStddev,
+        //     maxextensionPerStep,
+        //     myCubAllocator
+        // );
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
         helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
@@ -1305,13 +1305,30 @@ extend_gpu_pairedend(
 
         CudaStream stream;
 
-        auto batchData = std::make_unique<BatchData>(myCubAllocator);
+        const bool isPairedEnd = true;
+
+        auto batchData = std::make_unique<BatchData>(
+            isPairedEnd,
+            gpuReadStorage, 
+            minhasher,
+            correctionOptions,
+            goodAlignmentProperties,
+            qualityConversion,
+            insertSize,
+            insertSizeStddev,
+            maxextensionPerStep,
+            myCubAllocator
+        );
+        batchData->someId = ompThreadId;
 
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;
 
-        gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
-        gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
+        //gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
+        //gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
+
+        batchData->setMaxExtensionPerStep(fixedStepsize);
+        batchData->setMinCoverageForExtension(minCoverageForExtension);
 
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
@@ -1446,7 +1463,8 @@ extend_gpu_pairedend(
 
         auto output = [&](){
             nvtx::push_range("output", 5);
-            std::vector<extension::ExtendResult> extensionResults = gpuExtensionStepper.constructResults(*batchData);
+            //std::vector<extension::ExtendResult> extensionResults = gpuExtensionStepper.constructResults(*batchData);
+            std::vector<extension::ExtendResult> extensionResults = batchData->constructResults();
 
             const int numresults = extensionResults.size();
 
@@ -1523,14 +1541,20 @@ extend_gpu_pairedend(
             batchData->resetTasks();
         };
 
+        //std::cerr << "thread " << ompThreadId << " begins main loop\n";
+
         isLastIteration = false;
         while(!(readIdGenerator.empty())){
             init();
             if(batchData->state != BatchData::State::None){
-                gpuExtensionStepper.process(*batchData);
+                //gpuExtensionStepper.process(*batchData);
+                batchData->process();
                 output();
             }
         }
+
+        //batchData->printTransitions = true;
+        //std::cerr << "thread " << ompThreadId << " finished main loop\n";
  
         // constexpr int increment = 1;
         // constexpr int limit = 10;
@@ -1540,25 +1564,32 @@ extend_gpu_pairedend(
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
         while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
+            batchData->setMaxExtensionPerStep(fixedStepsize);
+            //batchData->setMinCoverageForExtension(minCoverageForExtension);
 
-            gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
+            //gpuExtensionStepper.setMaxExtensionPerStep(fixedStepsize);
             //std::cerr << "fixedStepsize = " << fixedStepsize << "\n"; 
             //gpuExtensionStepper.setMinCoverageForExtension(minCoverageForExtension);
 
-            std::cerr << "Will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
+            //std::cerr << "thread " << ompThreadId << " will repeat extension of " << pairsWhichShouldBeRepeated.size() << " read pairs with fixedStepsize = " << fixedStepsize << "\n";
             isLastIteration = (fixedStepsize <= 4);
 
             while(pairsWhichShouldBeRepeated.size() > 0){
                 init();
                 if(batchData->state != BatchData::State::None){
-                    gpuExtensionStepper.process(*batchData);
+                    //gpuExtensionStepper.process(*batchData);
+                    batchData->process();
                     output();
                 }
             }
 
+            //std::cerr << "thread " << ompThreadId << " finished extra loop with fixedStepsize = " << fixedStepsize << "\n";
+
             fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
         }
+
+        //std::cerr << "thread " << ompThreadId << " finished all extensions\n";
 
         // while(pairsWhichShouldBeRepeated.size() > 0 && ((minCoverageForExtension < limit))){
 
