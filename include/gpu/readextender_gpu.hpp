@@ -3590,13 +3590,6 @@ struct BatchData{
             const int indexOfActiveTask = indicesOfActiveTasks[i];
             auto& task = tasks[indexOfActiveTask];
 
-            // if(task.numRemainingCandidates == 0){
-            //     continue;
-            // }
-            // assert(task.numRemainingCandidates > 0);
-
-            task.numRemainingCandidates = h_numCandidatesPerAnchor[i];
-
             task.abortReason = h_abortReasons[i];
             if(task.abortReason == extension::AbortReason::None){
                 task.mateHasBeenFound = h_outputMateHasBeenFound[i];
@@ -4626,6 +4619,27 @@ struct BatchData{
     PinnedBuffer<bool> h_outputMateHasBeenFound;
     PinnedBuffer<int> h_sizeOfGapToMate;
     PinnedBuffer<bool> h_isFullyUsedCandidate{};
+
+    // tasḱ_accumExtensionLengths;
+    // tasḱ_pairedEnd;
+    // tasḱ_decodedMateRevC            
+    // tasḱ_numRemainingCandidates
+    // tasḱ_abortReason
+    // tasḱ_mateHasBeenFound
+    // tasḱ_currentAnchorLength
+    // tasḱ_totalDecodedAnchors
+    // tasḱ_totalAnchorQualityScores
+    // tasḱ_totalAnchorBeginInExtendedRead
+    // tasḱ_currentQualityScores                    
+    // tasḱ_abort
+    // tasḱ_iteration
+    // tasḱ_direction;
+    // tasḱ_myReadId;
+    // tasḱ_mateReadId;
+    // tasḱ_myLength;
+    // tasḱ_mateLength;
+    // tasḱ_mateQualityScoresReversed
+    // tasḱ_mateHasBeenFound;
 
     
     std::array<CudaEvent, 1> events{};
