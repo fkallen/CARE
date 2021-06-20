@@ -69,6 +69,7 @@ namespace extension{
         int numRemainingCandidates = 0;
         int splitDepth = 0;
         ExtensionDirection direction{};
+        int pairId = 0;
         read_number myReadId = 0;
         read_number mateReadId = 0;
         read_number currentAnchorReadId = 0;
@@ -114,6 +115,7 @@ namespace extension{
                 if(numRemainingCandidates != rhs.numRemainingCandidates) std::cerr << "numRemainingCandidates differs\n";
                 if(splitDepth != rhs.splitDepth) std::cerr << "splitDepth differs\n";
                 if(direction != rhs.direction) std::cerr << "direction differs\n";
+                if(pairId != rhs.pairId)  std::cerr << "pairId differs\n";
                 if(myReadId != rhs.myReadId) std::cerr << "myReadId differs\n";
                 if(mateReadId != rhs.mateReadId) std::cerr << "mateReadId differs\n";
                 if(currentAnchorReadId != rhs.currentAnchorReadId) std::cerr << "currentAnchorReadId differs\n";
@@ -157,6 +159,7 @@ namespace extension{
             if(numRemainingCandidates != rhs.numRemainingCandidates) return false;
             if(splitDepth != rhs.splitDepth) return false;
             if(direction != rhs.direction) return false;
+            if(pairId != rhs.pairId) return false;
             if(myReadId != rhs.myReadId) return false;
             if(mateReadId != rhs.mateReadId) return false;
             if(currentAnchorReadId != rhs.currentAnchorReadId) return false;
@@ -330,6 +333,7 @@ namespace extension{
                 auto& task1 = *cur;
                 task1.reset();
 
+                task1.pairId = input.readId1 / 2;
                 task1.pairedEnd = true;
                 task1.direction = ExtensionDirection::LR;      
                 task1.currentAnchor = enc1_53;
@@ -358,6 +362,7 @@ namespace extension{
                 auto& task2 = *cur;
                 task2.reset();
 
+                task2.pairId = input.readId1 / 2;
                 task2.pairedEnd = false;
                 task2.direction = ExtensionDirection::LR;      
                 task2.currentAnchor = enc2_53;
@@ -384,6 +389,7 @@ namespace extension{
                 auto& task3 = *cur;
                 task3.reset();
 
+                task3.pairId = input.readId1 / 2;
                 task3.pairedEnd = true;
                 task3.direction = ExtensionDirection::RL;      
                 task3.currentAnchor = enc2_35;
@@ -412,6 +418,7 @@ namespace extension{
                 auto& task4 = *cur;
                 task4.reset();
 
+                task4.pairId = input.readId1 / 2;
                 task4.pairedEnd = false;
                 task4.direction = ExtensionDirection::RL;      
                 task4.currentAnchor = enc1_35;

@@ -158,9 +158,6 @@ void initializePairedEndExtensionBatchData2(
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
     batchData.qualityPitchInBytes = qualityPitchInBytes;
 
-    batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
-    std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
-
     for(int i = 0; i < batchsizePairs * 2; i++){
         batchData.tasks[i].id = i;
     }
@@ -1577,7 +1574,7 @@ extend_gpu_pairedend(
             while(pairsWhichShouldBeRepeated.size() > 0){
                 init();
                 if(batchData->state != BatchData::State::None){
-                    //gpuExtensionStepper.process(*batchData);
+                    //gpuExtensionStepper.process(*batchData
                     batchData->process();
                     output();
                 }

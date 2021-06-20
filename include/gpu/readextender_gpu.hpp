@@ -536,7 +536,7 @@ struct BatchData{
     }
 
     bool isEmpty() const noexcept{
-        return indicesOfActiveTasks.empty();
+        return tasks.empty();
     }
 
     bool printTransitions = false;
@@ -615,44 +615,40 @@ struct BatchData{
         if(numAdditionalTasks == 0) return;
 
         const int currentNumTasks = tasks.size();
-        const int currentNumActiveTasks = indicesOfActiveTasks.size();
-        const int newNumActiveTasks = currentNumActiveTasks + numAdditionalTasks;
-
-        // std::cerr << "currentNumTasks = " << currentNumTasks << ", currentNumActiveTasks = " << currentNumActiveTasks
-        //     << "newNumActiveTasks = " << newNumActiveTasks << "\n";
+        const int newNumTasks = currentNumTasks + numAdditionalTasks;
 
 
         void* cubTemp = nullptr;
         std::size_t cubTempSize = 0;
         cudaError_t cubstatus = cudaSuccess;
 
-        h_anchorReadIds.resize(newNumActiveTasks);
-        h_mateReadIds.resize(newNumActiveTasks);
-        h_subjectSequencesDataDecoded.resize(newNumActiveTasks * decodedSequencePitchInBytes);
-        h_anchorSequencesLength.resize(newNumActiveTasks);
-        h_anchorQualityScores.resize(newNumActiveTasks * qualityPitchInBytes);
-        h_inputanchormatedata.resize(newNumActiveTasks * encodedSequencePitchInInts);
+        h_anchorReadIds.resize(newNumTasks);
+        h_mateReadIds.resize(newNumTasks);
+        h_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes);
+        h_anchorSequencesLength.resize(newNumTasks);
+        h_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes);
+        h_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts);
 
 
-        //d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks); // ???
+        //d_anchorIndicesWithRemovedMates.resize(newNumTasks); // ???
 
-        d_numUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-        d_numUsedReadIdsPerAnchorPrefixSum.resize(newNumActiveTasks);
-        d_numFullyUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-        d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(newNumActiveTasks);
+        d_numUsedReadIdsPerAnchor2.resize(newNumTasks);
+        d_numUsedReadIdsPerAnchorPrefixSum.resize(newNumTasks);
+        d_numFullyUsedReadIdsPerAnchor2.resize(newNumTasks);
+        d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(newNumTasks);
 
-        d_anchorReadIds2.resize(newNumActiveTasks);
-        d_mateReadIds2.resize(newNumActiveTasks);
-        d_subjectSequencesData2.resize(newNumActiveTasks * encodedSequencePitchInInts);
-        d_subjectSequencesDataDecoded2.resize(newNumActiveTasks * decodedSequencePitchInBytes);
-        d_anchorSequencesLength2.resize(newNumActiveTasks);
-        d_anchorQualityScores2.resize(newNumActiveTasks * qualityPitchInBytes);
-        d_inputanchormatedata2.resize(newNumActiveTasks * encodedSequencePitchInInts);
+        d_anchorReadIds2.resize(newNumTasks);
+        d_mateReadIds2.resize(newNumTasks);
+        d_subjectSequencesData2.resize(newNumTasks * encodedSequencePitchInInts);
+        d_subjectSequencesDataDecoded2.resize(newNumTasks * decodedSequencePitchInBytes);
+        d_anchorSequencesLength2.resize(newNumTasks);
+        d_anchorQualityScores2.resize(newNumTasks * qualityPitchInBytes);
+        d_inputanchormatedata2.resize(newNumTasks * encodedSequencePitchInInts);
 
         cudaMemcpyAsync(
             d_anchorReadIds2.data(), 
             d_anchorReadIds.data(),
-            sizeof(int) * currentNumActiveTasks,
+            sizeof(int) * currentNumTasks,
             D2D,
             streams[0]
         ); CUERR;
@@ -661,7 +657,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_mateReadIds2.data(), 
             d_mateReadIds.data(),
-            sizeof(int) * currentNumActiveTasks,
+            sizeof(int) * currentNumTasks,
             D2D,
             streams[0]
         ); CUERR;
@@ -670,7 +666,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_subjectSequencesDataDecoded2.data(), 
             d_subjectSequencesDataDecoded.data(),
-            sizeof(char) * currentNumActiveTasks * decodedSequencePitchInBytes,
+            sizeof(char) * currentNumTasks * decodedSequencePitchInBytes,
             D2D,
             streams[0]
         ); CUERR;
@@ -679,7 +675,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_subjectSequencesData2.data(), 
             d_subjectSequencesData.data(),
-            sizeof(unsigned int) * currentNumActiveTasks * encodedSequencePitchInInts,
+            sizeof(unsigned int) * currentNumTasks * encodedSequencePitchInInts,
             D2D,
             streams[0]
         ); CUERR;
@@ -688,7 +684,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_anchorSequencesLength2.data(), 
             d_anchorSequencesLength.data(),
-            sizeof(int) * currentNumActiveTasks,
+            sizeof(int) * currentNumTasks,
             D2D,
             streams[0]
         ); CUERR;
@@ -697,7 +693,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_anchorQualityScores2.data(), 
             d_anchorQualityScores.data(),
-            sizeof(char) * currentNumActiveTasks * qualityPitchInBytes,
+            sizeof(char) * currentNumTasks * qualityPitchInBytes,
             D2D,
             streams[0]
         ); CUERR;
@@ -706,7 +702,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_inputanchormatedata2.data(), 
             d_inputanchormatedata.data(),
-            sizeof(unsigned int) * currentNumActiveTasks * encodedSequencePitchInInts,
+            sizeof(unsigned int) * currentNumTasks * encodedSequencePitchInInts,
             D2D,
             streams[0]
         ); CUERR;
@@ -715,7 +711,7 @@ struct BatchData{
         cudaMemcpyAsync(
             d_numUsedReadIdsPerAnchor2.data(), 
             d_numUsedReadIdsPerAnchor.data(),
-            sizeof(int) * currentNumActiveTasks,
+            sizeof(int) * currentNumTasks,
             D2D,
             streams[0]
         ); CUERR;
@@ -724,21 +720,21 @@ struct BatchData{
         cudaMemcpyAsync(
             d_numFullyUsedReadIdsPerAnchor2.data(), 
             d_numFullyUsedReadIdsPerAnchor.data(),
-            sizeof(int) * currentNumActiveTasks,
+            sizeof(int) * currentNumTasks,
             D2D,
             streams[0]
         ); CUERR;
         std::swap(d_numFullyUsedReadIdsPerAnchor, d_numFullyUsedReadIdsPerAnchor2);
 
-        cudaMemsetAsync(d_numUsedReadIdsPerAnchor.data() + currentNumActiveTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
-        cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumActiveTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+        cudaMemsetAsync(d_numUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+        cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
 
         cubstatus = cub::DeviceScan::ExclusiveSum(
             nullptr,
             cubTempSize,
             d_numUsedReadIdsPerAnchor.data(), 
             d_numUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumActiveTasks, 
+            newNumTasks, 
             streams[0]
         );
         assert(cudaSuccess == cubstatus);
@@ -750,7 +746,7 @@ struct BatchData{
             cubTempSize,
             d_numUsedReadIdsPerAnchor.data(), 
             d_numUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumActiveTasks, 
+            newNumTasks, 
             streams[0]
         );
         assert(cudaSuccess == cubstatus);
@@ -764,7 +760,7 @@ struct BatchData{
             cubTempSize,
             d_numFullyUsedReadIdsPerAnchor.data(), 
             d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumActiveTasks, 
+            newNumTasks, 
             streams[0]
         );
         assert(cudaSuccess == cubstatus);
@@ -776,7 +772,7 @@ struct BatchData{
             cubTempSize,
             d_numFullyUsedReadIdsPerAnchor.data(), 
             d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumActiveTasks, 
+            newNumTasks, 
             streams[0]
         );
         assert(cudaSuccess == cubstatus);
@@ -815,7 +811,7 @@ struct BatchData{
         }
 
         cudaMemcpyAsync(
-            d_inputanchormatedata.data() + currentNumActiveTasks * encodedSequencePitchInInts,
+            d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts,
             h_inputanchormatedata.data(),
             sizeof(unsigned int) * encodedSequencePitchInInts * numAdditionalTasks,
             H2D,
@@ -823,7 +819,7 @@ struct BatchData{
         ); CUERR;
 
         cudaMemcpyAsync(
-            d_anchorSequencesLength.data() + currentNumActiveTasks,
+            d_anchorSequencesLength.data() + currentNumTasks,
             h_anchorSequencesLength.data(),
             sizeof(int) * numAdditionalTasks,
             H2D,
@@ -831,7 +827,7 @@ struct BatchData{
         ); CUERR;
 
         cudaMemcpyAsync(
-            d_anchorReadIds.data() + currentNumActiveTasks,
+            d_anchorReadIds.data() + currentNumTasks,
             h_anchorReadIds.data(),
             sizeof(read_number) * numAdditionalTasks,
             H2D,
@@ -839,7 +835,7 @@ struct BatchData{
         ); CUERR;
 
         cudaMemcpyAsync(
-            d_mateReadIds.data() + currentNumActiveTasks,
+            d_mateReadIds.data() + currentNumTasks,
             h_mateReadIds.data(),
             sizeof(read_number) * numAdditionalTasks,
             H2D,
@@ -847,7 +843,7 @@ struct BatchData{
         ); CUERR;
 
         cudaMemcpyAsync(
-            d_subjectSequencesDataDecoded.data() + currentNumActiveTasks * decodedSequencePitchInBytes,
+            d_subjectSequencesDataDecoded.data() + currentNumTasks * decodedSequencePitchInBytes,
             h_subjectSequencesDataDecoded.data(),
             sizeof(char) * numAdditionalTasks * decodedSequencePitchInBytes,
             H2D,
@@ -855,7 +851,7 @@ struct BatchData{
         ); CUERR;
 
         cudaMemcpyAsync(
-            d_anchorQualityScores.data() + currentNumActiveTasks * qualityPitchInBytes,
+            d_anchorQualityScores.data() + currentNumTasks * qualityPitchInBytes,
             h_anchorQualityScores.data(),
             sizeof(char) * numAdditionalTasks * qualityPitchInBytes,
             H2D,
@@ -864,9 +860,9 @@ struct BatchData{
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
         <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
-            d_subjectSequencesData.data() + currentNumActiveTasks * encodedSequencePitchInInts,
-            d_subjectSequencesDataDecoded.data() + currentNumActiveTasks * decodedSequencePitchInBytes,
-            d_anchorSequencesLength.data() + currentNumActiveTasks,
+            d_subjectSequencesData.data() + currentNumTasks * encodedSequencePitchInInts,
+            d_subjectSequencesDataDecoded.data() + currentNumTasks * decodedSequencePitchInBytes,
+            d_anchorSequencesLength.data() + currentNumTasks,
             decodedSequencePitchInBytes,
             encodedSequencePitchInInts,
             numAdditionalTasks
@@ -883,18 +879,10 @@ struct BatchData{
         
 
         for(int i = currentNumTasks; i < int(tasks.size()); i++){
-            tasks[i].id = i;
+            tasks[i].id = i - currentNumTasks;
         }
 
-        indicesOfActiveTasks.resize(currentNumActiveTasks + numAdditionalTasks);
-        std::iota(
-            indicesOfActiveTasks.begin() + currentNumActiveTasks, 
-            indicesOfActiveTasks.end(),
-            currentNumTasks
-        );
-        assert(indicesOfActiveTasks.size() == newNumActiveTasks);
-
-        numTasks = indicesOfActiveTasks.size();
+        numTasks = tasks.size();
         numReadPairs = tasks.size() / 4;
 
         state = State::BeforeHash;
@@ -905,7 +893,7 @@ struct BatchData{
         numTasks = 0;
         numReadPairs = 0;
         tasks.clear();
-        indicesOfActiveTasks.clear();
+        finishedTasks.clear();
     }
 
     void setMaxExtensionPerStep(int e) noexcept{
@@ -980,6 +968,10 @@ struct BatchData{
             cudaMemsetAsync(d_numCandidatesPerAnchor.get(), 0, sizeof(int) * numTasks , stream); CUERR;
             cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + numTasks), stream); CUERR;
             totalNumCandidates = 0;
+
+            for(auto&& task : tasks){
+                addFinishedTask(std::move(task));
+            }
 
             setState(BatchData::State::Finished);
             return;
@@ -1401,8 +1393,8 @@ struct BatchData{
         int numChecks = 0;
 
         for(int first = 0, second = 1; second < numTasks; ){
-            const int taskindex1 = indicesOfActiveTasks[first];
-            const int taskindex2 = indicesOfActiveTasks[second];
+            const int taskindex1 = first;
+            const int taskindex2 = second;
 
             const bool areConsecutiveTasks = tasks[taskindex1].id + 1 == tasks[taskindex2].id;
             const bool arePairedTasks = (tasks[taskindex1].id % 2) + 1 == (tasks[taskindex2].id % 2);
@@ -2797,7 +2789,7 @@ struct BatchData{
         // );
 
         for(int i = 0; i < numTasks; i++){
-            const int index = indicesOfActiveTasks[i];
+            const int index = i;
             const auto& task = tasks[index];
 
             h_accumExtensionsLengths[i] = task.accumExtensionLengths;
@@ -2822,7 +2814,7 @@ struct BatchData{
 
         int numPairedEndTasks = 0;
         for(int i = 0; i < numTasks; i++){
-            const int index = indicesOfActiveTasks[i];
+            const int index = i;
             const auto& task = tasks[index];
 
             if(task.pairedEnd){
@@ -3247,7 +3239,7 @@ struct BatchData{
                 d_numUsedReadIdsPerAnchorPrefixSum.data(),
                 d_segmentIdsOfUsedReadIds.data(),
                 *h_numUsedReadIds,
-                indicesOfActiveTasks.size(),        
+                numTasks,        
                 d_newUsedReadIds,
                 d_newNumUsedreadIdsPerAnchor,
                 d_newSegmentIdsOfUsedReadIds,
@@ -3465,7 +3457,7 @@ struct BatchData{
                 d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
                 d_segmentIdsOfFullyUsedReadIds.data(),
                 *h_numFullyUsedReadIds,
-                indicesOfActiveTasks.size(),        
+                numTasks,        
                 d_newFullyUsedReadIds,
                 d_newNumFullyUsedreadIdsPerAnchor,
                 d_newSegmentIdsOfFullyUsedReadIds,
@@ -3584,10 +3576,8 @@ struct BatchData{
     void unpackResultsIntoTasks(){
         assert(state == BatchData::State::BeforeUnpack);
 
-        const int numActiveTasks = indicesOfActiveTasks.size();
-
-        for(int i = 0; i < numActiveTasks; i++){ 
-            const int indexOfActiveTask = indicesOfActiveTasks[i];
+        for(int i = 0; i < numTasks; i++){ 
+            const int indexOfActiveTask = i;
             auto& task = tasks[indexOfActiveTask];
 
             task.abortReason = h_abortReasons[i];
@@ -3637,10 +3627,10 @@ struct BatchData{
             task.abort = task.abortReason != extension::AbortReason::None;
         }
 
-        handleEarlyExitOfTasks4(tasks, indicesOfActiveTasks);
+        handleEarlyExitOfTasks4();
 
-        for(int i = 0; i < numActiveTasks; i++){
-            auto& task = tasks[indicesOfActiveTasks[i]];
+        for(int i = 0; i < numTasks; i++){
+            auto& task = tasks[i];
 
             task.iteration++;
         }
@@ -3655,24 +3645,28 @@ struct BatchData{
         h_newPositionsOfActiveTasks.resize(numTasks);
         int newPosSize = 0;
 
+        assert(numTasks == int(tasks.size()));
+        const int totalTasksBefore = tasks.size() + finishedTasks.size();
+
         for(int i = 0; i < numTasks; i++){
-            if(tasks[indicesOfActiveTasks[i]].isActive(insertSize, insertSizeStddev)){
-                h_newPositionsOfActiveTasks[newPosSize++] = i;
+            if(tasks[i].isActive(insertSize, insertSizeStddev)){
+                h_newPositionsOfActiveTasks[newPosSize] = i;
+
+                if(newPosSize != i){
+                    tasks[newPosSize] = std::move(tasks[i]);
+                }
+
+                newPosSize++;
+            }else{
+                addFinishedTask(std::move(tasks[i]));
             }
         }
         h_newPositionsOfActiveTasks.resize(newPosSize);
 
-       
-        indicesOfActiveTasks.erase(
-            std::remove_if(
-                indicesOfActiveTasks.begin(), 
-                indicesOfActiveTasks.end(),
-                [&](int index){
-                    return !tasks[index].isActive(insertSize, insertSizeStddev);
-                }
-            ),
-            indicesOfActiveTasks.end()
-        );
+        tasks.erase(tasks.begin() + newPosSize, tasks.end());
+        const int totalTasksAfter = tasks.size() + finishedTasks.size();
+        assert(totalTasksAfter == totalTasksBefore);
+        // );
 
         if(!isEmpty()){
 
@@ -3706,7 +3700,7 @@ struct BatchData{
 
         }
 
-        numTasks = indicesOfActiveTasks.size();
+        numTasks = tasks.size();
 
         if(!isEmpty()){
             setState(BatchData::State::BeforeHash);
@@ -3725,21 +3719,21 @@ struct BatchData{
         nvtx::pop_range();
 
         //compute selection flags of remaining tasks
-        const int newNumActiveTasks = d_newPositionsOfActiveTasks.size();
+        const int newNumTasks = d_newPositionsOfActiveTasks.size();
         bool* d_isActive = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_isActive, numTasks, streams[0]);
         cudaMemsetAsync(d_isActive, 0, numTasks, streams[0]); CUERR;
 
-        helpers::lambda_kernel<<<SDIV(newNumActiveTasks, 128), 128, 0, streams[0]>>>(
+        helpers::lambda_kernel<<<SDIV(newNumTasks, 128), 128, 0, streams[0]>>>(
             [
                 d_isActive,
                 d_newPositionsOfActiveTasks = d_newPositionsOfActiveTasks.data(),
-                newNumActiveTasks
+                newNumTasks
             ] __device__ (){
                 const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                 const int stride = blockDim.x * gridDim.x;
 
-                for(int i = tid; i < newNumActiveTasks; i += stride){
+                for(int i = tid; i < newNumTasks; i += stride){
                     d_isActive[d_newPositionsOfActiveTasks[i]] = true;
                 }
             }
@@ -3750,7 +3744,7 @@ struct BatchData{
         cudaError_t cubstatus = cudaSuccess;
 
         //set new decoded anchors
-        d_subjectSequencesDataDecoded.resize(newNumActiveTasks * decodedSequencePitchInBytes);
+        d_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -3787,7 +3781,7 @@ struct BatchData{
         cubAllocator->DeviceFree(cubtemp);
 
         // set new anchor quality scores
-        d_anchorQualityScores.resize(newNumActiveTasks * qualityPitchInBytes);
+        d_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -3825,9 +3819,9 @@ struct BatchData{
 
         //set new anchorReadIds, mateReadIds, and anchor lengths
 
-        d_anchorReadIds2.resize(newNumActiveTasks);
-        d_mateReadIds2.resize(newNumActiveTasks);
-        d_anchorSequencesLength.resize(newNumActiveTasks);
+        d_anchorReadIds2.resize(newNumTasks);
+        d_mateReadIds2.resize(newNumTasks);
+        d_anchorSequencesLength.resize(newNumTasks);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -3879,7 +3873,7 @@ struct BatchData{
 
         //set new encoded mate data
 
-        d_inputanchormatedata2.resize(newNumActiveTasks * encodedSequencePitchInInts);
+        d_inputanchormatedata2.resize(newNumTasks * encodedSequencePitchInInts);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -3921,37 +3915,37 @@ struct BatchData{
 
         //convert new anchors to 2bit representation
 
-        d_subjectSequencesData.resize(newNumActiveTasks * encodedSequencePitchInInts);
+        d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts);
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
-        <<<SDIV(newNumActiveTasks, (128 / 8)), 128, 0, streams[0]>>>(
+        <<<SDIV(newNumTasks, (128 / 8)), 128, 0, streams[0]>>>(
             d_subjectSequencesData.data(),
             d_subjectSequencesDataDecoded.data(),
             d_anchorSequencesLength.data(),
             decodedSequencePitchInBytes,
             encodedSequencePitchInInts,
-            newNumActiveTasks
+            newNumTasks
         ); CUERR;
 
 
         //shrink remaining buffers
-        d_anchormatedata.resize(newNumActiveTasks * encodedSequencePitchInInts);
+        d_anchormatedata.resize(newNumTasks * encodedSequencePitchInInts);
 
-        d_numCandidatesPerAnchor.resize(newNumActiveTasks);
-        d_numCandidatesPerAnchor2.resize(newNumActiveTasks);
-        d_numCandidatesPerAnchorPrefixSum.resize(newNumActiveTasks+1);
-        d_numCandidatesPerAnchorPrefixSum2.resize(newNumActiveTasks+1);
+        d_numCandidatesPerAnchor.resize(newNumTasks);
+        d_numCandidatesPerAnchor2.resize(newNumTasks);
+        d_numCandidatesPerAnchorPrefixSum.resize(newNumTasks+1);
+        d_numCandidatesPerAnchorPrefixSum2.resize(newNumTasks+1);
 
-        d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks);
+        d_anchorIndicesWithRemovedMates.resize(newNumTasks);
 
     }
 
     void removeUsedIdsOfFinishedTasks(){
-        const int newNumActiveTasks = d_newPositionsOfActiveTasks.size();
+        const int newNumTasks = d_newPositionsOfActiveTasks.size();
 
-        if(newNumActiveTasks == 0) return;
+        if(newNumTasks == 0) return;
 
-        assert(newNumActiveTasks <= numTasks);
+        assert(newNumTasks <= numTasks);
 
         // {
         //     std::size_t free, total;
@@ -3964,13 +3958,13 @@ struct BatchData{
 
         {
 
-            d_numUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-            d_numUsedReadIdsPerAnchorPrefixSum2.resize(newNumActiveTasks);           
+            d_numUsedReadIdsPerAnchor2.resize(newNumTasks);
+            d_numUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);           
 
-            helpers::lambda_kernel<<<SDIV(newNumActiveTasks,256), 256, 0, streams[0]>>>(
+            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
                     indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
                     d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data(),
                     d_numUsedReadIdsPerAnchorOutsize = d_numUsedReadIdsPerAnchor2.size(),
@@ -3979,7 +3973,7 @@ struct BatchData{
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
-                    for(int t = tid; t < newNumActiveTasks; t += stride){
+                    for(int t = tid; t < newNumTasks; t += stride){
                         // assert(t < d_numUsedReadIdsPerAnchorOutsize);
                         // assert(indicesOfActiveTasks[t] < d_numUsedReadIdsPerAnchorInsize);
                         d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
@@ -3996,7 +3990,7 @@ struct BatchData{
                 bytes, 
                 d_numUsedReadIdsPerAnchor2.data(), 
                 h_numUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4008,7 +4002,7 @@ struct BatchData{
                 bytes, 
                 d_numUsedReadIdsPerAnchor2.data(), 
                 h_numUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4022,7 +4016,7 @@ struct BatchData{
                 bytes, 
                 d_numUsedReadIdsPerAnchor2.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum2.data(),  
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4034,7 +4028,7 @@ struct BatchData{
                 bytes, 
                 d_numUsedReadIdsPerAnchor2.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4046,13 +4040,13 @@ struct BatchData{
             d_usedReadIds2.resize(*h_numUsedReadIds);
             d_segmentIdsOfUsedReadIds2.resize(*h_numUsedReadIds);            
 
-            const int possibleNumWarps = newNumActiveTasks;
+            const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
                 d_newPositionsOfActiveTasks.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 d_usedReadIds.data(),
                 d_usedReadIds2.data(),
                 d_segmentIdsOfUsedReadIds2.data(),
@@ -4071,13 +4065,13 @@ struct BatchData{
         
         {
 
-            d_numFullyUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-            d_numFullyUsedReadIdsPerAnchorPrefixSum2.resize(newNumActiveTasks);
+            d_numFullyUsedReadIdsPerAnchor2.resize(newNumTasks);
+            d_numFullyUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);
 
-            helpers::lambda_kernel<<<SDIV(newNumActiveTasks,256), 256, 0, streams[0]>>>(
+            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
                     indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
                     d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data(),
                     d_numFullyUsedReadIdsPerAnchorOutsize = d_numFullyUsedReadIdsPerAnchor2.size(),
@@ -4086,7 +4080,7 @@ struct BatchData{
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
-                    for(int t = tid; t < newNumActiveTasks; t += stride){
+                    for(int t = tid; t < newNumTasks; t += stride){
                         // assert(t < d_numFullyUsedReadIdsPerAnchorOutsize);
                         // if(!(indicesOfActiveTasks[t] < d_numFullyUsedReadIdsPerAnchorInsize)){
                         //     printf("t %d indicesOfActiveTasks[t] %d d_numFullyUsedReadIdsPerAnchorInsize %lu\n", t, indicesOfActiveTasks[t], d_numFullyUsedReadIdsPerAnchorInsize);
@@ -4106,7 +4100,7 @@ struct BatchData{
                 bytes, 
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 h_numFullyUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4118,7 +4112,7 @@ struct BatchData{
                 bytes, 
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 h_numFullyUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4132,7 +4126,7 @@ struct BatchData{
                 bytes, 
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(),  
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4144,7 +4138,7 @@ struct BatchData{
                 bytes, 
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumActiveTasks,
+                newNumTasks,
                 streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -4156,13 +4150,13 @@ struct BatchData{
             d_fullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
             d_segmentIdsOfFullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
 
-            const int possibleNumWarps = newNumActiveTasks;
+            const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
                 d_newPositionsOfActiveTasks.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 d_fullyUsedReadIds.data(),
                 d_fullyUsedReadIds2.data(),
                 d_segmentIdsOfFullyUsedReadIds2.data(),
@@ -4189,10 +4183,11 @@ struct BatchData{
 
     std::vector<extension::ExtendResult> constructResults() const{
         std::vector<extension::ExtendResult> extendResults;
-        extendResults.reserve(tasks.size());
-        int x = 0;
+        extendResults.reserve(finishedTasks.size());
 
-        for(const auto& task : tasks){
+        // int x = 0;
+
+        for(const auto& task : finishedTasks){
 
             //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
 
@@ -4207,10 +4202,17 @@ struct BatchData{
             extendResult.originalMateLength = task.mateLength;
             extendResult.read1begin = 0;
 
+<<<<<<< HEAD
             std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
                 << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
 
             x++;
+=======
+            // std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
+            //     << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
+
+            // x++;
+>>>>>>> extenderfinishedtasks
 
             //construct extended read
             //build msa of all saved totalDecodedAnchors[0]
@@ -4462,6 +4464,97 @@ struct BatchData{
         
     }
     
+    void addFinishedTask(extension::Task&& task){
+        //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
+        auto comp = [](const auto& l, const auto& r){
+            return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
+        };
+        auto where = std::upper_bound(finishedTasks.begin(), finishedTasks.end(), task, comp);
+        finishedTasks.insert(where, std::move(task));
+    }
+
+    void handleEarlyExitOfTasks4(){
+
+        for(int i = 0; i < numTasks; i++){ 
+            const auto& task = tasks[i];
+            const int whichtype = task.id % 4;
+
+            //whichtype 0: LR, strand1 searching mate to the right.
+            //whichtype 1: LR, strand1 just extend to the right.
+            //whichtype 2: RL, strand2 searching mate to the right.
+            //whichtype 3: RL, strand2 just extend to the right.
+
+            if(whichtype == 0){
+                assert(task.direction == extension::ExtensionDirection::LR);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){
+                    for(int k = 1; k <= 4; k++){
+                        if(tasks[i + k].pairId == task.pairId){
+                            if(tasks[i+k].id == task.id + 1){
+                                //disable LR partner task
+                                tasks[i + k].abort = true;
+                                tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
+                            }else if(tasks[i+k].id == task.id + 2){
+                                //disable RL search task
+                                tasks[i + k].abort = true;
+                                tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                }else if(task.abort){
+                    for(int k = 1; k <= 4; k++){
+                        if(tasks[i + k].pairId == task.pairId){
+                            if(tasks[i+k].id == task.id + 1){
+                                //disable LR partner task  
+                                tasks[i + k].abort = true;
+                                tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
+                                break;
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                }
+            }else if(whichtype == 2){
+                assert(task.direction == extension::ExtensionDirection::RL);
+                assert(task.pairedEnd == true);
+
+                if(task.mateHasBeenFound){
+                    if(tasks[i + 1].pairId == task.pairId){
+                        if(tasks[i + 1].id == task.id + 1){
+                            //disable RL partner task
+                            tasks[i + 1].abort = true;
+                            tasks[i + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                        }
+                    }
+
+                    for(int k = 1; k <= 2; k++){
+                        if(tasks[i - k].pairId == task.pairId){
+                            if(tasks[i - k].id == task.id - 2){
+                                //disable LR search task
+                                tasks[i - k].abort = true;
+                                tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                    
+                }else if(task.abort){
+                    if(tasks[i + 1].pairId == task.pairId){
+                        if(tasks[i + 1].id == task.id + 1){
+                            //disable RL partner task
+                            tasks[i + 1].abort = true;
+                            tasks[i + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 
     bool pairedEnd = false;
@@ -4650,8 +4743,8 @@ struct BatchData{
     
     std::array<CudaEvent, 1> events{};
     std::array<CudaStream, 4> streams{};
-    std::vector<int> indicesOfActiveTasks{};
     std::vector<extension::Task> tasks;
+    std::vector<extension::Task> finishedTasks;
 
 };
 
@@ -5829,21 +5922,21 @@ public:
         nvtx::pop_range();
 
         //compute selection flags of remaining tasks
-        const int newNumActiveTasks = batchData.d_newPositionsOfActiveTasks.size();
+        const int newNumTasks = batchData.d_newPositionsOfActiveTasks.size();
         bool* d_isActive = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_isActive, batchData.numTasks, batchData.streams[0]);
         cudaMemsetAsync(d_isActive, 0, batchData.numTasks, batchData.streams[0]); CUERR;
 
-        helpers::lambda_kernel<<<SDIV(newNumActiveTasks, 128), 128, 0, batchData.streams[0]>>>(
+        helpers::lambda_kernel<<<SDIV(newNumTasks, 128), 128, 0, batchData.streams[0]>>>(
             [
                 d_isActive,
                 d_newPositionsOfActiveTasks = batchData.d_newPositionsOfActiveTasks.data(),
-                newNumActiveTasks
+                newNumTasks
             ] __device__ (){
                 const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                 const int stride = blockDim.x * gridDim.x;
 
-                for(int i = tid; i < newNumActiveTasks; i += stride){
+                for(int i = tid; i < newNumTasks; i += stride){
                     d_isActive[d_newPositionsOfActiveTasks[i]] = true;
                 }
             }
@@ -5854,7 +5947,7 @@ public:
         cudaError_t cubstatus = cudaSuccess;
 
         //set new decoded anchors
-        batchData.d_subjectSequencesDataDecoded.resize(newNumActiveTasks * batchData.decodedSequencePitchInBytes);
+        batchData.d_subjectSequencesDataDecoded.resize(newNumTasks * batchData.decodedSequencePitchInBytes);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -5891,7 +5984,7 @@ public:
         cubAllocator->DeviceFree(cubtemp);
 
         // set new anchor quality scores
-        batchData.d_anchorQualityScores.resize(newNumActiveTasks * batchData.qualityPitchInBytes);
+        batchData.d_anchorQualityScores.resize(newNumTasks * batchData.qualityPitchInBytes);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -5929,9 +6022,9 @@ public:
 
         //set new anchorReadIds, mateReadIds, and anchor lengths
 
-        batchData.d_anchorReadIds2.resize(newNumActiveTasks);
-        batchData.d_mateReadIds2.resize(newNumActiveTasks);
-        batchData.d_anchorSequencesLength.resize(newNumActiveTasks);
+        batchData.d_anchorReadIds2.resize(newNumTasks);
+        batchData.d_mateReadIds2.resize(newNumTasks);
+        batchData.d_anchorSequencesLength.resize(newNumTasks);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -5983,7 +6076,7 @@ public:
 
         //set new encoded mate data
 
-        batchData.d_inputanchormatedata2.resize(newNumActiveTasks * batchData.encodedSequencePitchInInts);
+        batchData.d_inputanchormatedata2.resize(newNumTasks * batchData.encodedSequencePitchInInts);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
@@ -6025,28 +6118,28 @@ public:
 
         //convert new anchors to 2bit representation
 
-        batchData.d_subjectSequencesData.resize(newNumActiveTasks * batchData.encodedSequencePitchInInts);
+        batchData.d_subjectSequencesData.resize(newNumTasks * batchData.encodedSequencePitchInInts);
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
-        <<<SDIV(newNumActiveTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
+        <<<SDIV(newNumTasks, (128 / 8)), 128, 0, batchData.streams[0]>>>(
             batchData.d_subjectSequencesData.data(),
             batchData.d_subjectSequencesDataDecoded.data(),
             batchData.d_anchorSequencesLength.data(),
             batchData.decodedSequencePitchInBytes,
             batchData.encodedSequencePitchInInts,
-            newNumActiveTasks
+            newNumTasks
         ); CUERR;
 
 
         //shrink remaining buffers
-        batchData.d_anchormatedata.resize(newNumActiveTasks * batchData.encodedSequencePitchInInts);
+        batchData.d_anchormatedata.resize(newNumTasks * batchData.encodedSequencePitchInInts);
 
-        batchData.d_numCandidatesPerAnchor.resize(newNumActiveTasks);
-        batchData.d_numCandidatesPerAnchor2.resize(newNumActiveTasks);
-        batchData.d_numCandidatesPerAnchorPrefixSum.resize(newNumActiveTasks+1);
-        batchData.d_numCandidatesPerAnchorPrefixSum2.resize(newNumActiveTasks+1);
+        batchData.d_numCandidatesPerAnchor.resize(newNumTasks);
+        batchData.d_numCandidatesPerAnchor2.resize(newNumTasks);
+        batchData.d_numCandidatesPerAnchorPrefixSum.resize(newNumTasks+1);
+        batchData.d_numCandidatesPerAnchorPrefixSum2.resize(newNumTasks+1);
 
-        batchData.d_anchorIndicesWithRemovedMates.resize(newNumActiveTasks);
+        batchData.d_anchorIndicesWithRemovedMates.resize(newNumTasks);
 
     }
 
@@ -6054,9 +6147,14 @@ public:
     void process(BatchData& batchData) const{
         assert(batchData.state == BatchData::State::BeforeHash);
 
+        const std::size_t initialNumTasks = tasks.size();
+
         while(batchData.state != BatchData::State::Finished){
             performNextStep(batchData);
         }
+
+        assert(tasks.size() == 0);
+        assert(finishedTasks.size() == initialNumTasks);
     }
 
     void unpackResultsIntoTasks(BatchData& batchData) const{
@@ -9346,11 +9444,11 @@ public:
     }
 
     void removeUsedIdsOfFinishedTasks(BatchData& batchData) const{
-        const int newNumActiveTasks = batchData.d_newPositionsOfActiveTasks.size();
+        const int newNumTasks = batchData.d_newPositionsOfActiveTasks.size();
 
-        if(newNumActiveTasks == 0) return;
+        if(newNumTasks == 0) return;
 
-        assert(newNumActiveTasks <= batchData.numTasks);
+        assert(newNumTasks <= batchData.numTasks);
 
         // {
         //     std::size_t free, total;
@@ -9363,13 +9461,13 @@ public:
 
         {
 
-            batchData.d_numUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-            batchData.d_numUsedReadIdsPerAnchorPrefixSum2.resize(newNumActiveTasks);           
+            batchData.d_numUsedReadIdsPerAnchor2.resize(newNumTasks);
+            batchData.d_numUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);           
 
-            helpers::lambda_kernel<<<SDIV(newNumActiveTasks,256), 256, 0, batchData.streams[0]>>>(
+            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, batchData.streams[0]>>>(
                 [
                     indicesOfActiveTasks = batchData.d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_numUsedReadIdsPerAnchorOut = batchData.d_numUsedReadIdsPerAnchor2.data(),
                     d_numUsedReadIdsPerAnchorIn = batchData.d_numUsedReadIdsPerAnchor.data(),
                     d_numUsedReadIdsPerAnchorOutsize = batchData.d_numUsedReadIdsPerAnchor2.size(),
@@ -9378,7 +9476,7 @@ public:
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
-                    for(int t = tid; t < newNumActiveTasks; t += stride){
+                    for(int t = tid; t < newNumTasks; t += stride){
                         // assert(t < d_numUsedReadIdsPerAnchorOutsize);
                         // assert(indicesOfActiveTasks[t] < d_numUsedReadIdsPerAnchorInsize);
                         d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
@@ -9395,7 +9493,7 @@ public:
                 bytes, 
                 batchData.d_numUsedReadIdsPerAnchor2.data(), 
                 batchData.h_numUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9407,7 +9505,7 @@ public:
                 bytes, 
                 batchData.d_numUsedReadIdsPerAnchor2.data(), 
                 batchData.h_numUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9421,7 +9519,7 @@ public:
                 bytes, 
                 batchData.d_numUsedReadIdsPerAnchor2.data(), 
                 batchData.d_numUsedReadIdsPerAnchorPrefixSum2.data(),  
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9433,7 +9531,7 @@ public:
                 bytes, 
                 batchData.d_numUsedReadIdsPerAnchor2.data(), 
                 batchData.d_numUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9445,14 +9543,14 @@ public:
             batchData.d_usedReadIds2.resize(*batchData.h_numUsedReadIds);
             batchData.d_segmentIdsOfUsedReadIds2.resize(*batchData.h_numUsedReadIds);            
 
-            const int possibleNumWarps = SDIV(newNumActiveTasks, 32);
+            const int possibleNumWarps = SDIV(newNumTasks, 32);
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             helpers::lambda_kernel<<<numBlocks, 128, 0, batchData.streams[0]>>>(
                 [
                     indicesOfActiveTasks = batchData.d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_usedReadIdsIn = batchData.d_usedReadIds.data(),
                     d_usedReadIdsOut = batchData.d_usedReadIds2.data(),
                     d_segmentIdsOfUsedIdsOut = batchData.d_segmentIdsOfUsedReadIds2.data(),
@@ -9466,7 +9564,7 @@ public:
                     const int numwarps = (blockDim.x * gridDim.x) / 32;
                     const int lane = threadIdx.x % 32;
 
-                    for(int t = warpid; t < newNumActiveTasks; t += numwarps){
+                    for(int t = warpid; t < newNumTasks; t += numwarps){
                         const int activeIndex = indicesOfActiveTasks[t];
                         const int num = d_numUsedReadIdsPerActiveTask[t];
                         const int inputOffset = inputOffsets[activeIndex];
@@ -9492,13 +9590,13 @@ public:
         
         {
 
-            batchData.d_numFullyUsedReadIdsPerAnchor2.resize(newNumActiveTasks);
-            batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum2.resize(newNumActiveTasks);
+            batchData.d_numFullyUsedReadIdsPerAnchor2.resize(newNumTasks);
+            batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);
 
-            helpers::lambda_kernel<<<SDIV(newNumActiveTasks,256), 256, 0, batchData.streams[0]>>>(
+            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, batchData.streams[0]>>>(
                 [
                     indicesOfActiveTasks = batchData.d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_numFullyUsedReadIdsPerAnchorOut = batchData.d_numFullyUsedReadIdsPerAnchor2.data(),
                     d_numFullyUsedReadIdsPerAnchorIn = batchData.d_numFullyUsedReadIdsPerAnchor.data(),
                     d_numFullyUsedReadIdsPerAnchorOutsize = batchData.d_numFullyUsedReadIdsPerAnchor2.size(),
@@ -9507,7 +9605,7 @@ public:
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
-                    for(int t = tid; t < newNumActiveTasks; t += stride){
+                    for(int t = tid; t < newNumTasks; t += stride){
                         // assert(t < d_numFullyUsedReadIdsPerAnchorOutsize);
                         // if(!(indicesOfActiveTasks[t] < d_numFullyUsedReadIdsPerAnchorInsize)){
                         //     printf("t %d indicesOfActiveTasks[t] %d d_numFullyUsedReadIdsPerAnchorInsize %lu\n", t, indicesOfActiveTasks[t], d_numFullyUsedReadIdsPerAnchorInsize);
@@ -9527,7 +9625,7 @@ public:
                 bytes, 
                 batchData.d_numFullyUsedReadIdsPerAnchor2.data(), 
                 batchData.h_numFullyUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9539,7 +9637,7 @@ public:
                 bytes, 
                 batchData.d_numFullyUsedReadIdsPerAnchor2.data(), 
                 batchData.h_numFullyUsedReadIds.data(),
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9553,7 +9651,7 @@ public:
                 bytes, 
                 batchData.d_numFullyUsedReadIdsPerAnchor2.data(), 
                 batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(),  
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9565,7 +9663,7 @@ public:
                 bytes, 
                 batchData.d_numFullyUsedReadIdsPerAnchor2.data(), 
                 batchData.d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumActiveTasks,
+                newNumTasks,
                 batchData.streams[0]
             );
             assert(cubstatus == cudaSuccess);
@@ -9577,14 +9675,14 @@ public:
             batchData.d_fullyUsedReadIds2.resize(*batchData.h_numFullyUsedReadIds);
             batchData.d_segmentIdsOfFullyUsedReadIds2.resize(*batchData.h_numFullyUsedReadIds);
 
-            const int possibleNumWarps = SDIV(newNumActiveTasks, 32);
+            const int possibleNumWarps = SDIV(newNumTasks, 32);
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             helpers::lambda_kernel<<<numBlocks, 128, 0, batchData.streams[0]>>>(
                 [
                     indicesOfActiveTasks = batchData.d_newPositionsOfActiveTasks.data(),
-                    newNumActiveTasks,
+                    newNumTasks,
                     d_fullyUsedReadIdsIn = batchData.d_fullyUsedReadIds.data(),
                     d_fullyUsedReadIdsOut = batchData.d_fullyUsedReadIds2.data(),
                     d_fullyUsedReadIdsInsize = batchData.d_fullyUsedReadIds.size(),
@@ -9601,7 +9699,7 @@ public:
                     const int numwarps = (blockDim.x * gridDim.x) / 32;
                     const int lane = threadIdx.x % 32;
 
-                    for(int t = warpid; t < newNumActiveTasks; t += numwarps){
+                    for(int t = warpid; t < newNumTasks; t += numwarps){
                         const int activeIndex = indicesOfActiveTasks[t];
                         const int num = d_numFullyUsedReadIdsPerActiveTask[t];
                         const int inputOffset = inputOffsets[activeIndex];
