@@ -4202,17 +4202,10 @@ struct BatchData{
             extendResult.originalMateLength = task.mateLength;
             extendResult.read1begin = 0;
 
-<<<<<<< HEAD
-            std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
-                << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
-
-            x++;
-=======
             // std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
             //     << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
 
             // x++;
->>>>>>> extenderfinishedtasks
 
             //construct extended read
             //build msa of all saved totalDecodedAnchors[0]
