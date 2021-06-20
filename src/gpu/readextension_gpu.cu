@@ -447,7 +447,7 @@ extend_gpu_pairedend(
     std::vector<ExtendedRead> resultExtendedReads;
 
     //cpu::RangeGenerator<read_number> readIdGenerator(gpuReadStorage.getNumberOfReads());
-    cpu::RangeGenerator<read_number> readIdGenerator(500000);
+    cpu::RangeGenerator<read_number> readIdGenerator(1500);
     //readIdGenerator.skip(2);
 
     BackgroundThread outputThread(true);
