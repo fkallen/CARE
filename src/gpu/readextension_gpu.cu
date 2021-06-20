@@ -158,9 +158,6 @@ void initializePairedEndExtensionBatchData2(
     batchData.msaColumnPitchInElements = msaColumnPitchInElements;
     batchData.qualityPitchInBytes = qualityPitchInBytes;
 
-    batchData.indicesOfActiveTasks.resize(batchData.tasks.size());
-    std::iota(batchData.indicesOfActiveTasks.begin(), batchData.indicesOfActiveTasks.end(), 0);
-
     for(int i = 0; i < batchsizePairs * 2; i++){
         batchData.tasks[i].id = i;
     }
