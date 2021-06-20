@@ -1574,7 +1574,7 @@ extend_gpu_pairedend(
             while(pairsWhichShouldBeRepeated.size() > 0){
                 init();
                 if(batchData->state != BatchData::State::None){
-                    //gpuExtensionStepper.process(*batchData);
+                    //gpuExtensionStepper.process(*batchData
                     batchData->process();
                     output();
                 }

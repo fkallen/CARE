@@ -4185,6 +4185,8 @@ struct BatchData{
         std::vector<extension::ExtendResult> extendResults;
         extendResults.reserve(finishedTasks.size());
 
+        // int x = 0;
+
         for(const auto& task : finishedTasks){
 
             //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
@@ -4199,6 +4201,11 @@ struct BatchData{
             extendResult.originalLength = task.myLength;
             extendResult.originalMateLength = task.mateLength;
             extendResult.read1begin = 0;
+
+            // std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
+            //     << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
+
+            // x++;
 
             //construct extended read
             //build msa of all saved totalDecodedAnchors[0]
@@ -4497,6 +4504,7 @@ struct BatchData{
                                 //disable LR partner task  
                                 tasks[i + k].abort = true;
                                 tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
+                                break;
                             }
                         }else{
                             break;
@@ -4516,7 +4524,7 @@ struct BatchData{
                         }
                     }
 
-                    for(int k = 2; k >= 1; k--){
+                    for(int k = 1; k <= 2; k++){
                         if(tasks[i - k].pairId == task.pairId){
                             if(tasks[i - k].id == task.id - 2){
                                 //disable LR search task
