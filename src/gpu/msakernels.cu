@@ -163,6 +163,7 @@ namespace gpu{
                 columnProperties = shared_columnProperties;
 
                 const int columnsToCheck = columnProperties.lastColumn_excl;
+                //printf("got %d, max %d\n", columnsToCheck, msa.columnPitchInElements);
 
                 assert(columnsToCheck <= msa.columnPitchInElements);
 
