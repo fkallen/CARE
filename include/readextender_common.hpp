@@ -98,6 +98,9 @@ namespace extension{
         std::vector<int> candidateShifts;
         std::vector<float> candidateOverlapWeights;
         std::vector<bool> isPairedCandidate;
+        std::vector<char> totalDecodedAnchorsFlat;
+        std::vector<int> totalDecodedAnchorsLengths;
+        std::vector<char> totalAnchorQualityScoresFlat;
 
         bool operator==(const Task& rhs) const noexcept{
             #if 1
@@ -144,6 +147,9 @@ namespace extension{
                 if(candidateShifts != rhs.candidateShifts) std::cerr << "candidateShifts differs\n";
                 if(candidateOverlapWeights != rhs.candidateOverlapWeights) std::cerr << "candidateOverlapWeights differs\n";
                 if(isPairedCandidate != rhs.isPairedCandidate) std::cerr << "isPairedCandidate differs\n";
+                if(totalDecodedAnchorsFlat != rhs.totalDecodedAnchorsFlat) std::cerr << "totalDecodedAnchorsFlat differs\n";
+                if(totalDecodedAnchorsLengths != rhs.totalDecodedAnchorsLengths) std::cerr << "totalDecodedAnchorsLengths differs\n";
+                if(totalAnchorQualityScoresFlat != rhs.totalAnchorQualityScoresFlat) std::cerr << "totalAnchorQualityScoresFlat differs\n";
             #endif
             if(pairedEnd != rhs.pairedEnd) return false;
             if(abort != rhs.abort) return false;
@@ -188,6 +194,9 @@ namespace extension{
             if(candidateShifts != rhs.candidateShifts) return false;
             if(candidateOverlapWeights != rhs.candidateOverlapWeights) return false;
             if(isPairedCandidate != rhs.isPairedCandidate) return false;
+            if(totalDecodedAnchorsFlat != rhs.totalDecodedAnchorsFlat) return false;
+            if(totalDecodedAnchorsLengths != rhs.totalDecodedAnchorsLengths) return false;
+            if(totalAnchorQualityScoresFlat != rhs.totalAnchorQualityScoresFlat) return false;
 
             return true;
         }
@@ -251,6 +260,9 @@ namespace extension{
             clear(candidateShifts);
             clear(candidateOverlapWeights);
             clear(isPairedCandidate);
+            clear(totalDecodedAnchorsFlat);
+            clear(totalDecodedAnchorsLengths);
+            clear(totalAnchorQualityScoresFlat);
         }
     };
 

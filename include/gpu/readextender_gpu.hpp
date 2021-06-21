@@ -609,8 +609,8 @@ struct BatchData{
     }
 
     template<class TaskIter>
-    void addTasks(TaskIter tasksBegin, TaskIter tasksEnd){
-        const int numAdditionalTasks = std::distance(tasksBegin, tasksEnd);
+    void addTasks(TaskIter extraTasksBegin, TaskIter extraTasksEnd){
+        const int numAdditionalTasks = std::distance(extraTasksBegin, extraTasksEnd);
         assert(numAdditionalTasks % 4 == 0);
         if(numAdditionalTasks == 0) return;
 
@@ -782,7 +782,7 @@ struct BatchData{
 
 
         for(int t = 0; t < numAdditionalTasks; t++){
-            const auto& task = *(tasksBegin + t);
+            const auto& task = *(extraTasksBegin + t);
 
             h_anchorReadIds[t] = task.myReadId;
             h_mateReadIds[t] = task.mateReadId;
@@ -804,8 +804,8 @@ struct BatchData{
             assert(h_anchorQualityScores.size() >= (t+1) * qualityPitchInBytes);
 
             std::copy(
-                task.currentQualityScores.begin(),
-                task.currentQualityScores.end(),
+                task.totalAnchorQualityScores.back().begin(),
+                task.totalAnchorQualityScores.back().end(),
                 h_anchorQualityScores.begin() + t * qualityPitchInBytes
             );
         }
@@ -869,11 +869,34 @@ struct BatchData{
         ); CUERR;
 
 
+        //init flat arrays
+        for(auto it = extraTasksBegin; it != extraTasksEnd; ++it){
 
+            const int expectedNumIterations = 2 + (insertSize / maxextensionPerStep);
+            
+            it->totalDecodedAnchorsFlat.reserve(expectedNumIterations * decodedSequencePitchInBytes);
+            it->totalDecodedAnchorsFlat.resize(decodedSequencePitchInBytes);
+            std::copy(
+                it->totalDecodedAnchors.back().begin(),
+                it->totalDecodedAnchors.back().end(),
+                it->totalDecodedAnchorsFlat.begin()
+            );
+
+            it->totalDecodedAnchorsLengths.reserve(expectedNumIterations);
+            it->totalDecodedAnchorsLengths.emplace_back(it->totalDecodedAnchors.back().size());
+
+            it->totalAnchorQualityScoresFlat.reserve(expectedNumIterations * qualityPitchInBytes);
+            it->totalAnchorQualityScoresFlat.resize(qualityPitchInBytes);
+            std::copy(
+                it->totalAnchorQualityScores.back().begin(),
+                it->totalAnchorQualityScores.back().end(),
+                it->totalAnchorQualityScoresFlat.begin()
+            );
+        }
 
         //save tasks and update indices of active tasks
 
-        tasks.insert(tasks.end(), std::make_move_iterator(tasksBegin), std::make_move_iterator(tasksEnd));
+        tasks.insert(tasks.end(), std::make_move_iterator(extraTasksBegin), std::make_move_iterator(extraTasksEnd));
         assert(tasks.size() % 4 == 0);
 
         
@@ -3584,42 +3607,108 @@ struct BatchData{
             if(task.abortReason == extension::AbortReason::None){
                 task.mateHasBeenFound = h_outputMateHasBeenFound[i];
 
+                const int myNumDecodedAnchors = task.totalDecodedAnchorsLengths.size();
+
                 if(!task.mateHasBeenFound){
                     const int newlength = h_outputAnchorLengths[i];
-
-                    std::string newseq(h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
-                    std::string newq(h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
-
+                    
                     task.currentAnchorLength = newlength;
                     task.accumExtensionLengths = h_accumExtensionsLengths[i];
-                    task.totalDecodedAnchors.emplace_back(std::move(newseq));
-                    task.totalAnchorQualityScores.emplace_back(std::move(newq));
-                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
 
-                    task.currentQualityScores = task.totalAnchorQualityScores.back(); 
+                    task.totalDecodedAnchorsFlat.resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
+                    assert(newlength <= decodedSequencePitchInBytes);
+                    std::copy_n(
+                        h_outputAnchors.data() + i * outputAnchorPitchInBytes,
+                        newlength,
+                        task.totalDecodedAnchorsFlat.begin()
+                            + myNumDecodedAnchors * decodedSequencePitchInBytes
+                    );
+                    task.totalDecodedAnchorsLengths.emplace_back(newlength);
+
+                    task.totalAnchorQualityScoresFlat.resize((myNumDecodedAnchors+1) * qualityPitchInBytes);
+                    assert(newlength <= qualityPitchInBytes);
+                    std::copy_n(
+                        h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes,
+                        newlength,
+                        task.totalAnchorQualityScoresFlat.begin()
+                            + myNumDecodedAnchors * qualityPitchInBytes
+                    );
+
+
+                    task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
                     
                 }else{
                     const int sizeofGap = h_sizeOfGapToMate[i];
                     if(sizeofGap == 0){
                         task.accumExtensionLengths = h_accumExtensionsLengths[i];
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-                        task.totalDecodedAnchors.emplace_back(task.decodedMateRevC);
-                        task.totalAnchorQualityScores.emplace_back(task.mateQualityScoresReversed);
+  
+                        task.totalDecodedAnchorsFlat.resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
+                        assert(task.mateLength <= decodedSequencePitchInBytes);
+                        std::copy(
+                            task.decodedMateRevC.begin(),
+                            task.decodedMateRevC.end(),
+                            task.totalDecodedAnchorsFlat.begin()
+                                + myNumDecodedAnchors * decodedSequencePitchInBytes
+                        );
+                        task.totalDecodedAnchorsLengths.emplace_back(task.mateLength);
+
+                        task.totalAnchorQualityScoresFlat.resize((myNumDecodedAnchors + 1) * qualityPitchInBytes);
+                        assert(task.mateLength <= qualityPitchInBytes);
+                        std::copy(
+                            task.mateQualityScoresReversed.begin(),
+                            task.mateQualityScoresReversed.end(),
+                            task.totalAnchorQualityScoresFlat.begin()
+                                + myNumDecodedAnchors * qualityPitchInBytes
+                        );
+
                     }else{
                         const int newlength = h_outputAnchorLengths[i];
 
-                        std::string newseq(h_outputAnchors.data() + i * outputAnchorPitchInBytes, newlength);
+                        task.totalDecodedAnchorsFlat.resize((myNumDecodedAnchors+2) * decodedSequencePitchInBytes);
+                        task.totalAnchorQualityScoresFlat.resize((myNumDecodedAnchors + 2) * qualityPitchInBytes);
+
                         std::string newq(h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes, newlength);
 
                         task.accumExtensionLengths = h_accumExtensionsLengths[i];
-                        task.totalDecodedAnchors.emplace_back(std::move(newseq));
-                        task.totalAnchorQualityScores.emplace_back(std::move(newq));
+                        assert(newlength <= decodedSequencePitchInBytes);
+                        std::copy_n(
+                            h_outputAnchors.data() + i * outputAnchorPitchInBytes,
+                            newlength,
+                            task.totalDecodedAnchorsFlat.begin()
+                                + myNumDecodedAnchors * decodedSequencePitchInBytes
+                        );
+                        task.totalDecodedAnchorsLengths.emplace_back(newlength);
+
+                        assert(newlength <= qualityPitchInBytes);
+                        std::copy_n(
+                            h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes,
+                            newlength,
+                            task.totalAnchorQualityScoresFlat.begin()
+                                + myNumDecodedAnchors * qualityPitchInBytes
+                        );
+
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
 
                         task.accumExtensionLengths += newlength;
                         task.totalAnchorBeginInExtendedRead.emplace_back(task.accumExtensionLengths);
-                        task.totalDecodedAnchors.emplace_back(task.decodedMateRevC);
-                        task.totalAnchorQualityScores.emplace_back(task.mateQualityScoresReversed);
+                        //task.totalDecodedAnchors.emplace_back(task.decodedMateRevC);
+                        assert(task.mateLength <= decodedSequencePitchInBytes);
+                        std::copy(
+                            task.decodedMateRevC.begin(),
+                            task.decodedMateRevC.end(),
+                            task.totalDecodedAnchorsFlat.begin()
+                                + (myNumDecodedAnchors + 1) * decodedSequencePitchInBytes
+                        );
+                        task.totalDecodedAnchorsLengths.emplace_back(task.mateLength);
+                        
+                        assert(task.mateLength <= qualityPitchInBytes);
+                        std::copy(
+                            task.mateQualityScoresReversed.begin(),
+                            task.mateQualityScoresReversed.end(),
+                            task.totalAnchorQualityScoresFlat.begin()
+                                + (myNumDecodedAnchors + 1) * qualityPitchInBytes
+                        );
                     }
                 }
             }
@@ -4210,53 +4299,40 @@ struct BatchData{
             //construct extended read
             //build msa of all saved totalDecodedAnchors[0]
 
-            const int numsteps = task.totalDecodedAnchors.size();
+            const int numsteps = task.totalDecodedAnchorsLengths.size();
 
             int maxlen = 0;
-            for(const auto& s: task.totalDecodedAnchors){
-                const int len = s.length();
+            for(const auto& len: task.totalDecodedAnchorsLengths){
                 if(len > maxlen){
                     maxlen = len;
                 }
             }
 
-            const std::string& decodedAnchor = task.totalDecodedAnchors[0];
-            const std::string& anchorQuality = task.totalAnchorQualityScores[0];
+            std::string_view decodedAnchor(
+                task.totalDecodedAnchorsFlat.data(), 
+                task.totalDecodedAnchorsLengths[0]
+            );
 
-            const std::vector<int> shifts(task.totalAnchorBeginInExtendedRead.begin() + 1, task.totalAnchorBeginInExtendedRead.end());
+            std::string_view anchorQuality(
+                task.totalAnchorQualityScoresFlat.data(),
+                task.totalDecodedAnchorsLengths[0]
+            );
+
+            const int* shifts = task.totalAnchorBeginInExtendedRead.data() + 1;
             std::vector<float> initialWeights(numsteps-1, 1.0f);
-
-
-            std::vector<char> stepstrings(maxlen * (numsteps-1), '\0');
-            std::vector<char> stepqualities(maxlen * (numsteps-1), '\0');
-            std::vector<int> stepstringlengths(numsteps-1);
-            for(int c = 1; c < numsteps; c++){
-                std::copy(
-                    task.totalDecodedAnchors[c].begin(),
-                    task.totalDecodedAnchors[c].end(),
-                    stepstrings.begin() + (c-1) * maxlen
-                );
-                assert(task.totalAnchorQualityScores[c].size() <= maxlen);
-                std::copy(
-                    task.totalAnchorQualityScores[c].begin(),
-                    task.totalAnchorQualityScores[c].end(),
-                    stepqualities.begin() + (c-1) * maxlen
-                );
-                stepstringlengths[c-1] = task.totalDecodedAnchors[c].size();
-            }
 
             MultipleSequenceAlignment::InputData msaInput;
             msaInput.useQualityScores = false;
             msaInput.subjectLength = decodedAnchor.length();
             msaInput.nCandidates = numsteps-1;
-            msaInput.candidatesPitch = maxlen;
-            msaInput.candidateQualitiesPitch = maxlen;
-            msaInput.subject = decodedAnchor.c_str();
-            msaInput.candidates = stepstrings.data();
+            msaInput.candidatesPitch = decodedSequencePitchInBytes;
+            msaInput.candidateQualitiesPitch = qualityPitchInBytes;
+            msaInput.subject = decodedAnchor.data();
+            msaInput.candidates = task.totalDecodedAnchorsFlat.data() + decodedSequencePitchInBytes;
             msaInput.subjectQualities = anchorQuality.data();
-            msaInput.candidateQualities = stepqualities.data();
-            msaInput.candidateLengths = stepstringlengths.data();
-            msaInput.candidateShifts = shifts.data();
+            msaInput.candidateQualities = task.totalAnchorQualityScoresFlat.data() + qualityPitchInBytes;
+            msaInput.candidateLengths = task.totalDecodedAnchorsLengths.data() + 1;
+            msaInput.candidateShifts = shifts;
             msaInput.candidateDefaultWeightFactors = initialWeights.data();
 
             MultipleSequenceAlignment msa(qualityConversion);
@@ -4721,8 +4797,7 @@ struct BatchData{
     // tasḱ_currentAnchorLength
     // tasḱ_totalDecodedAnchors
     // tasḱ_totalAnchorQualityScores
-    // tasḱ_totalAnchorBeginInExtendedRead
-    // tasḱ_currentQualityScores                    
+    // tasḱ_totalAnchorBeginInExtendedRead         
     // tasḱ_abort
     // tasḱ_iteration
     // tasḱ_direction;
