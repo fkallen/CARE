@@ -617,7 +617,6 @@ struct BatchData{
         const int currentNumTasks = tasks.size();
         const int newNumTasks = currentNumTasks + numAdditionalTasks;
 
-
         void* cubTemp = nullptr;
         std::size_t cubTempSize = 0;
         cudaError_t cubstatus = cudaSuccess;
@@ -959,6 +958,11 @@ struct BatchData{
             default: break;
         };
 
+        if(state == BatchData::State::Finished){
+            assert(tasks.size() == 0);
+            assert(finishedTasks.size() % 4 == 0);
+        }
+
         nvtx::pop_range();
     }
 
@@ -992,11 +996,7 @@ struct BatchData{
             cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.get(), 0, sizeof(int) * (1 + numTasks), stream); CUERR;
             totalNumCandidates = 0;
 
-            for(auto&& task : tasks){
-                addFinishedTask(std::move(task));
-            }
-
-            setState(BatchData::State::Finished);
+            setStateToFinished();
             return;
         }
 
@@ -1394,7 +1394,7 @@ struct BatchData{
 
         //removeUsedIdsAndMateIds is a compaction step. check early exit.
         if(totalNumCandidates == 0){
-            setState(BatchData::State::Finished);
+            setStateToFinished();
         }else{
             setState(BatchData::State::BeforeComputePairFlags);
         }
@@ -2440,7 +2440,7 @@ struct BatchData{
 
         //filterAlignments is a compaction step. check early exit.
         if(totalNumCandidates == 0){
-            setState(BatchData::State::Finished);
+            setStateToFinished();
         }else{
             setState(BatchData::State::BeforeMSA);
         }
@@ -3794,7 +3794,7 @@ struct BatchData{
         if(!isEmpty()){
             setState(BatchData::State::BeforeHash);
         }else{
-            setState(BatchData::State::Finished);
+            setStateToFinished();
         }
         
     }
@@ -4271,6 +4271,9 @@ struct BatchData{
 
 
     std::vector<extension::ExtendResult> constructResults(){
+        const int resultMSAColumnPitchInElements = 512; //SDIV(insertSize + insertSizeStddev, 4) * 4;
+
+        #if 0
         nvtx::push_range("constructresultgpumsa", 2);
         {
             const int numFinishedTasks = finishedTasks.size();
@@ -4509,7 +4512,7 @@ struct BatchData{
 
             //all input data ready. now set up msa
 
-            const int resultMSAColumnPitchInElements = 512; //SDIV(insertSize + insertSizeStddev, 4) * 4;
+            
 
             d_consensusEncoded.resize(numFinishedTasks * resultMSAColumnPitchInElements);
             d_coverage.resize(numFinishedTasks * resultMSAColumnPitchInElements);
@@ -4660,12 +4663,12 @@ struct BatchData{
 
                             for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
                                 const float support = taskSupport[i];
-                                const float cov = taskCoverage[i];
+                                // const float cov = taskCoverage[i];
 
-                                char q = getQualityChar(taskSupport[i]);
+                                // char q = getQualityChar(support);
 
-                                //scale down quality depending on coverage
-                                q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
+                                // //scale down quality depending on coverage
+                                // q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
 
                                 taskConsensusQuality[i] = getQualityChar(support);
                             }
@@ -4721,14 +4724,15 @@ struct BatchData{
 
         }
         nvtx::pop_range();
-
+        #endif
 
         std::vector<extension::ExtendResult> extendResults;
         extendResults.reserve(finishedTasks.size());
 
         // int x = 0;
 
-        for(const auto& task : finishedTasks){
+        for(std::size_t t = 0; t < finishedTasks.size(); t++){
+            const auto& task = finishedTasks[t];
 
             //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
 
@@ -4786,6 +4790,11 @@ struct BatchData{
 
             //msa.print(std::cerr);
 
+            // const int gpuLength = h_anchorSequencesLength[t];
+            // std::string_view gpuConsensus(h_outputAnchors.data() + t * resultMSAColumnPitchInElements, gpuLength);
+            // std::string_view gpuConsensusQual(h_outputAnchorQualities.data() + t * resultMSAColumnPitchInElements, gpuLength);
+
+
             std::string extendedRead(msa.consensus.begin(), msa.consensus.end());
             std::string extendedReadQuality(msa.consensus.size(), '\0');
             std::transform(msa.support.begin(), msa.support.end(), extendedReadQuality.begin(),
@@ -4793,6 +4802,17 @@ struct BatchData{
                     return getQualityChar(f);
                 }
             );
+
+            // if(extendedRead != gpuConsensus){
+            //     std::cerr << "t = " << t << "task.myReadId = " << task.myReadId << ", task.id = " << task.id << ", 'numsteps-1' = " << numsteps-1 << "\n";
+            //     std::cerr << "cpu: " << extendedRead << "\n";
+            //     std::cerr << "gpu: " << gpuConsensus << "\n";
+            //     std::cerr << "cpu: " << extendedReadQuality << "\n";
+            //     std::cerr << "gpu: " << gpuConsensusQual << "\n";
+            //     assert(false);
+            // }
+
+            
 
             std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
             std::copy(anchorQuality.begin(), anchorQuality.end(), extendedReadQuality.begin());
@@ -5122,6 +5142,15 @@ struct BatchData{
                 }
             }
         }
+    }
+
+    void setStateToFinished(){
+        for(auto&& task : tasks){
+            addFinishedTask(std::move(task));
+        }
+        tasks.clear();
+
+        setState(BatchData::State::Finished);
     }
 
 
