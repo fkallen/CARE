@@ -448,7 +448,11 @@ namespace gpu{
                         //reverse complement
                         encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                     }
-                    const float weight = weightfunc(quality[fullInts * nucleotidesPerInt2Bit + posInInt]);
+                    char q = 'I';
+                    if(canUseQualityScores){
+                        q = quality[fullInts * nucleotidesPerInt2Bit + posInInt];
+                    }
+                    const float weight = weightfunc(q);
 
                     assert(weight != 0);
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;
