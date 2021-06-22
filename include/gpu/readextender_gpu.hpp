@@ -3737,22 +3737,28 @@ struct BatchData{
         assert(numTasks == int(tasks.size()));
         const int totalTasksBefore = tasks.size() + finishedTasks.size();
 
+        std::vector<extension::Task> newActiveTasks;
+        std::vector<extension::Task> newlyFinishedTasks;
+        newActiveTasks.reserve(numTasks);
+        newlyFinishedTasks.reserve(numTasks);
+
         for(int i = 0; i < numTasks; i++){
             if(tasks[i].isActive(insertSize, insertSizeStddev)){
                 h_newPositionsOfActiveTasks[newPosSize] = i;
 
-                if(newPosSize != i){
-                    tasks[newPosSize] = std::move(tasks[i]);
-                }
+                newActiveTasks.emplace_back(std::move(tasks[i]));
 
                 newPosSize++;
             }else{
-                addFinishedTask(std::move(tasks[i]));
+                newlyFinishedTasks.emplace_back(std::move(tasks[i]));
             }
         }
         h_newPositionsOfActiveTasks.resize(newPosSize);
+        std::swap(tasks, newActiveTasks);
+        nvtx::push_range("addSortedFinishedTasks", 5);
+        addSortedFinishedTasks(newlyFinishedTasks);
+        nvtx::pop_range();
 
-        tasks.erase(tasks.begin() + newPosSize, tasks.end());
         const int totalTasksAfter = tasks.size() + finishedTasks.size();
         assert(totalTasksAfter == totalTasksBefore);
         // );
@@ -5078,6 +5084,16 @@ struct BatchData{
         }
         
     }
+
+    void setStateToFinished(){
+        // for(auto&& task : tasks){
+        //     addFinishedTask(std::move(task));
+        // }
+        addSortedFinishedTasks(tasks);
+        tasks.clear();
+
+        setState(BatchData::State::Finished);
+    }
     
     void addFinishedTask(extension::Task&& task){
         //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
@@ -5086,6 +5102,28 @@ struct BatchData{
         };
         auto where = std::upper_bound(finishedTasks.begin(), finishedTasks.end(), task, comp);
         finishedTasks.insert(where, std::move(task));
+    }
+
+    void addSortedFinishedTasks(std::vector<extension::Task>& tasksToAdd){
+        //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
+
+        auto comp = [](const auto& l, const auto& r){
+            return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
+        };
+        assert(std::is_sorted(tasksToAdd.begin(), tasksToAdd.end(), comp));
+
+        std::vector<extension::Task> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
+
+        std::merge(
+            std::make_move_iterator(tasksToAdd.begin()), 
+            std::make_move_iterator(tasksToAdd.end()), 
+            std::make_move_iterator(finishedTasks.begin()), 
+            std::make_move_iterator(finishedTasks.end()), 
+            newFinishedTasks.begin(),
+            comp
+        );
+
+        std::swap(newFinishedTasks, finishedTasks);
     }
 
     void handleEarlyExitOfTasks4(){
@@ -5171,14 +5209,9 @@ struct BatchData{
         }
     }
 
-    void setStateToFinished(){
-        for(auto&& task : tasks){
-            addFinishedTask(std::move(task));
-        }
-        tasks.clear();
 
-        setState(BatchData::State::Finished);
-    }
+
+
 
 
     bool pairedEnd = false;
