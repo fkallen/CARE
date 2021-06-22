@@ -94,7 +94,7 @@ namespace gpu{
         for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             const int myNumGoodCandidates = indices_per_subject[subjectIndex];
 
-            if(myNumGoodCandidates > 0){
+            //if(myNumGoodCandidates > 0){
 
                 tbGroup.sync(); //wait for smem of previous iteration
 
@@ -219,7 +219,7 @@ namespace gpu{
                         gmemCoverages[index] = msa.coverages[index];
                     }
                 }
-            } 
+            //} 
         }
 
     }
