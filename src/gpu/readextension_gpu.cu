@@ -739,7 +739,7 @@ extend_gpu_pairedend(
 
                 const int numReadPairsInBatch = numReadsInBatch / 2;
 
-                std::vector<ExtendInput> inputs(numReadPairsInBatch); 
+                std::vector<ExtendInput> inputs(numReadPairsInBatch);
 
                 for(int i = 0; i < numReadPairsInBatch; i++){
                     auto& input = inputs[i];
@@ -1258,6 +1258,12 @@ extend_gpu_pairedend(
         const int deviceId = runtimeOptions.deviceIds.at(deviceIdIndex);
         cudaSetDevice(deviceId); CUERR;
 
+        std::array<CudaStream, 4> streams{};
+        std::array<cudaStream_t, 4> streamsraw{};
+        for(int i = 0; i < 4; i++){
+            streamsraw[i] = streams[i].getStream();
+        }
+
         cub::CachingDeviceAllocator myCubAllocator(
             8, //bin_growth
             1, //min_bin
@@ -1266,6 +1272,7 @@ extend_gpu_pairedend(
             false, //skip_cleanup 
             false //debug
         );
+
 
         //cub::CachingDeviceAllocator* myCubAllocator = cubAllocators[deviceIdIndex].get();
 
@@ -1314,6 +1321,7 @@ extend_gpu_pairedend(
             insertSize,
             insertSizeStddev,
             maxextensionPerStep,
+            streamsraw,
             myCubAllocator
         );
         batchData->someId = ompThreadId;
