@@ -1346,22 +1346,15 @@ struct BatchData{
 
         if(numChecks > 0){
 
-            int* d_firstTasksOfPairsToCheck = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_firstTasksOfPairsToCheck, sizeof(int) * numChecks); CUERR;
-
-            DEBUGDEVICESYNC
+            CachedDeviceUVector<int> d_firstTasksOfPairsToCheck(numTasks, stream, *cubAllocator);
 
             cudaMemcpyAsync(
-                d_firstTasksOfPairsToCheck,
+                d_firstTasksOfPairsToCheck.data(),
                 h_firstTasksOfPairsToCheck.data(),
                 sizeof(int) * numChecks,
                 H2D,
                 stream
             ); CUERR;
-
-            DEBUGDEVICESYNC
-
-            
 
             dim3 block = 128;
             dim3 grid = numChecks;
@@ -1369,7 +1362,7 @@ struct BatchData{
             helpers::lambda_kernel<<<grid, block, 0, stream>>>(
                 [
                     numChecks,
-                    d_firstTasksOfPairsToCheck,
+                    d_firstTasksOfPairsToCheck = d_firstTasksOfPairsToCheck.data(),
                     d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
                     d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(), // numTasks + 1
                     d_numCandidatesPerAnchorPrefixSumsize = d_numCandidatesPerAnchorPrefixSum.size(),
@@ -1550,12 +1543,6 @@ struct BatchData{
                 }
             ); CUERR;
 
-            DEBUGDEVICESYNC
-
-            cubAllocator->DeviceFree(d_firstTasksOfPairsToCheck); CUERR;
-
-            DEBUGDEVICESYNC
-
         }
 
         setState(BatchData::State::BeforeLoadCandidates);
@@ -1602,18 +1589,11 @@ struct BatchData{
 
             CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
 
-            read_number* d_candidateReadIds2 = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * totalNumCandidates, stream); CUERR;
-
-            int* d_candidateSequencesLength2 = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_candidateSequencesLength2, sizeof(int) * totalNumCandidates, stream); CUERR;
-
-            bool* d_isPairedCandidate2 = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * totalNumCandidates, stream); CUERR;
-
-            int* d_segmentIdsOfCandidates2 = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_segmentIdsOfCandidates2, sizeof(int) * totalNumCandidates, stream);
-
+            CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<bool> d_keepflags(totalNumCandidates, stream, *cubAllocator);
 
             constexpr int groupsize = 32;
             constexpr int blocksize = 128;
@@ -1622,10 +1602,7 @@ struct BatchData{
             dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, blocksize), 1, 1);
             const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
 
-            bool* d_keepflags = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_keepflags, sizeof(bool) * totalNumCandidates, stream); CUERR;
-
-            helpers::call_fill_kernel_async(d_keepflags, totalNumCandidates, true, stream);
+            helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
 
             readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
                 d_anchormatedata.data(),
@@ -1635,11 +1612,10 @@ struct BatchData{
                 d_numCandidatesPerAnchorPrefixSum.data(),
                 d_anchorIndicesWithRemovedMates.data(),
                 numTasksWithMateRemoved,
-                d_keepflags
+                d_keepflags.data()
             ); CUERR;
 
-            int* d_outputpositions = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_outputpositions, sizeof(int) * totalNumCandidates, stream); CUERR;
+            CachedDeviceUVector<int> d_outputpositions(totalNumCandidates, stream, *cubAllocator);
 
             CachedDeviceUVector<char> cubTemp(*cubAllocator);
             std::size_t cubTempSize = 0;
@@ -1648,8 +1624,8 @@ struct BatchData{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr,
                 cubTempSize,
-                d_keepflags, 
-                d_outputpositions, 
+                d_keepflags.data(), 
+                d_outputpositions.data(), 
                 totalNumCandidates, 
                 stream
             );
@@ -1660,8 +1636,8 @@ struct BatchData{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 cubTemp.data(),
                 cubTempSize,
-                d_keepflags, 
-                d_outputpositions, 
+                d_keepflags.data(), 
+                d_outputpositions.data(), 
                 totalNumCandidates, 
                 stream
             );
@@ -1673,18 +1649,18 @@ struct BatchData{
                     encodedSequencePitchInInts = encodedSequencePitchInInts,
                     d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
                     d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-                    d_keepflags,
-                    d_outputpositions = d_outputpositions,
+                    d_keepflags = d_keepflags.data(),
+                    d_outputpositions = d_outputpositions.data(),
                     d_candidateReadIds = d_candidateReadIds.data(),
                     d_candidateSequencesLength = d_candidateSequencesLength.data(),
                     d_candidateSequencesData = d_candidateSequencesData.data(),
                     d_segmentIdsOfCandidates = d_segmentIdsOfCandidates.data(),
                     d_isPairedCandidate = d_isPairedCandidate.data(),
-                    d_candidateReadIdsOut = d_candidateReadIds2,
-                    d_candidateSequencesLengthOut = d_candidateSequencesLength2,
+                    d_candidateReadIdsOut = d_candidateReadIds2.data(),
+                    d_candidateSequencesLengthOut = d_candidateSequencesLength2.data(),
                     d_candidateSequencesDataOut = d_candidateSequencesData2.data(),
-                    d_segmentIdsOfCandidatesOut = d_segmentIdsOfCandidates2,
-                    d_isPairedCandidateOut = d_isPairedCandidate2
+                    d_segmentIdsOfCandidatesOut = d_segmentIdsOfCandidates2.data(),
+                    d_isPairedCandidateOut = d_isPairedCandidate2.data()
                 ] __device__ (){
 
                     constexpr int elementsPerIteration = 128;
@@ -1734,9 +1710,6 @@ struct BatchData{
                 }
             ); CUERR;
 
-            cubAllocator->DeviceFree(d_outputpositions); CUERR;
-            cubAllocator->DeviceFree(d_keepflags); CUERR;
-
             //update prefix sum        
             cubstatus = cub::DeviceScan::InclusiveSum(
                 nullptr,
@@ -1772,31 +1745,17 @@ struct BatchData{
 
             totalNumCandidates = *h_numCandidates;
 
-            assert(d_candidateReadIds.size() >= totalNumCandidates);
+            d_candidateReadIds2.resize(totalNumCandidates, stream);
+            d_candidateSequencesLength2.resize(totalNumCandidates, stream);
+            d_isPairedCandidate2.resize(totalNumCandidates, stream);
+            d_segmentIdsOfCandidates2.resize(totalNumCandidates, stream);
+            d_candidateSequencesData2.resize(totalNumCandidates * encodedSequencePitchInInts, stream);
 
-            helpers::call_copy_n_kernel(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateReadIds2,
-                    d_candidateSequencesLength2,
-                    d_isPairedCandidate2,
-                    d_segmentIdsOfCandidates2
-                )),
-                totalNumCandidates,
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_candidateReadIds.data(),
-                    d_candidateSequencesLength.data(),
-                    d_isPairedCandidate.data(),
-                    d_segmentIdsOfCandidates.data()
-                )),
-                stream
-            );
-
-            cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
-            cubAllocator->DeviceFree(d_candidateSequencesLength2); CUERR;
-            cubAllocator->DeviceFree(d_isPairedCandidate2); CUERR;
-            cubAllocator->DeviceFree(d_segmentIdsOfCandidates2); CUERR;
-
-            std::swap(d_candidateSequencesData2, d_candidateSequencesData); 
+            std::swap(d_candidateReadIds, d_candidateReadIds2); 
+            std::swap(d_candidateSequencesLength, d_candidateSequencesLength2); 
+            std::swap(d_isPairedCandidate, d_isPairedCandidate2); 
+            std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2); 
+            std::swap(d_candidateSequencesData, d_candidateSequencesData2); 
         }
 
         setState(BatchData::State::BeforeAlignment);
@@ -1813,9 +1772,8 @@ struct BatchData{
         d_alignment_nOps.resizeWithoutCopy(totalNumCandidates, stream);
         d_alignment_best_alignment_flags.resizeWithoutCopy(totalNumCandidates, stream);
 
-        bool* d_alignment_isValid = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_alignment_isValid, sizeof(bool) * totalNumCandidates, stream); CUERR;
-        
+        CachedDeviceUVector<bool> d_alignment_isValid(totalNumCandidates, stream, *cubAllocator);
+
         h_numAnchors[0] = numTasks;
 
         const bool* const d_anchorContainsN = nullptr;
@@ -1839,7 +1797,7 @@ struct BatchData{
                 d_alignment_overlaps.data(),
                 d_alignment_shifts.data(),
                 d_alignment_nOps.data(),
-                d_alignment_isValid,
+                d_alignment_isValid.data(),
                 d_alignment_best_alignment_flags.data(),
                 d_subjectSequencesData.data(),
                 d_candidateSequencesData.data(),
@@ -1874,8 +1832,6 @@ struct BatchData{
 
         callAlignmentKernel(d_tempstorage.data(), tempstoragebytes);
 
-        cubAllocator->DeviceFree(d_alignment_isValid); CUERR;
-
         setState(BatchData::State::BeforeAlignmentFilter);
     }
 
@@ -1895,12 +1851,8 @@ struct BatchData{
 
         CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
 
-        bool* d_keepflags = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_keepflags, sizeof(bool) * totalNumCandidates, stream); CUERR; 
-
-        helpers::call_fill_kernel_async(d_keepflags, totalNumCandidates, true, stream);
-
-        DEBUGDEVICESYNC
+        CachedDeviceUVector<bool> d_keepflags(totalNumCandidates, stream, *cubAllocator);
+        helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
 
         dim3 block(128,1,1);
         dim3 grid(numAnchors, 1, 1);
@@ -1919,7 +1871,7 @@ struct BatchData{
                 d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
                 d_isPairedCandidate = d_isPairedCandidate.data(),
-                d_keepflags,
+                d_keepflags = d_keepflags.data(),
                 min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
                 numAnchors
             ] __device__ (){
@@ -1994,7 +1946,7 @@ struct BatchData{
                 d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
                 d_isPairedCandidate = d_isPairedCandidate.data(),
-                d_keepflags,
+                d_keepflags = d_keepflags.data(),
                 min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
                 numAnchors
             ] __device__ (){
@@ -2111,57 +2063,25 @@ struct BatchData{
             )
         );
 
-        int* d_alignment_overlaps2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_alignment_overlaps2, sizeof(int) * totalNumCandidates, stream); CUERR;
-
-        int* d_alignment_shifts2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_alignment_shifts2, sizeof(int) * totalNumCandidates, stream); CUERR;
-
-        int* d_alignment_nOps2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_alignment_nOps2, sizeof(int) * totalNumCandidates, stream); CUERR;
-
-        BestAlignment_t* d_alignment_best_alignment_flags2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_alignment_best_alignment_flags2, sizeof(BestAlignment_t) * totalNumCandidates, stream); CUERR;
-
-        int* d_candidateSequencesLength2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_candidateSequencesLength2, sizeof(int) * totalNumCandidates, stream); CUERR;
-
-        read_number* d_candidateReadIds2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * totalNumCandidates, stream); CUERR;
-
-        bool* d_isPairedCandidate2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * totalNumCandidates, stream); CUERR;
-
-        DEBUGDEVICESYNC
-
+        CachedDeviceUVector<int> d_alignment_overlaps2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_shifts2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_nOps2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
+  
         auto d_zip_data_tmp = thrust::make_zip_iterator(
             thrust::make_tuple(
-                d_alignment_nOps2,
-                d_alignment_overlaps2,
-                d_alignment_shifts2,
-                d_alignment_best_alignment_flags2,
-                d_candidateReadIds2,
-                d_candidateSequencesLength2,
-                d_isPairedCandidate2
+                d_alignment_nOps2.data(),
+                d_alignment_overlaps2.data(),
+                d_alignment_shifts2.data(),
+                d_alignment_best_alignment_flags2.data(),
+                d_candidateReadIds2.data(),
+                d_candidateSequencesLength2.data(),
+                d_isPairedCandidate2.data()
             )
         );
-
-        assert(d_alignment_nOps.size() >= totalNumCandidates);
-        assert(d_alignment_overlaps.size() >= totalNumCandidates);
-        assert(d_alignment_shifts.size() >= totalNumCandidates);
-        assert(d_alignment_best_alignment_flags.size() >= totalNumCandidates);
-        assert(d_candidateReadIds.size() >= totalNumCandidates);
-        assert(d_candidateSequencesLength.size() >= totalNumCandidates);
-        assert(d_isPairedCandidate.size() >= totalNumCandidates);
-
-
-        assert(d_alignment_nOps2 != nullptr);
-        assert(d_alignment_overlaps2 != nullptr);
-        assert(d_alignment_shifts2 != nullptr);
-        assert(d_alignment_best_alignment_flags2 != nullptr);
-        assert(d_candidateReadIds2 != nullptr);
-        assert(d_candidateSequencesLength2 != nullptr);
-        assert(d_isPairedCandidate2 != nullptr);
 
         //compact 1d arrays
 
@@ -2172,7 +2092,7 @@ struct BatchData{
             nullptr, 
             cubTempSize, 
             d_zip_data, 
-            d_keepflags, 
+            d_keepflags.data(), 
             d_zip_data_tmp, 
             h_numCandidates.data(), 
             totalNumCandidates, 
@@ -2186,7 +2106,7 @@ struct BatchData{
             cubTemp.data(), 
             cubTempSize, 
             d_zip_data, 
-            d_keepflags, 
+            d_keepflags.data(), 
             d_zip_data_tmp, 
             h_numCandidates.data(), 
             totalNumCandidates, 
@@ -2203,7 +2123,7 @@ struct BatchData{
             d_candidateSequencesData.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags, int(encodedSequencePitchInInts)}
+                SequenceFlagMultiplier{d_keepflags.data(), int(encodedSequencePitchInInts)}
             ),
             d_candidateSequencesData2.data(),
             thrust::make_discard_iterator(),
@@ -2220,7 +2140,7 @@ struct BatchData{
             d_candidateSequencesData.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags, int(encodedSequencePitchInInts)}
+                SequenceFlagMultiplier{d_keepflags.data(), int(encodedSequencePitchInInts)}
             ),
             d_candidateSequencesData2.data(),
             thrust::make_discard_iterator(), //number of remaining candidates already known from previous compaction call
@@ -2230,10 +2150,6 @@ struct BatchData{
 
 
         std::swap(d_candidateSequencesData2, d_candidateSequencesData);
-
-        cubAllocator->DeviceFree(d_keepflags); CUERR;
-
-        DEBUGDEVICESYNC
 
 
         //compute prefix sum of new number of candidates per anchor
@@ -2259,52 +2175,27 @@ struct BatchData{
         );
         assert(cudaSuccess == cubstatus);
 
-        std::swap(d_numCandidatesPerAnchor2, d_numCandidatesPerAnchor);
-
-        DEBUGDEVICESYNC
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR; 
-
-        //     std::vector<int> offsets(numTasks + 1);
-        //     cudaMemcpyAsync(
-        //         offsets.data(),
-        //         d_numCandidatesPerAnchorPrefixSum.data(),
-        //         sizeof(int) * (numTasks + 1),
-        //         D2H,
-        //         stream
-        //     );
-
-        //     cudaDeviceSynchronize(); CUERR;
-        //     std::cerr << "Offsets after filteralignment:\n";
-        //     for(int i = 0; i < numTasks+1; i++){
-        //         std::cerr << offsets[i] << " ";
-        //     }
-        //     std::cerr << "\n";
-
-        // }
-        
+        std::swap(d_numCandidatesPerAnchor2, d_numCandidatesPerAnchor);       
 
 
         cudaEventSynchronize(events[0]); CUERR;
         totalNumCandidates = *h_numCandidates;
 
-        helpers::call_copy_n_kernel(
-            d_zip_data_tmp,
-            totalNumCandidates,
-            d_zip_data,
-            stream
-        ); CUERR;
+        d_alignment_nOps2.resize(totalNumCandidates, stream);
+        d_alignment_overlaps2.resize(totalNumCandidates, stream);
+        d_alignment_shifts2.resize(totalNumCandidates, stream);
+        d_alignment_best_alignment_flags2.resize(totalNumCandidates, stream);
+        d_candidateReadIds2.resize(totalNumCandidates, stream);
+        d_candidateSequencesLength2.resize(totalNumCandidates, stream);
+        d_isPairedCandidate2.resize(totalNumCandidates, stream);
 
-        DEBUGDEVICESYNC
-
-        cubAllocator->DeviceFree(d_alignment_overlaps2); CUERR;
-        cubAllocator->DeviceFree(d_alignment_shifts2); CUERR;
-        cubAllocator->DeviceFree(d_alignment_nOps2); CUERR;
-        cubAllocator->DeviceFree(d_alignment_best_alignment_flags2); CUERR;
-        cubAllocator->DeviceFree(d_candidateSequencesLength2); CUERR;
-        cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
-        cubAllocator->DeviceFree(d_isPairedCandidate2); CUERR;
+        std::swap(d_alignment_nOps, d_alignment_nOps2);
+        std::swap(d_alignment_overlaps, d_alignment_overlaps2);
+        std::swap(d_alignment_shifts, d_alignment_shifts2);
+        std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags2);
+        std::swap(d_candidateReadIds, d_candidateReadIds2);
+        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
+        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
 
         //filterAlignments is a compaction step. check early exit.
         if(totalNumCandidates == 0){
@@ -2320,45 +2211,31 @@ struct BatchData{
         cudaStream_t firstStream = streams[0];
         //cudaStream_t secondStream = firstStream;
 
-        char* d_candidateQualityScores = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_candidateQualityScores, sizeof(char) * qualityPitchInBytes * totalNumCandidates, firstStream); CUERR;
+        CachedDeviceUVector<char> d_candidateQualityScores(qualityPitchInBytes * totalNumCandidates, firstStream, *cubAllocator);
 
-        loadCandidateQualityScores(firstStream, d_candidateQualityScores);
+        loadCandidateQualityScores(firstStream, d_candidateQualityScores.data());
 
 
         d_consensusEncoded.resize(numTasks * msaColumnPitchInElements);
         d_coverage.resize(numTasks * msaColumnPitchInElements);
         d_msa_column_properties.resize(numTasks);
 
-        int* d_counts = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_counts, sizeof(int) * numTasks * 4 * msaColumnPitchInElements, firstStream); CUERR;
-
-        float* d_weights = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_weights, sizeof(float) * numTasks * 4 * msaColumnPitchInElements, firstStream); CUERR;
-
-        int* d_origCoverages = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_origCoverages, sizeof(int) * numTasks * msaColumnPitchInElements, firstStream); CUERR;
-
-        float* d_origWeights = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_origWeights, sizeof(float) * numTasks * msaColumnPitchInElements, firstStream); CUERR;
-
-        float* d_support = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_support, sizeof(float) * numTasks * msaColumnPitchInElements, firstStream); CUERR;
+        CachedDeviceUVector<int> d_counts(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
+        CachedDeviceUVector<float> d_weights(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_origCoverages(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
+        CachedDeviceUVector<float> d_origWeights(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
+        CachedDeviceUVector<float> d_support(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
 
         d_consensusQuality.resize(numTasks * msaColumnPitchInElements);
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
 
-        int* indices1 = nullptr; 
-        int* indices2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&indices1, sizeof(int) * totalNumCandidates, firstStream); CUERR;
-        cubAllocator->DeviceAllocate((void**)&indices2, sizeof(int) * totalNumCandidates, firstStream); CUERR;
-
-        
+        CachedDeviceUVector<int> indices1(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> indices2(totalNumCandidates, firstStream, *cubAllocator);       
 
         helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
             [
-                indices1,
+                indices1 = indices1.data(),
                 d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
             ] __device__ (){
@@ -2377,13 +2254,13 @@ struct BatchData{
 
         multiMSA.numMSAs = numTasks;
         multiMSA.columnPitchInElements = msaColumnPitchInElements;
-        multiMSA.counts = d_counts;
-        multiMSA.weights = d_weights;
+        multiMSA.counts = d_counts.data();
+        multiMSA.weights = d_weights.data();
         multiMSA.coverages = d_coverage.data();
         multiMSA.consensus = d_consensusEncoded.data();
-        multiMSA.support = d_support;
-        multiMSA.origWeights = d_origWeights;
-        multiMSA.origCoverages = d_origCoverages;
+        multiMSA.support = d_support.data();
+        multiMSA.origWeights = d_origWeights.data();
+        multiMSA.origCoverages = d_origCoverages.data();
         multiMSA.columnProperties = d_msa_column_properties.data();
 
         const bool useQualityScoresForMSA = true;
@@ -2396,14 +2273,14 @@ struct BatchData{
             d_alignment_best_alignment_flags.data(),
             d_anchorSequencesLength.data(),
             d_candidateSequencesLength.data(),
-            indices1, //d_indices,
+            indices1.data(), //d_indices,
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_subjectSequencesData.data(),
             d_candidateSequencesData.data(),
             d_isPairedCandidate.data(),
             d_anchorQualityScores.data(), //d_anchor_qualities.data(),
-            d_candidateQualityScores,
+            d_candidateQualityScores.data(),
             h_numAnchors.data(), //d_numAnchors
             goodAlignmentProperties->maxErrorRate,
             numTasks,
@@ -2415,12 +2292,12 @@ struct BatchData{
             kernelLaunchHandle
         );
 
+
         //refine msa
-        bool* d_shouldBeKept = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_shouldBeKept, sizeof(bool) * totalNumCandidates, firstStream); CUERR;
+        CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator); 
 
         callMsaCandidateRefinementKernel_multiiter_async(
-            indices2,
+            indices2.data(),
             d_numCandidatesPerAnchor2.data(),
             d_numCandidates2.data(),
             multiMSA,
@@ -2434,8 +2311,8 @@ struct BatchData{
             d_anchorSequencesLength.data(),
             d_candidateSequencesLength.data(),
             d_anchorQualityScores.data(), //d_anchor_qualities.data(),
-            d_candidateQualityScores,
-            d_shouldBeKept,
+            d_candidateQualityScores.data(),
+            d_shouldBeKept.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
             h_numAnchors.data(),
             goodAlignmentProperties->maxErrorRate,
@@ -2444,7 +2321,7 @@ struct BatchData{
             useQualityScoresForMSA, //correctionOptions->useQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            indices1, //d_indices,
+            indices1.data(), //d_indices,
             d_numCandidatesPerAnchor.data(),
             correctionOptions->estimatedCoverage,
             getNumRefinementIterations(),
@@ -2452,15 +2329,15 @@ struct BatchData{
             kernelLaunchHandle
         );
 
-        cubAllocator->DeviceFree(d_candidateQualityScores); CUERR;
+        d_candidateQualityScores.destroy();
 
-        helpers::call_fill_kernel_async(d_shouldBeKept, totalNumCandidates, false, firstStream); CUERR;
+        helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
 
         //convert output indices from task-local indices to global flags
         helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
             [
-                d_flagscandidates = d_shouldBeKept,
-                indices2,
+                d_flagscandidates = d_shouldBeKept.data(),
+                indices2 = indices2.data(),
                 d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
             ] __device__ (){
@@ -2493,7 +2370,7 @@ struct BatchData{
             nullptr,
             cubBytes,
             d_candidateReadIds.data(),
-            d_shouldBeKept,
+            d_shouldBeKept.data(),
             d_candidateReadIds2.data(),
             h_numCandidates.data(),
             totalNumCandidates,
@@ -2506,7 +2383,7 @@ struct BatchData{
             cubTemp.data(),
             cubBytes,
             d_candidateReadIds.data(),
-            d_shouldBeKept,
+            d_shouldBeKept.data(),
             d_candidateReadIds2.data(),
             h_numCandidates.data(),
             totalNumCandidates,
@@ -2523,7 +2400,7 @@ struct BatchData{
         helpers::lambda_kernel<<<numTasks, 256, 0, firstStream>>>(
             [
                 consensusQuality = d_consensusQuality.data(),
-                support = d_support,
+                support = d_support.data(),
                 coverages = d_coverage.data(),
                 msa_column_properties = d_msa_column_properties.data(),
                 d_numCandidatesInMsa = d_numCandidatesPerAnchor2.data(),
@@ -2563,15 +2440,14 @@ struct BatchData{
             }
         ); CUERR;
 
-        cubAllocator->DeviceFree(d_counts); CUERR;
-        cubAllocator->DeviceFree(d_weights); CUERR;
-        cubAllocator->DeviceFree(d_origCoverages); CUERR;
-        cubAllocator->DeviceFree(d_origWeights); CUERR;
-        cubAllocator->DeviceFree(d_support); CUERR;        
-        cubAllocator->DeviceFree(indices1); CUERR;
-        cubAllocator->DeviceFree(indices2); CUERR;
-        
-        cubAllocator->DeviceFree(d_shouldBeKept); CUERR;        
+        d_counts.destroy();
+        d_weights.destroy();
+        d_origCoverages.destroy();
+        d_origWeights.destroy();
+        d_support.destroy();
+        indices1.destroy();
+        indices2.destroy();
+        d_shouldBeKept.destroy();    
 
         cubstatus = cub::DeviceScan::InclusiveSum(
             nullptr,
