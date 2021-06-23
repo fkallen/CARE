@@ -2507,13 +2507,11 @@ struct BatchData{
         h_sizeOfGapToMate.resize(numTasks);
         h_isFullyUsedCandidate.resize(totalNumCandidates);
 
-        int* d_accumExtensionsLengths = nullptr;
-        int* d_accumExtensionsLengthsOUT = nullptr;
-        int* d_sizeOfGapToMate = nullptr;
 
-        cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengths, sizeof(int) * numTasks, stream); CUERR;
-        cubAllocator->DeviceAllocate((void**)&d_accumExtensionsLengthsOUT, sizeof(int) * numTasks, stream); CUERR;
-        cubAllocator->DeviceAllocate((void**)&d_sizeOfGapToMate, sizeof(int) * numTasks, stream); CUERR;
+        CachedDeviceUVector<int> d_accumExtensionsLengths(numTasks, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_accumExtensionsLengthsOUT(numTasks, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
+
         
         d_isFullyUsedCandidate.resize(totalNumCandidates);
         d_outputAnchors.resize(numTasks * outputAnchorPitchInBytes);
@@ -2535,7 +2533,7 @@ struct BatchData{
         }
 
         cudaMemcpyAsync(
-            d_accumExtensionsLengths,
+            d_accumExtensionsLengths.data(),
             h_accumExtensionsLengths.data(),
             sizeof(int) * numTasks,
             H2D,
@@ -2556,21 +2554,21 @@ struct BatchData{
                 d_consensusQuality = d_consensusQuality.data(),
                 d_coverage = d_coverage.data(),
                 d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_accumExtensionsLengths = (int*)d_accumExtensionsLengths,
-                d_inputMateLengths = (int*)d_inputMateLengths.data(),
+                d_accumExtensionsLengths = d_accumExtensionsLengths.data(),
+                d_inputMateLengths = d_inputMateLengths.data(),
                 d_abortReasons = d_abortReasons.data(),
-                d_accumExtensionsLengthsOUT = (int*)d_accumExtensionsLengthsOUT,
-                d_outputAnchors = (char*)d_outputAnchors,
+                d_accumExtensionsLengthsOUT = d_accumExtensionsLengthsOUT.data(),
+                d_outputAnchors = d_outputAnchors.data(),
                 outputAnchorPitchInBytes = outputAnchorPitchInBytes,
-                d_outputAnchorQualities = (char*)d_outputAnchorQualities,
+                d_outputAnchorQualities = d_outputAnchorQualities.data(),
                 outputAnchorQualityPitchInBytes = outputAnchorQualityPitchInBytes,
                 d_outputAnchorLengths = d_outputAnchorLengths.data(),
-                d_isPairedTask = (bool*)d_isPairedTask.data(),
+                d_isPairedTask = d_isPairedTask.data(),
                 d_inputanchormatedata = d_inputanchormatedata.data(),
                 encodedSequencePitchInInts = encodedSequencePitchInInts,
                 decodedMatesRevCPitchInBytes = decodedMatesRevCPitchInBytes,
                 d_outputMateHasBeenFound = d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate = (int*)d_sizeOfGapToMate,
+                d_sizeOfGapToMate = d_sizeOfGapToMate.data(),
                 minCoverageForExtension = this->minCoverageForExtension,
                 fixedStepsize = this->maxextensionPerStep
             ] __device__ (){
@@ -2805,11 +2803,10 @@ struct BatchData{
                 d_candidateSequencesLengths = d_candidateSequencesLength.data(),
                 d_alignment_shifts = d_alignment_shifts.data(),
                 d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_oldaccumExtensionsLengths = d_accumExtensionsLengths,
-                d_newaccumExtensionsLengths = d_accumExtensionsLengthsOUT,
+                d_oldaccumExtensionsLengths = d_accumExtensionsLengths.data(),
+                d_newaccumExtensionsLengths = d_accumExtensionsLengthsOUT.data(),
                 d_abortReasons = d_abortReasons.data(),
                 d_outputMateHasBeenFound = d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate,
                 d_isFullyUsedCandidate = d_isFullyUsedCandidate.data()
             ] __device__ (){
 
@@ -2840,10 +2837,10 @@ struct BatchData{
 
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
-                d_accumExtensionsLengthsOUT,
+                d_accumExtensionsLengthsOUT.data(),
                 d_abortReasons.data(),
                 d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate,
+                d_sizeOfGapToMate.data(),
                 d_outputAnchorLengths.data()
             )),
             numTasks,
@@ -2880,10 +2877,6 @@ struct BatchData{
             D2H,
             stream
         ); CUERR;
-
-        cubAllocator->DeviceFree(d_accumExtensionsLengths); CUERR;
-        cubAllocator->DeviceFree(d_accumExtensionsLengthsOUT); CUERR;
-        cubAllocator->DeviceFree(d_sizeOfGapToMate); CUERR;
 
         setState(BatchData::State::BeforeUpdateUsedCandidateIds);
     }
@@ -3405,13 +3398,13 @@ struct BatchData{
 
         //compute selection flags of remaining tasks
         const int newNumTasks = d_newPositionsOfActiveTasks.size();
-        bool* d_isActive = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_isActive, numTasks, streams[0]);
-        cudaMemsetAsync(d_isActive, 0, numTasks, streams[0]); CUERR;
+
+        CachedDeviceUVector<bool> d_isActive(numTasks, streams[0], *cubAllocator);
+        cudaMemsetAsync(d_isActive.data(), 0, numTasks, streams[0]); CUERR;
 
         helpers::lambda_kernel<<<SDIV(newNumTasks, 128), 128, 0, streams[0]>>>(
             [
-                d_isActive,
+                d_isActive = d_isActive.data(),
                 d_newPositionsOfActiveTasks = d_newPositionsOfActiveTasks.data(),
                 newNumTasks
             ] __device__ (){
@@ -3437,7 +3430,7 @@ struct BatchData{
             d_outputAnchors.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, outputAnchorPitchInBytes)
+                make_iterator_multiplier(d_isActive.data(), outputAnchorPitchInBytes)
             ),
             d_subjectSequencesDataDecoded.data(),
             thrust::make_discard_iterator(),
@@ -3454,7 +3447,7 @@ struct BatchData{
             d_outputAnchors.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, outputAnchorPitchInBytes)
+                make_iterator_multiplier(d_isActive.data(), outputAnchorPitchInBytes)
             ),
             d_subjectSequencesDataDecoded.data(),
             thrust::make_discard_iterator(),
@@ -3472,7 +3465,7 @@ struct BatchData{
             d_outputAnchorQualities.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, outputAnchorQualityPitchInBytes)
+                make_iterator_multiplier(d_isActive.data(), outputAnchorQualityPitchInBytes)
             ),
             d_anchorQualityScores.data(),
             thrust::make_discard_iterator(),
@@ -3489,7 +3482,7 @@ struct BatchData{
             d_outputAnchorQualities.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, outputAnchorQualityPitchInBytes)
+                make_iterator_multiplier(d_isActive.data(), outputAnchorQualityPitchInBytes)
             ),
             d_anchorQualityScores.data(),
             thrust::make_discard_iterator(),
@@ -3517,7 +3510,7 @@ struct BatchData{
                 d_inputMateLengths.data(),
                 d_isPairedTask.data()
             )),
-            d_isActive,
+            d_isActive.data(),
             thrust::make_zip_iterator(thrust::make_tuple(
                 d_anchorReadIds2.data(),
                 d_mateReadIds2.data(),
@@ -3543,7 +3536,7 @@ struct BatchData{
                 d_inputMateLengths.data(),
                 d_isPairedTask.data()
             )),
-            d_isActive,
+            d_isActive.data(),
             thrust::make_zip_iterator(thrust::make_tuple(
                 d_anchorReadIds2.data(),
                 d_mateReadIds2.data(),
@@ -3573,7 +3566,7 @@ struct BatchData{
             d_inputanchormatedata.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, encodedSequencePitchInInts)
+                make_iterator_multiplier(d_isActive.data(), encodedSequencePitchInInts)
             ),
             d_inputanchormatedata2.data(),
             thrust::make_discard_iterator(),
@@ -3590,7 +3583,7 @@ struct BatchData{
             d_inputanchormatedata.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive, encodedSequencePitchInInts)
+                make_iterator_multiplier(d_isActive.data(), encodedSequencePitchInInts)
             ),
             d_inputanchormatedata2.data(),
             thrust::make_discard_iterator(),
@@ -3601,11 +3594,9 @@ struct BatchData{
 
         std::swap(d_inputanchormatedata, d_inputanchormatedata2);
         
-        cubAllocator->DeviceFree(d_isActive);
-
         //convert new anchors to 2bit representation
 
-        d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_subjectSequencesData.resizeWithoutCopy(newNumTasks * encodedSequencePitchInInts, streams[0]);
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
         <<<SDIV(newNumTasks, (128 / 8)), 128, 0, streams[0]>>>(
@@ -4050,8 +4041,7 @@ struct BatchData{
 
                 //copy "candidate" qualities
                 // h_outputAnchorQualities.resize(numCandidates * qualityPitchInBytes);
-                // char* d_candidateQualityScores = nullptr;
-                // cubAllocator->DeviceAllocate((void**)&d_candidateQualityScores, sizeof(char) * qualityPitchInBytes * numCandidates, stream); CUERR;
+                // CachedDeviceUVector<char> d_candidateQualityScores(qualityPitchInBytes * numCandidates, stream, *cubAllocator);
 
                 // for(int i = 0; i < numFinishedTasks; i++){
                 //     const auto& task = finishedTasks[i];
@@ -4121,27 +4111,16 @@ struct BatchData{
                 d_coverage.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 d_msa_column_properties.resize(numFinishedTasks);
 
-                int* d_counts = nullptr;
-                cubAllocator->DeviceAllocate((void**)&d_counts, sizeof(int) * numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream); CUERR;
-
-                float* d_weights = nullptr;
-                cubAllocator->DeviceAllocate((void**)&d_weights, sizeof(float) * numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream); CUERR;
-
-                int* d_origCoverages = nullptr;
-                cubAllocator->DeviceAllocate((void**)&d_origCoverages, sizeof(int) * numFinishedTasks * resultMSAColumnPitchInElements, stream); CUERR;
-
-                float* d_origWeights = nullptr;
-                cubAllocator->DeviceAllocate((void**)&d_origWeights, sizeof(float) * numFinishedTasks * resultMSAColumnPitchInElements, stream); CUERR;
-
-                float* d_support = nullptr;
-                cubAllocator->DeviceAllocate((void**)&d_support, sizeof(float) * numFinishedTasks * resultMSAColumnPitchInElements, stream); CUERR;
-
-                int* indices1 = nullptr; 
-                cubAllocator->DeviceAllocate((void**)&indices1, sizeof(int) * numCandidates, stream); CUERR;
+                CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_support(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
 
                 helpers::lambda_kernel<<<numFinishedTasks, 128, 0, stream>>>(
                     [
-                        indices1,
+                        indices1 = indices1.data(),
                         d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
                         d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
                     ] __device__ (){
@@ -4161,13 +4140,13 @@ struct BatchData{
 
                 multiMSA.numMSAs = numFinishedTasks;
                 multiMSA.columnPitchInElements = resultMSAColumnPitchInElements;
-                multiMSA.counts = d_counts;
-                multiMSA.weights = d_weights;
+                multiMSA.counts = d_counts.data();
+                multiMSA.weights = d_weights.data();
                 multiMSA.coverages = d_coverage.data();
                 multiMSA.consensus = d_consensusEncoded.data();
-                multiMSA.support = d_support;
-                multiMSA.origWeights = d_origWeights;
-                multiMSA.origCoverages = d_origCoverages;
+                multiMSA.support = d_support.data();
+                multiMSA.origWeights = d_origWeights.data();
+                multiMSA.origCoverages = d_origCoverages.data();
                 multiMSA.columnProperties = d_msa_column_properties.data();
 
                 const bool useQualityScoresForMSA = false;
@@ -4182,7 +4161,7 @@ struct BatchData{
                     d_alignment_best_alignment_flags.data(),
                     d_anchorSequencesLength2.data(),
                     d_candidateSequencesLength.data(),
-                    indices1,
+                    indices1.data(),
                     d_numCandidatesPerAnchor.data(),
                     d_numCandidatesPerAnchorPrefixSum.data(),
                     d_subjectSequencesData2.data(),
@@ -4201,19 +4180,18 @@ struct BatchData{
                     kernelLaunchHandle
                 );
 
-                //cubAllocator->DeviceFree(d_candidateQualityScores); CUERR;
-                cubAllocator->DeviceFree(d_counts); CUERR;
-                cubAllocator->DeviceFree(d_weights); CUERR;
-                cubAllocator->DeviceFree(d_origCoverages); CUERR;
-                cubAllocator->DeviceFree(d_origWeights); CUERR;
-                cubAllocator->DeviceFree(d_support); CUERR;        
-                cubAllocator->DeviceFree(indices1); CUERR; 
+                // d_candidateQualityScores.destroy();
+                d_counts.destroy();
+                d_weights.destroy();
+                d_origCoverages.destroy();
+                d_origWeights.destroy();
+                d_support.destroy();
+                indices1.destroy();
 
                 //compute quality of consensus
                 d_consensusQuality.resize(numFinishedTasks * resultMSAColumnPitchInElements);
 
-                d_subjectSequencesDataDecoded2.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                char* d_decodedConsensus = d_subjectSequencesDataDecoded2.data();
+                CachedDeviceUVector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 
                 h_outputAnchorQualities.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 h_outputAnchors.resize(numFinishedTasks * resultMSAColumnPitchInElements);
@@ -4223,9 +4201,9 @@ struct BatchData{
                 helpers::lambda_kernel<<<numFinishedTasks, 256, 0, stream>>>(
                     [
                         d_consensusLengths = d_anchorSequencesLength2.data(),
-                        d_decodedConsensus = d_decodedConsensus,
+                        d_decodedConsensus = d_decodedConsensus.data(),
                         consensusQuality = d_consensusQuality.data(),
-                        support = d_support,
+                        support = d_support.data(),
                         coverages = d_coverage.data(),
                         d_encodedConsensus = d_consensusEncoded.data(),
                         msa_column_properties = d_msa_column_properties.data(),
@@ -4287,7 +4265,7 @@ struct BatchData{
 
                 cudaMemcpyAsync(
                     h_outputAnchors.data(),
-                    d_decodedConsensus,
+                    d_decodedConsensus.data(),
                     sizeof(char) * numFinishedTasks * resultMSAColumnPitchInElements,
                     D2H,
                     stream
