@@ -245,8 +245,8 @@ namespace readextendergpukernels{
 
     template<int dummy=0>
     __global__
-    void setAnchorIndicesOfCandidateskernel(
-        int* __restrict__ d_anchorIndicesOfCandidates,
+    void setSegmentIdsOfCandidateskernel(
+        int* __restrict__ d_segmentIdsOfCandidates,
         const int* __restrict__ numAnchorsPtr,
         const int* __restrict__ d_candidates_per_anchor,
         const int* __restrict__ d_candidates_per_anchor_prefixsum
@@ -254,7 +254,7 @@ namespace readextendergpukernels{
         for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += gridDim.x){
             const int offset = d_candidates_per_anchor_prefixsum[anchorIndex];
             const int numCandidatesOfAnchor = d_candidates_per_anchor[anchorIndex];
-            int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+            int* const beginptr = &d_segmentIdsOfCandidates[offset];
 
             for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += blockDim.x){
                 beginptr[localindex] = anchorIndex;
@@ -583,7 +583,7 @@ struct BatchData{
         d_candidateSequencesLength(cubAllocator_),    
         d_candidateReadIds(cubAllocator_),
         d_isPairedCandidate(cubAllocator_),
-        d_anchorIndicesOfCandidates(cubAllocator_),
+        d_segmentIdsOfCandidates(cubAllocator_),
         d_alignment_overlaps(cubAllocator_),
         d_alignment_shifts(cubAllocator_),
         d_alignment_nOps(cubAllocator_),
@@ -1014,7 +1014,7 @@ struct BatchData{
 
         //std::cerr << "\n" << totalNumCandidates << "\n";
         
-        d_anchorIndicesOfCandidates.resizeWithoutCopy(totalNumCandidates, firstStream);
+        d_segmentIdsOfCandidates.resizeWithoutCopy(totalNumCandidates, firstStream);
 
         read_number* d_candidateReadIds2 = nullptr;
         cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * totalNumCandidates, firstStream); CUERR;
@@ -1066,8 +1066,8 @@ struct BatchData{
         cubstatus = cub::DeviceScan::InclusiveScan(
             nullptr, 
             cubBytes2, 
-            d_anchorIndicesOfCandidates.data(), 
-            d_anchorIndicesOfCandidates.data(), 
+            d_segmentIdsOfCandidates.data(), 
+            d_segmentIdsOfCandidates.data(), 
             cub::Max{},
             totalNumCandidates,
             firstStream
@@ -1226,11 +1226,11 @@ struct BatchData{
         );
         assert(cubstatus == cudaSuccess);
 
-        helpers::call_fill_kernel_async(d_anchorIndicesOfCandidates.data(), totalNumCandidates, 0, firstStream);
+        helpers::call_fill_kernel_async(d_segmentIdsOfCandidates.data(), totalNumCandidates, 0, firstStream);
 
         readextendergpukernels::setFirstSegmentIdsKernel<<<SDIV(numTasks, 256), 256, 0, firstStream>>>(
             d_numCandidatesPerAnchor2.data(),
-            d_anchorIndicesOfCandidates.data(),
+            d_segmentIdsOfCandidates.data(),
             d_numCandidatesPerAnchorPrefixSum2.data(),
             numTasks
         );
@@ -1238,8 +1238,8 @@ struct BatchData{
         cubstatus = cub::DeviceScan::InclusiveScan(
             cubTemp.data(), 
             cubBytes, 
-            d_anchorIndicesOfCandidates.data(), 
-            d_anchorIndicesOfCandidates.data(), 
+            d_segmentIdsOfCandidates.data(), 
+            d_segmentIdsOfCandidates.data(), 
             cub::Max{},
             totalNumCandidates,
             firstStream
@@ -1253,8 +1253,7 @@ struct BatchData{
 
         //cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
 
-        int* d_anchorIndicesOfCandidates2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_anchorIndicesOfCandidates2, sizeof(int) * totalNumCandidates * 2, firstStream);
+        CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, firstStream, *cubAllocator);
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
@@ -1267,8 +1266,8 @@ struct BatchData{
                 firstStream
             ); CUERR;
             cudaMemcpyAsync(
-                d_anchorIndicesOfCandidates2,
-                d_anchorIndicesOfCandidates.data(),
+                d_segmentIdsOfCandidates2.data(),
+                d_segmentIdsOfCandidates.data(),
                 sizeof(int) * totalNumCandidates,
                 D2D,
                 firstStream
@@ -1290,7 +1289,7 @@ struct BatchData{
             d_candidateReadIds2,
             d_numCandidatesPerAnchor2.data(),
             d_numCandidatesPerAnchorPrefixSum2.data(),
-            d_anchorIndicesOfCandidates.data(),
+            d_segmentIdsOfCandidates.data(),
             totalNumCandidates,
             numTasks,
             d_fullyUsedReadIds.data(),
@@ -1301,7 +1300,7 @@ struct BatchData{
             numTasks,        
             d_candidateReadIds.data(),
             d_numCandidatesPerAnchor.data(),
-            d_anchorIndicesOfCandidates2,
+            d_segmentIdsOfCandidates2,
             numTasks,
             firstStream
         );
@@ -1315,15 +1314,7 @@ struct BatchData{
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
-        cudaMemcpyAsync(
-            d_anchorIndicesOfCandidates.data(),
-            d_anchorIndicesOfCandidates2,
-            sizeof(int) * totalNumCandidates,
-            D2D,
-            firstStream
-        ); CUERR;
-
-        cubAllocator->DeviceFree(d_anchorIndicesOfCandidates2); CUERR;
+        std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2);
 
         //compute prefix sum of new segment sizes
     
@@ -1650,8 +1641,8 @@ struct BatchData{
             bool* d_isPairedCandidate2 = nullptr;
             cubAllocator->DeviceAllocate((void**)&d_isPairedCandidate2, sizeof(bool) * totalNumCandidates, stream); CUERR;
 
-            int* d_anchorIndicesOfCandidates2 = nullptr;
-            cubAllocator->DeviceAllocate((void**)&d_anchorIndicesOfCandidates2, sizeof(int) * totalNumCandidates, stream);
+            int* d_segmentIdsOfCandidates2 = nullptr;
+            cubAllocator->DeviceAllocate((void**)&d_segmentIdsOfCandidates2, sizeof(int) * totalNumCandidates, stream);
 
 
             constexpr int groupsize = 32;
@@ -1717,12 +1708,12 @@ struct BatchData{
                     d_candidateReadIds = d_candidateReadIds.data(),
                     d_candidateSequencesLength = d_candidateSequencesLength.data(),
                     d_candidateSequencesData = d_candidateSequencesData.data(),
-                    d_anchorIndicesOfCandidates = d_anchorIndicesOfCandidates.data(),
+                    d_segmentIdsOfCandidates = d_segmentIdsOfCandidates.data(),
                     d_isPairedCandidate = d_isPairedCandidate.data(),
                     d_candidateReadIdsOut = d_candidateReadIds2,
                     d_candidateSequencesLengthOut = d_candidateSequencesLength2,
                     d_candidateSequencesDataOut = d_candidateSequencesData2.data(),
-                    d_anchorIndicesOfCandidatesOut = d_anchorIndicesOfCandidates2,
+                    d_segmentIdsOfCandidatesOut = d_segmentIdsOfCandidates2,
                     d_isPairedCandidateOut = d_isPairedCandidate2
                 ] __device__ (){
 
@@ -1743,7 +1734,7 @@ struct BatchData{
 
                                 d_candidateReadIdsOut[outputLocation] = d_candidateReadIds[inputOffset + i];
                                 d_candidateSequencesLengthOut[outputLocation] = d_candidateSequencesLength[inputOffset + i];
-                                d_anchorIndicesOfCandidatesOut[outputLocation] = d_anchorIndicesOfCandidates[inputOffset + i];
+                                d_segmentIdsOfCandidatesOut[outputLocation] = d_segmentIdsOfCandidates[inputOffset + i];
                                 d_isPairedCandidateOut[outputLocation] = d_isPairedCandidate[inputOffset + i];
 
                                 numSelected++;
@@ -1818,14 +1809,14 @@ struct BatchData{
                     d_candidateReadIds2,
                     d_candidateSequencesLength2,
                     d_isPairedCandidate2,
-                    d_anchorIndicesOfCandidates2
+                    d_segmentIdsOfCandidates2
                 )),
                 totalNumCandidates,
                 thrust::make_zip_iterator(thrust::make_tuple(
                     d_candidateReadIds.data(),
                     d_candidateSequencesLength.data(),
                     d_isPairedCandidate.data(),
-                    d_anchorIndicesOfCandidates.data()
+                    d_segmentIdsOfCandidates.data()
                 )),
                 stream
             );
@@ -1833,7 +1824,7 @@ struct BatchData{
             cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
             cubAllocator->DeviceFree(d_candidateSequencesLength2); CUERR;
             cubAllocator->DeviceFree(d_isPairedCandidate2); CUERR;
-            cubAllocator->DeviceFree(d_anchorIndicesOfCandidates2); CUERR;
+            cubAllocator->DeviceFree(d_segmentIdsOfCandidates2); CUERR;
 
             std::swap(d_candidateSequencesData2, d_candidateSequencesData); 
         }
@@ -1886,7 +1877,7 @@ struct BatchData{
                 d_candidateSequencesLength.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
                 d_numCandidatesPerAnchor.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_segmentIdsOfCandidates.data(),
                 h_numAnchors.data(),
                 &d_numCandidatesPerAnchorPrefixSum[numTasks],
                 d_anchorContainsN,
@@ -2525,16 +2516,15 @@ struct BatchData{
         CachedDeviceUVector<char> cubTemp(*cubAllocator);
         std::size_t cubBytes = 0;
         cudaError_t cubstatus = cudaSuccess;
-
-        read_number* d_candidateReadIds2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * totalNumCandidates, firstStream); CUERR;
+        
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
         cubstatus = cub::DeviceSelect::Flagged(
             nullptr,
             cubBytes,
             d_candidateReadIds.data(),
             d_shouldBeKept,
-            d_candidateReadIds2,
+            d_candidateReadIds2.data(),
             h_numCandidates.data(),
             totalNumCandidates,
             firstStream
@@ -2547,7 +2537,7 @@ struct BatchData{
             cubBytes,
             d_candidateReadIds.data(),
             d_shouldBeKept,
-            d_candidateReadIds2,
+            d_candidateReadIds2.data(),
             h_numCandidates.data(),
             totalNumCandidates,
             firstStream
@@ -2636,6 +2626,7 @@ struct BatchData{
         assert(cubstatus == cudaSuccess);
 
         cudaEventSynchronize(events[0]); CUERR; //wait for h_numCandidates
+        
 
 
 
@@ -2643,17 +2634,10 @@ struct BatchData{
         //auto oldnum = totalNumCandidates;
         totalNumCandidates = *h_numCandidates; 
 
-        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2);        
+        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
 
-        cudaMemcpyAsync(
-            d_candidateReadIds.data(),
-            d_candidateReadIds2,
-            sizeof(read_number) * totalNumCandidates,
-            D2D,
-            firstStream
-        ); CUERR;
-
-        cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
+        d_candidateReadIds2.resize(*h_numCandidates, firstStream);
+        std::swap(d_candidateReadIds, d_candidateReadIds2);     
 
         setState(BatchData::State::BeforeExtend);
     }
@@ -3065,7 +3049,7 @@ struct BatchData{
         cudaStream_t stream = streams[0];
 
         setGpuSegmentIds(
-            d_anchorIndicesOfCandidates.data(),
+            d_segmentIdsOfCandidates.data(),
             numTasks,
             totalNumCandidates,
             d_numCandidatesPerAnchor.data(),
@@ -3092,7 +3076,7 @@ struct BatchData{
                 d_candidateReadIds.data(),
                 d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
-                d_anchorIndicesOfCandidates.data(),
+                d_segmentIdsOfCandidates.data(),
                 totalNumCandidates,
                 numTasks,
                 d_usedReadIds.data(),
@@ -3189,7 +3173,7 @@ struct BatchData{
             auto candidatesAndSegmentIdsIn = thrust::make_zip_iterator(
                 thrust::make_tuple(
                     d_candidateReadIds.data(),
-                    d_anchorIndicesOfCandidates.data()
+                    d_segmentIdsOfCandidates.data()
                 )
             );
 
@@ -5092,7 +5076,7 @@ struct BatchData{
     CachedDeviceUVector<int> d_candidateSequencesLength{};    
     CachedDeviceUVector<read_number> d_candidateReadIds{};
     CachedDeviceUVector<bool> d_isPairedCandidate{};
-    CachedDeviceUVector<int> d_anchorIndicesOfCandidates{};
+    CachedDeviceUVector<int> d_segmentIdsOfCandidates{};
     CachedDeviceUVector<int> d_alignment_overlaps{};
     CachedDeviceUVector<int> d_alignment_shifts{};
     CachedDeviceUVector<int> d_alignment_nOps{};
@@ -5128,6 +5112,7 @@ struct BatchData{
 
     // -----
 
+    // ----- tracking used ids
     DeviceBuffer<read_number> d_usedReadIds{};
     DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
     DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
@@ -5148,6 +5133,7 @@ struct BatchData{
     DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchorPrefixSum2{};
     DeviceBuffer<int> d_segmentIdsOfFullyUsedReadIds2{};
     PinnedBuffer<int> h_numFullyUsedReadIds{};
+    // -----
     
 
     PinnedBuffer<int> h_newPositionsOfActiveTasks{};
