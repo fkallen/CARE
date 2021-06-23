@@ -4111,11 +4111,11 @@ struct BatchData{
                 d_coverage.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 d_msa_column_properties.resize(numFinishedTasks);
 
-                CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * msaColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * msaColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_support(numFinishedTasks * msaColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_support(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
 
                 helpers::lambda_kernel<<<numFinishedTasks, 128, 0, stream>>>(
@@ -4185,7 +4185,6 @@ struct BatchData{
                 d_weights.destroy();
                 d_origCoverages.destroy();
                 d_origWeights.destroy();
-                d_support.destroy();
                 indices1.destroy();
 
                 //compute quality of consensus
