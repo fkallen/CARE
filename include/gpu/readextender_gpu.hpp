@@ -1001,12 +1001,7 @@ struct BatchData{
         cudaStream_t firstStream = streams[0];
         cudaStream_t secondStream = firstStream;
 
-        //std::cerr << "\n" << totalNumCandidates << "\n";
-        
-        d_segmentIdsOfCandidates.resizeWithoutCopy(totalNumCandidates, firstStream);
-
-        read_number* d_candidateReadIds2 = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_candidateReadIds2, sizeof(read_number) * totalNumCandidates, firstStream); CUERR;
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
         h_segmentIdsOfReadIds.resize(totalNumCandidates);
 
@@ -1014,76 +1009,18 @@ struct BatchData{
 
         d_anchorIndicesWithRemovedMates.resize(numTasks);
 
-        bool* d_shouldBeKept = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_shouldBeKept, sizeof(bool) * totalNumCandidates, firstStream);   
-
-        bool* d_anchorFlags = nullptr;
-        cubAllocator->DeviceAllocate((void**)&d_anchorFlags, sizeof(bool) * numTasks, firstStream);   
-
         //determine required temp bytes for following cub calls, and allocate temp storage
 
-        cudaError_t cubstatus = cudaSuccess;
+        CachedDeviceUVector<char> cubTemp(*cubAllocator);
         std::size_t cubBytes = 0;
-        std::size_t cubBytes2 = 0;
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubBytes2,
-            d_candidateReadIds.data(),
-            d_shouldBeKept,
-            d_candidateReadIds2,
-            h_numCandidates.data(),
-            totalNumCandidates,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
-        
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr, 
-            cubBytes2, 
-            (int*)nullptr,
-            (int*)nullptr,
-            numTasks,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
-        
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            nullptr, 
-            cubBytes2, 
-            d_segmentIdsOfCandidates.data(), 
-            d_segmentIdsOfCandidates.data(), 
-            cub::Max{},
-            totalNumCandidates,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
-        
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubBytes2,
-            thrust::make_counting_iterator(0),
-            d_anchorFlags,
-            d_anchorIndicesWithRemovedMates.data(),
-            h_numAnchorsWithRemovedMates.data(),
-            numTasks,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-        
-        cubBytes = std::max(cubBytes, cubBytes2);
-
-        CachedDeviceUVector<char> cubTemp(cubBytes, firstStream, *cubAllocator);
+        cudaError_t cubstatus = cudaSuccess;
                
-        helpers::call_fill_kernel_async(d_shouldBeKept, totalNumCandidates, false, firstStream);
-
+        CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
+        CachedDeviceUVector<bool> d_anchorFlags(numTasks, firstStream, *cubAllocator);
+
+        helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream);
+
         
         //flag candidates ids to remove because they are equal to anchor id or equal to mate id
         readextendergpukernels::flagCandidateIdsWhichAreEqualToAnchorOrMateKernel<<<numTasks, 128, 0, firstStream>>>(
@@ -1092,8 +1029,8 @@ struct BatchData{
             d_mateReadIds.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_numCandidatesPerAnchor.data(),
-            d_shouldBeKept,
-            d_anchorFlags,
+            d_shouldBeKept.data(),
+            d_anchorFlags.data(),
             d_numCandidatesPerAnchor2.data(),
             numTasks,
             pairedEnd
@@ -1116,10 +1053,24 @@ struct BatchData{
         assert(h_numAnchorsWithRemovedMates.data() != nullptr);
 
         cubstatus = cub::DeviceSelect::Flagged(
+            nullptr,
+            cubBytes,
+            thrust::make_counting_iterator(0),
+            d_anchorFlags.data(),
+            d_anchorIndicesWithRemovedMates.data(),
+            h_numAnchorsWithRemovedMates.data(),
+            numTasks,
+            firstStream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        cubTemp.resizeWithoutCopy(cubBytes, firstStream);        
+
+        cubstatus = cub::DeviceSelect::Flagged(
             cubTemp.data(),
             cubBytes,
             thrust::make_counting_iterator(0),
-            d_anchorFlags,
+            d_anchorFlags.data(),
             d_anchorIndicesWithRemovedMates.data(),
             h_numAnchorsWithRemovedMates.data(),
             numTasks,
@@ -1129,17 +1080,30 @@ struct BatchData{
 
         //copy selected candidate ids
 
-        assert(d_candidateReadIds2 != nullptr);
+        assert(d_candidateReadIds2.data() != nullptr);
         assert(h_numCandidates.data() != nullptr);
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
         cubstatus = cub::DeviceSelect::Flagged(
+            nullptr,
+            cubBytes,
+            d_candidateReadIds.data(),
+            d_shouldBeKept.data(),
+            d_candidateReadIds2.data(),
+            h_numCandidates.data(),
+            totalNumCandidates,
+            firstStream
+        );
+
+        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
+
+        cubstatus = cub::DeviceSelect::Flagged(
             cubTemp.data(),
             cubBytes,
             d_candidateReadIds.data(),
-            d_shouldBeKept,
-            d_candidateReadIds2,
+            d_shouldBeKept.data(),
+            d_candidateReadIds2.data(),
             h_numCandidates.data(),
             totalNumCandidates,
             firstStream
@@ -1150,9 +1114,10 @@ struct BatchData{
         numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
         totalNumCandidates = *h_numCandidates;
 
-        d_anchorIndicesWithRemovedMates.resize(numTasksWithMateRemoved);
+        //d_anchorIndicesWithRemovedMates.resize(*h_numAnchorsWithRemovedMates, firstStream);
+        d_candidateReadIds2.resize(*h_numCandidates, firstStream);
 
-        cubAllocator->DeviceFree(d_shouldBeKept); CUERR;
+        d_anchorIndicesWithRemovedMates.resize(numTasksWithMateRemoved);
 
         //std::cerr << "new numTasksWithMateRemoved = " << numTasksWithMateRemoved << ", totalNumCandidates = " << totalNumCandidates << "\n";
 
@@ -1169,7 +1134,7 @@ struct BatchData{
                 d_inputanchormatedata.data(),
                 thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_anchorFlags, int(encodedSequencePitchInInts)}
+                    SequenceFlagMultiplier{d_anchorFlags.data(), int(encodedSequencePitchInInts)}
                 ),
                 d_anchormatedata.data(),
                 thrust::make_discard_iterator(),
@@ -1188,7 +1153,7 @@ struct BatchData{
                 d_inputanchormatedata.data(),
                 thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_anchorFlags, int(encodedSequencePitchInInts)}
+                    SequenceFlagMultiplier{d_anchorFlags.data(), int(encodedSequencePitchInInts)}
                 ),
                 d_anchormatedata.data(),
                 thrust::make_discard_iterator(),
@@ -1198,12 +1163,22 @@ struct BatchData{
             assert(cubstatus == cudaSuccess);
         }
 
-        cubAllocator->DeviceFree(d_anchorFlags); CUERR;
-
         CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum2(numTasks + 1, firstStream, *cubAllocator);
 
         // //compute prefix sum of number of candidates per anchor
         helpers::call_set_kernel_async(d_numCandidatesPerAnchorPrefixSum2.data(), 0, 0, firstStream);
+
+        cubstatus = cub::DeviceScan::InclusiveSum(
+            nullptr, 
+            cubBytes, 
+            d_numCandidatesPerAnchor2.data(), 
+            d_numCandidatesPerAnchorPrefixSum2.data() + 1, 
+            numTasks,
+            firstStream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
 
         cubstatus = cub::DeviceScan::InclusiveSum(
             cubTemp.data(), 
@@ -1215,20 +1190,35 @@ struct BatchData{
         );
         assert(cubstatus == cudaSuccess);
 
-        helpers::call_fill_kernel_async(d_segmentIdsOfCandidates.data(), totalNumCandidates, 0, firstStream);
+        CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, firstStream, *cubAllocator);
+
+        helpers::call_fill_kernel_async(d_segmentIdsOfCandidates2.data(), totalNumCandidates, 0, firstStream);
 
         readextendergpukernels::setFirstSegmentIdsKernel<<<SDIV(numTasks, 256), 256, 0, firstStream>>>(
             d_numCandidatesPerAnchor2.data(),
-            d_segmentIdsOfCandidates.data(),
+            d_segmentIdsOfCandidates2.data(),
             d_numCandidatesPerAnchorPrefixSum2.data(),
             numTasks
         );
 
         cubstatus = cub::DeviceScan::InclusiveScan(
+            nullptr, 
+            cubBytes, 
+            d_segmentIdsOfCandidates2.data(), 
+            d_segmentIdsOfCandidates2.data(), 
+            cub::Max{},
+            totalNumCandidates,
+            firstStream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
+
+        cubstatus = cub::DeviceScan::InclusiveScan(
             cubTemp.data(), 
             cubBytes, 
-            d_segmentIdsOfCandidates.data(), 
-            d_segmentIdsOfCandidates.data(), 
+            d_segmentIdsOfCandidates2.data(), 
+            d_segmentIdsOfCandidates2.data(), 
             cub::Max{},
             totalNumCandidates,
             firstStream
@@ -1240,72 +1230,63 @@ struct BatchData{
 
         ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
 
-        //cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
-
-        CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, firstStream, *cubAllocator);
-
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
         #ifdef DO_ONLY_REMOVE_MATE_IDS
-            cudaMemcpyAsync(
-                d_candidateReadIds.data(),
-                d_candidateReadIds2,
-                sizeof(read_number) * totalNumCandidates,
-                D2D,
-                firstStream
-            ); CUERR;
-            cudaMemcpyAsync(
-                d_segmentIdsOfCandidates2.data(),
-                d_segmentIdsOfCandidates.data(),
-                sizeof(int) * totalNumCandidates,
-                D2D,
-                firstStream
-            ); CUERR;
-            cudaMemcpyAsync(
-                d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchor2.data(),
-                sizeof(int) * numTasks,
-                D2D,
-                firstStream
-            ); CUERR;
+            std::swap(d_candidateReadIds, d_candidateReadIds2);
+            std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2);
+            std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2);
 
             auto d_candidateReadIds_end = d_candidateReadIds.data() + totalNumCandidates;
         #else
+
+            d_segmentIdsOfCandidates.resizeWithoutCopy(totalNumCandidates, firstStream);
         
-        //compute segmented set difference.  d_candidateReadIds = d_candidateReadIds2 \ d_usedReadIds
-        auto d_candidateReadIds_end = GpuSegmentedSetOperation::set_difference(
-            thrustCachingAllocator1,
-            d_candidateReadIds2,
-            d_numCandidatesPerAnchor2.data(),
-            d_numCandidatesPerAnchorPrefixSum2.data(),
-            d_segmentIdsOfCandidates.data(),
-            totalNumCandidates,
-            numTasks,
-            d_fullyUsedReadIds.data(),
-            d_numFullyUsedReadIdsPerAnchor.data(),
-            d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
-            d_segmentIdsOfFullyUsedReadIds.data(),
-            *h_numFullyUsedReadIds,
-            numTasks,        
-            d_candidateReadIds.data(),
-            d_numCandidatesPerAnchor.data(),
-            d_segmentIdsOfCandidates2,
-            numTasks,
-            firstStream
-        );
+            //compute segmented set difference.  d_candidateReadIds = d_candidateReadIds2 \ d_usedReadIds
+            auto d_candidateReadIds_end = GpuSegmentedSetOperation::set_difference(
+                thrustCachingAllocator1,
+                d_candidateReadIds2.data(),
+                d_numCandidatesPerAnchor2.data(),
+                d_numCandidatesPerAnchorPrefixSum2.data(),
+                d_segmentIdsOfCandidates2.data(),
+                totalNumCandidates,
+                numTasks,
+                d_fullyUsedReadIds.data(),
+                d_numFullyUsedReadIdsPerAnchor.data(),
+                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(),
+                d_segmentIdsOfFullyUsedReadIds.data(),
+                *h_numFullyUsedReadIds,
+                numTasks,        
+                d_candidateReadIds.data(),
+                d_numCandidatesPerAnchor.data(),
+                d_segmentIdsOfCandidates.data(),
+                numTasks,
+                firstStream
+            );
+
+            totalNumCandidates = std::distance(d_candidateReadIds.data(), d_candidateReadIds_end);
+
+            d_candidateReadIds.resize(totalNumCandidates, firstStream);
+            d_segmentIdsOfCandidates.resize(totalNumCandidates, firstStream);            
 
         #endif
 
-
-        cubAllocator->DeviceFree(d_candidateReadIds2); CUERR;
-
-        totalNumCandidates = std::distance(d_candidateReadIds.data(), d_candidateReadIds_end);
-
-        assert(d_candidateReadIds.size() >= totalNumCandidates);
-
-        std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2);
+        
+        
 
         //compute prefix sum of new segment sizes
+
+        cubstatus = cub::DeviceScan::InclusiveSum(
+            nullptr,
+            cubBytes, 
+            d_numCandidatesPerAnchor.data(), 
+            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
+            numTasks,
+            firstStream
+        );
+        assert(cubstatus == cudaSuccess);
+
+        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
     
         cubstatus = cub::DeviceScan::InclusiveSum(
             cubTemp.data(), 
