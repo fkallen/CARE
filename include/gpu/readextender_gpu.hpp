@@ -599,6 +599,14 @@ struct BatchData{
         d_inputMateLengths(cubAllocator_),
         d_isPairedTask(cubAllocator_),
         d_subjectSequencesData(cubAllocator_),
+        d_usedReadIds(cubAllocator_),
+        d_numUsedReadIdsPerAnchor(cubAllocator_),
+        d_numUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
+        d_segmentIdsOfUsedReadIds(cubAllocator_),
+        d_fullyUsedReadIds(cubAllocator_),
+        d_numFullyUsedReadIdsPerAnchor(cubAllocator_),
+        d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
+        d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
         streams(streams_)
     {
 
@@ -655,43 +663,15 @@ struct BatchData{
         h_inputMateLengths.resize(newNumTasks);
         h_isPairedTask.resize(newNumTasks);
 
-
-        //d_anchorIndicesWithRemovedMates.resize(newNumTasks); // ???
-
-        d_numUsedReadIdsPerAnchor2.resize(newNumTasks);
-        d_numUsedReadIdsPerAnchorPrefixSum.resize(newNumTasks);
-        d_numFullyUsedReadIdsPerAnchor2.resize(newNumTasks);
-        d_numFullyUsedReadIdsPerAnchorPrefixSum.resize(newNumTasks);
-
-        d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
-        d_anchorSequencesLength.resize(newNumTasks, streams[0]);
-        d_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes, streams[0]);
-        d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
-        d_inputMateLengths.resize(newNumTasks, streams[0]);
-        d_isPairedTask.resize(newNumTasks, streams[0]);
-
-
-        cudaMemcpyAsync(
-            d_numUsedReadIdsPerAnchor2.data(), 
-            d_numUsedReadIdsPerAnchor.data(),
-            sizeof(int) * currentNumTasks,
-            D2D,
-            streams[0]
-        ); CUERR;
-        std::swap(d_numUsedReadIdsPerAnchor, d_numUsedReadIdsPerAnchor2);
-
-        cudaMemcpyAsync(
-            d_numFullyUsedReadIdsPerAnchor2.data(), 
-            d_numFullyUsedReadIdsPerAnchor.data(),
-            sizeof(int) * currentNumTasks,
-            D2D,
-            streams[0]
-        ); CUERR;
-        std::swap(d_numFullyUsedReadIdsPerAnchor, d_numFullyUsedReadIdsPerAnchor2);
-
+        d_numUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
+        d_numFullyUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
         cudaMemsetAsync(d_numUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
         cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
 
+
+        d_numUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
+        d_numFullyUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
+
         cubstatus = cub::DeviceScan::ExclusiveSum(
             nullptr,
             cubTempSize,
@@ -736,6 +716,8 @@ struct BatchData{
             streams[0]
         );
         assert(cudaSuccess == cubstatus);
+
+        //copy input task data to pinned buffers
 
         for(int t = 0; t < numAdditionalTasks; t++){
             const auto& task = *(extraTasksBegin + t);
@@ -769,6 +751,15 @@ struct BatchData{
             h_isPairedTask[t] = task.pairedEnd;
         }
 
+        d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_anchorSequencesLength.resize(newNumTasks, streams[0]);
+        d_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes, streams[0]);
+        d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_inputMateLengths.resize(newNumTasks, streams[0]);
+        d_isPairedTask.resize(newNumTasks, streams[0]);
+        d_anchorReadIds.resize(newNumTasks, streams[0]);
+        d_mateReadIds.resize(newNumTasks, streams[0]);
+
         cudaMemcpyAsync(
             d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts,
             h_inputanchormatedata.data(),
@@ -785,7 +776,6 @@ struct BatchData{
             streams[0]
         ); CUERR;
 
-        d_anchorReadIds.resize(newNumTasks, streams[0]);
         cudaMemcpyAsync(
             d_anchorReadIds.data() + currentNumTasks,
             h_anchorReadIds.data(),
@@ -794,7 +784,6 @@ struct BatchData{
             streams[0]
         ); CUERR;
 
-        d_mateReadIds.resize(newNumTasks, streams[0]);
         cudaMemcpyAsync(
             d_mateReadIds.data() + currentNumTasks,
             h_mateReadIds.data(),
@@ -3059,15 +3048,11 @@ struct BatchData{
 
         {
 
-            read_number* d_newUsedReadIds = nullptr; 
-            int* d_newNumUsedreadIdsPerAnchor = nullptr;
-            int* d_newSegmentIdsOfUsedReadIds = nullptr;
-
             const int maxoutputsize = totalNumCandidates + *h_numUsedReadIds;
 
-            cubAllocator->DeviceAllocate((void**)&d_newUsedReadIds, sizeof(read_number) * maxoutputsize);
-            cubAllocator->DeviceAllocate((void**)&d_newNumUsedreadIdsPerAnchor, sizeof(int) * numTasks);
-            cubAllocator->DeviceAllocate((void**)&d_newSegmentIdsOfUsedReadIds, sizeof(int) * maxoutputsize);
+            CachedDeviceUVector<read_number> d_newUsedReadIds(maxoutputsize, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_newNumUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_newSegmentIdsOfUsedReadIds(maxoutputsize, stream, *cubAllocator);
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
 
@@ -3085,45 +3070,21 @@ struct BatchData{
                 d_segmentIdsOfUsedReadIds.data(),
                 *h_numUsedReadIds,
                 numTasks,        
-                d_newUsedReadIds,
-                d_newNumUsedreadIdsPerAnchor,
-                d_newSegmentIdsOfUsedReadIds,
-                std::max(numTasks, numTasks),
+                d_newUsedReadIds.data(),
+                d_newNumUsedreadIdsPerAnchor.data(),
+                d_newSegmentIdsOfUsedReadIds.data(),
+                numTasks,
                 stream
             );
 
-            int newsize = std::distance(d_newUsedReadIds, d_newUsedReadIds_end);
+            int newsize = std::distance(d_newUsedReadIds.data(), d_newUsedReadIds_end);
 
+            d_newUsedReadIds.resize(newsize, stream);
+            d_newSegmentIdsOfUsedReadIds.resize(newsize, stream);
 
-            d_usedReadIds.resize(newsize);
-            d_segmentIdsOfUsedReadIds.resize(newsize);
-
-            cudaMemcpyAsync(
-                d_usedReadIds.data(),
-                d_newUsedReadIds,
-                sizeof(read_number) * newsize,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newUsedReadIds);
-
-            cudaMemcpyAsync(
-                d_segmentIdsOfUsedReadIds.data(),
-                d_newSegmentIdsOfUsedReadIds,
-                sizeof(int) * newsize,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newSegmentIdsOfUsedReadIds);
-
-            cudaMemcpyAsync(
-                d_numUsedReadIdsPerAnchor.data(),
-                d_newNumUsedreadIdsPerAnchor,
-                sizeof(int) * numTasks,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newNumUsedreadIdsPerAnchor);
+            std::swap(d_usedReadIds, d_newUsedReadIds);
+            std::swap(d_segmentIdsOfUsedReadIds, d_newSegmentIdsOfUsedReadIds);
+            std::swap(d_numUsedReadIdsPerAnchor, d_newNumUsedreadIdsPerAnchor);
 
             std::size_t bytes = 0;
 
@@ -3158,18 +3119,13 @@ struct BatchData{
             std::size_t bytes = 0;
             cudaError_t cubstatus = cudaSuccess;
 
-            read_number* d_currentFullyUsedReadIds = nullptr; 
-            int* d_currentNumFullyUsedreadIdsPerAnchor = nullptr;
-            int* d_currentNumFullyUsedreadIdsPerAnchorPS = nullptr;
-            int* d_currentSegmentIdsOfFullyUsedReadIds = nullptr;
             int* h_currentNumFullyUsed = h_firstTasksOfPairsToCheck.data();
+
+            CachedDeviceUVector<read_number> d_currentFullyUsedReadIds(totalNumCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchorPS(numTasks, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_currentSegmentIdsOfFullyUsedReadIds(totalNumCandidates, stream, *cubAllocator);
             
-
-            cubAllocator->DeviceAllocate((void**)&d_currentFullyUsedReadIds, sizeof(read_number) * totalNumCandidates);
-            cubAllocator->DeviceAllocate((void**)&d_currentNumFullyUsedreadIdsPerAnchor, sizeof(int) * numTasks);
-            cubAllocator->DeviceAllocate((void**)&d_currentNumFullyUsedreadIdsPerAnchorPS, sizeof(int) * numTasks);
-            cubAllocator->DeviceAllocate((void**)&d_currentSegmentIdsOfFullyUsedReadIds, sizeof(int) * totalNumCandidates);
-
             auto candidatesAndSegmentIdsIn = thrust::make_zip_iterator(
                 thrust::make_tuple(
                     d_candidateReadIds.data(),
@@ -3179,8 +3135,8 @@ struct BatchData{
 
             auto candidatesAndSegmentIdsOut = thrust::make_zip_iterator(
                 thrust::make_tuple(
-                    d_currentFullyUsedReadIds,
-                    d_currentSegmentIdsOfFullyUsedReadIds
+                    d_currentFullyUsedReadIds.data(),
+                    d_currentSegmentIdsOfFullyUsedReadIds.data()
                 )
             );
 
@@ -3217,7 +3173,7 @@ struct BatchData{
                 nullptr,
                 bytes,
                 d_isFullyUsedCandidate.data(),
-                d_currentNumFullyUsedreadIdsPerAnchor,
+                d_currentNumFullyUsedreadIdsPerAnchor.data(),
                 numTasks,
                 d_numCandidatesPerAnchorPrefixSum.data(),
                 d_numCandidatesPerAnchorPrefixSum.data() + 1,
@@ -3231,7 +3187,7 @@ struct BatchData{
                 cubTemp.data(),
                 bytes,
                 d_isFullyUsedCandidate.data(),
-                d_currentNumFullyUsedreadIdsPerAnchor,
+                d_currentNumFullyUsedreadIdsPerAnchor.data(),
                 numTasks,
                 d_numCandidatesPerAnchorPrefixSum.data(),
                 d_numCandidatesPerAnchorPrefixSum.data() + 1,
@@ -3244,8 +3200,8 @@ struct BatchData{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr, 
                 bytes, 
-                d_currentNumFullyUsedreadIdsPerAnchor, 
-                d_currentNumFullyUsedreadIdsPerAnchorPS, 
+                d_currentNumFullyUsedreadIdsPerAnchor.data(), 
+                d_currentNumFullyUsedreadIdsPerAnchorPS.data(), 
                 numTasks,
                 stream
             );
@@ -3256,8 +3212,8 @@ struct BatchData{
             cubstatus = cub::DeviceScan::ExclusiveSum(
                 cubTemp.data(), 
                 bytes, 
-                d_currentNumFullyUsedreadIdsPerAnchor, 
-                d_currentNumFullyUsedreadIdsPerAnchorPS, 
+                d_currentNumFullyUsedreadIdsPerAnchor.data(), 
+                d_currentNumFullyUsedreadIdsPerAnchorPS.data(), 
                 numTasks,
                 stream
             );
@@ -3265,26 +3221,23 @@ struct BatchData{
 
             cudaEventSynchronize(events[0]); CUERR;
 
-
-
-            read_number* d_newFullyUsedReadIds = nullptr; 
-            int* d_newNumFullyUsedreadIdsPerAnchor = nullptr;
-            int* d_newSegmentIdsOfFullyUsedReadIds = nullptr;
+            d_currentFullyUsedReadIds.resize(*h_numFullyUsedReadIds, stream);
+            d_currentSegmentIdsOfFullyUsedReadIds.resize(*h_numFullyUsedReadIds, stream);
 
             const int maxoutputsize = totalNumCandidates + *h_numFullyUsedReadIds;
 
-            cubAllocator->DeviceAllocate((void**)&d_newFullyUsedReadIds, sizeof(read_number) * maxoutputsize);
-            cubAllocator->DeviceAllocate((void**)&d_newNumFullyUsedreadIdsPerAnchor, sizeof(int) * numTasks);
-            cubAllocator->DeviceAllocate((void**)&d_newSegmentIdsOfFullyUsedReadIds, sizeof(int) * maxoutputsize);
+            CachedDeviceUVector<read_number> d_newFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_newNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
+            CachedDeviceUVector<int> d_newSegmentIdsOfFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
 
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
 
             auto d_newFullyUsedReadIds_end = GpuSegmentedSetOperation::set_union(
                 thrustCachingAllocator1,
-                d_currentFullyUsedReadIds,
-                d_currentNumFullyUsedreadIdsPerAnchor,
-                d_currentNumFullyUsedreadIdsPerAnchorPS,
-                d_currentSegmentIdsOfFullyUsedReadIds,
+                d_currentFullyUsedReadIds.data(),
+                d_currentNumFullyUsedreadIdsPerAnchor.data(),
+                d_currentNumFullyUsedreadIdsPerAnchorPS.data(),
+                d_currentSegmentIdsOfFullyUsedReadIds.data(),
                 *h_currentNumFullyUsed,
                 numTasks,
                 d_fullyUsedReadIds.data(),
@@ -3293,51 +3246,24 @@ struct BatchData{
                 d_segmentIdsOfFullyUsedReadIds.data(),
                 *h_numFullyUsedReadIds,
                 numTasks,        
-                d_newFullyUsedReadIds,
-                d_newNumFullyUsedreadIdsPerAnchor,
-                d_newSegmentIdsOfFullyUsedReadIds,
-                std::max(numTasks, numTasks),
+                d_newFullyUsedReadIds.data(),
+                d_newNumFullyUsedreadIdsPerAnchor.data(),
+                d_newSegmentIdsOfFullyUsedReadIds.data(),
+                numTasks,
                 stream
             );
 
-            cubAllocator->DeviceFree(d_currentFullyUsedReadIds);
-            cubAllocator->DeviceFree(d_currentNumFullyUsedreadIdsPerAnchor);
-            cubAllocator->DeviceFree(d_currentNumFullyUsedreadIdsPerAnchorPS);
-            cubAllocator->DeviceFree(d_currentSegmentIdsOfFullyUsedReadIds);
+            int newsize = std::distance(d_newFullyUsedReadIds.data(), d_newFullyUsedReadIds_end);
+            *h_numFullyUsedReadIds = newsize;
 
-            int newsize = std::distance(d_newFullyUsedReadIds, d_newFullyUsedReadIds_end);
+            d_newFullyUsedReadIds.resize(newsize, stream);
+            d_newSegmentIdsOfFullyUsedReadIds.resize(newsize, stream);
 
-            d_fullyUsedReadIds.resize(newsize);
-            d_segmentIdsOfFullyUsedReadIds.resize(newsize);
+            std::swap(d_fullyUsedReadIds, d_newFullyUsedReadIds);
+            std::swap(d_segmentIdsOfFullyUsedReadIds, d_newSegmentIdsOfFullyUsedReadIds);
+            std::swap(d_numFullyUsedReadIdsPerAnchor, d_newNumFullyUsedreadIdsPerAnchor);
 
-            cudaMemcpyAsync(
-                d_fullyUsedReadIds.data(),
-                d_newFullyUsedReadIds,
-                sizeof(read_number) * newsize,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newFullyUsedReadIds);
-
-            cudaMemcpyAsync(
-                d_segmentIdsOfFullyUsedReadIds.data(),
-                d_newSegmentIdsOfFullyUsedReadIds,
-                sizeof(int) * newsize,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newSegmentIdsOfFullyUsedReadIds);
-
-            cudaMemcpyAsync(
-                d_numFullyUsedReadIdsPerAnchor.data(),
-                d_newNumFullyUsedreadIdsPerAnchor,
-                sizeof(int) * numTasks,
-                D2D,
-                stream
-            );
-            cubAllocator->DeviceFree(d_newNumFullyUsedreadIdsPerAnchor);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
+             cubstatus = cub::DeviceScan::ExclusiveSum(
                 nullptr, 
                 bytes, 
                 d_numFullyUsedReadIdsPerAnchor.data(), 
@@ -3357,10 +3283,7 @@ struct BatchData{
                 numTasks,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
-
-            *h_numFullyUsedReadIds = newsize;
-
+            assert(cubstatus == cudaSuccess);            
         }
 
         setState(BatchData::State::BeforeCopyToHost);
@@ -3865,25 +3788,20 @@ struct BatchData{
         //update used ids
 
         {
-
-            d_numUsedReadIdsPerAnchor2.resize(newNumTasks);
-            d_numUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);           
+            CachedDeviceUVector<int> d_numUsedReadIdsPerAnchor2(newNumTasks, streams[0], *cubAllocator);
+            CachedDeviceUVector<int> d_numUsedReadIdsPerAnchorPrefixSum2(newNumTasks, streams[0], *cubAllocator);      
 
             helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
                     indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
                     newNumTasks,
                     d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
-                    d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data(),
-                    d_numUsedReadIdsPerAnchorOutsize = d_numUsedReadIdsPerAnchor2.size(),
-                    d_numUsedReadIdsPerAnchorInsize = d_numUsedReadIdsPerAnchor.size()
+                    d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data()
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
                     for(int t = tid; t < newNumTasks; t += stride){
-                        // assert(t < d_numUsedReadIdsPerAnchorOutsize);
-                        // assert(indicesOfActiveTasks[t] < d_numUsedReadIdsPerAnchorInsize);
                         d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
                     }
                 }
@@ -3941,8 +3859,8 @@ struct BatchData{
 
             cudaEventSynchronize(events[0]); CUERR; //wait until h_numUsedReadIds is ready
 
-            d_usedReadIds2.resize(*h_numUsedReadIds);
-            d_segmentIdsOfUsedReadIds2.resize(*h_numUsedReadIds);            
+            CachedDeviceUVector<read_number> d_usedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);
+            CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);        
 
             const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
@@ -3968,28 +3886,20 @@ struct BatchData{
         //update fully used ids
         
         {
-
-            d_numFullyUsedReadIdsPerAnchor2.resize(newNumTasks);
-            d_numFullyUsedReadIdsPerAnchorPrefixSum2.resize(newNumTasks);
+            CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchor2(newNumTasks, streams[0], *cubAllocator);
+            CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchorPrefixSum2(newNumTasks, streams[0], *cubAllocator);  
 
             helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
                     indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
                     newNumTasks,
                     d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
-                    d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data(),
-                    d_numFullyUsedReadIdsPerAnchorOutsize = d_numFullyUsedReadIdsPerAnchor2.size(),
-                    d_numFullyUsedReadIdsPerAnchorInsize = d_numFullyUsedReadIdsPerAnchor.size()
+                    d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data()
                 ] __device__ (){
                     const int tid = threadIdx.x + blockIdx.x * blockDim.x;
                     const int stride = blockDim.x * gridDim.x;
 
                     for(int t = tid; t < newNumTasks; t += stride){
-                        // assert(t < d_numFullyUsedReadIdsPerAnchorOutsize);
-                        // if(!(indicesOfActiveTasks[t] < d_numFullyUsedReadIdsPerAnchorInsize)){
-                        //     printf("t %d indicesOfActiveTasks[t] %d d_numFullyUsedReadIdsPerAnchorInsize %lu\n", t, indicesOfActiveTasks[t], d_numFullyUsedReadIdsPerAnchorInsize);
-                        //     assert(indicesOfActiveTasks[t] < d_numFullyUsedReadIdsPerAnchorInsize);
-                        // }
                         d_numFullyUsedReadIdsPerAnchorOut[t] = d_numFullyUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
                     }
                 }
@@ -4047,8 +3957,8 @@ struct BatchData{
 
             cudaEventSynchronize(events[0]); CUERR; //wait until h_numFullyUsedReadIds is ready
 
-            d_fullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
-            d_segmentIdsOfFullyUsedReadIds2.resize(*h_numFullyUsedReadIds);
+            CachedDeviceUVector<read_number> d_fullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator);
+            CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator); 
 
             const int possibleNumWarps = newNumTasks;
             const int possibleNumBlocks = SDIV(possibleNumWarps, 128 / 32);
@@ -4071,13 +3981,6 @@ struct BatchData{
             std::swap(d_segmentIdsOfFullyUsedReadIds, d_segmentIdsOfFullyUsedReadIds2);
 
         }
-
-        // {
-        //     std::size_t free, total;
-        //     cudaMemGetInfo(&free, &total);
-        //     std::cerr << "after removeUsedIdsOfFinishedTasks " << free << "\n";
-        // }
-
     }
 
 
@@ -5113,25 +5016,18 @@ struct BatchData{
     // -----
 
     // ----- tracking used ids
-    DeviceBuffer<read_number> d_usedReadIds{};
-    DeviceBuffer<int> d_numUsedReadIdsPerAnchor{};
-    DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum{};
-    DeviceBuffer<int> d_segmentIdsOfUsedReadIds{};
-    DeviceBuffer<read_number> d_usedReadIds2{};
-    DeviceBuffer<int> d_numUsedReadIdsPerAnchor2{};
-    DeviceBuffer<int> d_numUsedReadIdsPerAnchorPrefixSum2{};
-    DeviceBuffer<int> d_segmentIdsOfUsedReadIds2{};
+    CachedDeviceUVector<read_number> d_usedReadIds{};
+    CachedDeviceUVector<int> d_numUsedReadIdsPerAnchor{};
+    CachedDeviceUVector<int> d_numUsedReadIdsPerAnchorPrefixSum{};
+    CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds{};
+
     PinnedBuffer<int> h_numUsedReadIds{};
 
-    DeviceBuffer<read_number> d_fullyUsedReadIds{};
-    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchor{};
-    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchorPrefixSum{};
-    DeviceBuffer<int> d_segmentIdsOfFullyUsedReadIds{};
+    CachedDeviceUVector<read_number> d_fullyUsedReadIds{};
+    CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchor{};
+    CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchorPrefixSum{};
+    CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds{};
 
-    DeviceBuffer<read_number> d_fullyUsedReadIds2{};
-    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchor2{};
-    DeviceBuffer<int> d_numFullyUsedReadIdsPerAnchorPrefixSum2{};
-    DeviceBuffer<int> d_segmentIdsOfFullyUsedReadIds2{};
     PinnedBuffer<int> h_numFullyUsedReadIds{};
     // -----
     
