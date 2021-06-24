@@ -1029,9 +1029,7 @@ struct BatchData{
         assert(d_positionsOfAnchorsToRemoveMate.data() != nullptr);
         assert(h_numAnchorsWithRemovedMates.data() != nullptr);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubBytes,
+        cubSelectFlagged(
             thrust::make_counting_iterator(0),
             d_anchorFlags.data(),
             d_positionsOfAnchorsToRemoveMate.data(),
@@ -1039,21 +1037,6 @@ struct BatchData{
             numTasks,
             firstStream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);        
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            cubBytes,
-            thrust::make_counting_iterator(0),
-            d_anchorFlags.data(),
-            d_positionsOfAnchorsToRemoveMate.data(),
-            h_numAnchorsWithRemovedMates.data(),
-            numTasks,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
 
         //copy selected candidate ids
 
@@ -1062,9 +1045,7 @@ struct BatchData{
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubBytes,
+        cubSelectFlagged(
             d_candidateReadIds.data(),
             d_shouldBeKept.data(),
             d_candidateReadIds2.data(),
@@ -1072,20 +1053,6 @@ struct BatchData{
             totalNumCandidates,
             firstStream
         );
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            cubBytes,
-            d_candidateReadIds.data(),
-            d_shouldBeKept.data(),
-            d_candidateReadIds2.data(),
-            h_numCandidates.data(),
-            totalNumCandidates,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
 
         cudaStreamSynchronize(firstStream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
         numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
@@ -1104,10 +1071,7 @@ struct BatchData{
 
             //copy mate sequence data of removed mates
 
-            std::size_t cubtempstream2bytes = 0;
-            cubstatus = cub::DeviceSelect::Flagged(
-                nullptr,
-                cubtempstream2bytes,
+            cubSelectFlagged(
                 d_inputanchormatedata.data(),
                 thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
@@ -1118,26 +1082,6 @@ struct BatchData{
                 numTasks * encodedSequencePitchInInts,
                 secondStream
             );
-            assert(cubstatus == cudaSuccess);
-    
-            CachedDeviceUVector<char> cubTemp2(cubtempstream2bytes, secondStream, *cubAllocator);
-
-            assert(d_anchormatedata.data() != nullptr);
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                cubTemp2.data(),
-                cubtempstream2bytes,
-                d_inputanchormatedata.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_anchorFlags.data(), int(encodedSequencePitchInInts)}
-                ),
-                d_anchormatedata.data(),
-                thrust::make_discard_iterator(),
-                numTasks * encodedSequencePitchInInts,
-                secondStream
-            );
-            assert(cubstatus == cudaSuccess);
         }
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum2(numTasks + 1, firstStream, *cubAllocator);
@@ -2026,9 +1970,7 @@ struct BatchData{
         CachedDeviceUVector<char> cubTemp(*cubAllocator);
         std::size_t cubTempSize = 0;
 
-        cudaError_t cubstatus = cub::DeviceSelect::Flagged(
-            nullptr, 
-            cubTempSize, 
+        cubSelectFlagged(
             d_zip_data, 
             d_keepflags.data(), 
             d_zip_data_tmp, 
@@ -2036,28 +1978,10 @@ struct BatchData{
             totalNumCandidates, 
             stream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubTempSize, stream);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(), 
-            cubTempSize, 
-            d_zip_data, 
-            d_keepflags.data(), 
-            d_zip_data_tmp, 
-            h_numCandidates.data(), 
-            totalNumCandidates, 
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
 
         cudaEventRecord(events[0], stream); CUERR;
 
-        //compact 2d candidate sequences
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubTempSize,
+        cubSelectFlagged(
             d_candidateSequencesData.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
@@ -2068,28 +1992,11 @@ struct BatchData{
             totalNumCandidates * encodedSequencePitchInInts,
             stream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubTempSize, stream);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            cubTempSize,
-            d_candidateSequencesData.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags.data(), int(encodedSequencePitchInInts)}
-            ),
-            d_candidateSequencesData2.data(),
-            thrust::make_discard_iterator(), //number of remaining candidates already known from previous compaction call
-            totalNumCandidates * encodedSequencePitchInInts,
-            stream
-        );
-
 
         std::swap(d_candidateSequencesData2, d_candidateSequencesData);
 
-
+        cudaError_t cubstatus = cudaSuccess;
+        
         //compute prefix sum of new number of candidates per anchor
         cubstatus = cub::DeviceScan::InclusiveSum(
             nullptr,
@@ -2304,9 +2211,7 @@ struct BatchData{
         
         CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            cubBytes,
+        cubSelectFlagged(
             d_candidateReadIds.data(),
             d_shouldBeKept.data(),
             d_candidateReadIds2.data(),
@@ -2314,21 +2219,6 @@ struct BatchData{
             totalNumCandidates,
             firstStream
         );
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            cubBytes,
-            d_candidateReadIds.data(),
-            d_shouldBeKept.data(),
-            d_candidateReadIds2.data(),
-            h_numCandidates.data(),
-            totalNumCandidates,
-            firstStream
-        );
-
-        assert(cubstatus == cudaSuccess);
 
         cudaEventRecord(events[0], firstStream); CUERR;
 
@@ -2914,9 +2804,7 @@ struct BatchData{
             );
 
             //make compact list of current fully used candidates
-            cubstatus = cub::DeviceSelect::Flagged(
-                nullptr,
-                bytes,
+            cubSelectFlagged(
                 candidatesAndSegmentIdsIn,
                 d_isFullyUsedCandidate.data(),
                 candidatesAndSegmentIdsOut,
@@ -2924,21 +2812,7 @@ struct BatchData{
                 totalNumCandidates,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
 
-            cubTemp.resizeWithoutCopy(bytes, stream);
-
-            cubstatus = cub::DeviceSelect::Flagged(
-                cubTemp.data(),
-                bytes,
-                candidatesAndSegmentIdsIn,
-                d_isFullyUsedCandidate.data(),
-                candidatesAndSegmentIdsOut,
-                h_currentNumFullyUsed,
-                totalNumCandidates,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
             cudaEventRecord(events[0], stream); CUERR;
 
             //compute current number of fully used candidates per segment
@@ -3317,9 +3191,7 @@ struct BatchData{
         //set new decoded anchors
         d_subjectSequencesDataDecoded.resizeWithoutCopy(newNumTasks * decodedSequencePitchInBytes, streams[0]);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            bytes,
+        cubSelectFlagged(
             d_outputAnchors.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
@@ -3330,31 +3202,11 @@ struct BatchData{
             numTasks * outputAnchorPitchInBytes,
             streams[0]
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            bytes,
-            d_outputAnchors.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive.data(), outputAnchorPitchInBytes)
-            ),
-            d_subjectSequencesDataDecoded.data(),
-            thrust::make_discard_iterator(),
-            numTasks * outputAnchorPitchInBytes,
-            streams[0]
-        );
-        assert(cubstatus == cudaSuccess);
         
         // set new anchor quality scores
         d_anchorQualityScores.resizeWithoutCopy(newNumTasks * qualityPitchInBytes, streams[0]);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            bytes,
+        cubSelectFlagged(
             d_outputAnchorQualities.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
@@ -3365,24 +3217,6 @@ struct BatchData{
             numTasks * outputAnchorQualityPitchInBytes,
             streams[0]
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            bytes,
-            d_outputAnchorQualities.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive.data(), outputAnchorQualityPitchInBytes)
-            ),
-            d_anchorQualityScores.data(),
-            thrust::make_discard_iterator(),
-            numTasks * outputAnchorQualityPitchInBytes,
-            streams[0]
-        );
-        assert(cubstatus == cudaSuccess);
 
         //set new anchorReadIds, mateReadIds, and anchor lengths
 
@@ -3393,9 +3227,7 @@ struct BatchData{
 
         d_anchorSequencesLength.resizeWithoutCopy(newNumTasks, streams[0]);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            bytes,
+        cubSelectFlagged(
             thrust::make_zip_iterator(thrust::make_tuple(
                 d_anchorReadIds.data(),
                 d_mateReadIds.data(),
@@ -3415,33 +3247,6 @@ struct BatchData{
             numTasks,
             streams[0]
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            bytes,
-            thrust::make_zip_iterator(thrust::make_tuple(
-                d_anchorReadIds.data(),
-                d_mateReadIds.data(),
-                d_outputAnchorLengths.data(),
-                d_inputMateLengths.data(),
-                d_isPairedTask.data()
-            )),
-            d_isActive.data(),
-            thrust::make_zip_iterator(thrust::make_tuple(
-                d_anchorReadIds2.data(),
-                d_mateReadIds2.data(),
-                d_anchorSequencesLength.data(),
-                d_inputMateLengths2.data(),
-                d_isPairedTask2.data()
-            )),
-            thrust::make_discard_iterator(),
-            numTasks,
-            streams[0]
-        );
-        assert(cubstatus == cudaSuccess);
 
         std::swap(d_anchorReadIds, d_anchorReadIds2);
         std::swap(d_mateReadIds, d_mateReadIds2);
@@ -3453,9 +3258,7 @@ struct BatchData{
 
         CachedDeviceUVector<unsigned int> d_inputanchormatedata2(newNumTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
 
-        cubstatus = cub::DeviceSelect::Flagged(
-            nullptr,
-            bytes,
+        cubSelectFlagged(
             d_inputanchormatedata.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
@@ -3466,24 +3269,6 @@ struct BatchData{
             numTasks * encodedSequencePitchInInts,
             streams[0]
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-        cubstatus = cub::DeviceSelect::Flagged(
-            cubTemp.data(),
-            bytes,
-            d_inputanchormatedata.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive.data(), encodedSequencePitchInInts)
-            ),
-            d_inputanchormatedata2.data(),
-            thrust::make_discard_iterator(),
-            numTasks * encodedSequencePitchInInts,
-            streams[0]
-        );
-        assert(cubstatus == cudaSuccess);
 
         std::swap(d_inputanchormatedata, d_inputanchormatedata2);
         
@@ -4640,6 +4425,48 @@ struct BatchData{
             bytes,
             d_in, 
             d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
+    template<typename InputIteratorT , typename FlagIterator , typename OutputIteratorT , typename NumSelectedIteratorT >
+    void cubSelectFlagged(
+        InputIteratorT d_in,
+        FlagIterator d_flags,
+        OutputIteratorT d_out,
+        NumSelectedIteratorT d_num_selected_out,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false 
+    ){
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceSelect::Flagged(
+            nullptr, 
+            bytes, 
+            d_in, 
+            d_flags, 
+            d_out, 
+            d_num_selected_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceSelect::Flagged(
+            temp.data(), 
+            bytes, 
+            d_in, 
+            d_flags, 
+            d_out, 
+            d_num_selected_out, 
             num_items, 
             stream,
             debug_synchronous
