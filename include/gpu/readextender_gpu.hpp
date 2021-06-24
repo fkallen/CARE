@@ -607,6 +607,10 @@ struct BatchData{
         d_numFullyUsedReadIdsPerAnchor(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
         d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
+        d_consensusEncoded(cubAllocator_),
+        d_coverage(cubAllocator_),
+        d_msa_column_properties(cubAllocator_),
+        d_consensusQuality(cubAllocator_),
         streams(streams_)
     {
 
@@ -1003,11 +1007,9 @@ struct BatchData{
 
         CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
-        h_segmentIdsOfReadIds.resize(totalNumCandidates);
-
         h_numCandidatesPerAnchor.resize(numTasks);
 
-        d_anchorIndicesWithRemovedMates.resize(numTasks);
+        d_positionsOfAnchorsToRemoveMate.resize(numTasks);
 
         //determine required temp bytes for following cub calls, and allocate temp storage
 
@@ -1049,7 +1051,7 @@ struct BatchData{
 
         //determine task ids with removed mates
 
-        assert(d_anchorIndicesWithRemovedMates.data() != nullptr);
+        assert(d_positionsOfAnchorsToRemoveMate.data() != nullptr);
         assert(h_numAnchorsWithRemovedMates.data() != nullptr);
 
         cubstatus = cub::DeviceSelect::Flagged(
@@ -1057,7 +1059,7 @@ struct BatchData{
             cubBytes,
             thrust::make_counting_iterator(0),
             d_anchorFlags.data(),
-            d_anchorIndicesWithRemovedMates.data(),
+            d_positionsOfAnchorsToRemoveMate.data(),
             h_numAnchorsWithRemovedMates.data(),
             numTasks,
             firstStream
@@ -1071,7 +1073,7 @@ struct BatchData{
             cubBytes,
             thrust::make_counting_iterator(0),
             d_anchorFlags.data(),
-            d_anchorIndicesWithRemovedMates.data(),
+            d_positionsOfAnchorsToRemoveMate.data(),
             h_numAnchorsWithRemovedMates.data(),
             numTasks,
             firstStream
@@ -1114,10 +1116,10 @@ struct BatchData{
         numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
         totalNumCandidates = *h_numCandidates;
 
-        //d_anchorIndicesWithRemovedMates.resize(*h_numAnchorsWithRemovedMates, firstStream);
+        //d_positionsOfAnchorsToRemoveMate.resize(*h_numAnchorsWithRemovedMates, firstStream);
         d_candidateReadIds2.resize(*h_numCandidates, firstStream);
 
-        d_anchorIndicesWithRemovedMates.resize(numTasksWithMateRemoved);
+        d_positionsOfAnchorsToRemoveMate.resize(numTasksWithMateRemoved);
 
         //std::cerr << "new numTasksWithMateRemoved = " << numTasksWithMateRemoved << ", totalNumCandidates = " << totalNumCandidates << "\n";
 
@@ -1610,7 +1612,7 @@ struct BatchData{
                 encodedSequencePitchInInts,
                 d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
-                d_anchorIndicesWithRemovedMates.data(),
+                d_positionsOfAnchorsToRemoveMate.data(),
                 numTasksWithMateRemoved,
                 d_keepflags.data()
             ); CUERR;
@@ -2216,9 +2218,10 @@ struct BatchData{
         loadCandidateQualityScores(firstStream, d_candidateQualityScores.data());
 
 
-        d_consensusEncoded.resize(numTasks * msaColumnPitchInElements);
-        d_coverage.resize(numTasks * msaColumnPitchInElements);
-        d_msa_column_properties.resize(numTasks);
+        d_consensusEncoded.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
+        d_coverage.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
+        d_msa_column_properties.resizeWithoutCopy(numTasks, firstStream);
+        d_consensusQuality.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
 
         CachedDeviceUVector<int> d_counts(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<float> d_weights(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
@@ -2226,7 +2229,6 @@ struct BatchData{
         CachedDeviceUVector<float> d_origWeights(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<float> d_support(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
 
-        d_consensusQuality.resize(numTasks * msaColumnPitchInElements);
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
 
@@ -3348,7 +3350,7 @@ struct BatchData{
 
         if(!isEmpty()){
 
-            d_newPositionsOfActiveTasks.resize(h_newPositionsOfActiveTasks.size());
+            CachedDeviceUVector<int> d_newPositionsOfActiveTasks(h_newPositionsOfActiveTasks.size(), streams[0], *cubAllocator);
 
             cudaMemcpyAsync(
                 d_newPositionsOfActiveTasks.data(),
@@ -3366,7 +3368,7 @@ struct BatchData{
 
             nvtx::push_range("updateBuffersForNextIteration", 6);
 
-            updateBuffersForNextIteration();
+            updateBuffersForNextIteration(d_newPositionsOfActiveTasks.data(), d_newPositionsOfActiveTasks.size());
 
             nvtx::pop_range();
 
@@ -3389,15 +3391,14 @@ struct BatchData{
     }
 
 
-    void updateBuffersForNextIteration(){
+    void updateBuffersForNextIteration(int* d_newPositionsOfActiveTasks, int newNumTasks){
         nvtx::push_range("removeUsedIdsOfFinishedTasks", 6);
 
-        removeUsedIdsOfFinishedTasks();
+        removeUsedIdsOfFinishedTasks(d_newPositionsOfActiveTasks, newNumTasks);
 
         nvtx::pop_range();
 
         //compute selection flags of remaining tasks
-        const int newNumTasks = d_newPositionsOfActiveTasks.size();
 
         CachedDeviceUVector<bool> d_isActive(numTasks, streams[0], *cubAllocator);
         cudaMemsetAsync(d_isActive.data(), 0, numTasks, streams[0]); CUERR;
@@ -3405,7 +3406,7 @@ struct BatchData{
         helpers::lambda_kernel<<<SDIV(newNumTasks, 128), 128, 0, streams[0]>>>(
             [
                 d_isActive = d_isActive.data(),
-                d_newPositionsOfActiveTasks = d_newPositionsOfActiveTasks.data(),
+                d_newPositionsOfActiveTasks = d_newPositionsOfActiveTasks,
                 newNumTasks
             ] __device__ (){
                 const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -3611,7 +3612,7 @@ struct BatchData{
 
         //shrink remaining buffers
         d_anchormatedata.resize(newNumTasks * encodedSequencePitchInInts);
-        d_anchorIndicesWithRemovedMates.resize(newNumTasks);
+        d_positionsOfAnchorsToRemoveMate.resize(newNumTasks);
 
         d_numCandidatesPerAnchor.resize(newNumTasks, streams[0]);
         d_numCandidatesPerAnchorPrefixSum.resize(newNumTasks+1, streams[0]);
@@ -3619,8 +3620,7 @@ struct BatchData{
 
     }
 
-    void removeUsedIdsOfFinishedTasks(){
-        const int newNumTasks = d_newPositionsOfActiveTasks.size();
+    void removeUsedIdsOfFinishedTasks(int* d_newPositionsOfActiveTasks, int newNumTasks){
 
         if(newNumTasks == 0) return;
 
@@ -3641,7 +3641,7 @@ struct BatchData{
 
             helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
+                    indicesOfActiveTasks = d_newPositionsOfActiveTasks,
                     newNumTasks,
                     d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
                     d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data()
@@ -3715,7 +3715,7 @@ struct BatchData{
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
-                d_newPositionsOfActiveTasks.data(),
+                d_newPositionsOfActiveTasks,
                 newNumTasks,
                 d_usedReadIds.data(),
                 d_usedReadIds2.data(),
@@ -3739,7 +3739,7 @@ struct BatchData{
 
             helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
                 [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks.data(),
+                    indicesOfActiveTasks = d_newPositionsOfActiveTasks,
                     newNumTasks,
                     d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
                     d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data()
@@ -3813,7 +3813,7 @@ struct BatchData{
             const int numBlocks = std::min(256, possibleNumBlocks);
 
             readextendergpukernels::compactUsedIdsOfSelectedTasks<32><<<numBlocks, 128, 0, streams[0]>>>(
-                d_newPositionsOfActiveTasks.data(),
+                d_newPositionsOfActiveTasks,
                 newNumTasks,
                 d_fullyUsedReadIds.data(),
                 d_fullyUsedReadIds2.data(),
@@ -4107,9 +4107,9 @@ struct BatchData{
 
                 
 
-                d_consensusEncoded.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                d_coverage.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                d_msa_column_properties.resize(numFinishedTasks);
+                d_consensusEncoded.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_coverage.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_msa_column_properties.resizeWithoutCopy(numFinishedTasks, stream);
 
                 CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
@@ -4188,7 +4188,7 @@ struct BatchData{
                 indices1.destroy();
 
                 //compute quality of consensus
-                d_consensusQuality.resize(numFinishedTasks * resultMSAColumnPitchInElements);
+                d_consensusQuality.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
 
                 CachedDeviceUVector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 
@@ -4203,7 +4203,7 @@ struct BatchData{
                         d_decodedConsensus = d_decodedConsensus.data(),
                         consensusQuality = d_consensusQuality.data(),
                         support = d_support.data(),
-                        coverages = d_coverage.data(),
+                        //coverages = d_coverage.data(),
                         d_encodedConsensus = d_consensusEncoded.data(),
                         msa_column_properties = d_msa_column_properties.data(),
                         d_numCandidatesInMsa = d_numCandidatesPerAnchor.data(),
@@ -4228,7 +4228,7 @@ struct BatchData{
                         for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
 
                             const float* const taskSupport = support + t * columnPitchInElements;
-                            const int* const taskCoverage = coverages + t * columnPitchInElements;
+                            //const int* const taskCoverage = coverages + t * columnPitchInElements;
                             char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
                             const int begin = msa_column_properties[t].firstColumn_incl;
                             const int end = msa_column_properties[t].lastColumn_excl;
@@ -4790,11 +4790,9 @@ struct BatchData{
     
     PinnedBuffer<read_number> h_candidateReadIds{};
 
-    PinnedBuffer<int> h_segmentIdsOfReadIds{};
-
     DeviceBuffer<unsigned int> d_anchormatedata{};
 
-    DeviceBuffer<int> d_anchorIndicesWithRemovedMates{};
+    DeviceBuffer<int> d_positionsOfAnchorsToRemoveMate{};
 
     PinnedBuffer<int> h_numCandidatesPerAnchor{};
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
@@ -4865,15 +4863,12 @@ struct BatchData{
     PinnedBuffer<int> h_numFullyUsedReadIds{};
     // -----
     
-
-    PinnedBuffer<int> h_newPositionsOfActiveTasks{};
-    PinnedBuffer<int> d_newPositionsOfActiveTasks{};
-
-    DeviceBuffer<std::uint8_t> d_consensusEncoded; //encoded , 0-4
-    DeviceBuffer<int> d_coverage;
-    DeviceBuffer<gpu::MSAColumnProperties> d_msa_column_properties;
-
-    DeviceBuffer<char> d_consensusQuality;
+    // ----- MSA data
+    CachedDeviceUVector<std::uint8_t> d_consensusEncoded{}; //encoded , 0-4
+    CachedDeviceUVector<int> d_coverage{};
+    CachedDeviceUVector<gpu::MSAColumnProperties> d_msa_column_properties{};
+    CachedDeviceUVector<char> d_consensusQuality{};
+    // -----
 
     DeviceBuffer<char> d_outputAnchors;
     DeviceBuffer<char> d_outputAnchorQualities;
@@ -4883,6 +4878,7 @@ struct BatchData{
     DeviceBuffer<bool> d_isFullyUsedCandidate{};
 
     PinnedBuffer<int> h_firstTasksOfPairsToCheck;
+    PinnedBuffer<int> h_newPositionsOfActiveTasks{};
 
     PinnedBuffer<int> h_accumExtensionsLengths;
     PinnedBuffer<extension::AbortReason> h_abortReasons;
