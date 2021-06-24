@@ -4080,13 +4080,16 @@ struct BatchData{
 
         std::vector<extension::Task> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
 
-        std::merge(
-            std::make_move_iterator(tasksToAdd.begin()), 
-            std::make_move_iterator(tasksToAdd.end()), 
-            std::make_move_iterator(finishedTasks.begin()), 
-            std::make_move_iterator(finishedTasks.end()), 
-            newFinishedTasks.begin(),
-            comp
+        newFinishedTasks.erase(
+            std::merge(
+                std::make_move_iterator(tasksToAdd.begin()), 
+                std::make_move_iterator(tasksToAdd.end()), 
+                std::make_move_iterator(finishedTasks.begin()), 
+                std::make_move_iterator(finishedTasks.end()), 
+                newFinishedTasks.begin(),
+                comp
+            ),
+            newFinishedTasks.end()
         );
 
         std::swap(newFinishedTasks, finishedTasks);
