@@ -629,6 +629,7 @@ struct BatchData{
         h_numAnchors.resize(1);
         h_numCandidates.resize(1);
         h_numAnchorsWithRemovedMates.resize(1);
+        h_numFullyUsedReadIds2.resize(1);
 
         d_numAnchors.resize(1);
         d_numCandidates.resize(1);
@@ -639,6 +640,7 @@ struct BatchData{
         *h_numAnchors = 0;
         *h_numCandidates = 0;
         *h_numAnchorsWithRemovedMates = 0;
+        *h_numFullyUsedReadIds2 = 0;
 
         numTasks = 0;   
     }
@@ -659,10 +661,6 @@ struct BatchData{
 
         const int currentNumTasks = tasks.size();
         const int newNumTasks = currentNumTasks + numAdditionalTasks;
-
-        CachedDeviceUVector<char> cubTemp(*cubAllocator);
-        std::size_t cubTempSize = 0;
-        cudaError_t cubstatus = cudaSuccess;
 
         h_anchorReadIds.resize(newNumTasks);
         h_mateReadIds.resize(newNumTasks);
@@ -987,10 +985,6 @@ struct BatchData{
         d_positionsOfAnchorsToRemoveMate.resize(numTasks);
 
         //determine required temp bytes for following cub calls, and allocate temp storage
-
-        CachedDeviceUVector<char> cubTemp(*cubAllocator);
-        std::size_t cubBytes = 0;
-        cudaError_t cubstatus = cudaSuccess;
                
         CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
@@ -1021,8 +1015,6 @@ struct BatchData{
             D2H,
             firstStream
         ); CUERR;
-
-        cudaEventRecord(events[0], firstStream);
 
         //determine task ids with removed mates
 
@@ -1086,30 +1078,15 @@ struct BatchData{
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum2(numTasks + 1, firstStream, *cubAllocator);
 
-        // //compute prefix sum of number of candidates per anchor
-        helpers::call_set_kernel_async(d_numCandidatesPerAnchorPrefixSum2.data(), 0, 0, firstStream);
+        //compute prefix sum of number of candidates per anchor
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum2.data(), 0, sizeof(int), firstStream); CUERR;
 
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr, 
-            cubBytes, 
+        cubInclusiveSum(
             d_numCandidatesPerAnchor2.data(), 
             d_numCandidatesPerAnchorPrefixSum2.data() + 1, 
             numTasks,
             firstStream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            cubTemp.data(), 
-            cubBytes, 
-            d_numCandidatesPerAnchor2.data(), 
-            d_numCandidatesPerAnchorPrefixSum2.data() + 1, 
-            numTasks,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
 
         CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, firstStream, *cubAllocator);
 
@@ -1170,31 +1147,14 @@ struct BatchData{
 
         
         
-
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), firstStream); CUERR;
         //compute prefix sum of new segment sizes
-
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr,
-            cubBytes, 
+        cubInclusiveSum(
             d_numCandidatesPerAnchor.data(), 
             d_numCandidatesPerAnchorPrefixSum.data() + 1, 
             numTasks,
             firstStream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-    
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            cubTemp.data(), 
-            cubBytes, 
-            d_numCandidatesPerAnchor.data(), 
-            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            numTasks,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-
 
         if(numTasksWithMateRemoved > 0){
             cudaEventRecord(events[0], secondStream);
@@ -1514,10 +1474,6 @@ struct BatchData{
 
             CachedDeviceUVector<int> d_outputpositions(totalNumCandidates, stream, *cubAllocator);
 
-            CachedDeviceUVector<char> cubTemp(*cubAllocator);
-            std::size_t cubTempSize = 0;
-            cudaError_t cubstatus = cudaSuccess;
-
             cubExclusiveSum(
                 d_keepflags.data(), 
                 d_outputpositions.data(), 
@@ -1592,28 +1548,16 @@ struct BatchData{
                 }
             ); CUERR;
 
-            //update prefix sum        
-            cubstatus = cub::DeviceScan::InclusiveSum(
-                nullptr,
-                cubTempSize,
+            //update prefix sum  
+
+            cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
+
+            cubInclusiveSum(
                 d_numCandidatesPerAnchor.data(), 
                 d_numCandidatesPerAnchorPrefixSum.data() + 1, 
                 numTasks, 
                 stream
             );
-            assert(cudaSuccess == cubstatus);
-
-            cubTemp.resizeWithoutCopy(cubTempSize, stream);
-
-            cubstatus = cub::DeviceScan::InclusiveSum(
-                cubTemp.data(),
-                cubTempSize,
-                d_numCandidatesPerAnchor.data(), 
-                d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-                numTasks, 
-                stream
-            );
-            assert(cudaSuccess == cubstatus);
 
             cudaMemcpyAsync(
                 h_numCandidates.data(),
@@ -1967,9 +1911,6 @@ struct BatchData{
 
         //compact 1d arrays
 
-        CachedDeviceUVector<char> cubTemp(*cubAllocator);
-        std::size_t cubTempSize = 0;
-
         cubSelectFlagged(
             d_zip_data, 
             d_keepflags.data(), 
@@ -1979,7 +1920,7 @@ struct BatchData{
             stream
         );
 
-        cudaEventRecord(events[0], stream); CUERR;
+        cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
 
         cubSelectFlagged(
             d_candidateSequencesData.data(),
@@ -1995,35 +1936,19 @@ struct BatchData{
 
         std::swap(d_candidateSequencesData2, d_candidateSequencesData);
 
-        cudaError_t cubstatus = cudaSuccess;
-        
         //compute prefix sum of new number of candidates per anchor
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr,
-            cubTempSize,
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
+        cubInclusiveSum(
             d_numCandidatesPerAnchor2.data(), 
             d_numCandidatesPerAnchorPrefixSum.data() + 1, 
             numTasks, 
             stream
         );
-        assert(cudaSuccess == cubstatus);
-
-        cubTemp.resizeWithoutCopy(cubTempSize, stream);
-
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            cubTemp.data(),
-            cubTempSize,
-            d_numCandidatesPerAnchor2.data(), 
-            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            numTasks, 
-            stream
-        );
-        assert(cudaSuccess == cubstatus);
 
         std::swap(d_numCandidatesPerAnchor2, d_numCandidatesPerAnchor);       
 
 
-        cudaEventSynchronize(events[0]); CUERR;
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
         totalNumCandidates = *h_numCandidates;
 
         d_alignment_nOps2.resize(totalNumCandidates, stream);
@@ -2203,11 +2128,6 @@ struct BatchData{
                 }
             }
         ); CUERR;
-
-
-        CachedDeviceUVector<char> cubTemp(*cubAllocator);
-        std::size_t cubBytes = 0;
-        cudaError_t cubstatus = cudaSuccess;
         
         CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
@@ -2220,7 +2140,7 @@ struct BatchData{
             firstStream
         );
 
-        cudaEventRecord(events[0], firstStream); CUERR;
+        cudaEventRecord(h_numCandidatesEvent, firstStream); CUERR;
 
 
 
@@ -2275,31 +2195,17 @@ struct BatchData{
         d_support.destroy();
         indices1.destroy();
         indices2.destroy();
-        d_shouldBeKept.destroy();    
+        d_shouldBeKept.destroy();
 
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            nullptr,
-            cubBytes,
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), firstStream); CUERR;
+        cubInclusiveSum(
             d_numCandidatesPerAnchor2.data(), 
             d_numCandidatesPerAnchorPrefixSum.data() + 1, 
             numTasks, 
             firstStream
         );
-        assert(cubstatus == cudaSuccess);
 
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-
-        cubstatus = cub::DeviceScan::InclusiveSum(
-            cubTemp.data(),
-            cubBytes,
-            d_numCandidatesPerAnchor2.data(), 
-            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            numTasks, 
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-
-        cudaEventSynchronize(events[0]); CUERR; //wait for h_numCandidates
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
         
 
 
@@ -2764,8 +2670,6 @@ struct BatchData{
             std::swap(d_segmentIdsOfUsedReadIds, d_newSegmentIdsOfUsedReadIds);
             std::swap(d_numUsedReadIdsPerAnchor, d_newNumUsedreadIdsPerAnchor);
 
-            std::size_t bytes = 0;
-
             cubExclusiveSum(
                 d_numUsedReadIdsPerAnchor.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum.data(), 
@@ -2778,11 +2682,6 @@ struct BatchData{
         }
 
         {
-            CachedDeviceUVector<char> cubTemp(*cubAllocator);
-            std::size_t bytes = 0;
-            cudaError_t cubstatus = cudaSuccess;
-
-            int* h_currentNumFullyUsed = h_firstTasksOfPairsToCheck.data();
 
             CachedDeviceUVector<read_number> d_currentFullyUsedReadIds(totalNumCandidates, stream, *cubAllocator);
             CachedDeviceUVector<int> d_currentNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
@@ -2808,17 +2707,15 @@ struct BatchData{
                 candidatesAndSegmentIdsIn,
                 d_isFullyUsedCandidate.data(),
                 candidatesAndSegmentIdsOut,
-                h_currentNumFullyUsed,
+                h_numFullyUsedReadIds2.data(),
                 totalNumCandidates,
                 stream
             );
 
-            cudaEventRecord(events[0], stream); CUERR;
+            cudaEventRecord(h_numFullyUsedReadIds2Event, stream); CUERR;
 
             //compute current number of fully used candidates per segment
-            cubstatus = cub::DeviceSegmentedReduce::Sum(
-                nullptr,
-                bytes,
+            cubSegmentedReduceSum(
                 d_isFullyUsedCandidate.data(),
                 d_currentNumFullyUsedreadIdsPerAnchor.data(),
                 numTasks,
@@ -2826,21 +2723,6 @@ struct BatchData{
                 d_numCandidatesPerAnchorPrefixSum.data() + 1,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
-
-            cubTemp.resizeWithoutCopy(bytes, stream);
-
-            cubstatus = cub::DeviceSegmentedReduce::Sum(
-                cubTemp.data(),
-                bytes,
-                d_isFullyUsedCandidate.data(),
-                d_currentNumFullyUsedreadIdsPerAnchor.data(),
-                numTasks,
-                d_numCandidatesPerAnchorPrefixSum.data(),
-                d_numCandidatesPerAnchorPrefixSum.data() + 1,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
 
             //compute prefix sum of current number of fully used candidates per segment
 
@@ -2851,12 +2733,12 @@ struct BatchData{
                 stream
             );
 
-            cudaEventSynchronize(events[0]); CUERR;
+            cudaEventSynchronize(h_numFullyUsedReadIds2Event); CUERR;
 
-            d_currentFullyUsedReadIds.resize(*h_numFullyUsedReadIds, stream);
-            d_currentSegmentIdsOfFullyUsedReadIds.resize(*h_numFullyUsedReadIds, stream);
+            d_currentFullyUsedReadIds.resize(*h_numFullyUsedReadIds2, stream);
+            d_currentSegmentIdsOfFullyUsedReadIds.resize(*h_numFullyUsedReadIds2, stream);
 
-            const int maxoutputsize = totalNumCandidates + *h_numFullyUsedReadIds;
+            const int maxoutputsize = *h_numFullyUsedReadIds2 + *h_numFullyUsedReadIds;
 
             CachedDeviceUVector<read_number> d_newFullyUsedReadIds(maxoutputsize, stream, *cubAllocator);
             CachedDeviceUVector<int> d_newNumFullyUsedreadIdsPerAnchor(numTasks, stream, *cubAllocator);
@@ -2870,7 +2752,7 @@ struct BatchData{
                 d_currentNumFullyUsedreadIdsPerAnchor.data(),
                 d_currentNumFullyUsedreadIdsPerAnchorPS.data(),
                 d_currentSegmentIdsOfFullyUsedReadIds.data(),
-                *h_currentNumFullyUsed,
+                *h_numFullyUsedReadIds2,
                 numTasks,
                 d_fullyUsedReadIds.data(),
                 d_numFullyUsedReadIdsPerAnchor.data(),
@@ -3184,10 +3066,6 @@ struct BatchData{
             }
         ); CUERR;
 
-        CachedDeviceUVector<char> cubTemp(*cubAllocator);
-        std::size_t bytes = 0;
-        cudaError_t cubstatus = cudaSuccess;
-
         //set new decoded anchors
         d_subjectSequencesDataDecoded.resizeWithoutCopy(newNumTasks * decodedSequencePitchInBytes, streams[0]);
 
@@ -3332,33 +3210,14 @@ struct BatchData{
                 }
             ); CUERR;
 
-            CachedDeviceUVector<char> cubTemp(*cubAllocator);
-            std::size_t bytes = 0;
-            cudaError_t cubstatus = cudaSuccess;
-            
-            cubstatus = cub::DeviceReduce::Sum(
-                nullptr, 
-                bytes, 
+            cubReduceSum(
                 d_numUsedReadIdsPerAnchor2.data(), 
                 h_numUsedReadIds.data(),
                 newNumTasks,
                 streams[0]
             );
-            assert(cubstatus == cudaSuccess);
 
-            cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-            cubstatus = cub::DeviceReduce::Sum(
-                cubTemp.data(), 
-                bytes, 
-                d_numUsedReadIdsPerAnchor2.data(), 
-                h_numUsedReadIds.data(),
-                newNumTasks,
-                streams[0]
-            );
-            assert(cubstatus == cudaSuccess);
-
-            cudaEventRecord(events[0], streams[0]);
+            cudaEventRecord(h_numUsedReadIdsEvent, streams[0]);
 
             cubExclusiveSum(
                 d_numUsedReadIdsPerAnchor2.data(), 
@@ -3367,7 +3226,7 @@ struct BatchData{
                 streams[0]
             );
 
-            cudaEventSynchronize(events[0]); CUERR; //wait until h_numUsedReadIds is ready
+            cudaEventSynchronize(h_numUsedReadIdsEvent); CUERR; //wait until h_numUsedReadIds is ready
 
             CachedDeviceUVector<read_number> d_usedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);
             CachedDeviceUVector<int> d_segmentIdsOfUsedReadIds2(*h_numUsedReadIds, streams[0], *cubAllocator);        
@@ -3414,34 +3273,15 @@ struct BatchData{
                     }
                 }
             ); CUERR;
-
-            CachedDeviceUVector<char> cubTemp(*cubAllocator);
-            std::size_t bytes = 0;
-            cudaError_t cubstatus = cudaSuccess;
             
-            cubstatus = cub::DeviceReduce::Sum(
-                nullptr, 
-                bytes, 
+            cubReduceSum(
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 h_numFullyUsedReadIds.data(),
                 newNumTasks,
                 streams[0]
             );
-            assert(cubstatus == cudaSuccess);
 
-            cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-            cubstatus = cub::DeviceReduce::Sum(
-                cubTemp.data(), 
-                bytes, 
-                d_numFullyUsedReadIdsPerAnchor2.data(), 
-                h_numFullyUsedReadIds.data(),
-                newNumTasks,
-                streams[0]
-            );
-            assert(cubstatus == cudaSuccess);
-
-            cudaEventRecord(events[0], streams[0]);
+            cudaEventRecord(h_numFullyUsedReadIdsEvent, streams[0]);
 
             cubExclusiveSum(
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
@@ -3450,7 +3290,7 @@ struct BatchData{
                 streams[0]
             );
 
-            cudaEventSynchronize(events[0]); CUERR; //wait until h_numFullyUsedReadIds is ready
+            cudaEventSynchronize(h_numFullyUsedReadIdsEvent); CUERR; //wait until h_numFullyUsedReadIds is ready
 
             CachedDeviceUVector<read_number> d_fullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator);
             CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds2(*h_numFullyUsedReadIds, streams[0], *cubAllocator); 
@@ -4206,31 +4046,13 @@ struct BatchData{
             numSegments
         );
 
-        std::size_t bytes = 0;
-
-        cudaError_t cubstatus = cub::DeviceScan::InclusiveScan(
-            nullptr, 
-            bytes, 
+        cubInclusiveScan(
             d_segmentIds, 
             d_segmentIds, 
             cub::Max{},
             numElements,
             stream
         );
-        assert(cubstatus == cudaSuccess);
-
-        CachedDeviceUVector<char> cubTemp(bytes, stream, *cubAllocator);
-
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            cubTemp.data(), 
-            bytes, 
-            d_segmentIds, 
-            d_segmentIds, 
-            cub::Max{},
-            numElements,
-            stream
-        );
-        assert(cubstatus == cudaSuccess);
     }
 
     void loadCandidateQualityScores(cudaStream_t stream, char* d_qualityscores){
@@ -4403,7 +4225,7 @@ struct BatchData{
         int num_items,
         cudaStream_t stream = 0,
         bool debug_synchronous = false
-    ){
+    ) const {
         std::size_t bytes = 0;
         cudaError_t status = cudaSuccess;
 
@@ -4432,6 +4254,117 @@ struct BatchData{
         assert(status == cudaSuccess);
     }
 
+    template<typename InputIteratorT , typename OutputIteratorT >
+    void cubInclusiveSum(
+        InputIteratorT d_in,
+        OutputIteratorT d_out,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false
+    ) const {
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceScan::InclusiveSum(
+            nullptr,
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceScan::InclusiveSum(
+            temp.data(),
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
+    template<typename InputIteratorT , typename OutputIteratorT , typename ScanOpT >
+    void cubInclusiveScan(
+        InputIteratorT d_in,
+        OutputIteratorT d_out,
+        ScanOpT scan_op,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false 
+    ) const {
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceScan::InclusiveScan(
+            nullptr,
+            bytes,
+            d_in, 
+            d_out, 
+            scan_op, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceScan::InclusiveScan(
+            temp.data(),
+            bytes,
+            d_in, 
+            d_out, 
+            scan_op, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
+    template<typename InputIteratorT , typename OutputIteratorT >
+    void cubReduceSum(
+        InputIteratorT d_in,
+        OutputIteratorT d_out,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false 
+    ) const {
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceReduce::Sum(
+            nullptr,
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceReduce::Sum(
+            temp.data(),
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
     template<typename InputIteratorT , typename FlagIterator , typename OutputIteratorT , typename NumSelectedIteratorT >
     void cubSelectFlagged(
         InputIteratorT d_in,
@@ -4441,7 +4374,7 @@ struct BatchData{
         int num_items,
         cudaStream_t stream = 0,
         bool debug_synchronous = false 
-    ){
+    ) const {
         std::size_t bytes = 0;
         cudaError_t status = cudaSuccess;
 
@@ -4468,6 +4401,48 @@ struct BatchData{
             d_out, 
             d_num_selected_out, 
             num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
+    template<typename InputIteratorT , typename OutputIteratorT , typename OffsetIteratorT >
+    void cubSegmentedReduceSum(
+        InputIteratorT d_in,
+        OutputIteratorT d_out,
+        int num_segments,
+        OffsetIteratorT	d_begin_offsets,
+        OffsetIteratorT d_end_offsets,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false 
+    ) const {
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceSegmentedReduce::Sum(
+            nullptr, 
+            bytes, 
+            d_in, 
+            d_out, 
+            num_segments, 
+            d_begin_offsets, 
+            d_end_offsets,
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceSegmentedReduce::Sum(
+            temp.data(), 
+            bytes, 
+            d_in, 
+            d_out, 
+            num_segments, 
+            d_begin_offsets, 
+            d_end_offsets,
             stream,
             debug_synchronous
         );
@@ -4583,6 +4558,7 @@ struct BatchData{
     CachedDeviceUVector<int> d_segmentIdsOfFullyUsedReadIds{};
 
     PinnedBuffer<int> h_numFullyUsedReadIds{};
+    PinnedBuffer<int> h_numFullyUsedReadIds2{};
     // -----
     
     // ----- MSA data
@@ -4612,6 +4588,16 @@ struct BatchData{
     PinnedBuffer<bool> h_outputMateHasBeenFound;
     PinnedBuffer<int> h_sizeOfGapToMate;
     PinnedBuffer<bool> h_isFullyUsedCandidate{};
+
+    // ----- Ready-events for pinned outputs
+    CudaEvent h_numAnchorsEvent{};
+    CudaEvent h_numCandidatesEvent{};
+    CudaEvent h_numAnchorsWithRemovedMatesEvent{};
+    CudaEvent h_numUsedReadIdsEvent{};
+    CudaEvent h_numFullyUsedReadIdsEvent{};
+    CudaEvent h_numFullyUsedReadIds2Event{};
+
+    // -----
 
     // tasḱ_accumExtensionLengths;
     // tasḱ_pairedEnd;
