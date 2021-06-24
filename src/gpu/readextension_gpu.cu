@@ -1265,7 +1265,7 @@ extend_gpu_pairedend(
         }
 
         cub::CachingDeviceAllocator myCubAllocator(
-            8, //bin_growth
+            2, //bin_growth
             1, //min_bin
             cub_CachingDeviceAllocator_INVALID_BIN, //max_bin
             cub_CachingDeviceAllocator_INVALID_SIZE, //max_cached_bytes
@@ -1286,17 +1286,6 @@ extend_gpu_pairedend(
 
         ReadStorageHandle readStorageHandle = gpuReadStorage.makeHandle();
 
-        // GpuExtensionStepper gpuExtensionStepper(
-        //     gpuReadStorage, 
-        //     minhasher,
-        //     correctionOptions,
-        //     goodAlignmentProperties,
-        //     qualityConversion,
-        //     insertSize,
-        //     insertSizeStddev,
-        //     maxextensionPerStep,
-        //     myCubAllocator
-        // );
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
         helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
