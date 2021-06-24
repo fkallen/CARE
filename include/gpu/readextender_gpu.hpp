@@ -678,8 +678,8 @@ struct BatchData{
         cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
 
 
-        d_numUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
-        d_numFullyUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
+        d_numUsedReadIdsPerAnchorPrefixSum.resizeUninitialized(newNumTasks, streams[0]);
+        d_numFullyUsedReadIdsPerAnchorPrefixSum.resizeUninitialized(newNumTasks, streams[0]);
 
         cubExclusiveSum(
             d_numUsedReadIdsPerAnchor.data(), 
@@ -918,8 +918,8 @@ struct BatchData{
 
         cudaStream_t stream = streams[0];
 
-        d_numCandidatesPerAnchor.resizeWithoutCopy(numTasks, stream);
-        d_numCandidatesPerAnchorPrefixSum.resizeWithoutCopy(numTasks + 1, stream);
+        d_numCandidatesPerAnchor.resizeUninitialized(numTasks, stream);
+        d_numCandidatesPerAnchorPrefixSum.resizeUninitialized(numTasks + 1, stream);
 
         int totalNumValues = 0;
 
@@ -936,7 +936,7 @@ struct BatchData{
 
         cudaStreamSynchronize(stream); CUERR;
 
-        d_candidateReadIds.resizeWithoutCopy(totalNumValues, stream);    
+        d_candidateReadIds.resizeUninitialized(totalNumValues, stream);    
 
         if(totalNumValues == 0){
             cudaMemsetAsync(d_numCandidatesPerAnchor.data(), 0, sizeof(int) * numTasks , stream); CUERR;
@@ -977,7 +977,6 @@ struct BatchData{
         assert(state == BatchData::State::BeforeRemoveIds);
 
         cudaStream_t firstStream = streams[0];
-        cudaStream_t secondStream = firstStream;
 
         CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
 
@@ -988,7 +987,7 @@ struct BatchData{
         CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);        
 
-        d_mateIdHasBeenRemoved.resizeWithoutCopy(numTasks, firstStream);
+        d_mateIdHasBeenRemoved.resizeUninitialized(numTasks, firstStream);
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream);
 
@@ -1034,13 +1033,10 @@ struct BatchData{
 
         d_shouldBeKept.destroy();
 
-        cudaStreamSynchronize(firstStream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
-        numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
+        cudaStreamSynchronize(firstStream); CUERR; //wait for h_numCandidates
         totalNumCandidates = *h_numCandidates;
 
-        d_candidateReadIds2.resize(*h_numCandidates, firstStream);
-
-        //std::cerr << "new numTasksWithMateRemoved = " << numTasksWithMateRemoved << ", totalNumCandidates = " << totalNumCandidates << "\n";
+        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + *h_numCandidates, d_candidateReadIds2.end(), firstStream);
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum2(numTasks + 1, firstStream, *cubAllocator);
 
@@ -1080,7 +1076,7 @@ struct BatchData{
             auto d_candidateReadIds_end = d_candidateReadIds.data() + totalNumCandidates;
         #else
 
-            d_segmentIdsOfCandidates.resizeWithoutCopy(totalNumCandidates, firstStream);
+            d_segmentIdsOfCandidates.resizeUninitialized(totalNumCandidates, firstStream);
         
             //compute segmented set difference.  d_candidateReadIds = d_candidateReadIds2 \ d_usedReadIds
             auto d_candidateReadIds_end = GpuSegmentedSetOperation::set_difference(
@@ -1106,8 +1102,8 @@ struct BatchData{
 
             totalNumCandidates = std::distance(d_candidateReadIds.data(), d_candidateReadIds_end);
 
-            d_candidateReadIds.resize(totalNumCandidates, firstStream);
-            d_segmentIdsOfCandidates.resize(totalNumCandidates, firstStream);            
+            d_candidateReadIds.erase(d_candidateReadIds.begin() + totalNumCandidates, d_candidateReadIds.end(), firstStream);
+            d_segmentIdsOfCandidates.erase(d_segmentIdsOfCandidates.begin() + totalNumCandidates, d_segmentIdsOfCandidates.end(), firstStream);
 
         #endif
 
@@ -1124,11 +1120,6 @@ struct BatchData{
             firstStream
         );
 
-        if(numTasksWithMateRemoved > 0){
-            cudaEventRecord(events[0], secondStream);
-            cudaStreamWaitEvent(firstStream, events[0], 0); CUERR;
-        }
-
         //removeUsedIdsAndMateIds is a compaction step. check early exit.
         if(totalNumCandidates == 0){
             setStateToFinished();
@@ -1143,7 +1134,7 @@ struct BatchData{
         cudaStream_t stream = streams[0];
         DEBUGDEVICESYNC
 
-        d_isPairedCandidate.resizeWithoutCopy(totalNumCandidates, stream);
+        d_isPairedCandidate.resizeUninitialized(totalNumCandidates, stream);
 
         helpers::call_fill_kernel_async(d_isPairedCandidate.data(), totalNumCandidates, false, stream);
 
@@ -1379,8 +1370,8 @@ struct BatchData{
 
         cudaStream_t stream = streams[0];
 
-        d_candidateSequencesLength.resizeWithoutCopy(totalNumCandidates, stream);
-        d_candidateSequencesData.resizeWithoutCopy(encodedSequencePitchInInts * totalNumCandidates, stream);
+        d_candidateSequencesLength.resizeUninitialized(totalNumCandidates, stream);
+        d_candidateSequencesData.resizeUninitialized(encodedSequencePitchInInts * totalNumCandidates, stream);
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);
 
@@ -1422,7 +1413,7 @@ struct BatchData{
             stream
         );
         cudaStreamSynchronize(stream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
-        numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
+        const int numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
 
         if(numTasksWithMateRemoved > 0){
 
@@ -1573,11 +1564,11 @@ struct BatchData{
 
             totalNumCandidates = *h_numCandidates;
 
-            d_candidateReadIds2.resize(totalNumCandidates, stream);
-            d_candidateSequencesLength2.resize(totalNumCandidates, stream);
-            d_isPairedCandidate2.resize(totalNumCandidates, stream);
-            d_segmentIdsOfCandidates2.resize(totalNumCandidates, stream);
-            d_candidateSequencesData2.resize(totalNumCandidates * encodedSequencePitchInInts, stream);
+            d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
+            d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
+            d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
+            d_segmentIdsOfCandidates2.erase(d_segmentIdsOfCandidates2.begin() + totalNumCandidates, d_segmentIdsOfCandidates2.end(), stream);
+            d_candidateSequencesData2.erase(d_candidateSequencesData2.begin() + totalNumCandidates, d_candidateSequencesData2.end(), stream);
 
             std::swap(d_candidateReadIds, d_candidateReadIds2); 
             std::swap(d_candidateSequencesLength, d_candidateSequencesLength2); 
@@ -1595,10 +1586,10 @@ struct BatchData{
         cudaStream_t stream = streams[0];
 
 
-        d_alignment_overlaps.resizeWithoutCopy(totalNumCandidates, stream);
-        d_alignment_shifts.resizeWithoutCopy(totalNumCandidates, stream);
-        d_alignment_nOps.resizeWithoutCopy(totalNumCandidates, stream);
-        d_alignment_best_alignment_flags.resizeWithoutCopy(totalNumCandidates, stream);
+        d_alignment_overlaps.resizeUninitialized(totalNumCandidates, stream);
+        d_alignment_shifts.resizeUninitialized(totalNumCandidates, stream);
+        d_alignment_nOps.resizeUninitialized(totalNumCandidates, stream);
+        d_alignment_best_alignment_flags.resizeUninitialized(totalNumCandidates, stream);
 
         CachedDeviceUVector<bool> d_alignment_isValid(totalNumCandidates, stream, *cubAllocator);
 
@@ -1953,13 +1944,13 @@ struct BatchData{
         cudaEventSynchronize(h_numCandidatesEvent); CUERR;
         totalNumCandidates = *h_numCandidates;
 
-        d_alignment_nOps2.resize(totalNumCandidates, stream);
-        d_alignment_overlaps2.resize(totalNumCandidates, stream);
-        d_alignment_shifts2.resize(totalNumCandidates, stream);
-        d_alignment_best_alignment_flags2.resize(totalNumCandidates, stream);
-        d_candidateReadIds2.resize(totalNumCandidates, stream);
-        d_candidateSequencesLength2.resize(totalNumCandidates, stream);
-        d_isPairedCandidate2.resize(totalNumCandidates, stream);
+        d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), stream);
+        d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), stream);
+        d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), stream);
+        d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), stream);
+        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
+        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
+        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
 
         std::swap(d_alignment_nOps, d_alignment_nOps2);
         std::swap(d_alignment_overlaps, d_alignment_overlaps2);
@@ -1988,10 +1979,10 @@ struct BatchData{
         loadCandidateQualityScores(firstStream, d_candidateQualityScores.data());
 
 
-        d_consensusEncoded.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
-        d_coverage.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
-        d_msa_column_properties.resizeWithoutCopy(numTasks, firstStream);
-        d_consensusQuality.resizeWithoutCopy(numTasks * msaColumnPitchInElements, firstStream);
+        d_consensusEncoded.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
+        d_coverage.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
+        d_msa_column_properties.resizeUninitialized(numTasks, firstStream);
+        d_consensusQuality.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
 
         CachedDeviceUVector<int> d_counts(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<float> d_weights(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
@@ -2209,16 +2200,11 @@ struct BatchData{
 
         cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
         
-
-
-
-        //only information about number of candidates and readids are kept. all other information about candidates is discarded
-        //auto oldnum = totalNumCandidates;
         totalNumCandidates = *h_numCandidates; 
 
-        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
+        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), firstStream);
 
-        d_candidateReadIds2.resize(*h_numCandidates, firstStream);
+        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
         std::swap(d_candidateReadIds, d_candidateReadIds2);     
 
         setState(BatchData::State::BeforeExtend);
@@ -2249,12 +2235,12 @@ struct BatchData{
         CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
 
         
-        d_isFullyUsedCandidate.resizeWithoutCopy(totalNumCandidates, stream);
-        d_outputAnchors.resizeWithoutCopy(numTasks * outputAnchorPitchInBytes, stream);
-        d_outputAnchorQualities.resizeWithoutCopy(numTasks * outputAnchorQualityPitchInBytes, stream);
-        d_outputMateHasBeenFound.resizeWithoutCopy(numTasks, stream);
-        d_abortReasons.resizeWithoutCopy(numTasks, stream);
-        d_outputAnchorLengths.resizeWithoutCopy(numTasks, stream);      
+        d_isFullyUsedCandidate.resizeUninitialized(totalNumCandidates, stream);
+        d_outputAnchors.resizeUninitialized(numTasks * outputAnchorPitchInBytes, stream);
+        d_outputAnchorQualities.resizeUninitialized(numTasks * outputAnchorQualityPitchInBytes, stream);
+        d_outputMateHasBeenFound.resizeUninitialized(numTasks, stream);
+        d_abortReasons.resizeUninitialized(numTasks, stream);
+        d_outputAnchorLengths.resizeUninitialized(numTasks, stream);      
 
         helpers::call_fill_kernel_async(d_outputMateHasBeenFound.data(), numTasks, false, stream); CUERR;
         helpers::call_fill_kernel_async(d_abortReasons.data(), numTasks, extension::AbortReason::None, stream); CUERR;
@@ -2665,8 +2651,8 @@ struct BatchData{
 
             int newsize = std::distance(d_newUsedReadIds.data(), d_newUsedReadIds_end);
 
-            d_newUsedReadIds.resize(newsize, stream);
-            d_newSegmentIdsOfUsedReadIds.resize(newsize, stream);
+            d_newUsedReadIds.erase(d_newUsedReadIds.begin() + newsize, d_newUsedReadIds.end(), stream);
+            d_newSegmentIdsOfUsedReadIds.erase(d_newSegmentIdsOfUsedReadIds.begin() + newsize, d_newSegmentIdsOfUsedReadIds.end(), stream);
 
             std::swap(d_usedReadIds, d_newUsedReadIds);
             std::swap(d_segmentIdsOfUsedReadIds, d_newSegmentIdsOfUsedReadIds);
@@ -2737,8 +2723,8 @@ struct BatchData{
 
             cudaEventSynchronize(h_numFullyUsedReadIds2Event); CUERR;
 
-            d_currentFullyUsedReadIds.resize(*h_numFullyUsedReadIds2, stream);
-            d_currentSegmentIdsOfFullyUsedReadIds.resize(*h_numFullyUsedReadIds2, stream);
+            d_currentFullyUsedReadIds.erase(d_currentFullyUsedReadIds.begin() + *h_numFullyUsedReadIds2, d_currentFullyUsedReadIds.end(), stream);
+            d_currentSegmentIdsOfFullyUsedReadIds.erase(d_currentSegmentIdsOfFullyUsedReadIds.begin() + *h_numFullyUsedReadIds2, d_currentSegmentIdsOfFullyUsedReadIds.end(), stream);
 
             const int maxoutputsize = *h_numFullyUsedReadIds2 + *h_numFullyUsedReadIds;
 
@@ -2772,8 +2758,8 @@ struct BatchData{
             int newsize = std::distance(d_newFullyUsedReadIds.data(), d_newFullyUsedReadIds_end);
             *h_numFullyUsedReadIds = newsize;
 
-            d_newFullyUsedReadIds.resize(newsize, stream);
-            d_newSegmentIdsOfFullyUsedReadIds.resize(newsize, stream);
+            d_newFullyUsedReadIds.erase(d_newFullyUsedReadIds.begin() + newsize, d_newFullyUsedReadIds.end(), stream);
+            d_newSegmentIdsOfFullyUsedReadIds.erase(d_newSegmentIdsOfFullyUsedReadIds.begin() + newsize, d_newSegmentIdsOfFullyUsedReadIds.end(), stream);
 
             std::swap(d_fullyUsedReadIds, d_newFullyUsedReadIds);
             std::swap(d_segmentIdsOfFullyUsedReadIds, d_newSegmentIdsOfFullyUsedReadIds);
@@ -3043,7 +3029,7 @@ struct BatchData{
         ); CUERR;
 
         //set new decoded anchors
-        d_subjectSequencesDataDecoded.resizeWithoutCopy(newNumTasks * decodedSequencePitchInBytes, streams[0]);
+        d_subjectSequencesDataDecoded.resizeUninitialized(newNumTasks * decodedSequencePitchInBytes, streams[0]);
 
         cubSelectFlagged(
             d_outputAnchors.data(),
@@ -3058,7 +3044,7 @@ struct BatchData{
         );
         
         // set new anchor quality scores
-        d_anchorQualityScores.resizeWithoutCopy(newNumTasks * qualityPitchInBytes, streams[0]);
+        d_anchorQualityScores.resizeUninitialized(newNumTasks * qualityPitchInBytes, streams[0]);
 
         cubSelectFlagged(
             d_outputAnchorQualities.data(),
@@ -3079,7 +3065,7 @@ struct BatchData{
         CachedDeviceUVector<int> d_inputMateLengths2(newNumTasks, streams[0], *cubAllocator);
         CachedDeviceUVector<bool> d_isPairedTask2(newNumTasks, streams[0], *cubAllocator);;
 
-        d_anchorSequencesLength.resizeWithoutCopy(newNumTasks, streams[0]);
+        d_anchorSequencesLength.resizeUninitialized(newNumTasks, streams[0]);
 
         cubSelectFlagged(
             thrust::make_zip_iterator(thrust::make_tuple(
@@ -3128,7 +3114,7 @@ struct BatchData{
         
         //convert new anchors to 2bit representation
 
-        d_subjectSequencesData.resizeWithoutCopy(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_subjectSequencesData.resizeUninitialized(newNumTasks * encodedSequencePitchInInts, streams[0]);
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
         <<<SDIV(newNumTasks, (128 / 8)), 128, 0, streams[0]>>>(
@@ -3142,9 +3128,8 @@ struct BatchData{
 
 
         //shrink remaining buffers
-
-        d_numCandidatesPerAnchor.resize(newNumTasks, streams[0]);
-        d_numCandidatesPerAnchorPrefixSum.resize(newNumTasks+1, streams[0]);
+        d_numCandidatesPerAnchor.erase(d_numCandidatesPerAnchor.begin() + newNumTasks, d_numCandidatesPerAnchor.end(), streams[0]);
+        d_numCandidatesPerAnchorPrefixSum.erase(d_numCandidatesPerAnchorPrefixSum.begin() + (newNumTasks + 1), d_numCandidatesPerAnchorPrefixSum.end(), streams[0]);
     }
 
     void removeUsedIdsOfFinishedTasks(int* d_newPositionsOfActiveTasks, int newNumTasks){
@@ -3349,8 +3334,8 @@ struct BatchData{
 
             }else{
 
-                d_numCandidatesPerAnchor.resizeWithoutCopy(numFinishedTasks, stream);
-                d_numCandidatesPerAnchorPrefixSum.resizeWithoutCopy(numFinishedTasks + 1, stream);
+                d_numCandidatesPerAnchor.resizeUninitialized(numFinishedTasks, stream);
+                d_numCandidatesPerAnchorPrefixSum.resizeUninitialized(numFinishedTasks + 1, stream);
 
                 cudaMemcpyAsync(
                     d_numCandidatesPerAnchor.data(),
@@ -3449,8 +3434,8 @@ struct BatchData{
                 h_outputAnchors.resize(numCandidates * decodedSequencePitchInBytes);
                 h_anchorSequencesLength.resize(numCandidates);
 
-                d_candidateSequencesLength.resizeWithoutCopy(numCandidates, stream);
-                d_candidateSequencesData.resizeWithoutCopy(numCandidates * encodedSequencePitchInInts, stream);
+                d_candidateSequencesLength.resizeUninitialized(numCandidates, stream);
+                d_candidateSequencesData.resizeUninitialized(numCandidates * encodedSequencePitchInInts, stream);
                 CachedDeviceUVector<char> d_candidateSequencesDataDecoded(decodedSequencePitchInBytes * numCandidates, stream, *cubAllocator);
 
                 for(int i = 0; i < numFinishedTasks; i++){
@@ -3528,11 +3513,11 @@ struct BatchData{
 
                 //sequence data has been transfered to gpu. now set up remaining msa input data
 
-                d_alignment_overlaps.resizeWithoutCopy(numCandidates, stream);
-                d_alignment_shifts.resizeWithoutCopy(numCandidates, stream);
-                d_alignment_nOps.resizeWithoutCopy(numCandidates, stream);
-                d_alignment_best_alignment_flags.resizeWithoutCopy(numCandidates, stream);
-                d_isPairedCandidate.resizeWithoutCopy(numCandidates, stream);
+                d_alignment_overlaps.resizeUninitialized(numCandidates, stream);
+                d_alignment_shifts.resizeUninitialized(numCandidates, stream);
+                d_alignment_nOps.resizeUninitialized(numCandidates, stream);
+                d_alignment_best_alignment_flags.resizeUninitialized(numCandidates, stream);
+                d_isPairedCandidate.resizeUninitialized(numCandidates, stream);
                 
                 helpers::call_fill_kernel_async(d_alignment_overlaps.begin(), numCandidates, 100, stream);
                 helpers::call_fill_kernel_async(d_alignment_nOps.begin(), numCandidates, 0, stream);
@@ -3566,9 +3551,9 @@ struct BatchData{
 
                 
 
-                d_consensusEncoded.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_coverage.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_msa_column_properties.resizeWithoutCopy(numFinishedTasks, stream);
+                d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
 
                 CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
@@ -3647,7 +3632,7 @@ struct BatchData{
                 indices1.destroy();
 
                 //compute quality of consensus
-                d_consensusQuality.resizeWithoutCopy(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_consensusQuality.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
 
                 CachedDeviceUVector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 
@@ -4426,7 +4411,6 @@ struct BatchData{
     bool pairedEnd = false;
     State state = State::None;
     int numTasks = 0;
-    int numTasksWithMateRemoved = 0;
     int someId = 0;
     int numReadPairs = 0;
 
