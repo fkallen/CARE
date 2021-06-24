@@ -611,6 +611,12 @@ struct BatchData{
         d_coverage(cubAllocator_),
         d_msa_column_properties(cubAllocator_),
         d_consensusQuality(cubAllocator_),
+        d_outputAnchors(cubAllocator_),
+        d_outputAnchorQualities(cubAllocator_),
+        d_outputMateHasBeenFound(cubAllocator_),
+        d_abortReasons(cubAllocator_),
+        d_outputAnchorLengths(cubAllocator_),
+        d_isFullyUsedCandidate(cubAllocator_),
         streams(streams_)
     {
 
@@ -676,50 +682,19 @@ struct BatchData{
         d_numUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
         d_numFullyUsedReadIdsPerAnchorPrefixSum.resizeWithoutCopy(newNumTasks, streams[0]);
 
-        cubstatus = cub::DeviceScan::ExclusiveSum(
-            nullptr,
-            cubTempSize,
+        cubExclusiveSum(
             d_numUsedReadIdsPerAnchor.data(), 
             d_numUsedReadIdsPerAnchorPrefixSum.data(), 
             newNumTasks, 
             streams[0]
         );
-        assert(cudaSuccess == cubstatus);
 
-        cubTemp.resizeWithoutCopy(cubTempSize, streams[0]);
-
-        cubstatus = cub::DeviceScan::ExclusiveSum(
-            cubTemp.data(),
-            cubTempSize,
-            d_numUsedReadIdsPerAnchor.data(), 
-            d_numUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumTasks, 
-            streams[0]
-        );
-        assert(cudaSuccess == cubstatus);
-
-
-        cubstatus = cub::DeviceScan::ExclusiveSum(
-            nullptr,
-            cubTempSize,
+        cubExclusiveSum(
             d_numFullyUsedReadIdsPerAnchor.data(), 
             d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
             newNumTasks, 
             streams[0]
         );
-        assert(cudaSuccess == cubstatus);
-
-        cubTemp.resizeWithoutCopy(cubTempSize, streams[0]);
-
-        cubstatus = cub::DeviceScan::ExclusiveSum(
-            cubTemp.data(),
-            cubTempSize,
-            d_numFullyUsedReadIdsPerAnchor.data(), 
-            d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
-            newNumTasks, 
-            streams[0]
-        );
-        assert(cudaSuccess == cubstatus);
 
         //copy input task data to pinned buffers
 
@@ -1196,38 +1171,14 @@ struct BatchData{
 
         helpers::call_fill_kernel_async(d_segmentIdsOfCandidates2.data(), totalNumCandidates, 0, firstStream);
 
-        readextendergpukernels::setFirstSegmentIdsKernel<<<SDIV(numTasks, 256), 256, 0, firstStream>>>(
-            d_numCandidatesPerAnchor2.data(),
+        setGpuSegmentIds(
             d_segmentIdsOfCandidates2.data(),
+            numTasks,
+            totalNumCandidates,
+            d_numCandidatesPerAnchor2.data(),
             d_numCandidatesPerAnchorPrefixSum2.data(),
-            numTasks
-        );
-
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            nullptr, 
-            cubBytes, 
-            d_segmentIdsOfCandidates2.data(), 
-            d_segmentIdsOfCandidates2.data(), 
-            cub::Max{},
-            totalNumCandidates,
             firstStream
         );
-        assert(cubstatus == cudaSuccess);
-
-        cubTemp.resizeWithoutCopy(cubBytes, firstStream);
-
-        cubstatus = cub::DeviceScan::InclusiveScan(
-            cubTemp.data(), 
-            cubBytes, 
-            d_segmentIdsOfCandidates2.data(), 
-            d_segmentIdsOfCandidates2.data(), 
-            cub::Max{},
-            totalNumCandidates,
-            firstStream
-        );
-        assert(cubstatus == cudaSuccess);
-
-
    
 
         ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, firstStream);
@@ -1623,27 +1574,12 @@ struct BatchData{
             std::size_t cubTempSize = 0;
             cudaError_t cubstatus = cudaSuccess;
 
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr,
-                cubTempSize,
+            cubExclusiveSum(
                 d_keepflags.data(), 
                 d_outputpositions.data(), 
                 totalNumCandidates, 
                 stream
             );
-            assert(cudaSuccess == cubstatus);
-
-            cubTemp.resizeWithoutCopy(cubTempSize, stream);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(),
-                cubTempSize,
-                d_keepflags.data(), 
-                d_outputpositions.data(), 
-                totalNumCandidates, 
-                stream
-            );
-            assert(cudaSuccess == cubstatus);
 
             helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
                 [
@@ -2515,12 +2451,12 @@ struct BatchData{
         CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
 
         
-        d_isFullyUsedCandidate.resize(totalNumCandidates);
-        d_outputAnchors.resize(numTasks * outputAnchorPitchInBytes);
-        d_outputAnchorQualities.resize(numTasks * outputAnchorQualityPitchInBytes);
-        d_outputMateHasBeenFound.resize(numTasks);
-        d_abortReasons.resize(numTasks);
-        d_outputAnchorLengths.resize(numTasks);      
+        d_isFullyUsedCandidate.resizeWithoutCopy(totalNumCandidates, stream);
+        d_outputAnchors.resizeWithoutCopy(numTasks * outputAnchorPitchInBytes, stream);
+        d_outputAnchorQualities.resizeWithoutCopy(numTasks * outputAnchorQualityPitchInBytes, stream);
+        d_outputMateHasBeenFound.resizeWithoutCopy(numTasks, stream);
+        d_abortReasons.resizeWithoutCopy(numTasks, stream);
+        d_outputAnchorLengths.resizeWithoutCopy(numTasks, stream);      
 
         helpers::call_fill_kernel_async(d_outputMateHasBeenFound.data(), numTasks, false, stream); CUERR;
         helpers::call_fill_kernel_async(d_abortReasons.data(), numTasks, extension::AbortReason::None, stream); CUERR;
@@ -2858,7 +2794,7 @@ struct BatchData{
 
         cudaMemcpyAsync(
             h_outputAnchors.data(),
-            d_outputAnchors,
+            d_outputAnchors.data(),
             sizeof(char) * outputAnchorPitchInBytes * numTasks,
             D2H,
             stream
@@ -2866,7 +2802,7 @@ struct BatchData{
 
         cudaMemcpyAsync(
             h_outputAnchorQualities.data(),
-            d_outputAnchorQualities,
+            d_outputAnchorQualities.data(),
             sizeof(char) * outputAnchorQualityPitchInBytes * numTasks,
             D2H,
             stream
@@ -2874,7 +2810,7 @@ struct BatchData{
 
         cudaMemcpyAsync(
             h_isFullyUsedCandidate.data(),
-            d_isFullyUsedCandidate,
+            d_isFullyUsedCandidate.data(),
             sizeof(bool) * totalNumCandidates,
             D2H,
             stream
@@ -2940,27 +2876,12 @@ struct BatchData{
 
             std::size_t bytes = 0;
 
-            cudaError_t cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr, 
-                bytes, 
+            cubExclusiveSum(
                 d_numUsedReadIdsPerAnchor.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum.data(), 
                 numTasks,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
-
-            CachedDeviceUVector<char> cubTemp(bytes, stream, *cubAllocator);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(), 
-                bytes, 
-                d_numUsedReadIdsPerAnchor.data(), 
-                d_numUsedReadIdsPerAnchorPrefixSum.data(), 
-                numTasks,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
 
             *h_numUsedReadIds = newsize;
 
@@ -3049,27 +2970,12 @@ struct BatchData{
 
             //compute prefix sum of current number of fully used candidates per segment
 
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr, 
-                bytes, 
+            cubExclusiveSum(
                 d_currentNumFullyUsedreadIdsPerAnchor.data(), 
                 d_currentNumFullyUsedreadIdsPerAnchorPS.data(), 
                 numTasks,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
-
-            cubTemp.resizeWithoutCopy(bytes, stream);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(), 
-                bytes, 
-                d_currentNumFullyUsedreadIdsPerAnchor.data(), 
-                d_currentNumFullyUsedreadIdsPerAnchorPS.data(), 
-                numTasks,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);
 
             cudaEventSynchronize(events[0]); CUERR;
 
@@ -3115,27 +3021,13 @@ struct BatchData{
             std::swap(d_segmentIdsOfFullyUsedReadIds, d_newSegmentIdsOfFullyUsedReadIds);
             std::swap(d_numFullyUsedReadIdsPerAnchor, d_newNumFullyUsedreadIdsPerAnchor);
 
-             cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr, 
-                bytes, 
+            cubExclusiveSum(
                 d_numFullyUsedReadIdsPerAnchor.data(), 
                 d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
                 numTasks,
                 stream
             );
-            assert(cubstatus == cudaSuccess);
-
-            cubTemp.resizeWithoutCopy(bytes, stream);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(), 
-                bytes, 
-                d_numFullyUsedReadIdsPerAnchor.data(), 
-                d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
-                numTasks,
-                stream
-            );
-            assert(cubstatus == cudaSuccess);            
+        
         }
 
         setState(BatchData::State::BeforeCopyToHost);
@@ -3683,27 +3575,12 @@ struct BatchData{
 
             cudaEventRecord(events[0], streams[0]);
 
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr, 
-                bytes, 
+            cubExclusiveSum(
                 d_numUsedReadIdsPerAnchor2.data(), 
                 d_numUsedReadIdsPerAnchorPrefixSum2.data(),  
                 newNumTasks,
                 streams[0]
             );
-            assert(cubstatus == cudaSuccess);
-
-            cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(), 
-                bytes, 
-                d_numUsedReadIdsPerAnchor2.data(), 
-                d_numUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumTasks,
-                streams[0]
-            );
-            assert(cubstatus == cudaSuccess);
 
             cudaEventSynchronize(events[0]); CUERR; //wait until h_numUsedReadIds is ready
 
@@ -3781,27 +3658,12 @@ struct BatchData{
 
             cudaEventRecord(events[0], streams[0]);
 
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                nullptr, 
-                bytes, 
+            cubExclusiveSum(
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
                 d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(),  
                 newNumTasks,
                 streams[0]
             );
-            assert(cubstatus == cudaSuccess);
-
-            cubTemp.resizeWithoutCopy(bytes, streams[0]);
-
-            cubstatus = cub::DeviceScan::ExclusiveSum(
-                cubTemp.data(), 
-                bytes, 
-                d_numFullyUsedReadIdsPerAnchor2.data(), 
-                d_numFullyUsedReadIdsPerAnchorPrefixSum2.data(), 
-                newNumTasks,
-                streams[0]
-            );
-            assert(cubstatus == cudaSuccess);
 
             cudaEventSynchronize(events[0]); CUERR; //wait until h_numFullyUsedReadIds is ready
 
@@ -4749,8 +4611,41 @@ struct BatchData{
         }
     }
 
+    template<typename InputIteratorT , typename OutputIteratorT >
+    void cubExclusiveSum(
+        InputIteratorT d_in,
+        OutputIteratorT d_out,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false
+    ){
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
 
+        status = cub::DeviceScan::ExclusiveSum(
+            nullptr,
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
 
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceScan::ExclusiveSum(
+            temp.data(),
+            bytes,
+            d_in, 
+            d_out, 
+            num_items, 
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
 
 
 
@@ -4870,12 +4765,14 @@ struct BatchData{
     CachedDeviceUVector<char> d_consensusQuality{};
     // -----
 
-    DeviceBuffer<char> d_outputAnchors;
-    DeviceBuffer<char> d_outputAnchorQualities;
-    DeviceBuffer<bool> d_outputMateHasBeenFound;
-    DeviceBuffer<extension::AbortReason> d_abortReasons;
-    DeviceBuffer<int> d_outputAnchorLengths{};
-    DeviceBuffer<bool> d_isFullyUsedCandidate{};
+    // ----- Extension output of a single iteration
+    CachedDeviceUVector<char> d_outputAnchors;
+    CachedDeviceUVector<char> d_outputAnchorQualities;
+    CachedDeviceUVector<bool> d_outputMateHasBeenFound;
+    CachedDeviceUVector<extension::AbortReason> d_abortReasons;
+    CachedDeviceUVector<int> d_outputAnchorLengths{};
+    CachedDeviceUVector<bool> d_isFullyUsedCandidate{};
+    // -----
 
     PinnedBuffer<int> h_firstTasksOfPairsToCheck;
     PinnedBuffer<int> h_newPositionsOfActiveTasks{};
