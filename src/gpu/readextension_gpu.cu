@@ -192,11 +192,11 @@ void initializePairedEndExtensionBatchData4(
         tasks[i].id = i % 4;
     }
 
-    std::cerr << "Adding tasks with pair ids: \n";
-    for(const auto& task : tasks){
-        std::cerr << task.pairId << " ";
-    }
-    std::cerr << "\n";
+    // std::cerr << "Adding tasks with pair ids: \n";
+    // for(const auto& task : tasks){
+    //     std::cerr << task.pairId << " ";
+    // }
+    // std::cerr << "\n";
 
     batchData.addTasks(std::make_move_iterator(tasks.begin()), std::make_move_iterator(tasks.end()));
     
@@ -1254,7 +1254,7 @@ extend_gpu_pairedend(
 
                 batchData->setState(BatchData::State::BeforeHash);
 
-                std::cerr << "Added " << (numReadPairsInBatch * 4) << " new tasks to batch\n";
+                //std::cerr << "Added " << (numReadPairsInBatch * 4) << " new tasks to batch\n";
             }
 
             nvtx::pop_range();
@@ -1267,7 +1267,7 @@ extend_gpu_pairedend(
             std::vector<extension::ExtendResult> extensionResults = batchData->constructResults4();
             const int numresults = extensionResults.size();
 
-            std::cerr << "Got " << (numresults) << " extended reads. Remaining unprocessed finished tasks: " << batchData->finishedTasks.size() << "\n";
+            //std::cerr << "Got " << (numresults) << " extended reads. Remaining unprocessed finished tasks: " << batchData->finishedTasks.size() << "\n";
 
 
             std::vector<ExtendedRead> extendedReads;
@@ -1353,9 +1353,11 @@ extend_gpu_pairedend(
 
             batchData->processOneIteration();
             
-            if(batchData->finishedTasks.size() > (batchsizePairs * 4)){
+            if(batchData->finishedTasks.size() > (batchsizePairs * 4) / 2){
                 output();
             }
+
+            //std::cerr << "Remaining: tasks " << batchData->tasks.size() << ", finishedtasks " << batchData->finishedTasks.size() << "\n";
         }
 
         output();
