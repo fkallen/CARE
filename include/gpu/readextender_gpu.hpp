@@ -579,6 +579,7 @@ struct BatchData{
         goodAlignmentProperties(&gap),
         qualityConversion(&qualityConversion_),
         readStorageHandle(gpuReadStorage->makeHandle()),
+        d_mateIdHasBeenRemoved(cubAllocator_),
         d_candidateSequencesData(cubAllocator_),
         d_candidateSequencesLength(cubAllocator_),    
         d_candidateReadIds(cubAllocator_),
@@ -982,13 +983,12 @@ struct BatchData{
 
         h_numCandidatesPerAnchor.resize(numTasks);
 
-        d_positionsOfAnchorsToRemoveMate.resize(numTasks);
-
         //determine required temp bytes for following cub calls, and allocate temp storage
                
         CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
-        CachedDeviceUVector<bool> d_anchorFlags(numTasks, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);        
+
+        d_mateIdHasBeenRemoved.resizeWithoutCopy(numTasks, firstStream);
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream);
 
@@ -1001,7 +1001,7 @@ struct BatchData{
             d_numCandidatesPerAnchorPrefixSum.data(),
             d_numCandidatesPerAnchor.data(),
             d_shouldBeKept.data(),
-            d_anchorFlags.data(),
+            d_mateIdHasBeenRemoved.data(),
             d_numCandidatesPerAnchor2.data(),
             numTasks,
             pairedEnd
@@ -1014,21 +1014,7 @@ struct BatchData{
             sizeof(int) * numTasks,
             D2H,
             firstStream
-        ); CUERR;
-
-        //determine task ids with removed mates
-
-        assert(d_positionsOfAnchorsToRemoveMate.data() != nullptr);
-        assert(h_numAnchorsWithRemovedMates.data() != nullptr);
-
-        cubSelectFlagged(
-            thrust::make_counting_iterator(0),
-            d_anchorFlags.data(),
-            d_positionsOfAnchorsToRemoveMate.data(),
-            h_numAnchorsWithRemovedMates.data(),
-            numTasks,
-            firstStream
-        );
+        ); CUERR;       
 
         //copy selected candidate ids
 
@@ -1046,35 +1032,15 @@ struct BatchData{
             firstStream
         );
 
+        d_shouldBeKept.destroy();
+
         cudaStreamSynchronize(firstStream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
         numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
         totalNumCandidates = *h_numCandidates;
 
-        //d_positionsOfAnchorsToRemoveMate.resize(*h_numAnchorsWithRemovedMates, firstStream);
         d_candidateReadIds2.resize(*h_numCandidates, firstStream);
 
-        d_positionsOfAnchorsToRemoveMate.resize(numTasksWithMateRemoved);
-
         //std::cerr << "new numTasksWithMateRemoved = " << numTasksWithMateRemoved << ", totalNumCandidates = " << totalNumCandidates << "\n";
-
-        if(numTasksWithMateRemoved > 0){
-
-            d_anchormatedata.resize(numTasks * encodedSequencePitchInInts);
-
-            //copy mate sequence data of removed mates
-
-            cubSelectFlagged(
-                d_inputanchormatedata.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_anchorFlags.data(), int(encodedSequencePitchInInts)}
-                ),
-                d_anchormatedata.data(),
-                thrust::make_discard_iterator(),
-                numTasks * encodedSequencePitchInInts,
-                secondStream
-            );
-        }
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchorPrefixSum2(numTasks + 1, firstStream, *cubAllocator);
 
@@ -1144,6 +1110,8 @@ struct BatchData{
             d_segmentIdsOfCandidates.resize(totalNumCandidates, firstStream);            
 
         #endif
+
+        d_numCandidatesPerAnchor2.destroy();
 
         
         
@@ -1440,9 +1408,25 @@ struct BatchData{
     void eraseDataOfRemovedMates(){
         assert(state == BatchData::State::BeforeEraseData);
 
+        cudaStream_t stream = streams[0];
+
+        CachedDeviceUVector<int> d_positionsOfAnchorsToRemoveMateSequence(numTasks, stream, *cubAllocator);
+
+        //determine task ids with removed mates
+        cubSelectFlagged(
+            thrust::make_counting_iterator(0),
+            d_mateIdHasBeenRemoved.data(),
+            d_positionsOfAnchorsToRemoveMateSequence.data(),
+            h_numAnchorsWithRemovedMates.data(),
+            numTasks,
+            stream
+        );
+        cudaStreamSynchronize(stream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
+        numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
+
         if(numTasksWithMateRemoved > 0){
 
-            cudaStream_t stream = streams[0];
+            
 
             CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
 
@@ -1452,6 +1436,23 @@ struct BatchData{
             CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, stream, *cubAllocator);
             CachedDeviceUVector<bool> d_keepflags(totalNumCandidates, stream, *cubAllocator);
 
+
+            CachedDeviceUVector<unsigned int> d_anchorMateData(numTasks * encodedSequencePitchInInts, stream, *cubAllocator);
+
+            //Gather mate sequence data of tasks which removed mate read id from candidate list
+
+            cubSelectFlagged(
+                d_inputanchormatedata.data(),
+                thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    SequenceFlagMultiplier{d_mateIdHasBeenRemoved.data(), int(encodedSequencePitchInInts)}
+                ),
+                d_anchorMateData.data(),
+                thrust::make_discard_iterator(),
+                numTasks * encodedSequencePitchInInts,
+                stream
+            );
+
             constexpr int groupsize = 32;
             constexpr int blocksize = 128;
             constexpr int groupsperblock = blocksize / groupsize;
@@ -1459,15 +1460,16 @@ struct BatchData{
             dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, blocksize), 1, 1);
             const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
 
+            //compute flags of candidates which should not be removed. Candidates which should be removed are identical to mate sequence
             helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
 
             readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-                d_anchormatedata.data(),
+                d_anchorMateData.data(),
                 d_candidateSequencesData.data(),
                 encodedSequencePitchInInts,
                 d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
-                d_positionsOfAnchorsToRemoveMate.data(),
+                d_positionsOfAnchorsToRemoveMateSequence.data(),
                 numTasksWithMateRemoved,
                 d_keepflags.data()
             ); CUERR;
@@ -2794,32 +2796,6 @@ struct BatchData{
 
         nvtx::push_range("copyBuffersToHost", 8);
 
-        // h_candidateReadIds.resize(totalNumCandidates);
-        // h_numCandidatesPerAnchor.resize(numTasks);
-        // h_numCandidatesPerAnchorPrefixSum.resize(numTasks + 1);
-
-        // h_numCandidatesPerAnchorPrefixSum[0] = 0;
-       
-        // helpers::call_copy_n_kernel(
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         d_numCandidatesPerAnchorPrefixSum.data() + 1,
-        //         d_numCandidatesPerAnchor.data()
-        //     )),
-        //     numTasks,
-        //     thrust::make_zip_iterator(thrust::make_tuple(
-        //         h_numCandidatesPerAnchorPrefixSum.data() + 1,
-        //         h_numCandidatesPerAnchor.data()
-        //     )),
-        //     streams[0]
-        // );   
-
-        // cudaMemcpyAsync(
-        //     h_candidateReadIds.data(),
-        //     d_candidateReadIds.data(),
-        //     sizeof(read_number) * totalNumCandidates,
-        //     D2H,
-        //     streams[0]
-        // );
 
         cudaStreamSynchronize(streams[0]); CUERR;
         cudaStreamSynchronize(streams[1]); CUERR;
@@ -3166,13 +3142,9 @@ struct BatchData{
 
 
         //shrink remaining buffers
-        d_anchormatedata.resize(newNumTasks * encodedSequencePitchInInts);
-        d_positionsOfAnchorsToRemoveMate.resize(newNumTasks);
 
         d_numCandidatesPerAnchor.resize(newNumTasks, streams[0]);
         d_numCandidatesPerAnchorPrefixSum.resize(newNumTasks+1, streams[0]);
-
-
     }
 
     void removeUsedIdsOfFinishedTasks(int* d_newPositionsOfActiveTasks, int newNumTasks){
@@ -4487,9 +4459,7 @@ struct BatchData{
     
     PinnedBuffer<read_number> h_candidateReadIds{};
 
-    DeviceBuffer<unsigned int> d_anchormatedata{};
-
-    DeviceBuffer<int> d_positionsOfAnchorsToRemoveMate{};
+    CachedDeviceUVector<bool> d_mateIdHasBeenRemoved{};
 
     PinnedBuffer<int> h_numCandidatesPerAnchor{};
     PinnedBuffer<int> h_numCandidatesPerAnchorPrefixSum{};
