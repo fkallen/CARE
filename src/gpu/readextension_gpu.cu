@@ -1353,7 +1353,7 @@ extend_gpu_pairedend(
 
             batchData->processOneIteration();
             
-            if(batchData->finishedTasks.size() > (batchsizePairs * 4) / 2){
+            if(batchData->finishedTasks.size() > std::size_t((batchsizePairs * 4) / 2)){
                 output();
             }
 
@@ -1395,7 +1395,7 @@ extend_gpu_pairedend(
     
                 batchData->processOneIteration();
                 
-                if(batchData->finishedTasks.size() > (batchsizePairs * 4)){
+                if(batchData->finishedTasks.size() > std::size_t((batchsizePairs * 4))){
                     output();
                 }
             }
