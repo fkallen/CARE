@@ -1274,6 +1274,8 @@ extend_gpu_pairedend(
             extendedReads.reserve(numresults);
 
             int repeated = 0;
+
+            nvtx::push_range("convert extension results", 7);
            
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
@@ -1333,6 +1335,7 @@ extend_gpu_pairedend(
             outputThread.enqueue(
                 std::move(outputfunc)
             );
+            nvtx::pop_range();
 
             //batchData->setState(BatchData::State::None);
 

@@ -920,18 +920,6 @@ struct BatchData{
         };
 
         if(state == BatchData::State::Finished){
-            // std::cerr << "state is finished.\n";
-            // std::cerr << "pairIds tasks\n";
-            // for(const auto& task : tasks){
-            //     std::cerr << task.pairId << " ";
-            // }
-            // std::cerr << "\n";
-            // std::cerr << "pairIds finishedTasks\n";
-            // for(const auto& task : finishedTasks){
-            //     std::cerr << task.pairId << " ";
-            // }
-            // std::cerr << "\n";
-
             assert(tasks.size() == 0);
             assert(finishedTasks.size() % 4 == 0);
         }
@@ -2975,15 +2963,6 @@ struct BatchData{
             }
         }
 
-        for(const auto& task : newActiveTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-        for(const auto& task : newlyFinishedTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
         h_newPositionsOfActiveTasks.resize(newPosSize);
         std::swap(tasks, newActiveTasks);
         nvtx::push_range("addSortedFinishedTasks", 5);
@@ -2992,15 +2971,6 @@ struct BatchData{
 
         const int totalTasksAfter = tasks.size() + finishedTasks.size();
         assert(totalTasksAfter == totalTasksBefore);
-
-        for(const auto& task : tasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-        for(const auto& task : finishedTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
 
         if(!isEmpty()){
 
@@ -3014,24 +2984,11 @@ struct BatchData{
                 streams[0]
             ); CUERR;
 
-            // {
-            //     std::size_t free, total;
-            //     cudaMemGetInfo(&free, &total);
-            //     std::cerr << "before updateBuffersForNextIteration " << free << "\n";
-            // }
-
             nvtx::push_range("updateBuffersForNextIteration", 6);
 
             updateBuffersForNextIteration(d_newPositionsOfActiveTasks.data(), d_newPositionsOfActiveTasks.size());
 
             nvtx::pop_range();
-
-            // {
-            //     std::size_t free, total;
-            //     cudaMemGetInfo(&free, &total);
-            //     std::cerr << "after updateBuffersForNextIteration " << free << "\n";
-            // }
-
         }
 
         numTasks = tasks.size();
@@ -3964,46 +3921,7 @@ struct BatchData{
         std::vector<extension::Task> finishedTasks4{};
         std::vector<extension::Task> finishedTasksNot4{};
 
-        for(const auto& task : tasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
-        for(const auto& task : finishedTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
-        // bool print = false;
-        
-        // for(const auto& task : tasks){
-        //     if(task.pairId == 4966){
-        //         std::cerr << "pairIds remainingTasks\n";
-        //         for(const auto& task : tasks){
-        //             std::cerr << task.pairId << " ";
-        //         }
-        //         std::cerr << "\n";
-        //         print = true;
-        //         break;
-        //     }            
-        // }
-
-        // for(const auto& task : finishedTasks){
-        //     if(task.pairId == 4966){
-        //         std::cerr << "pairIds finishedTasks\n";
-        //         for(const auto& task : finishedTasks){
-        //             std::cerr << task.pairId << " ";
-        //         }
-        //         std::cerr << "\n";
-        //         print = true;
-        //         break;
-        //     }            
-        // }
-
-
         {
-
-            #if 1
             auto l = finishedTasks.begin();
             auto r = finishedTasks.begin();
 
@@ -4030,92 +3948,14 @@ struct BatchData{
 
                 l = r;
             }
-            #else
-
-            for(std::size_t i = 0, j = 0; j < finishedTasks.size(); j++){
-                if(finishedTasks[i].pairId == finishedTasks[j].pairId){
-                    // if previous 3 tasks are equal and current is equal, 4 equal tasks have been found
-                    if(j - i == 3){
-                        finishedTasks4.insert(
-                            finishedTasks4.end(), 
-                            std::make_move_iterator(finishedTasks.begin() + i), 
-                            std::make_move_iterator(finishedTasks.begin() + j + 1)
-                        );
-
-                        i = j + 1;
-                    }else{
-                        // handle equal range of size less than 4 at the end of input
-                        if(j == finishedTasks.size() - 1){
-                            finishedTasksNot4.insert(
-                                finishedTasksNot4.end(), 
-                                std::make_move_iterator(finishedTasks.begin() + i), 
-                                std::make_move_iterator(finishedTasks.begin() + j + 1)
-                            );
-                        }
-                    }         
-                }else{
-                    finishedTasksNot4.insert(
-                        finishedTasksNot4.end(), 
-                        std::make_move_iterator(finishedTasks.begin() + i), 
-                        std::make_move_iterator(finishedTasks.begin() + j)
-                    );
-                    
-                    i = j;
-                }
-            }
-
-            #endif
         }
-
-        for(const auto& task : finishedTasks4){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
-        for(const auto& task : finishedTasksNot4){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
-        // if(print){
-        //     std::cerr << "pairIds finishedTasks4\n";
-        //     for(const auto& task : finishedTasks4){
-        //         std::cerr << task.pairId << " ";
-        //     }
-        //     std::cerr << "\n";
-
-        //     std::cerr << "pairIds finishedTasksNot4\n";
-        //         for(const auto& task : finishedTasksNot4){
-        //             std::cerr << task.pairId << " ";
-        //         }
-        //         std::cerr << "\n";
-        // }
-
-        // for(const auto& task : finishedTasks4){
-        //     if(task.pairId == 4966){
-        //         std::cerr << "pairIds finishedTasks4\n";
-        //         for(const auto& task : finishedTasks4){
-        //             std::cerr << task.pairId << " ";
-        //         }
-        //         std::cerr << "\n";
-        //         break;
-        //     }            
-        // }
-
-        // for(const auto& task : finishedTasksNot4){
-        //     if(task.pairId == 4966){
-        //         std::cerr << "pairIds finishedTasksNot4\n";
-        //         for(const auto& task : finishedTasksNot4){
-        //             std::cerr << task.pairId << " ";
-        //         }
-        //         std::cerr << "\n";
-        //         break;
-        //     }            
-        // }
-
 
         //update remaining finished tasks
         std::swap(finishedTasks, finishedTasksNot4);
+
+        nvtx::push_range("clear finishedTasksNot4", 0);
+        finishedTasksNot4.clear();
+        nvtx::pop_range();
 
         nvtx::push_range("constructResults4", 2);
         {
@@ -4573,10 +4413,10 @@ struct BatchData{
         }
         nvtx::pop_range();
 
+        nvtx::push_range("updateResults", 3);
+
         std::vector<extension::ExtendResult> extendResults;
         extendResults.reserve(finishedTasks4.size());
-
-        // int x = 0;
 
         for(std::size_t t = 0; t < finishedTasks4.size(); t++){
             const auto& task = finishedTasks4[t];
@@ -4740,13 +4580,25 @@ struct BatchData{
             extendResults.emplace_back(std::move(extendResult));
         }
 
-        std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
+        nvtx::pop_range();
+
+        nvtx::push_range("combinePairedEndDirectionResults4", 4);
+
+        // std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
+        //     extendResults,
+        //     insertSize,
+        //     insertSizeStddev
+        // );
+
+        extension::combinePairedEndDirectionResults4Inplace(
             extendResults,
             insertSize,
             insertSizeStddev
         );
 
-        return extendResultsCombined;
+        nvtx::pop_range();
+
+        return extendResults;
     }
 
     //helpers
@@ -4842,17 +4694,6 @@ struct BatchData{
         auto comp = [](const auto& l, const auto& r){
             return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
         };
-        assert(std::is_sorted(tasksToAdd.begin(), tasksToAdd.end(), comp));
-
-        for(const auto& task : tasksToAdd){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
-
-        for(const auto& task : finishedTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
 
         std::vector<extension::Task> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
 
@@ -4869,11 +4710,6 @@ struct BatchData{
         );
 
         std::swap(newFinishedTasks, finishedTasks);
-
-        for(const auto& task : finishedTasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
-        }
     }
 
     void handleEarlyExitOfTasks4(){
