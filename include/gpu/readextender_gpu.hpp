@@ -662,6 +662,11 @@ struct BatchData{
         assert(numAdditionalTasks % 4 == 0);
         if(numAdditionalTasks == 0) return;
 
+        auto comp = [](const auto& l, const auto& r){
+            return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
+        };
+        assert(std::is_sorted(extraTasksBegin, extraTasksEnd, comp));
+
         const int currentNumTasks = tasks.size();
         const int newNumTasks = currentNumTasks + numAdditionalTasks;
 
@@ -3969,19 +3974,63 @@ struct BatchData{
             assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
         }
 
-        // std::cerr << "pairIds remainingTasks\n";
+        // bool print = false;
+        
         // for(const auto& task : tasks){
-        //     std::cerr << task.pairId << " ";
+        //     if(task.pairId == 4966){
+        //         std::cerr << "pairIds remainingTasks\n";
+        //         for(const auto& task : tasks){
+        //             std::cerr << task.pairId << " ";
+        //         }
+        //         std::cerr << "\n";
+        //         print = true;
+        //         break;
+        //     }            
         // }
-        // std::cerr << "\n";
 
-        // std::cerr << "pairIds finishedTasks\n";
         // for(const auto& task : finishedTasks){
-        //     std::cerr << task.pairId << " ";
+        //     if(task.pairId == 4966){
+        //         std::cerr << "pairIds finishedTasks\n";
+        //         for(const auto& task : finishedTasks){
+        //             std::cerr << task.pairId << " ";
+        //         }
+        //         std::cerr << "\n";
+        //         print = true;
+        //         break;
+        //     }            
         // }
-        // std::cerr << "\n";
+
 
         {
+
+            #if 1
+            auto l = finishedTasks.begin();
+            auto r = finishedTasks.begin();
+
+            while(r != finishedTasks.end()){
+
+                while(r != finishedTasks.end() && l->pairId == r->pairId){
+                    ++r;
+                }
+
+                if(std::distance(l,r) == 4){
+                    finishedTasks4.insert(
+                        finishedTasks4.end(), 
+                        std::make_move_iterator(l), 
+                        std::make_move_iterator(r)
+                    );
+                }else{
+                    assert(std::distance(l,r) < 4);
+                    finishedTasksNot4.insert(
+                        finishedTasksNot4.end(), 
+                        std::make_move_iterator(l), 
+                        std::make_move_iterator(r)
+                    );
+                }
+
+                l = r;
+            }
+            #else
 
             for(std::size_t i = 0, j = 0; j < finishedTasks.size(); j++){
                 if(finishedTasks[i].pairId == finishedTasks[j].pairId){
@@ -4014,6 +4063,8 @@ struct BatchData{
                     i = j;
                 }
             }
+
+            #endif
         }
 
         for(const auto& task : finishedTasks4){
@@ -4026,17 +4077,42 @@ struct BatchData{
             assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
         }
 
-        // std::cerr << "pairIds finishedTasks4\n";
-        // for(const auto& task : finishedTasks4){
-        //     std::cerr << task.pairId << " ";
-        // }
-        // std::cerr << "\n";
+        // if(print){
+        //     std::cerr << "pairIds finishedTasks4\n";
+        //     for(const auto& task : finishedTasks4){
+        //         std::cerr << task.pairId << " ";
+        //     }
+        //     std::cerr << "\n";
 
-        // std::cerr << "pairIds finishedTasksNot4\n";
-        // for(const auto& task : finishedTasksNot4){
-        //     std::cerr << task.pairId << " ";
+        //     std::cerr << "pairIds finishedTasksNot4\n";
+        //         for(const auto& task : finishedTasksNot4){
+        //             std::cerr << task.pairId << " ";
+        //         }
+        //         std::cerr << "\n";
         // }
-        // std::cerr << "\n";
+
+        // for(const auto& task : finishedTasks4){
+        //     if(task.pairId == 4966){
+        //         std::cerr << "pairIds finishedTasks4\n";
+        //         for(const auto& task : finishedTasks4){
+        //             std::cerr << task.pairId << " ";
+        //         }
+        //         std::cerr << "\n";
+        //         break;
+        //     }            
+        // }
+
+        // for(const auto& task : finishedTasksNot4){
+        //     if(task.pairId == 4966){
+        //         std::cerr << "pairIds finishedTasksNot4\n";
+        //         for(const auto& task : finishedTasksNot4){
+        //             std::cerr << task.pairId << " ";
+        //         }
+        //         std::cerr << "\n";
+        //         break;
+        //     }            
+        // }
+
 
         //update remaining finished tasks
         std::swap(finishedTasks, finishedTasksNot4);

@@ -1274,7 +1274,7 @@ extend_gpu_pairedend(
             extendedReads.reserve(numresults);
 
             int repeated = 0;
-            
+           
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
                 const int extendedReadLength = extensionOutput.extendedRead.size();
@@ -1373,6 +1373,10 @@ extend_gpu_pairedend(
         //minCoverageForExtension += increment;
         std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
 
+        std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end(), [](const auto& p1, const auto& p2){
+            return p1.first < p2.first;
+        });
+
         while(pairsWhichShouldBeRepeated.size() > 0 && (fixedStepsize > 0)){
             batchData->setMaxExtensionPerStep(fixedStepsize);
             //batchData->setMinCoverageForExtension(minCoverageForExtension);
@@ -1403,6 +1407,10 @@ extend_gpu_pairedend(
 
             fixedStepsize -= 4;
             std::swap(pairsWhichShouldBeRepeatedTemp, pairsWhichShouldBeRepeated);
+
+            std::sort(pairsWhichShouldBeRepeated.begin(), pairsWhichShouldBeRepeated.end(), [](const auto& p1, const auto& p2){
+                return p1.first < p2.first;
+            });
         }
 
         //std::cerr << "thread " << ompThreadId << " finished all extensions\n";
