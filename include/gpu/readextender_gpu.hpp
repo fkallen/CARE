@@ -4822,6 +4822,7 @@ struct BatchData{
         // }
         addSortedFinishedTasks(tasks);
         tasks.clear();
+        numTasks = 0;
 
         setState(BatchData::State::Finished);
     }
