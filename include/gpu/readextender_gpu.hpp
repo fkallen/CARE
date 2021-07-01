@@ -59,7 +59,651 @@ namespace care{
 
 
 
+    template<int blocksize>
+    struct CheckAmbiguousColumns{
+
+        using BlockReduce = cub::BlockReduce<int, 128>;
+        //using BlockScan = cub::BlockScan<int, blocksize>;
+        using BlockSort = cub::BlockRadixSort<std::uint64_t, blocksize, 1>;
+
+        const int* countsA;
+        const int* countsC;
+        const int* countsG;
+        const int* countsT;
+        const int* coverages;
+
+        void* tempstorage;
+
+        __host__ __device__
+        CheckAmbiguousColumns(const int* cA, const int* cC, const int* cG, const int* cT, const int* cov) 
+            : countsA(cA), countsC(cC), countsG(cG), countsT(cT), coverages(cov){}
+
+        //thread 0 returns number of ambiguous columns in given range. Block-wide algorithm
+        __device__
+        int getAmbiguousColumnCount(int begin, int end, typename BlockReduce::TempStorage& temp) const{ 
+
+            int myCount = 0;
+
+            for(int col = threadIdx.x; col < end; col += blocksize){
+                if(col >= begin){
+
+                    int numNucs = 0;
+
+                    auto checkNuc = [&](const auto& counts, const char nuc){
+                        const float ratio = float(counts[col]) / float(coverages[col]);
+                        if(counts[col] >= 2 && fgeq(ratio, 0.4f) && fleq(ratio, 0.6f)){
+                            numNucs++;                                
+                        }
+                    };
+
+                    checkNuc(countsA, 'A');
+                    checkNuc(countsC, 'C');
+                    checkNuc(countsG, 'G');
+                    checkNuc(countsT, 'T');
+
+                    if(numNucs > 0){
+                        myCount++;
+                    }
+                }
+            }
+
+            myCount = BlockReduce(temp).Sum(myCount);
+
+            return myCount;
+        }
+
+        struct SplitInfo{
+            char nuc;
+            int column;
+
+            SplitInfo() = default;
+
+            __host__ __device__
+            SplitInfo(char c, int n) : nuc(c), column(c){}
+        };
+
+        struct SplitInfos{       
+            static constexpr int maxSplitInfos = 64;
+
+            int numSplitInfos;
+            SplitInfo splitInfos[maxSplitInfos];
+        };
+
+        struct TempStorage{
+            int broadcastint;
+            union{
+                typename BlockReduce::TempStorage blockreducetemp;
+                //typename BlockScan::TempStorage blockscantemp;
+                typename BlockSort::TempStorage blocksorttemp;
+            } cub;
+
+            static constexpr int maxNumEncodedRows = 128;
+            int numEncodedRows;
+            std::uint64_t encodedRows[maxNumEncodedRows];
+            int flags[maxNumEncodedRows];
+        };
+
+
+
+        __device__
+        void getSplitInfos(int begin, int end, float relativeCountLowerBound, float relativeCountUpperBound, SplitInfos& result) const{
+            using PSC = MultipleSequenceAlignment::PossibleSplitColumn;
+
+            if(threadIdx.x == 0){
+                result.numSplitInfos = 0;
+            }
+            __syncthreads();
+
+            //find columns where counts/coverage is in range [relativeCountLowerBound, relativeCountUpperBound]
+            //if there are exactly 2 different bases for which this is true in a column, SplitInfos of both cases are saved in result.splitInfos
+            for(int col = threadIdx.x; col < end; col += blocksize){
+                if(col >= begin){
+
+                    SplitInfo myResults[2];
+                    int myNumResults = 0;
+
+                    auto checkNuc = [&](const auto& counts, const char nuc){
+                        const float ratio = float(counts[col]) / float(coverages[col]);
+                        if(counts[col] >= 2 && fgeq(ratio, relativeCountLowerBound) && fleq(ratio, relativeCountUpperBound)){
+
+                            #pragma unroll
+                            for(int k = 0; k < 2; k++){
+                                if(myNumResults == k){
+                                    myResults[k] = {nuc, col};
+                                    myNumResults++;
+                                    break;
+                                }
+                            }
+                              
+                        }
+                    };
+
+                    checkNuc(countsA, 'A');
+                    checkNuc(countsC, 'C');
+                    checkNuc(countsG, 'G');
+                    checkNuc(countsT, 'T');
+
+                    if(myNumResults == 2){
+                        if(result.numSplitInfos < SplitInfos::maxSplitInfos){
+                            int firstPos = atomicAdd(&result.numSplitInfos, 2);
+                            if(firstPos <= SplitInfos::maxSplitInfos - 2){
+                                result.splitInfos[firstPos + 0] = myResults[0];
+                                result.splitInfos[firstPos + 1] = myResults[1];
+                            }
+                        }
+                    }
+                }
+            }
+
+            __syncthreads();
+            if(threadIdx.x == 0){
+                if(result.numSplitInfos > SplitInfos::maxSplitInfos){
+                    result.numSplitInfos = SplitInfos::maxSplitInfos;
+                }
+            }
+            __syncthreads();
+        }
+
+        __device__
+        int getNumberOfSplits(
+            const SplitInfos& splitInfos, 
+            const gpu::MSAColumnProperties& msaColumnProperties,
+            int numCandidates, 
+            const int* candidateShifts,
+            const BestAlignment_t* bestAlignmentFlags,
+            const int* candidateLengths,
+            const unsigned int* encodedCandidates, 
+            int encodedSequencePitchInInts, 
+            TempStorage& temp
+        ){
+            assert(TempStorage::maxNumEncodedRows == blocksize);
+
+            // 64-bit flags. 2 bit per column. 
+            // 00 -> nuc does not match any of both splitInfos
+            // 10 -> nuc  matches first splitInfos
+            // 11 -> nuc  matches second splitInfos
+            constexpr int numPossibleColumnsPerFlag = 32; 
+            //
+
+            if(threadIdx.x == 0){
+                temp.numEncodedRows = 0;
+            }
+            __syncthreads();
+
+            const int subjectColumnsBegin_incl = msaColumnProperties.subjectColumnsBegin_incl;
+            const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, splitInfos.numSplitInfos / 2);
+            const int maxCandidatesToCheck = std::min(blocksize, numCandidates);
+
+            for(int c = threadIdx.x; c < maxCandidatesToCheck; c += blocksize){
+                if(temp.numEncodedRows < TempStorage::maxNumEncodedRows){
+                    std::uint64_t flags = 0;
+
+                    const unsigned int* const myCandidate = encodedCandidates + c * encodedSequencePitchInInts;
+
+                    for(int k = 0; k < numColumnsToCheck; k++){
+                        flags <<= 2;
+
+                        const SplitInfo psc0 = splitInfos.splitInfos[2*k+0];
+                        const SplitInfo psc1 = splitInfos.splitInfos[2*k+1];
+                        assert(psc0.column == psc1.column);
+
+                        const int candidateColumnsBegin_incl = candidateShifts[c] + subjectColumnsBegin_incl;
+                        const int candidateColumnsEnd_excl = candidateLengths[c] + candidateColumnsBegin_incl;
+                        
+                        //column range check for row
+                        if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){                        
+
+                            char nuc = 'F';
+                            if(bestAlignmentFlags[c] == BestAlignment_t::Forward){
+                                const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLengths[c], positionInCandidate);
+                                nuc = SequenceHelpers::decodeBase(encodedCandidateNuc);
+                            }else{
+                                const int positionInCandidate = candidateLengths[c] - 1 - (psc0.column - candidateColumnsBegin_incl);
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLengths[c], positionInCandidate);
+                                nuc = SequenceHelpers::complementBaseDecoded(SequenceHelpers::decodeBase(encodedCandidateNuc));
+                            }
+
+                            if(nuc == psc0.nuc){
+                                flags = flags | 0b10;
+                            }else if(nuc == psc1.nuc){
+                                flags = flags | 0b11;
+                            }else{
+                                flags = flags | 0b00;
+                            } 
+
+                        }else{
+                            flags = flags | 0b00;
+                        } 
+
+                    }
+
+                    const int tempPos = atomicAdd(&temp.numEncodedRows, 1);
+                    if(tempPos < TempStorage::maxNumEncodedRows){
+                        temp.encodedRows[tempPos] = flags;
+                    }
+                }
+            }
+        
+            __syncthreads();
+            if(threadIdx.x == 0){
+                if(temp.numEncodedRows > TempStorage::maxNumEncodedRows){
+                    temp.numEncodedRows = TempStorage::maxNumEncodedRows;
+                }
+            }
+            __syncthreads();
+
+            {
+
+                std::uint64_t encodedRow[1];
+
+                if(threadIdx.x < temp.numEncodedRows){
+                    encodedRow[0] = temp.encodedRows[threadIdx.x];
+                }else{
+                    encodedRow[0] = std::numeric_limits<std::uint64_t>::max();
+                }
+
+                BlockSort(temp.cub.blocksorttemp).Sort(encodedRow);
+                __syncthreads();
+
+                if(threadIdx.x < temp.numEncodedRows){
+                    temp.encodedRows[threadIdx.x] = encodedRow[0];
+                    temp.flags[threadIdx.x] = 0;
+                }
+
+                __syncthreads();
+            }
+
+            for(int i = 0; i < temp.numEncodedRows - 1; i++){
+                const std::uint64_t encodedRow = temp.encodedRows[i];
+
+                std::uint64_t mask = 0;
+                for(int s = 0; s < 32; s++){
+                    if(encodedRow >> (2*s+1) & 1){
+                        mask = mask | (0x03 << (2*s));
+                    }
+                }
+                
+                if(i < threadIdx.x && threadIdx.x < temp.numEncodedRows){
+                    //check if encodedRow is equal to another flag masked with mask. if yes, it can be removed
+                    if(temp.encodedRows[threadIdx.x] & mask == encodedRow){
+                        atomicAdd(&temp.flags[i], 1);
+                    }
+                }
+            }
+
+            __syncthreads();
+
+            //count number of remaining row flags
+            int count = 0;
+            if(threadIdx.x < temp.numEncodedRows){
+                count = temp.flags[threadIdx.x] == 0 ? 1 : 0;
+            }
+            count = BlockReduce(temp.cub.blockreducetemp).Sum(count);
+            if(threadIdx.x == 0){
+                temp.broadcastint = count;
+            }
+            __syncthreads();
+
+            count = temp.broadcastint;
+
+            return count;
+        }
+
+    };
+
 namespace readextendergpukernels{
+
+    template<int blocksize>
+    __global__
+    void computeExtensionStepFromMsaKernel(
+        int numTasks,
+        int insertSize,
+        int insertSizeStddev,
+        int msaColumnPitchInElements,
+        const int* d_numCandidatesPerAnchor,
+        const int* d_numCandidatesPerAnchorPrefixSum,
+        const gpu::MSAColumnProperties* d_msa_column_properties,
+        const std::uint8_t* d_consensusEncoded,
+        const char* d_consensusQuality,
+        const int* d_coverage,
+        const int* d_anchorSequencesLength,
+        const int* d_accumExtensionsLengths,
+        const int* d_inputMateLengths,
+        extension::AbortReason* d_abortReasons,
+        int* d_accumExtensionsLengthsOUT,
+        char* d_outputAnchors,
+        int outputAnchorPitchInBytes,
+        char* d_outputAnchorQualities,
+        int outputAnchorQualityPitchInBytes,
+        int* d_outputAnchorLengths,
+        const bool* d_isPairedTask,
+        const unsigned int* d_inputanchormatedata,
+        int encodedSequencePitchInInts,
+        int decodedMatesRevCPitchInBytes,
+        bool* d_outputMateHasBeenFound,
+        int* d_sizeOfGapToMate,
+        int minCoverageForExtension,
+        int fixedStepsize,
+        float* d_goodscores
+    ){
+
+        auto decodeConsensus = [](const std::uint8_t encoded){
+            char decoded = 'F';
+            if(encoded == std::uint8_t{0}){
+                decoded = 'A';
+            }else if(encoded == std::uint8_t{1}){
+                decoded = 'C';
+            }else if(encoded == std::uint8_t{2}){
+                decoded = 'G';
+            }else if(encoded == std::uint8_t{3}){
+                decoded = 'T';
+            }
+            return decoded;
+        };
+
+        using BlockReduce = cub::BlockReduce<int, blocksize>;
+        using BlockReduceFloat = cub::BlockReduce<float, blocksize>;
+
+        __shared__ union{
+            typename BlockReduce::TempStorage reduce;
+            typename BlockReduceFloat::TempStorage reduceFloat;
+        } temp;
+
+        constexpr int smemEncodedMateInts = 32;
+        __shared__ unsigned int smemEncodedMate[smemEncodedMateInts];
+
+        __shared__ int broadcastsmem_int;
+
+        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+            const int numCandidates = d_numCandidatesPerAnchor[t];
+
+            if(numCandidates > 0){
+                const auto msaProps = d_msa_column_properties[t];
+
+                assert(msaProps.firstColumn_incl == 0);
+                assert(msaProps.lastColumn_excl <= msaColumnPitchInElements);
+
+                const int anchorLength = d_anchorSequencesLength[t];
+                int accumExtensionsLength = d_accumExtensionsLengths[t];
+                const int mateLength = d_inputMateLengths[t];
+                const bool isPaired = d_isPairedTask[t];
+
+                const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
+
+                const std::uint8_t* const consensusEncoded = d_consensusEncoded + t * msaColumnPitchInElements;
+                auto consensusDecoded = thrust::transform_iterator(consensusEncoded, decodeConsensus);
+                const char* const consensusQuality = d_consensusQuality + t * msaColumnPitchInElements;
+                const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
+
+                extension::AbortReason* const abortReasonPtr = d_abortReasons + t;
+                char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
+                char* const outputAnchorQuality = d_outputAnchorQualities + t * outputAnchorQualityPitchInBytes;
+                int* const outputAnchorLengthPtr = d_outputAnchorLengths + t;
+                bool* const mateHasBeenFoundPtr = d_outputMateHasBeenFound + t;
+
+                int extendBy = std::min(
+                    consensusLength - anchorLength, 
+                    std::max(0, fixedStepsize)
+                );
+                //cannot extend over fragment 
+                extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+
+                //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
+                //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
+                int myPos = consensusLength;
+                for(int i = anchorLength + threadIdx.x; i < consensusLength; i += blockDim.x){
+                    int flag = msacoverage[i] < minCoverageForExtension ? 0 : 1;
+                    if(flag == 0 && i < myPos){
+                        myPos = i;
+                    }
+                }
+
+                myPos = BlockReduce(temp.reduce).Reduce(myPos, cub::Min{});
+
+                if(threadIdx.x == 0){
+                    broadcastsmem_int = myPos;
+                }
+                __syncthreads();
+                myPos = broadcastsmem_int;
+                __syncthreads();
+
+                if(fixedStepsize <= 0){
+                    extendBy = myPos - anchorLength;
+                    extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
+                }
+
+                auto makeAnchorForNextIteration = [&](){
+                    if(extendBy == 0){
+                        if(threadIdx.x == 0){
+                            *abortReasonPtr = extension::AbortReason::MsaNotExtended;
+                        }
+                    }else{
+                        if(threadIdx.x == 0){
+                            d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + extendBy;
+                            *outputAnchorLengthPtr = anchorLength;
+                        }           
+
+                        for(int i = threadIdx.x; i < anchorLength; i += blockDim.x){
+                            outputAnchor[i] = consensusDecoded[extendBy + i];
+                            outputAnchorQuality[i] = consensusQuality[extendBy + i];
+                        }
+                    }
+                };
+
+                constexpr int requiredOverlapMate = 70; //TODO relative overlap 
+                constexpr float maxRelativeMismatchesInOverlap = 0.06f;
+                constexpr int maxAbsoluteMismatchesInOverlap = 10;
+
+                const int maxNumMismatches = std::min(int(mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
+
+                
+
+                if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
+                    //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
+
+                    const int firstStartpos = std::max(0, insertSize - insertSizeStddev - accumExtensionsLength - mateLength);
+                    const int lastStartposExcl = std::min(
+                        std::max(0, insertSize + insertSizeStddev - accumExtensionsLength - mateLength) + 1,
+                        consensusLength - requiredOverlapMate
+                    );
+
+                    int bestOverlapMismatches = std::numeric_limits<int>::max();
+                    int bestOverlapStartpos = -1;
+
+                    const unsigned int* encodedMate = nullptr;
+                    {
+                        const unsigned int* const gmemEncodedMate = d_inputanchormatedata + t * encodedSequencePitchInInts;
+                        const int requirednumints = SequenceHelpers::getEncodedNumInts2Bit(mateLength);
+                        if(smemEncodedMateInts >= requirednumints){
+                            for(int i = threadIdx.x; i < requirednumints; i += blockDim.x){
+                                smemEncodedMate[i] = gmemEncodedMate[i];
+                            }
+                            encodedMate = &smemEncodedMate[0];
+                            __syncthreads();
+                        }else{
+                            encodedMate = &gmemEncodedMate[0];
+                        }
+                    }
+
+                    for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
+                        //compute metrics of overlap
+
+                        //Hamming distance. positions which do not overlap are not accounted for
+                        int ham = 0;
+                        for(int i = threadIdx.x; i < min(consensusLength - startpos, mateLength); i += blockDim.x){
+                            std::uint8_t encbasemate = SequenceHelpers::getEncodedNuc2Bit(encodedMate, mateLength, mateLength - 1 - i);
+                            std::uint8_t encbasematecomp = SequenceHelpers::complementBase2Bit(encbasemate);
+                            char decbasematecomp = SequenceHelpers::decodeBase(encbasematecomp);
+
+                            //TODO store consensusDecoded in smem ?
+                            ham += (consensusDecoded[startpos + i] != decbasematecomp) ? 1 : 0;
+                        }
+
+                        ham = BlockReduce(temp.reduce).Sum(ham);
+
+                        if(threadIdx.x == 0){
+                            broadcastsmem_int = ham;
+                        }
+                        __syncthreads();
+                        ham = broadcastsmem_int;
+                        __syncthreads();
+
+                        if(bestOverlapMismatches > ham){
+                            bestOverlapMismatches = ham;
+                            bestOverlapStartpos = startpos;
+                        }
+
+                        if(bestOverlapMismatches == 0){
+                            break;
+                        }
+                    }
+
+                    // if(threadIdx.x == 0){
+                    //     printf("gpu: bestOverlapMismatches %d,bestOverlapStartpos %d\n", bestOverlapMismatches, bestOverlapStartpos);
+                    // }
+
+                    if(bestOverlapMismatches <= maxNumMismatches){
+                        const int mateStartposInConsensus = bestOverlapStartpos;
+                        const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - anchorLength);
+                        // if(threadIdx.x == 0){
+                        //     printf("missingPositionsBetweenAnchorEndAndMateBegin %d\n", missingPositionsBetweenAnchorEndAndMateBegin);
+                        // }
+
+                        if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
+                            //bridge the gap between current anchor and mate
+
+                            for(int i = threadIdx.x; i < missingPositionsBetweenAnchorEndAndMateBegin; i += blockDim.x){
+                                outputAnchor[i] = consensusDecoded[anchorLength + i];
+                                outputAnchorQuality[i] = consensusQuality[anchorLength + i];
+                            }
+
+                            if(threadIdx.x == 0){
+                                d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + anchorLength;
+                                *outputAnchorLengthPtr = missingPositionsBetweenAnchorEndAndMateBegin;
+                                *mateHasBeenFoundPtr = true;
+                                d_sizeOfGapToMate[t] = missingPositionsBetweenAnchorEndAndMateBegin;
+                            }
+                        }else{
+
+                            if(threadIdx.x == 0){
+                                d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + mateStartposInConsensus;
+                                *outputAnchorLengthPtr = 0;
+                                *mateHasBeenFoundPtr = true;
+                                d_sizeOfGapToMate[t] = 0;
+                            }
+                        }
+
+                        
+                    }else{
+                        makeAnchorForNextIteration();
+                    }
+                }else{
+                    makeAnchorForNextIteration();
+                }
+
+            }else{ //numCandidates == 0
+                if(threadIdx.x == 0){
+                    d_abortReasons[t] = extension::AbortReason::NoPairedCandidatesAfterAlignment;
+                }
+            }
+        }
+    }
+
+    template<int blocksize>
+    __global__
+    void computeExtensionStepQualityKernel(
+        int numTasks,
+        float* d_goodscores,
+        int msaColumnPitchInElements,
+        const extension::AbortReason* d_abortReasons,
+        const bool* d_mateHasBeenFound,
+        const int* accumExtensionLengthsBefore,
+        const int* accumExtensionLengthsAfter,
+        const int* d_coverage,
+        const float* d_support,
+        const int* d_counts,
+        const int* anchorLengths,
+        const int* d_numCandidatesPerAnchor,
+        const int* d_numCandidatesPerAnchorPrefixSum,
+        const int* d_candidateSequencesLengths,
+        const int* d_alignment_shifts,
+        const BestAlignment_t* d_alignment_best_alignment_flags,
+        const unsigned int* d_candidateSequencesData,
+        const gpu::MSAColumnProperties* d_msa_column_properties,
+        int encodedSequencePitchInInts
+    ){
+        using BlockReduce = cub::BlockReduce<int, blocksize>;
+        using BlockReduceFloat = cub::BlockReduce<float, blocksize>;
+        using AmbiguousColumnsChecker = CheckAmbiguousColumns<blocksize>;
+
+        __shared__ union{
+            typename BlockReduce::TempStorage reduce;
+            typename BlockReduceFloat::TempStorage reduceFloat;
+            typename AmbiguousColumnsChecker::TempStorage columnschecker;
+        } temp;
+
+        __shared__ typename AmbiguousColumnsChecker::SplitInfos smemSplitInfos;
+
+        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+            if(d_abortReasons[t] == extension::AbortReason::None && !d_mateHasBeenFound[t]){
+                const int extendedBy = accumExtensionLengthsAfter[t] - accumExtensionLengthsBefore[t];
+                const int anchorLength = anchorLengths[t];
+
+                const float* const mySupport = d_support + t * msaColumnPitchInElements;
+                const int* const myCounts = d_counts + t * 4 * msaColumnPitchInElements;
+                const int* const myCoverage = d_coverage + t * msaColumnPitchInElements;
+
+                const int* const myCandidateLengths = d_candidateSequencesLengths + d_numCandidatesPerAnchorPrefixSum[t];
+                const int* const myCandidateShifts = d_alignment_shifts + d_numCandidatesPerAnchorPrefixSum[t];
+                const BestAlignment_t* const myCandidateBestAlignmentFlags = d_alignment_best_alignment_flags + d_numCandidatesPerAnchorPrefixSum[t];
+                const unsigned int* const myCandidateSequencesData = d_candidateSequencesData + encodedSequencePitchInInts * d_numCandidatesPerAnchorPrefixSum[t];
+
+                // float supportSum = 0.0f;
+
+                // for(int i = threadIdx.x; i < extendedBy; i += blockDim.x){
+                //     supportSum += 1.0f - mySupport[anchorLength + i];
+                // }
+
+                // float reducedSupport = BlockReduceFloat(temp.reduceFloat).Sum(supportSum);
+
+                // //printf("reducedSupport %f\n", reducedSupport);
+                // if(threadIdx.x == 0){
+                //     d_goodscores[t] = reducedSupport;
+                // }
+
+                AmbiguousColumnsChecker checker(
+                    myCounts + 0 * msaColumnPitchInElements,
+                    myCounts + 1 * msaColumnPitchInElements,
+                    myCounts + 2 * msaColumnPitchInElements,
+                    myCounts + 3 * msaColumnPitchInElements,
+                    myCoverage
+                );
+
+                int count = checker.getAmbiguousColumnCount(anchorLength, anchorLength + extendedBy, temp.reduce);
+
+                // checker.getSplitInfos(anchorLength, anchorLength + extendBy, 0.4f, 0.6f, smemSplitInfos);
+
+                // int count = checker.getNumberOfSplits(
+                //     smemSplitInfos, 
+                //     d_msa_column_properties[t],
+                //     d_numCandidatesPerAnchor[t], 
+                //     myCandidateShifts,
+                //     myCandidateBestAlignmentFlags,
+                //     myCandidateLengths,
+                //     myCandidateSequencesData, 
+                //     encodedSequencePitchInInts, 
+                //     temp.columnschecker
+                // );
+
+                if(threadIdx.x == 0){
+                    d_goodscores[t] = count;
+                }
+                
+                __syncthreads();
+            }
+        }
+    }
 
     template<int blocksize, int itemsPerThread, bool inclusive, class T>
     __global__
@@ -475,6 +1119,7 @@ namespace readextendergpukernels{
 }
 
 
+
 struct SequenceFlagMultiplier{
     int pitch{};
     const bool* flags{};
@@ -611,7 +1256,9 @@ struct BatchData{
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
         d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
         d_consensusEncoded(cubAllocator_),
+        d_counts(cubAllocator_),
         d_coverage(cubAllocator_),
+        d_support(cubAllocator_),
         d_msa_column_properties(cubAllocator_),
         d_consensusQuality(cubAllocator_),
         d_outputAnchors(cubAllocator_),
@@ -1998,12 +2645,12 @@ struct BatchData{
         d_msa_column_properties.resizeUninitialized(numTasks, firstStream);
         d_consensusQuality.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
 
-        CachedDeviceUVector<int> d_counts(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<float> d_weights(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<int> d_origCoverages(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
         CachedDeviceUVector<float> d_origWeights(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
-        CachedDeviceUVector<float> d_support(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
 
+        d_counts.resizeUninitialized(numTasks * 4 * msaColumnPitchInElements, firstStream);
+        d_support.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
 
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
 
@@ -2195,11 +2842,9 @@ struct BatchData{
             }
         ); CUERR;
 
-        d_counts.destroy();
         d_weights.destroy();
         d_origCoverages.destroy();
         d_origWeights.destroy();
-        d_support.destroy();
         indices1.destroy();
         indices2.destroy();
         d_shouldBeKept.destroy();
@@ -2242,11 +2887,13 @@ struct BatchData{
         h_outputMateHasBeenFound.resize(numTasks);
         h_sizeOfGapToMate.resize(numTasks);
         h_isFullyUsedCandidate.resize(totalNumCandidates);
+        h_goodscores.resize(numTasks);
 
 
         CachedDeviceUVector<int> d_accumExtensionsLengths(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_accumExtensionsLengthsOUT(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
+        CachedDeviceUVector<float> d_goodscores(numTasks, stream, *cubAllocator);
 
         
         d_isFullyUsedCandidate.resizeUninitialized(totalNumCandidates, stream);
@@ -2259,6 +2906,7 @@ struct BatchData{
         helpers::call_fill_kernel_async(d_outputMateHasBeenFound.data(), numTasks, false, stream); CUERR;
         helpers::call_fill_kernel_async(d_abortReasons.data(), numTasks, extension::AbortReason::None, stream); CUERR;
         helpers::call_fill_kernel_async(d_isFullyUsedCandidate.data(), totalNumCandidates, false, stream); CUERR;
+        helpers::call_fill_kernel_async(d_goodscores.data(), numTasks, 0.0f, stream); CUERR;
 
 
         for(int i = 0; i < numTasks; i++){
@@ -2277,257 +2925,59 @@ struct BatchData{
         ); CUERR;
        
         //compute extensions
-           
-        helpers::lambda_kernel<<<numTasks, 128, 0, stream>>>(
-            [
-                numTasks = numTasks,
-                insertSize = insertSize,
-                insertSizeStddev = insertSizeStddev,
-                msaColumnPitchInElements = msaColumnPitchInElements,
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_msa_column_properties = d_msa_column_properties.data(),
-                d_consensusEncoded = d_consensusEncoded.data(),
-                d_consensusQuality = d_consensusQuality.data(),
-                d_coverage = d_coverage.data(),
-                d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_accumExtensionsLengths = d_accumExtensionsLengths.data(),
-                d_inputMateLengths = d_inputMateLengths.data(),
-                d_abortReasons = d_abortReasons.data(),
-                d_accumExtensionsLengthsOUT = d_accumExtensionsLengthsOUT.data(),
-                d_outputAnchors = d_outputAnchors.data(),
-                outputAnchorPitchInBytes = outputAnchorPitchInBytes,
-                d_outputAnchorQualities = d_outputAnchorQualities.data(),
-                outputAnchorQualityPitchInBytes = outputAnchorQualityPitchInBytes,
-                d_outputAnchorLengths = d_outputAnchorLengths.data(),
-                d_isPairedTask = d_isPairedTask.data(),
-                d_inputanchormatedata = d_inputanchormatedata.data(),
-                encodedSequencePitchInInts = encodedSequencePitchInInts,
-                decodedMatesRevCPitchInBytes = decodedMatesRevCPitchInBytes,
-                d_outputMateHasBeenFound = d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate = d_sizeOfGapToMate.data(),
-                minCoverageForExtension = this->minCoverageForExtension,
-                fixedStepsize = this->maxextensionPerStep
-            ] __device__ (){
 
-                auto decodeConsensus = [](const std::uint8_t encoded){
-                    char decoded = 'F';
-                    if(encoded == std::uint8_t{0}){
-                        decoded = 'A';
-                    }else if(encoded == std::uint8_t{1}){
-                        decoded = 'C';
-                    }else if(encoded == std::uint8_t{2}){
-                        decoded = 'G';
-                    }else if(encoded == std::uint8_t{3}){
-                        decoded = 'T';
-                    }
-                    return decoded;
-                };
+        readextendergpukernels::computeExtensionStepFromMsaKernel<128><<<numTasks, 128, 0, stream>>>(
+            numTasks,
+            insertSize,
+            insertSizeStddev,
+            msaColumnPitchInElements,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_msa_column_properties.data(),
+            d_consensusEncoded.data(),
+            d_consensusQuality.data(),
+            d_coverage.data(),
+            d_anchorSequencesLength.data(),
+            d_accumExtensionsLengths.data(),
+            d_inputMateLengths.data(),
+            d_abortReasons.data(),
+            d_accumExtensionsLengthsOUT.data(),
+            d_outputAnchors.data(),
+            outputAnchorPitchInBytes,
+            d_outputAnchorQualities.data(),
+            outputAnchorQualityPitchInBytes,
+            d_outputAnchorLengths.data(),
+            d_isPairedTask.data(),
+            d_inputanchormatedata.data(),
+            encodedSequencePitchInInts,
+            decodedMatesRevCPitchInBytes,
+            d_outputMateHasBeenFound.data(),
+            d_sizeOfGapToMate.data(),
+            minCoverageForExtension,
+            maxextensionPerStep,
+            d_goodscores.data()
+        );
 
-                using BlockReduce = cub::BlockReduce<int, 128>;
-
-                __shared__ union{
-                    typename BlockReduce::TempStorage reduce;
-                } temp;
-
-                constexpr int smemEncodedMateInts = 32;
-                __shared__ unsigned int smemEncodedMate[smemEncodedMateInts];
-
-                __shared__ int broadcastsmem_int;
-
-                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-                    const int numCandidates = d_numCandidatesPerAnchor[t];
-
-                    if(numCandidates > 0){
-                        const auto msaProps = d_msa_column_properties[t];
-
-                        assert(msaProps.firstColumn_incl == 0);
-                        assert(msaProps.lastColumn_excl <= msaColumnPitchInElements);
-
-                        const int anchorLength = d_anchorSequencesLength[t];
-                        int accumExtensionsLength = d_accumExtensionsLengths[t];
-                        const int mateLength = d_inputMateLengths[t];
-                        const bool isPaired = d_isPairedTask[t];
-
-                        const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
-
-                        const std::uint8_t* const consensusEncoded = d_consensusEncoded + t * msaColumnPitchInElements;
-                        auto consensusDecoded = thrust::transform_iterator(consensusEncoded, decodeConsensus);
-                        const char* const consensusQuality = d_consensusQuality + t * msaColumnPitchInElements;
-                        const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
-
-                        extension::AbortReason* const abortReasonPtr = d_abortReasons + t;
-                        char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
-                        char* const outputAnchorQuality = d_outputAnchorQualities + t * outputAnchorQualityPitchInBytes;
-                        int* const outputAnchorLengthPtr = d_outputAnchorLengths + t;
-                        bool* const mateHasBeenFoundPtr = d_outputMateHasBeenFound + t;
-
-                        int extendBy = std::min(
-                            consensusLength - anchorLength, 
-                            std::max(0, fixedStepsize)
-                        );
-                        //cannot extend over fragment 
-                        extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
-
-                        //auto firstLowCoverageIter = std::find_if(coverage + anchorLength, coverage + consensusLength, [&](int cov){ return cov < minCoverageForExtension; });
-                        //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
-                        int myPos = consensusLength;
-                        for(int i = anchorLength + threadIdx.x; i < consensusLength; i += blockDim.x){
-                            int flag = msacoverage[i] < minCoverageForExtension ? 0 : 1;
-                            if(flag == 0 && i < myPos){
-                                myPos = i;
-                            }
-                        }
-
-                        myPos = BlockReduce(temp.reduce).Reduce(myPos, cub::Min{});
-
-                        if(threadIdx.x == 0){
-                            broadcastsmem_int = myPos;
-                        }
-                        __syncthreads();
-                        myPos = broadcastsmem_int;
-                        __syncthreads();
-
-                        if(fixedStepsize <= 0){
-                            extendBy = myPos - anchorLength;
-                            extendBy = std::min(extendBy, (insertSize + insertSizeStddev - mateLength) - accumExtensionsLength);
-                        }
-
-                        auto makeAnchorForNextIteration = [&](){
-                            if(extendBy == 0){
-                                if(threadIdx.x == 0){
-                                    *abortReasonPtr = extension::AbortReason::MsaNotExtended;
-                                }
-                            }else{
-                                if(threadIdx.x == 0){
-                                    d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + extendBy;
-                                    *outputAnchorLengthPtr = anchorLength;
-                                }
-
-                                for(int i = threadIdx.x; i < anchorLength; i += blockDim.x){
-                                    outputAnchor[i] = consensusDecoded[extendBy + i];
-                                    outputAnchorQuality[i] = consensusQuality[extendBy + i];
-                                }
-                            }
-                        };
-
-                        constexpr int requiredOverlapMate = 70; //TODO relative overlap 
-                        constexpr float maxRelativeMismatchesInOverlap = 0.06f;
-                        constexpr int maxAbsoluteMismatchesInOverlap = 10;
-
-                        const int maxNumMismatches = std::min(int(mateLength * maxRelativeMismatchesInOverlap), maxAbsoluteMismatchesInOverlap);
-
-                        
-
-                        if(isPaired && accumExtensionsLength + consensusLength - requiredOverlapMate + mateLength >= insertSize - insertSizeStddev){
-                            //for each possibility to overlap the mate and consensus such that the merged sequence would end in the desired range [insertSize - insertSizeStddev, insertSize + insertSizeStddev]
-
-                            const int firstStartpos = std::max(0, insertSize - insertSizeStddev - accumExtensionsLength - mateLength);
-                            const int lastStartposExcl = std::min(
-                                std::max(0, insertSize + insertSizeStddev - accumExtensionsLength - mateLength) + 1,
-                                consensusLength - requiredOverlapMate
-                            );
-
-                            int bestOverlapMismatches = std::numeric_limits<int>::max();
-                            int bestOverlapStartpos = -1;
-
-                            const unsigned int* encodedMate = nullptr;
-                            {
-                                const unsigned int* const gmemEncodedMate = d_inputanchormatedata + t * encodedSequencePitchInInts;
-                                const int requirednumints = SequenceHelpers::getEncodedNumInts2Bit(mateLength);
-                                if(smemEncodedMateInts >= requirednumints){
-                                    for(int i = threadIdx.x; i < requirednumints; i += blockDim.x){
-                                        smemEncodedMate[i] = gmemEncodedMate[i];
-                                    }
-                                    encodedMate = &smemEncodedMate[0];
-                                    __syncthreads();
-                                }else{
-                                    encodedMate = &gmemEncodedMate[0];
-                                }
-                            }
-
-                            for(int startpos = firstStartpos; startpos < lastStartposExcl; startpos++){
-                                //compute metrics of overlap
-
-                                //Hamming distance. positions which do not overlap are not accounted for
-                                int ham = 0;
-                                for(int i = threadIdx.x; i < min(consensusLength - startpos, mateLength); i += blockDim.x){
-                                    std::uint8_t encbasemate = SequenceHelpers::getEncodedNuc2Bit(encodedMate, mateLength, mateLength - 1 - i);
-                                    std::uint8_t encbasematecomp = SequenceHelpers::complementBase2Bit(encbasemate);
-                                    char decbasematecomp = SequenceHelpers::decodeBase(encbasematecomp);
-
-                                    //TODO store consensusDecoded in smem ?
-                                    ham += (consensusDecoded[startpos + i] != decbasematecomp) ? 1 : 0;
-                                }
-
-                                ham = BlockReduce(temp.reduce).Sum(ham);
-
-                                if(threadIdx.x == 0){
-                                    broadcastsmem_int = ham;
-                                }
-                                __syncthreads();
-                                ham = broadcastsmem_int;
-                                __syncthreads();
-
-                                if(bestOverlapMismatches > ham){
-                                    bestOverlapMismatches = ham;
-                                    bestOverlapStartpos = startpos;
-                                }
-
-                                if(bestOverlapMismatches == 0){
-                                    break;
-                                }
-                            }
-
-                            // if(threadIdx.x == 0){
-                            //     printf("gpu: bestOverlapMismatches %d,bestOverlapStartpos %d\n", bestOverlapMismatches, bestOverlapStartpos);
-                            // }
-
-                            if(bestOverlapMismatches <= maxNumMismatches){
-                                const int mateStartposInConsensus = bestOverlapStartpos;
-                                const int missingPositionsBetweenAnchorEndAndMateBegin = std::max(0, mateStartposInConsensus - anchorLength);
-                                // if(threadIdx.x == 0){
-                                //     printf("missingPositionsBetweenAnchorEndAndMateBegin %d\n", missingPositionsBetweenAnchorEndAndMateBegin);
-                                // }
-
-                                if(missingPositionsBetweenAnchorEndAndMateBegin > 0){
-                                    //bridge the gap between current anchor and mate
-
-                                    for(int i = threadIdx.x; i < missingPositionsBetweenAnchorEndAndMateBegin; i += blockDim.x){
-                                        outputAnchor[i] = consensusDecoded[anchorLength + i];
-                                        outputAnchorQuality[i] = consensusQuality[anchorLength + i];
-                                    }
-
-                                    if(threadIdx.x == 0){
-                                        d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + anchorLength;
-                                        *outputAnchorLengthPtr = missingPositionsBetweenAnchorEndAndMateBegin;
-                                        *mateHasBeenFoundPtr = true;
-                                        d_sizeOfGapToMate[t] = missingPositionsBetweenAnchorEndAndMateBegin;
-                                    }
-                                }else{
-
-                                    if(threadIdx.x == 0){
-                                        d_accumExtensionsLengthsOUT[t] = accumExtensionsLength + mateStartposInConsensus;
-                                        *outputAnchorLengthPtr = 0;
-                                        *mateHasBeenFoundPtr = true;
-                                        d_sizeOfGapToMate[t] = 0;
-                                    }
-                                }
-
-                                
-                            }else{
-                                makeAnchorForNextIteration();
-                            }
-                        }else{
-                            makeAnchorForNextIteration();
-                        }
-
-                    }else{ //numCandidates == 0
-                        if(threadIdx.x == 0){
-                            d_abortReasons[t] = extension::AbortReason::NoPairedCandidatesAfterAlignment;
-                        }
-                    }
-                }
-            }
+        readextendergpukernels::computeExtensionStepQualityKernel<128><<<numTasks, 128, 0, stream>>>(
+            numTasks,
+            d_goodscores.data(),
+            msaColumnPitchInElements,
+            d_abortReasons.data(),
+            d_outputMateHasBeenFound.data(),
+            d_accumExtensionsLengths.data(),
+            d_accumExtensionsLengthsOUT.data(),
+            d_coverage.data(),
+            d_support.data(),
+            d_counts.data(),
+            d_anchorSequencesLength.data(),
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_candidateSequencesLength.data(),
+            d_alignment_shifts.data(),
+            d_alignment_best_alignment_flags.data(),
+            d_candidateSequencesData.data(),
+            d_msa_column_properties.data(),
+            encodedSequencePitchInInts
         );
 
         //check which candidates are fully used in the extension
@@ -2577,7 +3027,8 @@ struct BatchData{
                 d_abortReasons.data(),
                 d_outputMateHasBeenFound.data(),
                 d_sizeOfGapToMate.data(),
-                d_outputAnchorLengths.data()
+                d_outputAnchorLengths.data(),
+                d_goodscores.data()
             )),
             numTasks,
             thrust::make_zip_iterator(thrust::make_tuple(
@@ -2585,7 +3036,8 @@ struct BatchData{
                 h_abortReasons.data(),
                 h_outputMateHasBeenFound.data(),
                 h_sizeOfGapToMate.data(),
-                h_outputAnchorLengths.data()
+                h_outputAnchorLengths.data(),
+                h_goodscores.data()
             )),
             stream
         );
@@ -2809,8 +3261,9 @@ struct BatchData{
         assert(state == BatchData::State::BeforeUnpack);
 
         for(int i = 0; i < numTasks; i++){ 
-            const int indexOfActiveTask = i;
-            auto& task = tasks[indexOfActiveTask];
+            auto& task = tasks[i];
+
+            task.goodscore += h_goodscores[i];
 
             task.abortReason = h_abortReasons[i];
             if(task.abortReason == extension::AbortReason::None){
@@ -3555,8 +4008,8 @@ struct BatchData{
                 d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
                 d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
                 d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
+                d_counts.resizeUninitialized(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream);
 
-                CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
@@ -3626,7 +4079,6 @@ struct BatchData{
                 );
 
                 // d_candidateQualityScores.destroy();
-                d_counts.destroy();
                 d_weights.destroy();
                 d_origCoverages.destroy();
                 d_origWeights.destroy();
@@ -4231,8 +4683,8 @@ struct BatchData{
                 d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
                 d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
                 d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
+                d_counts.resizeUninitialized(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream);
 
-                CachedDeviceUVector<int> d_counts(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
@@ -4302,7 +4754,6 @@ struct BatchData{
                 );
 
                 // d_candidateQualityScores.destroy();
-                d_counts.destroy();
                 d_weights.destroy();
                 d_origCoverages.destroy();
                 d_origWeights.destroy();
@@ -4433,6 +4884,7 @@ struct BatchData{
             extendResult.originalLength = task.myLength;
             extendResult.originalMateLength = task.mateLength;
             extendResult.read1begin = 0;
+            extendResult.goodscore = task.goodscore;
 
             // std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
             //     << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
@@ -4736,8 +5188,8 @@ struct BatchData{
                                 tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
                             }else if(tasks[i+k].id == task.id + 2){
                                 //disable RL search task
-                                tasks[i + k].abort = true;
-                                tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                // tasks[i + k].abort = true;
+                                // tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
                             }
                         }else{
                             break;
@@ -4774,8 +5226,8 @@ struct BatchData{
                         if(tasks[i - k].pairId == task.pairId){
                             if(tasks[i - k].id == task.id - 2){
                                 //disable LR search task
-                                tasks[i - k].abort = true;
-                                tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                // tasks[i - k].abort = true;
+                                // tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
                             }
                         }else{
                             break;
@@ -5136,7 +5588,9 @@ struct BatchData{
     
     // ----- MSA data
     CachedDeviceUVector<std::uint8_t> d_consensusEncoded{}; //encoded , 0-4
+    CachedDeviceUVector<int> d_counts{};
     CachedDeviceUVector<int> d_coverage{};
+    CachedDeviceUVector<float> d_support{};
     CachedDeviceUVector<gpu::MSAColumnProperties> d_msa_column_properties{};
     CachedDeviceUVector<char> d_consensusQuality{};
     // -----
@@ -5161,6 +5615,7 @@ struct BatchData{
     PinnedBuffer<bool> h_outputMateHasBeenFound;
     PinnedBuffer<int> h_sizeOfGapToMate;
     PinnedBuffer<bool> h_isFullyUsedCandidate{};
+    PinnedBuffer<float> h_goodscores{};
 
     // ----- Ready-events for pinned outputs
     CudaEvent h_numAnchorsEvent{};
