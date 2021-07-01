@@ -753,46 +753,46 @@ namespace readextendergpukernels{
                 const BestAlignment_t* const myCandidateBestAlignmentFlags = d_alignment_best_alignment_flags + d_numCandidatesPerAnchorPrefixSum[t];
                 const unsigned int* const myCandidateSequencesData = d_candidateSequencesData + encodedSequencePitchInInts * d_numCandidatesPerAnchorPrefixSum[t];
 
-                float supportSum = 0.0f;
+                // float supportSum = 0.0f;
 
-                for(int i = threadIdx.x; i < extendedBy; i += blockDim.x){
-                    supportSum += 1.0f - mySupport[anchorLength + i];
-                }
+                // for(int i = threadIdx.x; i < extendedBy; i += blockDim.x){
+                //     supportSum += 1.0f - mySupport[anchorLength + i];
+                // }
 
-                float reducedSupport = BlockReduceFloat(temp.reduceFloat).Sum(supportSum);
+                // float reducedSupport = BlockReduceFloat(temp.reduceFloat).Sum(supportSum);
 
-                //printf("reducedSupport %f\n", reducedSupport);
-                if(threadIdx.x == 0){
-                    d_goodscores[t] = reducedSupport;
-                }
+                // //printf("reducedSupport %f\n", reducedSupport);
+                // if(threadIdx.x == 0){
+                //     d_goodscores[t] = reducedSupport;
+                // }
 
-                // AmbiguousColumnsChecker checker(
-                //     myCounts + 0 * msaColumnPitchInElements,
-                //     myCounts + 1 * msaColumnPitchInElements,
-                //     myCounts + 2 * msaColumnPitchInElements,
-                //     myCounts + 3 * msaColumnPitchInElements,
-                //     myCoverage
-                // );
+                AmbiguousColumnsChecker checker(
+                    myCounts + 0 * msaColumnPitchInElements,
+                    myCounts + 1 * msaColumnPitchInElements,
+                    myCounts + 2 * msaColumnPitchInElements,
+                    myCounts + 3 * msaColumnPitchInElements,
+                    myCoverage
+                );
 
                 //int count = checker.getAmbiguousColumnCount(anchorLength, anchorLength + extendedBy, temp.reduce);
 
-                // checker.getSplitInfos(anchorLength, anchorLength + extendedBy, 0.4f, 0.6f, smemSplitInfos);
+                checker.getSplitInfos(anchorLength, anchorLength + extendedBy, 0.4f, 0.6f, smemSplitInfos);
 
-                // int count = checker.getNumberOfSplits(
-                //     smemSplitInfos, 
-                //     d_msa_column_properties[t],
-                //     d_numCandidatesPerAnchor[t], 
-                //     myCandidateShifts,
-                //     myCandidateBestAlignmentFlags,
-                //     myCandidateLengths,
-                //     myCandidateSequencesData, 
-                //     encodedSequencePitchInInts, 
-                //     temp.columnschecker
-                // );
+                int count = checker.getNumberOfSplits(
+                    smemSplitInfos, 
+                    d_msa_column_properties[t],
+                    d_numCandidatesPerAnchor[t], 
+                    myCandidateShifts,
+                    myCandidateBestAlignmentFlags,
+                    myCandidateLengths,
+                    myCandidateSequencesData, 
+                    encodedSequencePitchInInts, 
+                    temp.columnschecker
+                );
 
-                // if(threadIdx.x == 0){
-                //     d_goodscores[t] = count;
-                // }
+                if(threadIdx.x == 0){
+                    d_goodscores[t] = count;
+                }
                 
                 __syncthreads();
             }
@@ -3908,644 +3908,8 @@ struct BatchData{
     }
 
 
-    std::vector<extension::ExtendResult> constructResults(){
-        const int resultMSAColumnPitchInElements = 512; //SDIV(insertSize + insertSizeStddev, 4) * 4;
-        assert(false);
-
-        nvtx::push_range("constructresultgpumsa", 2);
-        {
-            const int numFinishedTasks = finishedTasks.size();
-            if(numFinishedTasks == 0){
-                return std::vector<extension::ExtendResult>{};
-            }
-            cudaStream_t stream = streams[0];
-
-            h_numCandidatesPerAnchor.resize(numFinishedTasks);
-            h_numCandidatesPerAnchorPrefixSum.resize(numFinishedTasks + 1);
-
-            for(int i = 0; i < numFinishedTasks; i++){
-                const auto& task = finishedTasks[i];
-
-                h_numCandidatesPerAnchor[i] = task.totalDecodedAnchorsLengths.size() - 1;
-            }
-
-            h_numCandidatesPerAnchorPrefixSum[0] = 0;
-            std::inclusive_scan(
-                h_numCandidatesPerAnchor.begin(),
-                h_numCandidatesPerAnchor.end(),
-                h_numCandidatesPerAnchorPrefixSum.begin() + 1
-            );
-            const int numCandidates = h_numCandidatesPerAnchorPrefixSum[numFinishedTasks];
-            assert(numCandidates >= 0);
-
-            //if there are no candidates, the resulting sequences will be identical to the input anchors. no computing required
-            if(numCandidates == 0){
-                h_outputAnchors.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                h_outputAnchorQualities.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                h_anchorSequencesLength.resize(numFinishedTasks);
-
-                for(int i = 0; i < numFinishedTasks; i++){
-                    const auto& task = finishedTasks[i];
-
-                    const int num = h_numCandidatesPerAnchor[i];
-
-                    std::copy(
-                        task.totalDecodedAnchorsFlat.begin(),
-                        task.totalDecodedAnchorsFlat.begin() + decodedSequencePitchInBytes,
-                        h_outputAnchors + i * resultMSAColumnPitchInElements
-                    );
-
-                    std::fill(
-                        h_outputAnchorQualities + i * resultMSAColumnPitchInElements,
-                        h_outputAnchorQualities + i * resultMSAColumnPitchInElements + task.totalDecodedAnchorsLengths[0],
-                        'I'
-                    );
-
-                    h_anchorSequencesLength[i] = task.totalDecodedAnchorsLengths[0];
-                }
-
-            }else{
-
-                d_numCandidatesPerAnchor.resizeUninitialized(numFinishedTasks, stream);
-                d_numCandidatesPerAnchorPrefixSum.resizeUninitialized(numFinishedTasks + 1, stream);
-
-                cudaMemcpyAsync(
-                    d_numCandidatesPerAnchor.data(),
-                    h_numCandidatesPerAnchor.data(),
-                    sizeof(int) * numFinishedTasks,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    d_numCandidatesPerAnchorPrefixSum.data(),
-                    h_numCandidatesPerAnchorPrefixSum.data(),
-                    sizeof(int) * (numFinishedTasks + 1),
-                    H2D,
-                    stream
-                ); CUERR;
-
-                //copy anchor lengths and anchor sequences
-
-                h_outputAnchors.resize(numFinishedTasks * decodedSequencePitchInBytes);
-                h_anchorSequencesLength.resize(numFinishedTasks);
-
-                CachedDeviceUVector<int> d_anchorSequencesLength2(numFinishedTasks, stream, *cubAllocator);
-                CachedDeviceUVector<unsigned int> d_subjectSequencesData2(numFinishedTasks * encodedSequencePitchInInts, stream, *cubAllocator);
-                CachedDeviceUVector<char> d_subjectSequencesDataDecoded2(numFinishedTasks * decodedSequencePitchInBytes, stream, *cubAllocator);
-
-                for(int i = 0; i < numFinishedTasks; i++){
-                    const auto& task = finishedTasks[i];
-
-                    const int num = h_numCandidatesPerAnchor[i];
-
-                    std::copy(
-                        task.totalDecodedAnchorsFlat.begin(),
-                        task.totalDecodedAnchorsFlat.begin() + decodedSequencePitchInBytes,
-                        h_outputAnchors + i * decodedSequencePitchInBytes
-                    );
-
-                    h_anchorSequencesLength[i] = task.totalDecodedAnchorsLengths[0];
-                }
-
-                cudaMemcpyAsync(
-                    d_anchorSequencesLength2.data(),
-                    h_anchorSequencesLength.data(),
-                    sizeof(int) * numFinishedTasks,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    d_subjectSequencesDataDecoded2.data(),
-                    h_outputAnchors.data(),
-                    sizeof(char) * decodedSequencePitchInBytes * numFinishedTasks,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                readextendergpukernels::encodeSequencesTo2BitKernel<8>
-                <<<SDIV(numFinishedTasks, (128 / 8)), 128, 0, streams[0]>>>(
-                    d_subjectSequencesData2.data(),
-                    d_subjectSequencesDataDecoded2.data(),
-                    d_anchorSequencesLength2.data(),
-                    decodedSequencePitchInBytes,
-                    encodedSequencePitchInInts,
-                    numFinishedTasks
-                ); CUERR;
-
-                //copy anchor qualities
-                // h_outputAnchorQualities.resize(numFinishedTasks * qualityPitchInBytes);
-                // d_anchorQualityScores2.resize(numFinishedTasks * qualityPitchInBytes);
-
-                // for(int i = 0; i < numFinishedTasks; i++){
-                //     const auto& task = finishedTasks[i];
-
-                //     const int num = h_numCandidatesPerAnchor[i];
-
-                //     std::copy(
-                //         task.totalAnchorQualityScoresFlat.begin(),
-                //         task.totalAnchorQualityScoresFlat.begin() + qualityPitchInBytes,
-                //         h_outputAnchorQualities + i * qualityPitchInBytes
-                //     );
-                // }
-
-                // cudaMemcpyAsync(
-                //     d_anchorQualityScores2.data(),
-                //     h_outputAnchorQualities.data(),
-                //     sizeof(char) * qualityPitchInBytes * numFinishedTasks,
-                //     H2D,
-                //     stream
-                // ); CUERR;
-
-                //synchronize before reusing pinned buffers
-                cudaStreamSynchronize(stream); CUERR;
-
-                //copy "candidate" sequences
-
-                h_outputAnchors.resize(numCandidates * decodedSequencePitchInBytes);
-                h_anchorSequencesLength.resize(numCandidates);
-
-                d_candidateSequencesLength.resizeUninitialized(numCandidates, stream);
-                d_candidateSequencesData.resizeUninitialized(numCandidates * encodedSequencePitchInInts, stream);
-                CachedDeviceUVector<char> d_candidateSequencesDataDecoded(decodedSequencePitchInBytes * numCandidates, stream, *cubAllocator);
-
-                for(int i = 0; i < numFinishedTasks; i++){
-                    const auto& task = finishedTasks[i];
-
-                    const int num = h_numCandidatesPerAnchor[i];
-                    const int offset = h_numCandidatesPerAnchorPrefixSum[i];
-
-                    std::copy(
-                        task.totalDecodedAnchorsFlat.begin() + decodedSequencePitchInBytes,
-                        task.totalDecodedAnchorsFlat.end(),
-                        h_outputAnchors + offset * decodedSequencePitchInBytes
-                    );
-
-                    std::copy(
-                        task.totalDecodedAnchorsLengths.begin() + 1,
-                        task.totalDecodedAnchorsLengths.end(),
-                        h_anchorSequencesLength + offset
-                    );
-                }
-
-                cudaMemcpyAsync(
-                    d_candidateSequencesLength.data(),
-                    h_anchorSequencesLength.data(),
-                    sizeof(int) * numCandidates,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    d_candidateSequencesDataDecoded.data(),
-                    h_outputAnchors.data(),
-                    sizeof(char) * decodedSequencePitchInBytes * numCandidates,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                readextendergpukernels::encodeSequencesTo2BitKernel<8>
-                <<<SDIV(numCandidates, (128 / 8)), 128, 0, streams[0]>>>(
-                    d_candidateSequencesData.data(),
-                    d_candidateSequencesDataDecoded.data(),
-                    d_candidateSequencesLength.data(),
-                    decodedSequencePitchInBytes,
-                    encodedSequencePitchInInts,
-                    numCandidates
-                ); CUERR;
-
-                //copy "candidate" qualities
-                // h_outputAnchorQualities.resize(numCandidates * qualityPitchInBytes);
-                // CachedDeviceUVector<char> d_candidateQualityScores(qualityPitchInBytes * numCandidates, stream, *cubAllocator);
-
-                // for(int i = 0; i < numFinishedTasks; i++){
-                //     const auto& task = finishedTasks[i];
-
-                //     const int num = h_numCandidatesPerAnchor[i];
-                //     const int offset = h_numCandidatesPerAnchorPrefixSum[i];
-
-                //     std::copy(
-                //         task.totalDecodedAnchorsFlat.begin() + qualityPitchInBytes,
-                //         task.totalDecodedAnchorsFlat.end(),
-                //         h_outputAnchorQualities + offset * qualityPitchInBytes
-                //     );
-                // }
-
-                // cudaMemcpyAsync(
-                //     d_candidateQualityScores,
-                //     h_outputAnchorQualities.data(),
-                //     sizeof(char) * qualityPitchInBytes * numCandidates,
-                //     H2D,
-                //     stream
-                // ); CUERR;
-
-                //synchronize before reusing pinned buffers
-                cudaStreamSynchronize(stream); CUERR;
-
-                //sequence data has been transfered to gpu. now set up remaining msa input data
-
-                d_alignment_overlaps.resizeUninitialized(numCandidates, stream);
-                d_alignment_shifts.resizeUninitialized(numCandidates, stream);
-                d_alignment_nOps.resizeUninitialized(numCandidates, stream);
-                d_alignment_best_alignment_flags.resizeUninitialized(numCandidates, stream);
-                d_isPairedCandidate.resizeUninitialized(numCandidates, stream);
-                
-                helpers::call_fill_kernel_async(d_alignment_overlaps.begin(), numCandidates, 100, stream);
-                helpers::call_fill_kernel_async(d_alignment_nOps.begin(), numCandidates, 0, stream);
-                helpers::call_fill_kernel_async(d_alignment_best_alignment_flags.begin(), numCandidates, BestAlignment_t::Forward, stream);
-                helpers::call_fill_kernel_async(d_isPairedCandidate.begin(), numCandidates, false, stream);
-
-                h_sizeOfGapToMate.resize(numCandidates);
-                for(int i = 0; i < numFinishedTasks; i++){
-                    const auto& task = finishedTasks[i];
-
-                    const int offset = h_numCandidatesPerAnchorPrefixSum[i];
-
-                    std::copy(
-                        task.totalAnchorBeginInExtendedRead.begin() + 1,
-                        task.totalAnchorBeginInExtendedRead.end(),
-                        h_sizeOfGapToMate + offset
-                    );
-
-                    //assert(task.totalAnchorBeginInExtendedRead.back() + task.totalDecodedAnchorsLengths.back() <= insertSize + insertSizeStddev);
-                }
-
-                cudaMemcpyAsync(
-                    d_alignment_shifts.data(),
-                    h_sizeOfGapToMate.data(),
-                    sizeof(int) * numCandidates,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                //all input data ready. now set up msa
-
-                
-
-                d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
-                d_counts.resizeUninitialized(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream);
-
-                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_support(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
-
-                helpers::lambda_kernel<<<numFinishedTasks, 128, 0, stream>>>(
-                    [
-                        indices1 = indices1.data(),
-                        d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                        d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
-                    ] __device__ (){
-                        const int num = d_numCandidatesPerAnchor[blockIdx.x];
-                        const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
-                        
-                        for(int i = threadIdx.x; i < num; i += blockDim.x){
-                            indices1[offset + i] = i;
-                        }
-                    }
-                );
-
-
-                gpu::GPUMultiMSA multiMSA;
-
-                *h_numAnchors = numFinishedTasks;
-
-                multiMSA.numMSAs = numFinishedTasks;
-                multiMSA.columnPitchInElements = resultMSAColumnPitchInElements;
-                multiMSA.counts = d_counts.data();
-                multiMSA.weights = d_weights.data();
-                multiMSA.coverages = d_coverage.data();
-                multiMSA.consensus = d_consensusEncoded.data();
-                multiMSA.support = d_support.data();
-                multiMSA.origWeights = d_origWeights.data();
-                multiMSA.origCoverages = d_origCoverages.data();
-                multiMSA.columnProperties = d_msa_column_properties.data();
-
-                const bool useQualityScoresForMSA = false;
-
-                
-
-                callConstructMultipleSequenceAlignmentsKernel_async(
-                    multiMSA,
-                    d_alignment_overlaps.data(),
-                    d_alignment_shifts.data(),
-                    d_alignment_nOps.data(),
-                    d_alignment_best_alignment_flags.data(),
-                    d_anchorSequencesLength2.data(),
-                    d_candidateSequencesLength.data(),
-                    indices1.data(),
-                    d_numCandidatesPerAnchor.data(),
-                    d_numCandidatesPerAnchorPrefixSum.data(),
-                    d_subjectSequencesData2.data(),
-                    d_candidateSequencesData.data(),
-                    d_isPairedCandidate.data(),
-                    nullptr, //anchor qualities
-                    nullptr, //candidate qualities
-                    h_numAnchors.data(), //d_numAnchors
-                    goodAlignmentProperties->maxErrorRate,
-                    numFinishedTasks,
-                    numCandidates,
-                    useQualityScoresForMSA,
-                    encodedSequencePitchInInts,
-                    qualityPitchInBytes,
-                    stream,
-                    kernelLaunchHandle
-                );
-
-                // d_candidateQualityScores.destroy();
-                d_weights.destroy();
-                d_origCoverages.destroy();
-                d_origWeights.destroy();
-                indices1.destroy();
-
-                //compute quality of consensus
-                d_consensusQuality.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-
-                CachedDeviceUVector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                
-                h_outputAnchorQualities.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                h_outputAnchors.resize(numFinishedTasks * resultMSAColumnPitchInElements);
-                h_anchorSequencesLength.resize(numFinishedTasks);
-                
-                //compute consensus quality, decoded consensus and compute consensus lengths per anchor
-                helpers::lambda_kernel<<<numFinishedTasks, 256, 0, stream>>>(
-                    [
-                        d_consensusLengths = d_anchorSequencesLength2.data(),
-                        d_decodedConsensus = d_decodedConsensus.data(),
-                        consensusQuality = d_consensusQuality.data(),
-                        support = d_support.data(),
-                        //coverages = d_coverage.data(),
-                        d_encodedConsensus = d_consensusEncoded.data(),
-                        msa_column_properties = d_msa_column_properties.data(),
-                        d_numCandidatesInMsa = d_numCandidatesPerAnchor.data(),
-                        columnPitchInElements = resultMSAColumnPitchInElements,
-                        numTasks = numFinishedTasks
-                    ] __device__ (){
-
-                        auto decodeConsensus = [](const std::uint8_t encoded){
-                            char decoded = 'F';
-                            if(encoded == std::uint8_t{0}){
-                                decoded = 'A';
-                            }else if(encoded == std::uint8_t{1}){
-                                decoded = 'C';
-                            }else if(encoded == std::uint8_t{2}){
-                                decoded = 'G';
-                            }else if(encoded == std::uint8_t{3}){
-                                decoded = 'T';
-                            }
-                            return decoded;
-                        };
-
-                        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-
-                            const float* const taskSupport = support + t * columnPitchInElements;
-                            //const int* const taskCoverage = coverages + t * columnPitchInElements;
-                            char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
-                            const int begin = msa_column_properties[t].firstColumn_incl;
-                            const int end = msa_column_properties[t].lastColumn_excl;
-
-                            assert(begin >= 0);
-                            assert(end < columnPitchInElements);
-
-                            if(threadIdx.x == 0){
-                                d_consensusLengths[t] = end - begin;
-                            }
-
-                            for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                                const float support = taskSupport[i];
-                                // const float cov = taskCoverage[i];
-
-                                // char q = getQualityChar(support);
-
-                                // //scale down quality depending on coverage
-                                // q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
-
-                                taskConsensusQuality[i] = getQualityChar(support);
-                            }
-
-                            for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                                const int outpos = i - begin;
-
-                                d_decodedConsensus[t * columnPitchInElements + outpos]
-                                    = decodeConsensus(d_encodedConsensus[t * columnPitchInElements + i]);
-                            }
-                        }
-                    }
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    h_outputAnchors.data(),
-                    d_decodedConsensus.data(),
-                    sizeof(char) * numFinishedTasks * resultMSAColumnPitchInElements,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    h_outputAnchorQualities.data(),
-                    d_consensusQuality.data(),
-                    sizeof(char) * numFinishedTasks * resultMSAColumnPitchInElements,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaMemcpyAsync(
-                    h_anchorSequencesLength.data(),
-                    d_anchorSequencesLength2.data(),
-                    sizeof(int) * numFinishedTasks,
-                    D2H,
-                    stream
-                ); CUERR;
-
-                cudaStreamSynchronize(stream); CUERR;
-            }
-
-        }
-        nvtx::pop_range();
-
-
-        std::vector<extension::ExtendResult> extendResults;
-        extendResults.reserve(finishedTasks.size());
-
-        // int x = 0;
-
-        for(std::size_t t = 0; t < finishedTasks.size(); t++){
-            const auto& task = finishedTasks[t];
-
-            //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
-
-            extension::ExtendResult extendResult;
-            extendResult.direction = task.direction;
-            extendResult.numIterations = task.iteration;
-            extendResult.aborted = task.abort;
-            extendResult.abortReason = task.abortReason;
-            extendResult.readId1 = task.myReadId;
-            extendResult.readId2 = task.mateReadId;
-            extendResult.originalLength = task.myLength;
-            extendResult.originalMateLength = task.mateLength;
-            extendResult.read1begin = 0;
-
-            const int numsteps = task.totalDecodedAnchorsLengths.size();
-
-            std::string_view decodedAnchor(
-                task.totalDecodedAnchorsFlat.data(), 
-                task.totalDecodedAnchorsLengths[0]
-            );
-
-            std::string_view anchorQuality(
-                task.totalAnchorQualityScoresFlat.data(),
-                task.totalDecodedAnchorsLengths[0]
-            );
-
-            const int gpuLength = h_anchorSequencesLength[t];
-            std::string extendedRead(h_outputAnchors.data() + t * resultMSAColumnPitchInElements, gpuLength);
-            std::string extendedReadQuality(h_outputAnchorQualities.data() + t * resultMSAColumnPitchInElements, gpuLength);
-
-            std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedRead.begin());
-            std::copy(anchorQuality.begin(), anchorQuality.end(), extendedReadQuality.begin());
-
-
-            //alternative extendedRead. no msa + consensus, just concat
-            #if 0
-
-            std::string extendedReadTmp;
-
-            if(numsteps > 1){
-                extendedReadTmp.resize(shifts[numsteps - 1] + task.totalDecodedAnchorsLengths.back(), '\0');
-
-                auto b = std::copy(decodedAnchor.begin(), decodedAnchor.end(), extendedReadTmp.begin());
-
-                std::cerr << "debug. copy\n";
-                std::copy(
-                    decodedAnchor.begin(),
-                    decodedAnchor.end(),
-                    std::ostream_iterator<char>(std::cerr, "")
-                );
-                std::cerr << "\n";
-
-                for(int i = 0; i < numsteps - 1; i++){
-                    const int currentEnd = std::distance(extendedReadTmp.begin(), b);
-
-                    const int nextLength = task.totalDecodedAnchorsLengths[i];
-                    const int nextBegin = shifts[i];
-
-                    std::cerr << nextBegin << " + " << nextLength << " > " << currentEnd << "?\n";
-
-                    if(nextBegin + nextLength > currentEnd){
-                        const int copybegin = currentEnd - nextBegin;
-                        b = std::copy(
-                            task.totalDecodedAnchorsFlat.begin() + (i+1) * decodedSequencePitchInBytes + copybegin,
-                            task.totalDecodedAnchorsFlat.begin() + (i+1) * decodedSequencePitchInBytes + copybegin + nextLength,
-                            b
-                        );
-
-                        std::cerr << "debug. copy\n";
-                        std::copy(
-                            task.totalDecodedAnchorsFlat.begin() + (i+1) * decodedSequencePitchInBytes + copybegin,
-                            task.totalDecodedAnchorsFlat.begin() + (i+1) * decodedSequencePitchInBytes + copybegin + nextLength,
-                            std::ostream_iterator<char>(std::cerr, "")
-                        );
-                        std::cerr << "\n";
-                    }
-                }
-
-                if(!(b == extendedReadTmp.end())){
-                    for(int i = 0; i < numsteps; i++){
-                        std::copy(
-                            task.totalDecodedAnchorsFlat.begin() + (i) * decodedSequencePitchInBytes,
-                            task.totalDecodedAnchorsFlat.begin() + (i+1) * decodedSequencePitchInBytes,
-                            std::ostream_iterator<char>(std::cerr, "")
-                        );
-                        std::cerr << "\n";
-                    }
-
-                    std::cerr << "lenghts\n";
-                    std::copy(
-                        task.totalDecodedAnchorsLengths.begin(),
-                        task.totalDecodedAnchorsLengths.end(),
-                        std::ostream_iterator<int >(std::cerr, ", ")
-                    );
-                    std::cerr << "\n";
-
-                    std::cerr << "shifts\n";
-                    std::copy(
-                        task.totalAnchorBeginInExtendedRead.begin(),
-                        task.totalAnchorBeginInExtendedRead.end(),
-                        std::ostream_iterator<int >(std::cerr, ", ")
-                    );
-                    std::cerr << "\n";
-
-                    std::cerr << "extendedReadTmp\n";
-                    std::cerr << extendedReadTmp << "\n";
-
-                    std::cerr << "extendedRead\n";
-                    std::cerr << extendedRead << "\n";
-                }
-
-                assert(b == extendedReadTmp.end());
-
-                // if(extendedReadTmp != extendedRead){
-                //     std::cerr << "old: " << extendedRead << "\n";
-                //     std::cerr << "new: " << extendedReadTmp << "\n";
-                // }
-            }else{
-                extendedReadTmp = decodedAnchor;
-            }
-
-            
-            //std::swap(extendedReadTmp, extendedRead);
-            #endif
-
-
-
-
-            
-
-            if(task.mateHasBeenFound){
-                //std::cerr << "copy " << task.decodedMateRevC << " to end of consensus " << task.myReadId << "\n";
-                std::copy(
-                    task.decodedMateRevC.begin(),
-                    task.decodedMateRevC.end(),
-                    extendedRead.begin() + extendedRead.length() - task.decodedMateRevC.length()
-                );
-
-                std::copy(
-                    task.mateQualityScoresReversed.begin(),
-                    task.mateQualityScoresReversed.end(),
-                    extendedReadQuality.begin() + extendedReadQuality.length() - task.decodedMateRevC.length()
-                );
-
-                extendResult.read2begin = extendedRead.length() - task.decodedMateRevC.length();
-            }else{
-                extendResult.read2begin = -1;
-            }
-
-            extendResult.extendedRead = std::move(extendedRead);
-            extendResult.qualityScores = std::move(extendedReadQuality);
-
-            extendResult.mateHasBeenFound = task.mateHasBeenFound;
-
-            extendResults.emplace_back(std::move(extendResult));
-        }
-
-        std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
-            extendResults,
-            insertSize,
-            insertSizeStddev
-        );
-
-        finishedTasks.clear();
-
-        return extendResultsCombined;
-    }
-
     //construct results for each group of 4 tasks belonging to the same read pair
     std::vector<extension::ExtendResult> constructResults4(){
-        const int resultMSAColumnPitchInElements = 512; //SDIV(insertSize + insertSizeStddev, 4) * 4;
 
         //determine tasks in groups of 4
         std::vector<extension::Task> finishedTasks4{};
@@ -4587,6 +3951,8 @@ struct BatchData{
         finishedTasksNot4.clear();
         nvtx::pop_range();
 
+        int resultMSAColumnPitchInElements = 1024;
+
         nvtx::push_range("constructResults4", 2);
         {
             const int numFinishedTasks = finishedTasks4.size();
@@ -4615,6 +3981,9 @@ struct BatchData{
 
             //if there are no candidates, the resulting sequences will be identical to the input anchors. no computing required
             if(numCandidates == 0){
+
+                resultMSAColumnPitchInElements = decodedSequencePitchInBytes;
+
                 h_outputAnchors.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 h_outputAnchorQualities.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 h_anchorSequencesLength.resize(numFinishedTasks);
@@ -4626,7 +3995,7 @@ struct BatchData{
 
                     std::copy(
                         task.totalDecodedAnchorsFlat.begin(),
-                        task.totalDecodedAnchorsFlat.begin() + decodedSequencePitchInBytes,
+                        task.totalDecodedAnchorsFlat.begin() + task.totalDecodedAnchorsLengths[0],
                         h_outputAnchors + i * resultMSAColumnPitchInElements
                     );
 
@@ -4856,17 +4225,6 @@ struct BatchData{
 
                 //all input data ready. now set up msa
 
-                
-
-                d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-                d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
-                d_counts.resizeUninitialized(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream);
-
-                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
-                CachedDeviceUVector<float> d_support(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
                 CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
 
                 helpers::lambda_kernel<<<numFinishedTasks, 128, 0, stream>>>(
@@ -4885,6 +4243,49 @@ struct BatchData{
                 );
 
 
+                CachedDeviceUVector<int> d_maxMsaWidth(1, stream, *cubAllocator);
+
+                gpu::callComputeMaximumMsaWidthKernel(
+                    d_maxMsaWidth.data(),
+                    d_alignment_shifts.data(),
+                    d_anchorSequencesLength2.data(),
+                    d_candidateSequencesLength.data(),
+                    indices1.data(),
+                    d_numCandidatesPerAnchor.data(),
+                    d_numCandidatesPerAnchorPrefixSum.data(),
+                    numFinishedTasks,
+                    stream
+                );
+
+                h_numAnchorsWithRemovedMates.resize(1);
+
+                int* const h_maxMsaWidth = h_numAnchorsWithRemovedMates.data();
+
+                cudaMemcpyAsync(
+                    h_maxMsaWidth,
+                    d_maxMsaWidth.data(),
+                    sizeof(int),
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaStreamSynchronize(stream); CUERR;
+                //const int resultMSAColumnPitchInElements = 1024; //SDIV(insertSize + insertSizeStddev, 4) * 4;
+
+                //std::cerr << resultMSAColumnPitchInElements << " " << *h_maxMsaWidth << "\n";
+                resultMSAColumnPitchInElements = SDIV(*h_maxMsaWidth, 32) * 32;
+
+                d_consensusEncoded.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_coverage.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
+                d_msa_column_properties.resizeUninitialized(numFinishedTasks, stream);
+                d_counts.resizeUninitialized(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream);
+
+                CachedDeviceUVector<float> d_weights(numFinishedTasks * 4 * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_origCoverages(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_origWeights(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
+                CachedDeviceUVector<float> d_support(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
+
+
                 gpu::GPUMultiMSA multiMSA;
 
                 *h_numAnchors = numFinishedTasks;
@@ -4900,9 +4301,7 @@ struct BatchData{
                 multiMSA.origCoverages = d_origCoverages.data();
                 multiMSA.columnProperties = d_msa_column_properties.data();
 
-                const bool useQualityScoresForMSA = false;
-
-                
+                const bool useQualityScoresForMSA = false;                
 
                 callConstructMultipleSequenceAlignmentsKernel_async(
                     multiMSA,
@@ -4984,7 +4383,7 @@ struct BatchData{
                             const int end = msa_column_properties[t].lastColumn_excl;
 
                             assert(begin >= 0);
-                            assert(end < columnPitchInElements);
+                            assert(end <= columnPitchInElements);
 
                             if(threadIdx.x == 0){
                                 d_consensusLengths[t] = end - begin;
@@ -5344,6 +4743,8 @@ struct BatchData{
 
     void handleEarlyExitOfTasks4(){
 
+        constexpr bool disableOtherStrand = false;
+
         for(int i = 0; i < numTasks; i++){ 
             const auto& task = tasks[i];
             const int whichtype = task.id % 4;
@@ -5366,8 +4767,10 @@ struct BatchData{
                                 tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
                             }else if(tasks[i+k].id == task.id + 2){
                                 //disable RL search task
-                                // tasks[i + k].abort = true;
-                                // tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                if(disableOtherStrand){
+                                    tasks[i + k].abort = true;
+                                    tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                }
                             }
                         }else{
                             break;
@@ -5404,8 +4807,10 @@ struct BatchData{
                         if(tasks[i - k].pairId == task.pairId){
                             if(tasks[i - k].id == task.id - 2){
                                 //disable LR search task
-                                // tasks[i - k].abort = true;
-                                // tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                if(disableOtherStrand){
+                                    tasks[i - k].abort = true;
+                                    tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
+                                }
                             }
                         }else{
                             break;
