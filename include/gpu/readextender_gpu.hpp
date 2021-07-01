@@ -19,7 +19,7 @@
 #include <util_iterator.hpp>
 #include <readextender_common.hpp>
 #include <gpu/cubvector.cuh>
-
+#include <gpu/cuda_block_select.cuh>
 
 
 #include <algorithm>
@@ -62,9 +62,11 @@ namespace care{
     template<int blocksize>
     struct CheckAmbiguousColumns{
 
-        using BlockReduce = cub::BlockReduce<int, 128>;
+        using BlockReduce = cub::BlockReduce<int, blocksize>;
         //using BlockScan = cub::BlockScan<int, blocksize>;
         using BlockSort = cub::BlockRadixSort<std::uint64_t, blocksize, 1>;
+        using BlockDiscontinuity = cub::BlockDiscontinuity<std::uint64_t, blocksize>;
+        using MyBlockSelect = BlockSelect<std::uint64_t, blocksize>;
 
         const int* countsA;
         const int* countsC;
@@ -115,11 +117,15 @@ namespace care{
         struct SplitInfo{
             char nuc;
             int column;
+            float ratio;
 
             SplitInfo() = default;
 
             __host__ __device__
-            SplitInfo(char c, int n) : nuc(c), column(c){}
+            SplitInfo(char c, int n) : nuc(c), column(n){}
+
+            __host__ __device__
+            SplitInfo(char c, int n, float f) : nuc(c), column(n), ratio(f){}
         };
 
         struct SplitInfos{       
@@ -135,6 +141,8 @@ namespace care{
                 typename BlockReduce::TempStorage blockreducetemp;
                 //typename BlockScan::TempStorage blockscantemp;
                 typename BlockSort::TempStorage blocksorttemp;
+                typename BlockDiscontinuity::TempStorage blockdiscontinuity;
+                typename MyBlockSelect::TempStorage blockselect;
             } cub;
 
             static constexpr int maxNumEncodedRows = 128;
@@ -169,7 +177,7 @@ namespace care{
                             #pragma unroll
                             for(int k = 0; k < 2; k++){
                                 if(myNumResults == k){
-                                    myResults[k] = {nuc, col};
+                                    myResults[k] = {nuc, col, ratio};
                                     myNumResults++;
                                     break;
                                 }
@@ -234,11 +242,56 @@ namespace care{
             const int numColumnsToCheck = std::min(numPossibleColumnsPerFlag, splitInfos.numSplitInfos / 2);
             const int maxCandidatesToCheck = std::min(blocksize, numCandidates);
 
+            #if 0
+            if(threadIdx.x == 0){                
+                if(splitInfos.numSplitInfos > 0){
+                    printf("numSplitInfos %d\n", splitInfos.numSplitInfos);
+                    for(int i = 0; i < splitInfos.numSplitInfos; i++){
+                        printf("(%c,%d, %f) ", 
+                            splitInfos.splitInfos[i].nuc, 
+                            splitInfos.splitInfos[i].column,
+                            splitInfos.splitInfos[i].ratio);
+                    }
+                    printf("\n");
+
+                    for(int c = 0; c < maxCandidatesToCheck; c++){
+                        const unsigned int* const myCandidate = encodedCandidates + c * encodedSequencePitchInInts;
+                        const int candidateShift = candidateShifts[c];
+                        const int candidateLength = candidateLengths[c];
+                        const BestAlignment_t alignmentFlag = bestAlignmentFlags[c];
+
+                        for(int i = 0; i < candidateShift; i++){
+                            printf("0");
+                        }
+                        for(int i = 0; i < candidateLength; i++){
+                            char nuc = 'F';
+                            if(alignmentFlag == BestAlignment_t::Forward){
+                                const int positionInCandidate = i;
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
+                                nuc = SequenceHelpers::decodeBase(encodedCandidateNuc);
+                            }else{
+                                const int positionInCandidate = candidateLength - 1 - i;
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
+                                nuc = SequenceHelpers::complementBaseDecoded(SequenceHelpers::decodeBase(encodedCandidateNuc));
+                            }
+                            printf("%c", nuc);
+                        }
+                        printf("\n");
+                    }
+                }
+            }
+
+            __syncthreads(); //DEBUG
+            #endif
+
             for(int c = threadIdx.x; c < maxCandidatesToCheck; c += blocksize){
                 if(temp.numEncodedRows < TempStorage::maxNumEncodedRows){
                     std::uint64_t flags = 0;
 
                     const unsigned int* const myCandidate = encodedCandidates + c * encodedSequencePitchInInts;
+                    const int candidateShift = candidateShifts[c];
+                    const int candidateLength = candidateLengths[c];
+                    const BestAlignment_t alignmentFlag = bestAlignmentFlags[c];
 
                     for(int k = 0; k < numColumnsToCheck; k++){
                         flags <<= 2;
@@ -247,22 +300,24 @@ namespace care{
                         const SplitInfo psc1 = splitInfos.splitInfos[2*k+1];
                         assert(psc0.column == psc1.column);
 
-                        const int candidateColumnsBegin_incl = candidateShifts[c] + subjectColumnsBegin_incl;
-                        const int candidateColumnsEnd_excl = candidateLengths[c] + candidateColumnsBegin_incl;
+                        const int candidateColumnsBegin_incl = candidateShift + subjectColumnsBegin_incl;
+                        const int candidateColumnsEnd_excl = candidateLength + candidateColumnsBegin_incl;
                         
                         //column range check for row
                         if(candidateColumnsBegin_incl <= psc0.column && psc0.column < candidateColumnsEnd_excl){                        
 
                             char nuc = 'F';
-                            if(bestAlignmentFlags[c] == BestAlignment_t::Forward){
+                            if(alignmentFlag == BestAlignment_t::Forward){
                                 const int positionInCandidate = psc0.column - candidateColumnsBegin_incl;
-                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLengths[c], positionInCandidate);
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
                                 nuc = SequenceHelpers::decodeBase(encodedCandidateNuc);
                             }else{
-                                const int positionInCandidate = candidateLengths[c] - 1 - (psc0.column - candidateColumnsBegin_incl);
-                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLengths[c], positionInCandidate);
+                                const int positionInCandidate = candidateLength - 1 - (psc0.column - candidateColumnsBegin_incl);
+                                std::uint8_t encodedCandidateNuc = SequenceHelpers::getEncodedNuc2Bit(myCandidate, candidateLength, positionInCandidate);
                                 nuc = SequenceHelpers::complementBaseDecoded(SequenceHelpers::decodeBase(encodedCandidateNuc));
                             }
+
+                            //printf("cand %d col %d %c\n", c, psc0.column, nuc);
 
                             if(nuc == psc0.nuc){
                                 flags = flags | 0b10;
@@ -294,6 +349,7 @@ namespace care{
             __syncthreads();
 
             {
+                //sort the computed encoded rows, and make them unique
 
                 std::uint64_t encodedRow[1];
 
@@ -312,13 +368,45 @@ namespace care{
                 }
 
                 __syncthreads();
+
+                int headflag[1];
+
+                if(threadIdx.x < temp.numEncodedRows){
+                    encodedRow[0] = temp.encodedRows[threadIdx.x];
+                }else{
+                    encodedRow[0] = temp.encodedRows[temp.numEncodedRows-1];
+                }
+
+                BlockDiscontinuity(temp.cub.blockdiscontinuity).FlagHeads(headflag, encodedRow, cub::Inequality());
+
+                __syncthreads();
+
+                int numselected = MyBlockSelect(temp.cub.blockselect).Flagged(encodedRow, headflag, &temp.encodedRows[0], temp.numEncodedRows);
+
+                __syncthreads();
+                if(threadIdx.x == 0){
+                    temp.numEncodedRows = numselected;
+                }
+                __syncthreads();
             }
+
+            // if(threadIdx.x == 0){                
+            //     if(splitInfos.numSplitInfos > 0){
+            //         printf("numEncodedRows %d\n", temp.numEncodedRows);
+            //         for(int i = 0; i < temp.numEncodedRows; i++){
+            //             printf("%lu ", temp.encodedRows[i]);
+            //         }
+            //         printf("\n");
+            //     }
+            // }
+
+            // __syncthreads(); //DEBUG
 
             for(int i = 0; i < temp.numEncodedRows - 1; i++){
                 const std::uint64_t encodedRow = temp.encodedRows[i];
 
                 std::uint64_t mask = 0;
-                for(int s = 0; s < 32; s++){
+                for(int s = 0; s < numColumnsToCheck; s++){
                     if(encodedRow >> (2*s+1) & 1){
                         mask = mask | (0x03 << (2*s));
                     }
@@ -326,7 +414,10 @@ namespace care{
                 
                 if(i < threadIdx.x && threadIdx.x < temp.numEncodedRows){
                     //check if encodedRow is equal to another flag masked with mask. if yes, it can be removed
-                    if(temp.encodedRows[threadIdx.x] & mask == encodedRow){
+                    if((temp.encodedRows[threadIdx.x] & mask) == encodedRow){
+                        // if(encodedRow == 172){
+                        //     printf("i = %d, thread=%d temp.encodedRows[threadIdx.x] = %lu, mask = %lu", i, threadIdx.x, temp.encodedRows[threadIdx.x], mask)
+                        // }
                         atomicAdd(&temp.flags[i], 1);
                     }
                 }
@@ -342,6 +433,9 @@ namespace care{
             count = BlockReduce(temp.cub.blockreducetemp).Sum(count);
             if(threadIdx.x == 0){
                 temp.broadcastint = count;
+                // if(splitInfos.numSplitInfos > 0){
+                //     printf("count = %d\n", count);
+                // }
             }
             __syncthreads();
 
@@ -659,30 +753,30 @@ namespace readextendergpukernels{
                 const BestAlignment_t* const myCandidateBestAlignmentFlags = d_alignment_best_alignment_flags + d_numCandidatesPerAnchorPrefixSum[t];
                 const unsigned int* const myCandidateSequencesData = d_candidateSequencesData + encodedSequencePitchInInts * d_numCandidatesPerAnchorPrefixSum[t];
 
-                // float supportSum = 0.0f;
+                float supportSum = 0.0f;
 
-                // for(int i = threadIdx.x; i < extendedBy; i += blockDim.x){
-                //     supportSum += 1.0f - mySupport[anchorLength + i];
-                // }
+                for(int i = threadIdx.x; i < extendedBy; i += blockDim.x){
+                    supportSum += 1.0f - mySupport[anchorLength + i];
+                }
 
-                // float reducedSupport = BlockReduceFloat(temp.reduceFloat).Sum(supportSum);
+                float reducedSupport = BlockReduceFloat(temp.reduceFloat).Sum(supportSum);
 
-                // //printf("reducedSupport %f\n", reducedSupport);
-                // if(threadIdx.x == 0){
-                //     d_goodscores[t] = reducedSupport;
-                // }
+                //printf("reducedSupport %f\n", reducedSupport);
+                if(threadIdx.x == 0){
+                    d_goodscores[t] = reducedSupport;
+                }
 
-                AmbiguousColumnsChecker checker(
-                    myCounts + 0 * msaColumnPitchInElements,
-                    myCounts + 1 * msaColumnPitchInElements,
-                    myCounts + 2 * msaColumnPitchInElements,
-                    myCounts + 3 * msaColumnPitchInElements,
-                    myCoverage
-                );
+                // AmbiguousColumnsChecker checker(
+                //     myCounts + 0 * msaColumnPitchInElements,
+                //     myCounts + 1 * msaColumnPitchInElements,
+                //     myCounts + 2 * msaColumnPitchInElements,
+                //     myCounts + 3 * msaColumnPitchInElements,
+                //     myCoverage
+                // );
 
-                int count = checker.getAmbiguousColumnCount(anchorLength, anchorLength + extendedBy, temp.reduce);
+                //int count = checker.getAmbiguousColumnCount(anchorLength, anchorLength + extendedBy, temp.reduce);
 
-                // checker.getSplitInfos(anchorLength, anchorLength + extendBy, 0.4f, 0.6f, smemSplitInfos);
+                // checker.getSplitInfos(anchorLength, anchorLength + extendedBy, 0.4f, 0.6f, smemSplitInfos);
 
                 // int count = checker.getNumberOfSplits(
                 //     smemSplitInfos, 
@@ -696,9 +790,9 @@ namespace readextendergpukernels{
                 //     temp.columnschecker
                 // );
 
-                if(threadIdx.x == 0){
-                    d_goodscores[t] = count;
-                }
+                // if(threadIdx.x == 0){
+                //     d_goodscores[t] = count;
+                // }
                 
                 __syncthreads();
             }
@@ -2753,7 +2847,7 @@ struct BatchData{
             kernelLaunchHandle
         );
 
-        d_candidateQualityScores.destroy();
+        
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
 
@@ -2782,15 +2876,49 @@ struct BatchData{
                 }
             }
         ); CUERR;
-        
+
+        //compact data of remaining candidates
+
+        auto d_zip_data = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_alignment_nOps.data(),
+                d_alignment_overlaps.data(),
+                d_alignment_shifts.data(),
+                d_alignment_best_alignment_flags.data(),
+                d_candidateReadIds.data(),
+                d_candidateSequencesLength.data(),
+                d_isPairedCandidate.data()
+            )
+        );
+
+        CachedDeviceUVector<int> d_alignment_overlaps2(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_shifts2(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_nOps2(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, firstStream, *cubAllocator);
         CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, firstStream, *cubAllocator);
+  
+        auto d_zip_data_tmp = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_alignment_nOps2.data(),
+                d_alignment_overlaps2.data(),
+                d_alignment_shifts2.data(),
+                d_alignment_best_alignment_flags2.data(),
+                d_candidateReadIds2.data(),
+                d_candidateSequencesLength2.data(),
+                d_isPairedCandidate2.data()
+            )
+        );
+
+        //compact 1d arrays
 
         cubSelectFlagged(
-            d_candidateReadIds.data(),
-            d_shouldBeKept.data(),
-            d_candidateReadIds2.data(),
-            h_numCandidates.data(),
-            totalNumCandidates,
+            d_zip_data, 
+            d_shouldBeKept.data(), 
+            d_zip_data_tmp, 
+            h_numCandidates.data(), 
+            totalNumCandidates, 
             firstStream
         );
 
@@ -2847,7 +2975,6 @@ struct BatchData{
         d_origWeights.destroy();
         indices1.destroy();
         indices2.destroy();
-        d_shouldBeKept.destroy();
 
         cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), firstStream); CUERR;
         cubInclusiveSum(
@@ -2856,15 +2983,66 @@ struct BatchData{
             numTasks, 
             firstStream
         );
+        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
 
         cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
-        
+        const int oldTotalNumCandidates = totalNumCandidates;
+
         totalNumCandidates = *h_numCandidates; 
 
+        d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), firstStream);
+        d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), firstStream);
+        d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), firstStream);
+        d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), firstStream);
         d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), firstStream);
+        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), firstStream);
+        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), firstStream);
 
-        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
-        std::swap(d_candidateReadIds, d_candidateReadIds2);     
+        std::swap(d_alignment_nOps, d_alignment_nOps2);
+        std::swap(d_alignment_overlaps, d_alignment_overlaps2);
+        std::swap(d_alignment_shifts, d_alignment_shifts2);
+        std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags2);
+        std::swap(d_candidateReadIds, d_candidateReadIds2);
+        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
+        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
+        
+        //update candidate sequences data
+        CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, firstStream, *cubAllocator);
+
+        cubSelectFlagged(
+            d_candidateSequencesData.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{d_shouldBeKept.data(), int(encodedSequencePitchInInts)}
+            ),
+            d_candidateSequencesData2.data(),
+            thrust::make_discard_iterator(),
+            oldTotalNumCandidates * encodedSequencePitchInInts,
+            firstStream
+        );
+
+        std::swap(d_candidateSequencesData, d_candidateSequencesData2);
+
+        //update candidate quality scores
+        assert(qualityPitchInBytes % sizeof(int) == 0);
+        CachedDeviceUVector<char> d_candidateQualities2(qualityPitchInBytes * totalNumCandidates, firstStream, *cubAllocator);
+
+        cubSelectFlagged(
+            (const int*)d_candidateQualityScores.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{d_shouldBeKept.data(), int(qualityPitchInBytes / sizeof(int))}
+            ),
+            (int*)d_candidateQualities2.data(),
+            thrust::make_discard_iterator(),
+            oldTotalNumCandidates * qualityPitchInBytes / sizeof(int),
+            firstStream
+        );
+
+        std::swap(d_candidateQualityScores, d_candidateQualities2);
+
+        d_candidateQualityScores.destroy();
+        d_shouldBeKept.destroy();
 
         setState(BatchData::State::BeforeExtend);
     }
