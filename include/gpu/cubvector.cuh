@@ -1,4 +1,5 @@
 #ifndef CARE_CUBVECTOR_CUH
+#define CARE_CUBVECTOR_CUH
 
 #include <cub/util_allocator.cuh>
 #include <hpc_helpers.cuh>
