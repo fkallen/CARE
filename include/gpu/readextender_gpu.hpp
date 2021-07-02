@@ -2168,23 +2168,14 @@ struct BatchData{
             numTasks,
             stream
         );
-        cudaStreamSynchronize(stream); CUERR; //wait for h_numCandidates   and h_numAnchorsWithRemovedMates
+        cudaStreamSynchronize(stream); CUERR; //wait for h_numAnchorsWithRemovedMates
         const int numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
 
         if(numTasksWithMateRemoved > 0){
 
-            
-
-            CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
-
-            CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
-            CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
-            CachedDeviceUVector<int> d_segmentIdsOfCandidates2(totalNumCandidates, stream, *cubAllocator);
             CachedDeviceUVector<bool> d_keepflags(totalNumCandidates, stream, *cubAllocator);
 
-
-            CachedDeviceUVector<unsigned int> d_anchorMateData(numTasks * encodedSequencePitchInInts, stream, *cubAllocator);
+            CachedDeviceUVector<unsigned int> d_sequencesOfMatesWhichShouldBeRemoved(numTasksWithMateRemoved * encodedSequencePitchInInts, stream, *cubAllocator);
 
             //Gather mate sequence data of tasks which removed mate read id from candidate list
 
@@ -2194,7 +2185,7 @@ struct BatchData{
                     thrust::make_counting_iterator(0),
                     SequenceFlagMultiplier{d_mateIdHasBeenRemoved.data(), int(encodedSequencePitchInInts)}
                 ),
-                d_anchorMateData.data(),
+                d_sequencesOfMatesWhichShouldBeRemoved.data(),
                 thrust::make_discard_iterator(),
                 numTasks * encodedSequencePitchInInts,
                 stream
@@ -2211,7 +2202,7 @@ struct BatchData{
             helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
 
             readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-                d_anchorMateData.data(),
+                d_sequencesOfMatesWhichShouldBeRemoved.data(),
                 d_candidateSequencesData.data(),
                 encodedSequencePitchInInts,
                 d_numCandidatesPerAnchor.data(),
@@ -2221,116 +2212,10 @@ struct BatchData{
                 d_keepflags.data()
             ); CUERR;
 
-            CachedDeviceUVector<int> d_outputpositions(totalNumCandidates, stream, *cubAllocator);
-
-            cubExclusiveSum(
-                d_keepflags.data(), 
-                d_outputpositions.data(), 
-                totalNumCandidates, 
+            compactCandidateDataByFlagsExcludingAlignments(
+                d_keepflags.data(),
                 stream
             );
-
-            helpers::lambda_kernel<<<4096, 128, 0, stream>>>(
-                [
-                    numTasks = numTasks,
-                    encodedSequencePitchInInts = encodedSequencePitchInInts,
-                    d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                    d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-                    d_keepflags = d_keepflags.data(),
-                    d_outputpositions = d_outputpositions.data(),
-                    d_candidateReadIds = d_candidateReadIds.data(),
-                    d_candidateSequencesLength = d_candidateSequencesLength.data(),
-                    d_candidateSequencesData = d_candidateSequencesData.data(),
-                    d_segmentIdsOfCandidates = d_segmentIdsOfCandidates.data(),
-                    d_isPairedCandidate = d_isPairedCandidate.data(),
-                    d_candidateReadIdsOut = d_candidateReadIds2.data(),
-                    d_candidateSequencesLengthOut = d_candidateSequencesLength2.data(),
-                    d_candidateSequencesDataOut = d_candidateSequencesData2.data(),
-                    d_segmentIdsOfCandidatesOut = d_segmentIdsOfCandidates2.data(),
-                    d_isPairedCandidateOut = d_isPairedCandidate2.data()
-                ] __device__ (){
-
-                    constexpr int elementsPerIteration = 128;
-
-                    using BlockReduce = cub::BlockReduce<int, elementsPerIteration>;
-                    __shared__ typename BlockReduce::TempStorage temp_storage;
-
-                    for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-                        const int numCandidates = d_numCandidatesPerAnchor[t];
-                        const int inputOffset = d_numCandidatesPerAnchorPrefixSum[t];
-
-                        int numSelected = 0;
-
-                        for(int i = threadIdx.x; i < numCandidates; i += blockDim.x){
-                            if(d_keepflags[inputOffset + i]){
-                                const int outputLocation = d_outputpositions[inputOffset + i];
-
-                                d_candidateReadIdsOut[outputLocation] = d_candidateReadIds[inputOffset + i];
-                                d_candidateSequencesLengthOut[outputLocation] = d_candidateSequencesLength[inputOffset + i];
-                                d_segmentIdsOfCandidatesOut[outputLocation] = d_segmentIdsOfCandidates[inputOffset + i];
-                                d_isPairedCandidateOut[outputLocation] = d_isPairedCandidate[inputOffset + i];
-
-                                numSelected++;
-                            }
-                        }
-
-                        for(int i = threadIdx.x; i < numCandidates * encodedSequencePitchInInts; i += blockDim.x){
-                            const int which = i / encodedSequencePitchInInts;
-                            const int what = i % encodedSequencePitchInInts;
-
-                            if(d_keepflags[inputOffset + which]){
-                                d_candidateSequencesDataOut[d_outputpositions[inputOffset + which] * encodedSequencePitchInInts + what] = d_candidateSequencesData[(inputOffset + which) * encodedSequencePitchInInts + what];
-                            }
-                        }
-
-                        numSelected = BlockReduce(temp_storage).Sum(numSelected);
-                        __syncthreads();
-                        
-                        if(threadIdx.x == 0){
-                            if(numSelected != numCandidates){
-                                assert(numSelected < numCandidates);
-                                d_numCandidatesPerAnchor[t] = numSelected;
-                            }
-                        }
-
-                    }
-                }
-            ); CUERR;
-
-            //update prefix sum  
-
-            cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
-
-            cubInclusiveSum(
-                d_numCandidatesPerAnchor.data(), 
-                d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-                numTasks, 
-                stream
-            );
-
-            cudaMemcpyAsync(
-                h_numCandidates.data(),
-                d_numCandidatesPerAnchorPrefixSum.data() + numTasks,
-                sizeof(int),
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaStreamSynchronize(stream); CUERR;
-
-            totalNumCandidates = *h_numCandidates;
-
-            d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
-            d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
-            d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
-            d_segmentIdsOfCandidates2.erase(d_segmentIdsOfCandidates2.begin() + totalNumCandidates, d_segmentIdsOfCandidates2.end(), stream);
-            d_candidateSequencesData2.erase(d_candidateSequencesData2.begin() + totalNumCandidates, d_candidateSequencesData2.end(), stream);
-
-            std::swap(d_candidateReadIds, d_candidateReadIds2); 
-            std::swap(d_candidateSequencesLength, d_candidateSequencesLength2); 
-            std::swap(d_isPairedCandidate, d_isPairedCandidate2); 
-            std::swap(d_segmentIdsOfCandidates, d_segmentIdsOfCandidates2); 
-            std::swap(d_candidateSequencesData, d_candidateSequencesData2); 
         }
 
         setState(BatchData::State::BeforeAlignment);
@@ -2624,97 +2509,10 @@ struct BatchData{
         ); CUERR;
         #endif
 
-        DEBUGDEVICESYNC
-
-        auto d_zip_data = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                d_alignment_nOps.data(),
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_candidateReadIds.data(),
-                d_candidateSequencesLength.data(),
-                d_isPairedCandidate.data()
-            )
-        );
-
-        CachedDeviceUVector<int> d_alignment_overlaps2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_alignment_shifts2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_alignment_nOps2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
-        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
-  
-        auto d_zip_data_tmp = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                d_alignment_nOps2.data(),
-                d_alignment_overlaps2.data(),
-                d_alignment_shifts2.data(),
-                d_alignment_best_alignment_flags2.data(),
-                d_candidateReadIds2.data(),
-                d_candidateSequencesLength2.data(),
-                d_isPairedCandidate2.data()
-            )
-        );
-
-        //compact 1d arrays
-
-        cubSelectFlagged(
-            d_zip_data, 
-            d_keepflags.data(), 
-            d_zip_data_tmp, 
-            h_numCandidates.data(), 
-            totalNumCandidates, 
+        compactCandidateDataByFlags(
+            d_keepflags.data(),
             stream
         );
-
-        cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
-
-        cubSelectFlagged(
-            d_candidateSequencesData.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepflags.data(), int(encodedSequencePitchInInts)}
-            ),
-            d_candidateSequencesData2.data(),
-            thrust::make_discard_iterator(),
-            totalNumCandidates * encodedSequencePitchInInts,
-            stream
-        );
-
-        std::swap(d_candidateSequencesData2, d_candidateSequencesData);
-
-        //compute prefix sum of new number of candidates per anchor
-        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
-        cubInclusiveSum(
-            d_numCandidatesPerAnchor2.data(), 
-            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            numTasks, 
-            stream
-        );
-
-        std::swap(d_numCandidatesPerAnchor2, d_numCandidatesPerAnchor);       
-
-
-        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
-        totalNumCandidates = *h_numCandidates;
-
-        d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), stream);
-        d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), stream);
-        d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), stream);
-        d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), stream);
-        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
-        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
-        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
-
-        std::swap(d_alignment_nOps, d_alignment_nOps2);
-        std::swap(d_alignment_overlaps, d_alignment_overlaps2);
-        std::swap(d_alignment_shifts, d_alignment_shifts2);
-        std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags2);
-        std::swap(d_candidateReadIds, d_candidateReadIds2);
-        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
-        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
 
         //filterAlignments is a compaction step. check early exit.
         if(totalNumCandidates == 0){
@@ -2847,85 +2645,7 @@ struct BatchData{
             firstStream,
             kernelLaunchHandle
         );
-
         
-
-        helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
-
-        //convert output indices from task-local indices to global flags
-        helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
-            [
-                d_flagscandidates = d_shouldBeKept.data(),
-                indices2 = indices2.data(),
-                d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
-            ] __device__ (){
-                /*
-                    Input:
-                    indices2: 0,1,2,0,0,0,0,3,5,0
-                    d_numCandidatesPerAnchorPrefixSum: 0,6,10
-
-                    Output:
-                    d_flagscandidates: 1,1,1,0,0,0,1,0,0,1,0,1
-                */
-                const int num = d_numCandidatesPerAnchor2[blockIdx.x];
-                const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
-                
-                for(int i = threadIdx.x; i < num; i += blockDim.x){
-                    const int globalIndex = indices2[offset + i] + offset;
-                    d_flagscandidates[globalIndex] = true;
-                }
-            }
-        ); CUERR;
-
-        //compact data of remaining candidates
-
-        auto d_zip_data = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                d_alignment_nOps.data(),
-                d_alignment_overlaps.data(),
-                d_alignment_shifts.data(),
-                d_alignment_best_alignment_flags.data(),
-                d_candidateReadIds.data(),
-                d_candidateSequencesLength.data(),
-                d_isPairedCandidate.data()
-            )
-        );
-
-        CachedDeviceUVector<int> d_alignment_overlaps2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> d_alignment_shifts2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> d_alignment_nOps2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, firstStream, *cubAllocator);
-  
-        auto d_zip_data_tmp = thrust::make_zip_iterator(
-            thrust::make_tuple(
-                d_alignment_nOps2.data(),
-                d_alignment_overlaps2.data(),
-                d_alignment_shifts2.data(),
-                d_alignment_best_alignment_flags2.data(),
-                d_candidateReadIds2.data(),
-                d_candidateSequencesLength2.data(),
-                d_isPairedCandidate2.data()
-            )
-        );
-
-        //compact 1d arrays
-
-        cubSelectFlagged(
-            d_zip_data, 
-            d_shouldBeKept.data(), 
-            d_zip_data_tmp, 
-            h_numCandidates.data(), 
-            totalNumCandidates, 
-            firstStream
-        );
-
-        cudaEventRecord(h_numCandidatesEvent, firstStream); CUERR;
-
-
 
         //compute quality of consensus
         helpers::lambda_kernel<<<numTasks, 256, 0, firstStream>>>(
@@ -2971,80 +2691,51 @@ struct BatchData{
             }
         ); CUERR;
 
+        
+
+        helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
+
+        //convert output indices from task-local indices to global flags
+        helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
+            [
+                d_flagscandidates = d_shouldBeKept.data(),
+                indices2 = indices2.data(),
+                d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
+                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
+            ] __device__ (){
+                /*
+                    Input:
+                    indices2: 0,1,2,0,0,0,0,3,5,0
+                    d_numCandidatesPerAnchorPrefixSum: 0,6,10
+
+                    Output:
+                    d_flagscandidates: 1,1,1,0,0,0,1,0,0,1,0,1
+                */
+                const int num = d_numCandidatesPerAnchor2[blockIdx.x];
+                const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
+                
+                for(int i = threadIdx.x; i < num; i += blockDim.x){
+                    const int globalIndex = indices2[offset + i] + offset;
+                    d_flagscandidates[globalIndex] = true;
+                }
+            }
+        ); CUERR;
+
+
         d_weights.destroy();
         d_origCoverages.destroy();
         d_origWeights.destroy();
         indices1.destroy();
         indices2.destroy();
-
-        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), firstStream); CUERR;
-        cubInclusiveSum(
-            d_numCandidatesPerAnchor2.data(), 
-            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
-            numTasks, 
-            firstStream
-        );
-        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
-
-        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
-        const int oldTotalNumCandidates = totalNumCandidates;
-
-        totalNumCandidates = *h_numCandidates; 
-
-        d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), firstStream);
-        d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), firstStream);
-        d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), firstStream);
-        d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), firstStream);
-        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), firstStream);
-        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), firstStream);
-        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), firstStream);
-
-        std::swap(d_alignment_nOps, d_alignment_nOps2);
-        std::swap(d_alignment_overlaps, d_alignment_overlaps2);
-        std::swap(d_alignment_shifts, d_alignment_shifts2);
-        std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags2);
-        std::swap(d_candidateReadIds, d_candidateReadIds2);
-        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
-        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
-        
-        //update candidate sequences data
-        CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, firstStream, *cubAllocator);
-
-        cubSelectFlagged(
-            d_candidateSequencesData.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_shouldBeKept.data(), int(encodedSequencePitchInInts)}
-            ),
-            d_candidateSequencesData2.data(),
-            thrust::make_discard_iterator(),
-            oldTotalNumCandidates * encodedSequencePitchInInts,
-            firstStream
-        );
-
-        std::swap(d_candidateSequencesData, d_candidateSequencesData2);
-
-        //update candidate quality scores
-        assert(qualityPitchInBytes % sizeof(int) == 0);
-        CachedDeviceUVector<char> d_candidateQualities2(qualityPitchInBytes * totalNumCandidates, firstStream, *cubAllocator);
-
-        cubSelectFlagged(
-            (const int*)d_candidateQualityScores.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_shouldBeKept.data(), int(qualityPitchInBytes / sizeof(int))}
-            ),
-            (int*)d_candidateQualities2.data(),
-            thrust::make_discard_iterator(),
-            oldTotalNumCandidates * qualityPitchInBytes / sizeof(int),
-            firstStream
-        );
-
-        std::swap(d_candidateQualityScores, d_candidateQualities2);
+        d_numCandidatesPerAnchor2.destroy();
 
         d_candidateQualityScores.destroy();
-        d_shouldBeKept.destroy();
 
+        compactCandidateDataByFlags(
+            d_shouldBeKept.data(),
+            firstStream
+        );
+        
         setState(BatchData::State::BeforeExtend);
     }
 
@@ -4632,8 +4323,278 @@ struct BatchData{
                 'I',
                 stream
             ); CUERR;
-        }
+        }        
+    }
+
+    void compactCandidateDataByFlagsExcludingAlignments(
+        const bool* d_keepFlags,
+        cudaStream_t stream
+    ){
+        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, stream, *cubAllocator);
+
+        cubSegmentedReduceSum(
+            d_keepFlags,
+            d_numCandidatesPerAnchor2.data(),
+            numTasks,
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_numCandidatesPerAnchorPrefixSum.data() + 1,
+            stream
+        );
+
+        auto d_zip_data = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_candidateReadIds.data(),
+                d_candidateSequencesLength.data(),
+                d_isPairedCandidate.data()
+            )
+        );
+
+        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
+  
+        auto d_zip_data_tmp = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_candidateReadIds2.data(),
+                d_candidateSequencesLength2.data(),
+                d_isPairedCandidate2.data()
+            )
+        );
+
+        //compact 1d arrays
+
+        cubSelectFlagged(
+            d_zip_data, 
+            d_keepFlags, 
+            d_zip_data_tmp, 
+            h_numCandidates.data(), 
+            totalNumCandidates, 
+            stream
+        );
+
+        cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
+
+
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
+        cubInclusiveSum(
+            d_numCandidatesPerAnchor2.data(), 
+            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
+            numTasks, 
+            stream
+        );
+        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
+
+        d_numCandidatesPerAnchor2.destroy();
+
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
+        const int oldTotalNumCandidates = totalNumCandidates;
+
+        totalNumCandidates = *h_numCandidates; 
+
+        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
+        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
+        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
+
+        std::swap(d_candidateReadIds, d_candidateReadIds2);
+        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
+        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
+
+        d_candidateSequencesLength2.destroy();
+        d_candidateReadIds2.destroy();
+        d_isPairedCandidate2.destroy();
         
+        //update candidate sequences data
+        CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
+
+        cubSelectFlagged(
+            d_candidateSequencesData.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{d_keepFlags, int(encodedSequencePitchInInts)}
+            ),
+            d_candidateSequencesData2.data(),
+            thrust::make_discard_iterator(),
+            oldTotalNumCandidates * encodedSequencePitchInInts,
+            stream
+        );
+
+        std::swap(d_candidateSequencesData, d_candidateSequencesData2);
+        d_candidateSequencesData2.destroy();
+
+        //update candidate quality scores
+        // assert(qualityPitchInBytes % sizeof(int) == 0);
+        // CachedDeviceUVector<char> d_candidateQualities2(qualityPitchInBytes * totalNumCandidates, stream, *cubAllocator);
+
+        // cubSelectFlagged(
+        //     (const int*)d_candidateQualityScores.data(),
+        //     thrust::make_transform_iterator(
+        //         thrust::make_counting_iterator(0),
+        //         SequenceFlagMultiplier{d_keepFlags, int(qualityPitchInBytes / sizeof(int))}
+        //     ),
+        //     (int*)d_candidateQualities2.data(),
+        //     thrust::make_discard_iterator(),
+        //     oldTotalNumCandidates * qualityPitchInBytes / sizeof(int),
+        //     firstStream
+        // );
+
+        // std::swap(d_candidateQualityScores, d_candidateQualities2);
+
+        setGpuSegmentIds(
+            d_segmentIdsOfCandidates.data(),
+            numTasks,
+            totalNumCandidates,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            stream
+        );
+    }
+
+
+    void compactCandidateDataByFlags(
+        const bool* d_keepFlags,
+        cudaStream_t stream
+    ){
+        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, stream, *cubAllocator);
+
+        cubSegmentedReduceSum(
+            d_keepFlags,
+            d_numCandidatesPerAnchor2.data(),
+            numTasks,
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_numCandidatesPerAnchorPrefixSum.data() + 1,
+            stream
+        );
+
+        auto d_zip_data = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_alignment_nOps.data(),
+                d_alignment_overlaps.data(),
+                d_alignment_shifts.data(),
+                d_alignment_best_alignment_flags.data(),
+                d_candidateReadIds.data(),
+                d_candidateSequencesLength.data(),
+                d_isPairedCandidate.data()
+            )
+        );
+
+        CachedDeviceUVector<int> d_alignment_overlaps2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_shifts2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_alignment_nOps2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<BestAlignment_t> d_alignment_best_alignment_flags2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_candidateSequencesLength2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedCandidate2(totalNumCandidates, stream, *cubAllocator);
+  
+        auto d_zip_data_tmp = thrust::make_zip_iterator(
+            thrust::make_tuple(
+                d_alignment_nOps2.data(),
+                d_alignment_overlaps2.data(),
+                d_alignment_shifts2.data(),
+                d_alignment_best_alignment_flags2.data(),
+                d_candidateReadIds2.data(),
+                d_candidateSequencesLength2.data(),
+                d_isPairedCandidate2.data()
+            )
+        );
+
+        //compact 1d arrays
+
+        cubSelectFlagged(
+            d_zip_data, 
+            d_keepFlags, 
+            d_zip_data_tmp, 
+            h_numCandidates.data(), 
+            totalNumCandidates, 
+            stream
+        );
+
+        cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
+
+
+        cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
+        cubInclusiveSum(
+            d_numCandidatesPerAnchor2.data(), 
+            d_numCandidatesPerAnchorPrefixSum.data() + 1, 
+            numTasks, 
+            stream
+        );
+        std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
+
+        d_numCandidatesPerAnchor2.destroy();
+
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
+        const int oldTotalNumCandidates = totalNumCandidates;
+
+        totalNumCandidates = *h_numCandidates; 
+
+        d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), stream);
+        d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), stream);
+        d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), stream);
+        d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), stream);
+        d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
+        d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
+        d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
+
+        std::swap(d_alignment_nOps, d_alignment_nOps2);
+        std::swap(d_alignment_overlaps, d_alignment_overlaps2);
+        std::swap(d_alignment_shifts, d_alignment_shifts2);
+        std::swap(d_alignment_best_alignment_flags, d_alignment_best_alignment_flags2);
+        std::swap(d_candidateReadIds, d_candidateReadIds2);
+        std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
+        std::swap(d_isPairedCandidate, d_isPairedCandidate2);
+
+        d_alignment_overlaps2.destroy();
+        d_alignment_shifts2.destroy();
+        d_alignment_nOps2.destroy();
+        d_alignment_best_alignment_flags2.destroy();
+        d_candidateSequencesLength2.destroy();
+        d_candidateReadIds2.destroy();
+        d_isPairedCandidate2.destroy();
+        
+        //update candidate sequences data
+        CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * totalNumCandidates, stream, *cubAllocator);
+
+        cubSelectFlagged(
+            d_candidateSequencesData.data(),
+            thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                SequenceFlagMultiplier{d_keepFlags, int(encodedSequencePitchInInts)}
+            ),
+            d_candidateSequencesData2.data(),
+            thrust::make_discard_iterator(),
+            oldTotalNumCandidates * encodedSequencePitchInInts,
+            stream
+        );
+
+        std::swap(d_candidateSequencesData, d_candidateSequencesData2);
+        d_candidateSequencesData2.destroy();
+
+        //update candidate quality scores
+        // assert(qualityPitchInBytes % sizeof(int) == 0);
+        // CachedDeviceUVector<char> d_candidateQualities2(qualityPitchInBytes * totalNumCandidates, stream, *cubAllocator);
+
+        // cubSelectFlagged(
+        //     (const int*)d_candidateQualityScores.data(),
+        //     thrust::make_transform_iterator(
+        //         thrust::make_counting_iterator(0),
+        //         SequenceFlagMultiplier{d_keepFlags, int(qualityPitchInBytes / sizeof(int))}
+        //     ),
+        //     (int*)d_candidateQualities2.data(),
+        //     thrust::make_discard_iterator(),
+        //     oldTotalNumCandidates * qualityPitchInBytes / sizeof(int),
+        //     firstStream
+        // );
+
+        // std::swap(d_candidateQualityScores, d_candidateQualities2);
+
+        setGpuSegmentIds(
+            d_segmentIdsOfCandidates.data(),
+            numTasks,
+            totalNumCandidates,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            stream
+        );
     }
 
     void setStateToFinished(){
