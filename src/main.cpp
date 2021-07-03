@@ -182,7 +182,8 @@ int main(int argc, char** argv){
 			"PE / pe : Paired-end reads",
 			cxxopts::value<std::string>()->default_value("SE"))
 		("pairedthreshold1", "pairedthreshold1", cxxopts::value<float>())
-
+		("hashloadfactor", "Load factor of hashtables. 0.0 < hashloadfactor < 1.0"
+			"Default: " + std::to_string(MemoryOptions{}.hashtableLoadfactor), cxxopts::value<float>())
 	;
 
 	//options.parse_positional({"deviceIds"});
@@ -300,6 +301,8 @@ int main(int argc, char** argv){
 
 	std::cout << "Maximum memory for hash tables: " << memoryOptions.memoryForHashtables << "\n";
 	std::cout << "Maximum memory total: " << memoryOptions.memoryTotalLimit << "\n";
+	std::cout << "Hashtable load factor: " << memoryOptions.hashtableLoadfactor << "\n";
+
 
 	std::cout << "Minimum read length: " << fileOptions.minimum_sequence_length << "\n";
 	std::cout << "Maximum read length: " << fileOptions.maximum_sequence_length << "\n";

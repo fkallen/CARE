@@ -129,7 +129,7 @@ public:
         correctionOptions(&correctionOptions_),
         goodAlignmentProperties(&goodAlignmentProperties_),
         minhasher{&minhasher_},
-        minhashHandle{minhasher->makeQueryHandle()},
+        minhashHandle{minhasher->makeMinhasherHandle()},
         readStorage{&readStorage_},
         readStorageHandle{readStorage->makeHandle()},
         correctionFlags(&correctionFlags_),
@@ -141,6 +141,7 @@ public:
 
     ~CpuErrorCorrector(){
         readStorage->destroyHandle(readStorageHandle);
+        minhasher->destroyHandle(minhashHandle);
     }
 
     CpuErrorCorrectorOutput process(const CpuErrorCorrectorInput input){
@@ -1762,7 +1763,7 @@ private:
     const CorrectionOptions* correctionOptions{};
     const GoodAlignmentProperties* goodAlignmentProperties{};
     const CpuMinhasher* minhasher{};
-    mutable CpuMinhasher::QueryHandle minhashHandle;
+    mutable MinhasherHandle minhashHandle;
     const CpuReadStorage* readStorage{};
     mutable ReadStorageHandle readStorageHandle;
 

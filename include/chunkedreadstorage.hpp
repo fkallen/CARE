@@ -640,7 +640,7 @@ public: //inherited interface
         return pairedEnd;
     }
 
-    void destroy() override{
+    void destroy() {
         auto deallocVector = [](auto& vec){
             using T = typename std::remove_reference<decltype(vec)>::type;
             T tmp{};
