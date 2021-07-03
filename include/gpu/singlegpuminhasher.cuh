@@ -5,8 +5,6 @@
 
 #include <config.hpp>
 
-#include <warpcore.cuh>
-
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>

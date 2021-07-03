@@ -3,7 +3,9 @@
 #ifndef CARE_GPUHASHTABLE_CUH
 #define CARE_GPUHASHTABLE_CUH
 
-#include <warpcore.cuh>
+#include <warpcore/single_value_hash_table.cuh>
+#include <warpcore/multi_value_hash_table.cuh>
+
 #include <hpc_helpers.cuh>
 
 #include <memorymanagement.hpp>

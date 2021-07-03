@@ -38,7 +38,8 @@
 
 #ifdef CARE_HAS_WARPCORE
 
-#include <warpcore.cuh>
+#include <warpcore/single_value_hash_table.cuh>
+#include <warpcore/multi_value_hash_table.cuh>
 
 #endif
 
