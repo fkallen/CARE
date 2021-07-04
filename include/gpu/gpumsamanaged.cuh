@@ -125,6 +125,71 @@ namespace gpu{
             );
         }
 
+        void refine(
+            int* d_newCandidatePositionsInSegments,
+            int* d_newNumCandidatePositionsInSegments,
+            int* d_newNumCandidates,
+            const int* d_alignment_overlaps,
+            const int* d_alignment_shifts,
+            const int* d_alignment_nOps,
+            const BestAlignment_t* d_alignment_best_alignment_flags,
+            int* d_candidatePositionsInSegments,
+            int* d_numCandidatePositionsInSegments,
+            const int* d_segmentBeginOffsets,
+            const int* d_anchorSequencesLength,
+            const unsigned int* d_anchorSequences,
+            const char* d_anchorQualities,
+            int numAnchors,
+            const int* d_candidateSequencesLength,
+            const unsigned int* d_candidateSequences,
+            const char* d_candidateQualities,
+            const bool* d_isPairedCandidate,
+            int numCandidates,
+            const int* d_numAnchors,
+            std::size_t encodedSequencePitchInInts,
+            std::size_t qualityPitchInBytes,
+            bool useQualityScores,
+            float desiredAlignmentMaxErrorRate,
+            int dataset_coverage,
+            int numIterations,
+            cudaStream_t stream
+        ){
+            CachedDeviceUVector<bool> d_temp(numCandidates, stream, *cubAllocator);
+
+            callMsaCandidateRefinementKernel_multiiter_async(
+                d_newCandidatePositionsInSegments,
+                d_newNumCandidatePositionsInSegments,
+                d_newNumCandidates,
+                multiMSA,
+                d_alignment_best_alignment_flags,
+                d_alignment_shifts,
+                d_alignment_nOps,
+                d_alignment_overlaps,
+                d_anchorSequences,
+                d_candidateSequences,
+                d_isPairedCandidate,
+                d_anchorSequencesLength,
+                d_candidateSequencesLength,
+                d_anchorQualities,
+                d_candidateQualities,
+                d_temp.data(),
+                d_segmentBeginOffsets,
+                d_numAnchors,
+                desiredAlignmentMaxErrorRate,
+                numAnchors,
+                numCandidates,
+                useQualityScores,
+                encodedSequencePitchInInts,
+                qualityPitchInBytes,
+                d_candidatePositionsInSegments,
+                d_numCandidatePositionsInSegments,
+                dataset_coverage,
+                numIterations,
+                stream,
+                kernelLaunchHandle
+            );
+        }
+
         void destroy(){
             d_consensusEncoded.destroy();
             d_counts.destroy();
