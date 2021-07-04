@@ -22,10 +22,13 @@ namespace gpu{
             const MemoryOptions& memoryOptions,
             const GpuReadStorage& gpuReadStorage
         ){
+            float loadfactor = memoryOptions.hashtableLoadfactor;
+            
             auto gpuMinhasher = std::make_unique<FakeGpuMinhasher>(
                 gpuReadStorage.getNumberOfReads(),
                 calculateResultsPerMapThreshold(correctionOptions.estimatedCoverage),
-                correctionOptions.kmerlength
+                correctionOptions.kmerlength,
+                loadfactor
             );
 
             if(fileOptions.load_hashtables_from != ""){

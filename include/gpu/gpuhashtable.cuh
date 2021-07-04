@@ -7,7 +7,7 @@
 #include <warpcore/multi_value_hash_table.cuh>
 
 #include <hpc_helpers.cuh>
-
+#include <cpuhashtable.hpp>
 #include <memorymanagement.hpp>
 
 #include <memory>
@@ -871,6 +871,364 @@ namespace gpu{
 
         gpuhashtablekernels::fixTableKeysKernel<<<grid, block, 0, stream>>>(d_keys, numKeys, isValidKey); CUERR;
     }
+
+
+    #if 0
+
+    template<class Key, class Value>
+    class CpuReadOnlyMultiValueHashTableWithWarpcoreLookup{
+        static_assert(std::is_integral<Key>::value, "Key must be integral!");
+    public:
+
+        using WarpcoreLookup = warpcore::SingleValueHashTable<Key, std::pair<Value, BucketSize>>;
+
+        struct QueryResult{
+            int numValues;
+            const Value* valuesBegin;
+        };
+
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup() = default;
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&) = default;
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&&) = default;
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& operator=(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&) = default;
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& operator=(CpuReadOnlyMultiValueHashTableWithWarpcoreLookup&&) = default;
+
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey,
+            const std::vector<int>& gpuIds,
+            bool valuesOfSameKeyMustBeSorted = false
+        ){
+            init(std::move(keys), std::move(vals), maxValuesPerKey, gpuIds, valuesOfSameKeyMustBeSorted);
+        }
+
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey,
+            bool valuesOfSameKeyMustBeSorted = false
+        ){
+            init(std::move(keys), std::move(vals), maxValuesPerKey, valuesOfSameKeyMustBeSorted);
+        }
+
+        CpuReadOnlyMultiValueHashTableWithWarpcoreLookup(
+            std::uint64_t maxNumValues_
+        ) : buildMaxNumValues{maxNumValues_}{
+            buildkeys.reserve(buildMaxNumValues);
+            buildvalues.reserve(buildMaxNumValues);
+        }
+
+        bool operator==(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& rhs) const{
+            return values == rhs.values && lookup == rhs.lookup;
+        }
+
+        bool operator!=(const CpuReadOnlyMultiValueHashTableWithWarpcoreLookup& rhs) const{
+            return !(operator==(rhs));
+        }
+
+        void init(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey,
+            ThreadPool* threadPool,
+            bool valuesOfSameKeyMustBeSorted = false
+        ){
+            init(std::move(keys), std::move(vals), maxValuesPerKey, threadPool, {}, valuesOfSameKeyMustBeSorted);
+        }
+
+        void init(
+            std::vector<Key> keys, 
+            std::vector<Value> vals, 
+            int maxValuesPerKey,
+            ThreadPool* threadPool,
+            const std::vector<int>& gpuIds,
+            bool valuesOfSameKeyMustBeSorted = false
+        ){
+            assert(keys.size() == vals.size());
+
+            //std::cerr << "init valuesOfSameKeyMustBeSorted = " << valuesOfSameKeyMustBeSorted << "\n";
+
+            if(isInit) return;
+
+            std::vector<read_number> countsPrefixSum;
+            values = std::move(vals);
+
+            if(keys.size() == 0) return;
+
+            #ifdef __NVCC__            
+            if(gpuIds.size() == 0){
+            #endif
+                using GroupByKeyCpu = care::cpu::cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
+
+                GroupByKeyCpu groupByKey(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                groupByKey.execute(keys, values, countsPrefixSum);
+            #ifdef __NVCC__
+            }else{
+
+                bool success = false;
+
+                using GroupByKeyCpu = care::cpu::cpuhashtabledetail::GroupByKeyCpu<Key, Value, read_number>;
+                using GroupByKeyGpu = care::cpu::cpuhashtabledetail::GroupByKeyGpu<Key, Value, read_number>;
+
+                #ifdef CARE_HAS_WARPCORE
+                using GroupByKeyGpuWarpcore = cpuhashtabledetail::GroupByKeyGpuWarpcore<Key, Value, read_number>;
+
+                if(true || valuesOfSameKeyMustBeSorted){
+
+                    GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
+
+                }else{
+
+                    GroupByKeyGpuWarpcore groupByKeyGpuWarpcore(maxValuesPerKey);
+                    success = groupByKeyGpuWarpcore.execute(keys, values, countsPrefixSum);
+
+                    if(!success){
+                        GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                        success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
+                    }
+
+                }
+                #else 
+                    GroupByKeyGpu groupByKeyGpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    success = groupByKeyGpu.execute(keys, values, countsPrefixSum);
+                #endif           
+
+                if(!success){
+                    GroupByKeyCpu groupByKeyCpu(valuesOfSameKeyMustBeSorted, maxValuesPerKey);
+                    groupByKeyCpu.execute(keys, values, countsPrefixSum);
+                }
+            }
+            #endif
+
+            lookup = std::make_unique<WarpcoreLookup>(keys.size() / 0.8f);
+
+            auto buildKeyLookup = [me=this, keys = std::move(keys), countsPrefixSum = std::move(countsPrefixSum)](){
+
+                constexpr int batchsize = 500000;
+                const int iterations = SDIV(keys.size(), batchsize);
+
+                helpers::SimpleAllocationDevice<Key> d_keys(batchsize);
+                helpers::SimpleAllocationDevice<read_number> d_prefixsum(batchsize+1);
+                helpers::SimpleAllocationDevice<std::pair<Value, BucketSize>> d_lookupvalues(batchsize);
+
+                for(int iter = 0; iter < iterations; iter++){
+                    const int begin = iter * batchsize;
+                    const int end = std::min((iter+1) * batchsize, int(keys.size()));
+                    const int num = end - begin;
+
+                    cudaMemcpyAsync(
+                        d_keys.data(),
+                        keys.data() + begin,
+                        sizeof(Key) * num;
+                        H2D,
+                        cudaStreamPerThread
+                    ); CUERR;
+
+                    cudaMemcpyAsync(
+                        d_prefixsum.data(),
+                        countsPrefixSum.data() + begin,
+                        sizeof(read_number) * (num + 1);
+                        H2D,
+                        cudaStreamPerThread
+                    ); CUERR;
+
+                    helpers::lambda_kernel<<<SDIV(batchsize, 256), 256, 0, cudaStreamPerThread>>>(
+                        [
+                            d_prefixsum = d_prefixsum.data(),
+                            d_lookupvalues = d_lookupvalues.data(),
+                            num
+                        ] __device__ (){
+                            const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+                            if(tid < num){
+                                d_lookupvalues[tid].first = d_prefixsum[tid];
+                                d_lookupvalues[tid].second = d_prefixsum[tid + 1] - d_prefixsum[tid];
+                            }
+                        }
+                    ); CUERR;
+
+                    me->lookup->insert(
+                        d_keys.data(),
+                        d_prefixsum.data(),
+                        num,
+                        cudaStreamPerThread
+                    );
+
+                }
+
+                me->isInit = true;
+            };
+
+            if(threadPool != nullptr){
+                threadPool->enqueue(std::move(buildKeyLookup));
+            }else{
+                buildKeyLookup();
+            }
+
+        }
+
+        void insert(const Key* keys, const Value* values, int N){
+            assert(keys != nullptr);
+            assert(values != nullptr);
+            assert(buildMaxNumValues >= buildkeys.size() + N);
+
+            buildkeys.insert(buildkeys.end(), keys, keys + N);
+            buildvalues.insert(buildvalues.end(), values, values + N);
+        }
+
+        void finalize(int maxValuesPerKey, ThreadPool* threadPool, bool valuesOfSameKeyMustBeSorted, const std::vector<int>& gpuIds = {}){
+            init(std::move(buildkeys), std::move(buildvalues), maxValuesPerKey, threadPool, gpuIds, valuesOfSameKeyMustBeSorted);            
+        }
+
+        bool isInitialized() const noexcept{
+            return isInit;
+        }
+
+        void query(void* d_temp, size_t& d_tempbytes, void* h_temp, size_t& h_tempbytes, const Key* d_keys, std::size_t numKeys, QueryResult* resultsOutput, cudaStream_t stream) const{
+            const int required_d_temp_bytes = sizeof(std::pair<Value, BucketSize>) * numKeys + sizeof(QueryResult) * numKeys;
+            const int required_h_temp_bytes = sizeof(QueryResult) * numKeys;
+
+            if(d_temp == nullptr){
+                d_tempbytes = required_d_temp_bytes;
+            }
+
+            if(h_temp == nullptr){
+                h_tempbytes = required_h_temp_bytes;
+            }
+
+            if(d_temp == nullptr || h_temp == nullptr){
+                return;
+            }
+
+            assert(d_tempbytes >= required_d_temp_bytes);
+            assert(h_tempbytes >= required_h_temp_bytes);
+
+            std::pair<Value, BucketSize>* d_queryoutput = (std::pair<Value, BucketSize>*)d_temp;
+            QueryResult* d_resultsOutput = (QueryResult*)(d_queryoutput + numKeys);
+            QueryResult* h_resultsOutput = (QueryResult*)h_temp;
+
+            cudaMemsetAsync(
+                d_tempoutput,
+                0, 
+                required_d_temp_bytes,
+                stream
+            ); CUERR;
+
+            lookup->retrieve(
+                d_keys,
+                numKeys,
+                d_queryoutput,
+                stream
+            );
+
+            helpers::lambda_kernel<<<SDIV(numKeys, 256), 256, 0, stream>>>(
+                [
+                    d_queryoutput,
+                    d_resultsOutput,
+                    pointerToHostValues = values.data(),
+                    numKeys
+                ] __device__ (){
+                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+                    if(tid < numKeys){
+                        if(notempy){
+                            d_resultsOutput[tid].numValues = d_queryoutput[tid].second;
+                            const auto valuepos = d_queryoutput[tid].first;
+                            d_resultsOutput[tid].valuesBegin = pointerToHostValues + valuepos;
+                        }else{
+                            d_resultsOutput[tid].numValues = 0;
+                            d_resultsOutput[tid].valuesBegin = nullptr;
+                        }
+                    }
+                }
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                h_resultsOutput,
+                d_resultsOutput,
+                sizeof(QueryResult) * numKeys,
+                D2H,
+                stream
+            ); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            std::copy_n(h_resultsOutput, numKeys, resultsOutput);
+        }
+
+        MemoryUsage getMemoryInfo() const{
+            MemoryUsage result;
+            result.host = sizeof(Value) * values.capacity();
+            result.host += lookup.getMemoryInfo().host;
+            result.host += sizeof(Key) * buildkeys.capacity();
+            result.host += sizeof(Value) * buildvalues.capacity();
+
+            result.device = lookup.getMemoryInfo().device;
+
+            std::cerr << lookup.getMemoryInfo().host << " " << result.host << " bytes\n";
+
+            return result;
+        }
+
+        void writeToStream(std::ostream& os) const{
+            assert(isInit);
+
+            const std::size_t elements = values.size();
+            const std::size_t bytes = sizeof(Value) * elements;
+            os.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+            os.write(reinterpret_cast<const char*>(values.data()), bytes);
+
+            lookup.writeToStream(os);
+        }
+
+        void loadFromStream(std::ifstream& is){
+            destroy();
+
+            std::size_t elements;
+            is.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+            values.resize(elements);
+            const std::size_t bytes = sizeof(Value) * elements;
+            is.read(reinterpret_cast<char*>(values.data()), bytes);
+
+            lookup.loadFromStream(is);
+            isInit = true;
+        }
+
+        void destroy(){
+            std::vector<Value> tmp;
+            std::swap(values, tmp);
+
+            lookup.destroy();
+            isInit = false;
+        }
+
+        static std::size_t estimateGpuMemoryRequiredForInit(std::size_t numElements){
+
+            std::size_t mem = 0;
+            mem += sizeof(Key) * numElements; //d_keys
+            mem += sizeof(Value) * numElements; //d_values
+            mem += sizeof(read_number) * numElements; //d_indices
+            mem += std::max(sizeof(read_number), sizeof(Value)) * numElements; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
+
+            return mem;
+        }
+
+    private:
+
+        using ValueIndex = std::pair<read_number, BucketSize>;
+        bool isInit = false;
+        std::uint64_t buildMaxNumValues = 0;
+        std::vector<Key> buildkeys;
+        std::vector<Value> buildvalues;
+        // values with the same key are stored in contiguous memory locations
+        // a single-value hashmap maps keys to the range of the corresponding values
+        std::vector<Value> values; 
+        std::unique_ptr<WarpcoreLookup> lookup;
+    };
+
+    #endif
 
 
 

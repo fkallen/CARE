@@ -83,6 +83,7 @@ namespace care{
 	};
 
     struct MemoryOptions{
+        float hashtableLoadfactor = 0.8f;
         std::size_t memoryForHashtables = 0;
         std::size_t memoryTotalLimit = 0;
     };

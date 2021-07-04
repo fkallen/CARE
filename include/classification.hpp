@@ -4,6 +4,7 @@
 #include <array>
 #include <random>
 #include <forest.hpp>
+#include <logreg.hpp>
 #include <msa.hpp>
 #include <cpucorrectortask.hpp>
 #include <options.hpp>
@@ -45,7 +46,6 @@ struct ClfAgentDecisionInputData{
     MSAProperties anchorMsaProperties{};
 };
 
-
 template<typename AnchorClf,
          typename CandClf,
          typename AnchorExtractor,
@@ -71,7 +71,12 @@ struct clf_agent
         rng(44),
         coinflip_anchor(c_opts.sampleRateAnchor),
         coinflip_cands(c_opts.sampleRateCands)
-    {}
+    {
+        if (c_opts.correctionType == CorrectionType::Print) {
+            *anchor_file << extract_anchor << std::endl;
+            *cands_file << extract_cands << std::endl;
+        }
+    }
 
     clf_agent(const clf_agent& other) :
         classifier_anchor(other.classifier_anchor),
@@ -101,20 +106,14 @@ struct clf_agent
         cands_stream << '\n';
     }
 
-    bool decide_anchor(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt) {       
-        return classifier_anchor->decide(extract_anchor(task, i, opt));
+    template<typename... Args>
+    bool decide_anchor(Args&&...args) {
+        return classifier_anchor->decide(extract_anchor(std::forward<Args>(args)...));
     }
 
-    bool decide_cand(const CpuErrorCorrectorTask& task, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
-        return classifier_cands->decide(extract_cands(task, i, opt, cand, offset));
-    }
-
-    bool decide_anchor(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt) {       
-        return classifier_anchor->decide(extract_anchor(data, i, opt));
-    }
-
-    bool decide_cand(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) {       
-        return classifier_cands->decide(extract_cands(data, i, opt, cand, offset));
+    template<typename... Args>
+    bool decide_cand(Args&&...args) {
+        return classifier_cands->decide(extract_cands(std::forward<Args>(args)...));
     }
 
     void flush() {
@@ -131,7 +130,6 @@ struct clf_agent
 };
 
 namespace detail {
-
 
 struct extract_anchor {
     using features_t = std::array<float, 21>;
@@ -281,11 +279,12 @@ struct extract_cands {
     }
 };
 
-
-
-
 struct extract_anchor_transformed {
     using features_t = std::array<float, 37>;
+
+    constexpr operator auto() {
+        return u8"37 extract_anchor_transformed";
+    }
 
     features_t operator()(const ClfAgentDecisionInputData& data, int i, const CorrectionOptions& opt) noexcept{
         int a_begin = data.subjectColumnsBegin_incl;
@@ -384,11 +383,12 @@ struct extract_anchor_transformed {
     }
 };
 
-
-
-
 struct extract_cands_transformed {
     using features_t = std::array<float, 42>;
+
+    constexpr operator auto() {
+        return u8"37 extract_cands_transformed";
+    }
 
     features_t operator()(const ClfAgentDecisionInputData& data, size_t i, const CorrectionOptions& opt, size_t cand, size_t offset) noexcept {   
 
@@ -502,8 +502,6 @@ struct extract_cands_transformed {
         };
     }
 };
-
-
 
 struct extract_anchor_normed_weights {
     using features_t = std::array<float, 21>;
@@ -659,8 +657,6 @@ struct extract_cands_normed_weights {
     }
 };
 
-
-
 struct extract_anchor_transformed_normed_weights {
     using features_t = std::array<float, 37>;
 
@@ -761,7 +757,6 @@ struct extract_anchor_transformed_normed_weights {
         };
     }
 };
-
 
 struct extract_cands_transformed_normed_weights {
     using features_t = std::array<float, 42>;
@@ -880,25 +875,18 @@ struct extract_cands_transformed_normed_weights {
     }
 };
 
-
-
-
-
 } //namespace detail
 
 
 //--------------------------------------------------------------------------------
 
-//using anchor_extractor = detail::extract_anchor_21;
 using anchor_extractor = detail::extract_anchor_transformed;
 using cands_extractor = detail::extract_cands_transformed;
 
-using anchor_clf_t = ForestClf<std::tuple_size<anchor_extractor::features_t>::value>;
-using cands_clf_t = ForestClf<std::tuple_size<cands_extractor::features_t>::value>;
-
+using anchor_clf_t = ForestClf<anchor_extractor>;
+using cands_clf_t = ForestClf<cands_extractor>;
 
 using ClfAgent = clf_agent<anchor_clf_t, cands_clf_t, anchor_extractor, cands_extractor>;
-
 
 } // namespace care
 
