@@ -1177,10 +1177,16 @@ namespace gpu{
                                 }
                             }
 
-                            if(notAffected || (!(keepMatching ^ (base == foundBase)))){
-                                myShouldBeKept[k] = true; //same region
+                            if(notAffected){
+                                myShouldBeKept[k] = true;
+                            }else if(keepMatching && (base == foundBase)){
+                                //keep candidates which match the found base
+                                myShouldBeKept[k] = true;
+                            }else if(!keepMatching && (base != foundBase)){
+                                //keep candidates which do not match the found base
+                                myShouldBeKept[k] = true;
                             }else{
-                                myShouldBeKept[k] = false; //different region
+                                myShouldBeKept[k] = false;
                             }
                         }
                         #if 1
