@@ -593,7 +593,7 @@ private:
         temp_allocation_sizes[1] = sizeof(int) * numOutputSegments;
         temp_allocation_sizes[2] = sizeof(int);
         temp_allocation_sizes[3] = cubbytes;
-        
+
         std::size_t temp_storage_bytes = 0;
         cubstatus = cub::AliasTemporaries(
             nullptr,

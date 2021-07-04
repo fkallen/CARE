@@ -151,6 +151,18 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 
 // msa construction kernels
 
+void callComputeMaximumMsaWidthKernel(
+    int* d_result,
+    const int* d_shifts,
+    const int* d_anchorLengths,
+    const int* d_candidateLengths,
+    const int* d_indices,
+    const int* d_indices_per_subject,
+    const int* d_candidatesPerSubjectPrefixSum,
+    const int numAnchors,
+    cudaStream_t stream
+);
+
 void callConstructMultipleSequenceAlignmentsKernel_async(
         GPUMultiMSA multiMSA,
         const int* d_overlaps,

@@ -59,6 +59,8 @@ public:
 
     //virtual void destroy() = 0;
 
+    virtual bool hasGpuTables() const noexcept = 0;
+
 protected:
     MinhasherHandle constructHandle(int id) const{
         return MinhasherHandle{id};

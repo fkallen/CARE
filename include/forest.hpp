@@ -9,7 +9,6 @@
 #include <string>
 #include <array>
 #include <deserialize.hpp>
-// #include <numeric>
 
 namespace care {
 
@@ -17,7 +16,7 @@ namespace gpu{
     class GpuForest;
 }
 
-template<size_t feature_count>
+template<typename extractor_t>
 class ForestClf {
     friend class care::gpu::GpuForest;
 
@@ -32,7 +31,7 @@ class ForestClf {
     };
 
     using Tree = std::vector<Node>;
-    using features_t = std::array<float, feature_count>;
+    using features_t = typename extractor_t::features_t;
 
     void populate(std::ifstream& is, Tree& tree) {
         Node& node = *tree.emplace(tree.end());
@@ -78,11 +77,12 @@ public:
         std::ifstream is(path, std::ios::binary);
         if (!is)
             throw std::runtime_error("Loading classifier file failed! " + path);
-
-        size_t file_feat_count = read_one<uint8_t>(is);
-        if (file_feat_count != feature_count)
-            throw std::runtime_error("Classifier feature shape does not match feature extractor! Expected: " +std::to_string(feature_count) + " Got: "+std::to_string(file_feat_count));
         
+        auto desc = read_str(is);
+        auto expected = std::string(extractor_t());
+        if (desc != expected)
+            throw std::runtime_error("Classifier and extractor descriptors do not match! Expected: " + expected + " Received: " + desc);
+    
         forest_ = Forest(read_one<uint32_t>(is));
         for (Tree& tree: forest_) {
             tree.reserve(read_one<uint32_t>(is));

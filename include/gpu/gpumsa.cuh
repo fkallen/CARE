@@ -181,6 +181,53 @@ namespace gpu{
             return msaProperties;
         }
 
+        //computes column properties. only return value of thread_rank 0 is valid
+        template<
+            class ThreadGroup, 
+            class GroupReduceIntMin, 
+            class GroupReduceIntMax
+        >
+        __device__ __forceinline__
+        static MSAColumnProperties computeColumnProperties(
+                ThreadGroup& group,
+                GroupReduceIntMin& groupReduceIntMin,
+                GroupReduceIntMax& groupReduceIntMax,
+                const int* __restrict__ goodCandidateIndices,
+                int numGoodCandidates,
+                const int* __restrict__ shifts,
+                const int subjectLength,
+                const int* __restrict__ candidateLengths
+        ){
+
+            int startindex = 0;
+            int endindex = subjectLength;
+
+            for(int k = group.thread_rank(); k < numGoodCandidates; k += group.size()) {
+                const int localCandidateIndex = goodCandidateIndices[k];
+
+                const int shift = shifts[localCandidateIndex];
+                const int queryLength = candidateLengths[localCandidateIndex];
+
+                const int queryEndsAt = queryLength + shift;
+                startindex = min(startindex, shift);
+                endindex = max(endindex, queryEndsAt);
+            }
+
+            startindex = groupReduceIntMin(startindex);
+            endindex = groupReduceIntMax(endindex);
+
+            group.sync();
+
+            MSAColumnProperties my_columnproperties;
+
+            my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
+            my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+            my_columnproperties.firstColumn_incl = 0;
+            my_columnproperties.lastColumn_excl = endindex - startindex;
+
+            return my_columnproperties;
+        }
+
 
         template<
             class ThreadGroup, 
@@ -448,7 +495,11 @@ namespace gpu{
                         //reverse complement
                         encodedBaseAsInt = SequenceHelpers::complementBase2Bit(encodedBaseAsInt);
                     }
-                    const float weight = weightfunc(quality[fullInts * nucleotidesPerInt2Bit + posInInt]);
+                    char q = 'I';
+                    if(canUseQualityScores){
+                        q = quality[fullInts * nucleotidesPerInt2Bit + posInInt];
+                    }
+                    const float weight = weightfunc(q);
 
                     assert(weight != 0);
                     const int rowOffset = encodedBaseAsInt * columnPitchInElements;

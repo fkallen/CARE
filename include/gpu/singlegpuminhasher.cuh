@@ -5,8 +5,6 @@
 
 #include <config.hpp>
 
-#include <warpcore.cuh>
-
 #include <gpu/gpureadstorage.cuh>
 #include <gpu/cuda_unique.cuh>
 #include <cpuhashtable.hpp>
@@ -478,6 +476,10 @@ namespace gpu{
         void destroy(){
             DeviceSwitcher sd(getDeviceId());
             gpuHashTables.clear();
+        }
+
+        bool hasGpuTables() const noexcept override {
+            return true;
         }
 
         void determineNumValues(
