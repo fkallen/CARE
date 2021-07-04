@@ -1350,11 +1350,7 @@ struct BatchData{
         d_numFullyUsedReadIdsPerAnchor(cubAllocator_),
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
         d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
-        d_consensusEncoded(cubAllocator_),
-        d_counts(cubAllocator_),
-        d_coverage(cubAllocator_),
-        d_support(cubAllocator_),
-        d_msa_column_properties(cubAllocator_),
+        multiMSA(cubAllocator_),
         d_consensusQuality(cubAllocator_),
         d_outputAnchors(cubAllocator_),
         d_outputAnchorQualities(cubAllocator_),
@@ -2532,19 +2528,6 @@ struct BatchData{
 
         loadCandidateQualityScores(firstStream, d_candidateQualityScores.data());
 
-
-        d_consensusEncoded.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
-        d_coverage.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
-        d_msa_column_properties.resizeUninitialized(numTasks, firstStream);
-        d_consensusQuality.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
-
-        CachedDeviceUVector<float> d_weights(numTasks * 4 * msaColumnPitchInElements, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> d_origCoverages(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
-        CachedDeviceUVector<float> d_origWeights(numTasks * msaColumnPitchInElements, firstStream, *cubAllocator);
-
-        d_counts.resizeUninitialized(numTasks * 4 * msaColumnPitchInElements, firstStream);
-        d_support.resizeUninitialized(numTasks * msaColumnPitchInElements, firstStream);
-
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
 
         CachedDeviceUVector<int> indices1(totalNumCandidates, firstStream, *cubAllocator);
@@ -2565,107 +2548,85 @@ struct BatchData{
             }
         );
 
-        gpu::GPUMultiMSA multiMSA;
-
         *h_numAnchors = numTasks;
-
-        multiMSA.numMSAs = numTasks;
-        multiMSA.columnPitchInElements = msaColumnPitchInElements;
-        multiMSA.counts = d_counts.data();
-        multiMSA.weights = d_weights.data();
-        multiMSA.coverages = d_coverage.data();
-        multiMSA.consensus = d_consensusEncoded.data();
-        multiMSA.support = d_support.data();
-        multiMSA.origWeights = d_origWeights.data();
-        multiMSA.origCoverages = d_origCoverages.data();
-        multiMSA.columnProperties = d_msa_column_properties.data();
 
         const bool useQualityScoresForMSA = true;
 
-        callConstructMultipleSequenceAlignmentsKernel_async(
-            multiMSA,
+        multiMSA.construct(
             d_alignment_overlaps.data(),
             d_alignment_shifts.data(),
             d_alignment_nOps.data(),
             d_alignment_best_alignment_flags.data(),
-            d_anchorSequencesLength.data(),
-            d_candidateSequencesLength.data(),
-            indices1.data(), //d_indices,
+            indices1.data(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
+            d_anchorSequencesLength.data(),
             d_subjectSequencesData.data(),
-            d_candidateSequencesData.data(),
-            d_isPairedCandidate.data(),
-            d_anchorQualityScores.data(), //d_anchor_qualities.data(),
-            d_candidateQualityScores.data(),
-            h_numAnchors.data(), //d_numAnchors
-            goodAlignmentProperties->maxErrorRate,
+            d_anchorQualityScores.data(),
             numTasks,
+            d_candidateSequencesLength.data(),
+            d_candidateSequencesData.data(),
+            d_candidateQualityScores.data(),
+            d_isPairedCandidate.data(),
             totalNumCandidates,
-            useQualityScoresForMSA, //correctionOptions->useQualityScores,
+            h_numAnchors.data(), //d_numAnchors
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            firstStream,
-            kernelLaunchHandle
+            useQualityScoresForMSA,
+            goodAlignmentProperties->maxErrorRate,
+            gpu::MSAColumnCount(msaColumnPitchInElements),
+            firstStream
         );
 
-
-        //refine msa
-        CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator); 
-
-        callMsaCandidateRefinementKernel_multiiter_async(
+        multiMSA.refine(
             indices2.data(),
             d_numCandidatesPerAnchor2.data(),
             d_numCandidates2.data(),
-            multiMSA,
-            d_alignment_best_alignment_flags.data(),
+            d_alignment_overlaps.data(),
             d_alignment_shifts.data(),
             d_alignment_nOps.data(),
-            d_alignment_overlaps.data(),
-            d_subjectSequencesData.data(),
-            d_candidateSequencesData.data(),
-            d_isPairedCandidate.data(),
-            d_anchorSequencesLength.data(),
-            d_candidateSequencesLength.data(),
-            d_anchorQualityScores.data(), //d_anchor_qualities.data(),
-            d_candidateQualityScores.data(),
-            d_shouldBeKept.data(),
+            d_alignment_best_alignment_flags.data(),
+            indices1.data(),
+            d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
-            h_numAnchors.data(),
-            goodAlignmentProperties->maxErrorRate,
+            d_anchorSequencesLength.data(),
+            d_subjectSequencesData.data(),
+            d_anchorQualityScores.data(),
             numTasks,
+            d_candidateSequencesLength.data(),
+            d_candidateSequencesData.data(),
+            d_candidateQualityScores.data(),
+            d_isPairedCandidate.data(),
             totalNumCandidates,
-            useQualityScoresForMSA, //correctionOptions->useQualityScores,
+            h_numAnchors.data(), //d_numAnchors
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            indices1.data(), //d_indices,
-            d_numCandidatesPerAnchor.data(),
+            useQualityScoresForMSA,
+            goodAlignmentProperties->maxErrorRate,
             correctionOptions->estimatedCoverage,
             getNumRefinementIterations(),
-            firstStream,
-            kernelLaunchHandle
+            firstStream
         );
-        
+  
+        d_consensusQuality.resizeUninitialized(numTasks * multiMSA.getMaximumMsaWidth(), firstStream);
 
         //compute quality of consensus
         helpers::lambda_kernel<<<numTasks, 256, 0, firstStream>>>(
             [
                 consensusQuality = d_consensusQuality.data(),
-                support = d_support.data(),
-                coverages = d_coverage.data(),
-                msa_column_properties = d_msa_column_properties.data(),
+                multiMSA = multiMSA.multiMSAView(),
                 d_numCandidatesInMsa = d_numCandidatesPerAnchor2.data(),
-                columnPitchInElements = msaColumnPitchInElements,
+                //columnPitchInElements = msaColumnPitchInElements,
+                columnPitchInElements = multiMSA.getMaximumMsaWidth(),
                 numTasks = numTasks
             ] __device__ (){
 
                 for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
                     if(d_numCandidatesInMsa[t] > 0){
-                        const float* const taskSupport = support + t * columnPitchInElements;
-                        const int* const taskCoverage = coverages + t * columnPitchInElements;
-                        char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
-                        const int begin = msa_column_properties[t].firstColumn_incl;
-                        const int end = msa_column_properties[t].lastColumn_excl;
+                        const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+
+                        const int begin = singleMSA.columnProperties->firstColumn_incl;
+                        const int end = singleMSA.columnProperties->lastColumn_excl;
 
                         // if(threadIdx.x == 0){
                         //     printf("t %d, begin %d end %d\n", t, begin, end);
@@ -2676,22 +2637,22 @@ struct BatchData{
                         assert(end < columnPitchInElements);
 
                         for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                            const float support = taskSupport[i];
-                            const float cov = taskCoverage[i];
+                            const float support = singleMSA.support[i];
+                            const float cov = singleMSA.coverages[i];
 
-                            char q = getQualityChar(taskSupport[i]);
+                            char q = getQualityChar(support);
 
                             //scale down quality depending on coverage
                             q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
 
-                            taskConsensusQuality[i] = getQualityChar(support);
+                            consensusQuality[t * columnPitchInElements + i] = getQualityChar(support);
                         }
                     }
                 }
             }
         ); CUERR;
 
-        
+        CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
 
@@ -2721,10 +2682,6 @@ struct BatchData{
             }
         ); CUERR;
 
-
-        d_weights.destroy();
-        d_origCoverages.destroy();
-        d_origWeights.destroy();
         indices1.destroy();
         indices2.destroy();
         d_numCandidatesPerAnchor2.destroy();
@@ -2800,13 +2757,13 @@ struct BatchData{
             numTasks,
             insertSize,
             insertSizeStddev,
-            msaColumnPitchInElements,
+            multiMSA.getMaximumMsaWidth(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
-            d_msa_column_properties.data(),
-            d_consensusEncoded.data(),
+            multiMSA.d_columnProperties.data(),
+            multiMSA.d_consensusEncoded.data(),
             d_consensusQuality.data(),
-            d_coverage.data(),
+            multiMSA.d_coverages.data(),
             d_anchorSequencesLength.data(),
             d_accumExtensionsLengths.data(),
             d_inputMateLengths.data(),
@@ -2831,14 +2788,14 @@ struct BatchData{
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<numTasks, 128, 0, stream>>>(
             numTasks,
             d_goodscores.data(),
-            msaColumnPitchInElements,
+            multiMSA.getMaximumMsaWidth(),
             d_abortReasons.data(),
             d_outputMateHasBeenFound.data(),
             d_accumExtensionsLengths.data(),
             d_accumExtensionsLengthsOUT.data(),
-            d_coverage.data(),
-            d_support.data(),
-            d_counts.data(),
+            multiMSA.d_coverages.data(),
+            multiMSA.d_support.data(),
+            multiMSA.d_counts.data(),
             d_anchorSequencesLength.data(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
@@ -2846,7 +2803,7 @@ struct BatchData{
             d_alignment_shifts.data(),
             d_alignment_best_alignment_flags.data(),
             d_candidateSequencesData.data(),
-            d_msa_column_properties.data(),
+            multiMSA.d_columnProperties.data(),
             encodedSequencePitchInInts
         );
 
@@ -3935,8 +3892,6 @@ struct BatchData{
                 );
 
                 *h_numAnchors = numFinishedTasks;
-
-                gpu::ManagedGPUMultiMSA multiMSA(*cubAllocator);
 
                 multiMSA.construct(
                     d_alignment_overlaps.data(),
@@ -5070,11 +5025,7 @@ struct BatchData{
     // -----
     
     // ----- MSA data
-    CachedDeviceUVector<std::uint8_t> d_consensusEncoded{}; //encoded , 0-4
-    CachedDeviceUVector<int> d_counts{};
-    CachedDeviceUVector<int> d_coverage{};
-    CachedDeviceUVector<float> d_support{};
-    CachedDeviceUVector<gpu::MSAColumnProperties> d_msa_column_properties{};
+    gpu::ManagedGPUMultiMSA multiMSA;
     CachedDeviceUVector<char> d_consensusQuality{};
     // -----
 
