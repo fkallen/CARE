@@ -131,7 +131,6 @@ public:
         minhasher{&minhasher_},
         minhashHandle{minhasher->makeMinhasherHandle()},
         readStorage{&readStorage_},
-        readStorageHandle{readStorage->makeHandle()},
         correctionFlags(&correctionFlags_),
         clfAgent(&clfAgent_),
         qualityCoversion(std::make_unique<cpu::QualityScoreConversion>())
@@ -140,7 +139,6 @@ public:
     }
 
     ~CpuErrorCorrector(){
-        readStorage->destroyHandle(readStorageHandle);
         minhasher->destroyHandle(minhashHandle);
     }
 
@@ -574,7 +572,7 @@ private:
 
         //const bool containsN = readProvider->readContainsN(readId);
         bool containsN = false;
-        readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
+        readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
 
         //exclude anchors with ambiguous bases
         if(!(correctionOptions->excludeAmbiguousReads && containsN)){
@@ -632,7 +630,7 @@ private:
                     task.candidateReadIds.end(),
                     [&](read_number readId){
                         bool isAmbig = false;
-                        readStorage->areSequencesAmbiguous(readStorageHandle, &isAmbig, &readId, 1);
+                        readStorage->areSequencesAmbiguous(&isAmbig, &readId, 1);
                         return isAmbig;
                     }
                 );
@@ -659,7 +657,7 @@ private:
             SequenceHelpers::decode2BitSequence(decodedAnchor.data(), multiInput.encodedAnchors[i], readlength);
 
             bool containsN = false;
-            readStorage->areSequencesAmbiguous(readStorageHandle, &containsN, &readId, 1);
+            readStorage->areSequencesAmbiguous(&containsN, &readId, 1);
 
             std::vector<read_number> candidateIds;
 
@@ -718,7 +716,7 @@ private:
                         candidateIds.end(),
                         [&](read_number readId){
                             bool isAmbig = false;
-                            readStorage->areSequencesAmbiguous(readStorageHandle, &isAmbig, &readId, 1);
+                            readStorage->areSequencesAmbiguous(&isAmbig, &readId, 1);
                             return isAmbig;
                         }
                     );
@@ -808,14 +806,12 @@ private:
         multiData.candidateQualities.resize(numIds * qualityPitchInBytes);
 
         readStorage->gatherSequenceLengths(
-            readStorageHandle,
             multiData.candidateLengths.data(),
             multiIds.candidateReadIds.data(),
             numIds
         );
 
         readStorage->gatherSequences(
-            readStorageHandle,
             multiData.encodedCandidates.data(),
             encodedSequencePitchInInts,
             multiIds.candidateReadIds.data(),
@@ -825,7 +821,6 @@ private:
         if(correctionOptions->useQualityScores){
 
             readStorage->gatherQualities(
-                readStorageHandle,
                 multiData.candidateQualities.data(),
                 qualityPitchInBytes,
                 multiIds.candidateReadIds.data(),
@@ -881,14 +876,12 @@ private:
         task.candidateSequencesRevcData.resize(size_t(encodedSequencePitchInInts) * numCandidates, 0);
 
         readStorage->gatherSequenceLengths(
-            readStorageHandle,
             task.candidateSequencesLengths.data(),
             task.candidateReadIds.data(),
             numCandidates
         );
 
         readStorage->gatherSequences(
-            readStorageHandle,
             task.candidateSequencesData.data(),
             encodedSequencePitchInInts,
             task.candidateReadIds.data(),
@@ -1210,7 +1203,6 @@ private:
         task.candidateQualities.resize(qualityPitchInBytes * numCandidates);
 
         readStorage->gatherQualities(
-            readStorageHandle,
             task.candidateQualities.data(),
             qualityPitchInBytes,
             task.candidateReadIds.data(),
@@ -1638,7 +1630,7 @@ private:
             auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
             const int correctedlength = correctedSequenceString.length();
             bool originalReadContainsN = false;
-            readStorage->areSequencesAmbiguous(readStorageHandle, &originalReadContainsN, &task.input.anchorReadId, 1);
+            readStorage->areSequencesAmbiguous(&originalReadContainsN, &task.input.anchorReadId, 1);
             
             TempCorrectedSequence tmp;
             
@@ -1703,7 +1695,7 @@ private:
                 // }
                 
                 bool originalCandidateReadContainsN = false;
-                readStorage->areSequencesAmbiguous(readStorageHandle, &originalCandidateReadContainsN, &candidateId, 1);
+                readStorage->areSequencesAmbiguous(&originalCandidateReadContainsN, &candidateId, 1);
                 
                 if(!originalCandidateReadContainsN){
                     const std::size_t offset = correctedCandidate.index * decodedSequencePitchInBytes;
@@ -1765,7 +1757,6 @@ private:
     const CpuMinhasher* minhasher{};
     mutable MinhasherHandle minhashHandle;
     const CpuReadStorage* readStorage{};
-    mutable ReadStorageHandle readStorageHandle;
 
     ReadCorrectionFlags* correctionFlags{};
     ClfAgent* clfAgent{};

@@ -31,6 +31,73 @@ namespace gpu{
         Shared
     };
 
+
+    template<int BLOCKSIZE>
+    __global__
+    void computeMaximumMsaWidthKernel(
+        int* __restrict__ result, //initialized with 0
+        const int* __restrict__ shifts,
+        const int* __restrict__ anchorLengths,
+        const int* __restrict__ candidateLengths,
+        const int* __restrict__ indices,
+        const int* __restrict__ indices_per_subject,
+        const int* __restrict__ candidatesPerSubjectPrefixSum,
+        const int numAnchors
+    ){
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+        __shared__ typename BlockReduceInt::TempStorage cubTempStorage;
+
+        auto tbGroup = cg::this_thread_block();
+
+        int myMaxWidth = 0; //only valid for thread_rank 0
+
+        for(int subjectIndex = blockIdx.x; subjectIndex < numAnchors; subjectIndex += gridDim.x){
+            const int myNumGoodCandidates = indices_per_subject[subjectIndex];
+            tbGroup.sync();
+
+            const int globalCandidateOffset = candidatesPerSubjectPrefixSum[subjectIndex];
+
+            const int* const myShifts = shifts + globalCandidateOffset;
+            const int subjectLength = anchorLengths[subjectIndex];
+            const int* const myCandidateLengths = candidateLengths + globalCandidateOffset;
+            const int* const myIndices = indices + globalCandidateOffset;
+
+            auto groupReduceIntMin = [&](int data){
+                data = BlockReduceInt(cubTempStorage).Reduce(data, cub::Min());
+                tbGroup.sync();
+                return data;
+            };
+
+            auto groupReduceIntMax = [&](int data){                        
+                data = BlockReduceInt(cubTempStorage).Reduce(data, cub::Max());
+                tbGroup.sync();
+                return data;
+            };
+
+            MSAColumnProperties columnProperties = GpuSingleMSA::computeColumnProperties(
+                tbGroup,
+                groupReduceIntMin,
+                groupReduceIntMax,
+                myIndices,
+                myNumGoodCandidates,
+                myShifts,
+                subjectLength,
+                myCandidateLengths
+            );
+
+            //only thread 0 has valid column properties. 
+            myMaxWidth = max(myMaxWidth, columnProperties.lastColumn_excl);
+        }
+
+        if(tbGroup.thread_rank() == 0){
+            atomicMax(result, myMaxWidth);
+        }
+    }
+
+
+
     #ifdef __CUDACC_DEBUG__
 
         #define constructMultipleSequenceAlignmentsKernel_MIN_BLOCKS   1
@@ -94,7 +161,7 @@ namespace gpu{
         for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             const int myNumGoodCandidates = indices_per_subject[subjectIndex];
 
-            if(myNumGoodCandidates > 0){
+            //if(myNumGoodCandidates > 0){
 
                 tbGroup.sync(); //wait for smem of previous iteration
 
@@ -163,6 +230,7 @@ namespace gpu{
                 columnProperties = shared_columnProperties;
 
                 const int columnsToCheck = columnProperties.lastColumn_excl;
+                //printf("got %d, max %d\n", columnsToCheck, msa.columnPitchInElements);
 
                 assert(columnsToCheck <= msa.columnPitchInElements);
 
@@ -218,7 +286,7 @@ namespace gpu{
                         gmemCoverages[index] = msa.coverages[index];
                     }
                 }
-            } 
+            //} 
         }
 
     }
@@ -837,6 +905,31 @@ namespace gpu{
 
 
     //####################   KERNEL DISPATCH   ####################
+
+    void callComputeMaximumMsaWidthKernel(
+        int* d_result,
+        const int* d_shifts,
+        const int* d_anchorLengths,
+        const int* d_candidateLengths,
+        const int* d_indices,
+        const int* d_indices_per_subject,
+        const int* d_candidatesPerSubjectPrefixSum,
+        const int numAnchors,
+        cudaStream_t stream
+    ){
+        cudaMemsetAsync(d_result, 0, sizeof(int), stream);
+
+        computeMaximumMsaWidthKernel<128><<<numAnchors, 128, 0, stream>>>(
+            d_result,
+            d_shifts,
+            d_anchorLengths,
+            d_candidateLengths,
+            d_indices,
+            d_indices_per_subject,
+            d_candidatesPerSubjectPrefixSum,
+            numAnchors
+        );
+    }
     
     void callMsaCandidateRefinementKernel_multiiter_async(
         int* d_newIndices,

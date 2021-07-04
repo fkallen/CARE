@@ -10,7 +10,6 @@
 #include <concurrencyhelpers.hpp>
 #include <lengthstorage.hpp>
 #include <cpureadstorage.hpp>
-#include <readstoragehandle.hpp>
 #include <memorymanagement.hpp>
 
 #include <unordered_set>
@@ -386,27 +385,7 @@ public:
 
 public: //inherited interface
 
-    ReadStorageHandle makeHandle() const override {
-
-        std::unique_lock<SharedMutex> lock(sharedmutex);
-        const int handleid = counter++;
-        ReadStorageHandle h = constructHandle(handleid);
-
-        return h;
-    }
-
-    void destroyHandle(ReadStorageHandle& handle) const override{
-        //std::unique_lock<SharedMutex> lock(sharedmutex);
-
-        //const int id = handle.getId();
-        //assert(id < int(tempdataVector.size()));
-        
-        //tempdataVector[id] = nullptr;
-        handle = constructHandle(std::numeric_limits<int>::max());
-    };
-
     void areSequencesAmbiguous(
-        ReadStorageHandle& handle,
         bool* result, 
         const read_number* readIds, 
         int numSequences
@@ -427,7 +406,6 @@ public: //inherited interface
     }
 
     void gatherSequences(
-        ReadStorageHandle& handle,
         unsigned int* sequence_data,
         size_t outSequencePitchInInts,
         const read_number* readIds,
@@ -498,7 +476,6 @@ public: //inherited interface
     }
 
     void gatherQualities(
-        ReadStorageHandle& handle,
         char* quality_data,
         size_t out_quality_pitch,
         const read_number* readIds,
@@ -569,7 +546,6 @@ public: //inherited interface
     }
 
     void gatherSequenceLengths(
-        ReadStorageHandle& handle,
         int* lengths,
         const read_number* readIds,
         int numSequences
@@ -582,7 +558,6 @@ public: //inherited interface
     }
 
     void getIdsOfAmbiguousReads(
-        ReadStorageHandle& handle,
         read_number* ids
     ) const override{
         std::copy(ambigReadIds.begin(), ambigReadIds.end(), ids);
@@ -611,12 +586,6 @@ public: //inherited interface
         for(const auto& s : qualityStorage){
             result.host += sizeof(char) * s.qualities.capacity();
         }
-        return result;
-    }
-
-    MemoryUsage getMemoryInfo(const ReadStorageHandle& handle) const override{
-        //no data associated with handle
-        MemoryUsage result{};
         return result;
     }
 

@@ -34,11 +34,12 @@ struct ThrustCachingAllocator : thrust::device_malloc_allocator<T> {
         }else{
             status = cudaMalloc(&ptr, n * sizeof(T));
         }
-		if(status != cudaSuccess){
-			throw std::bad_alloc();
-		}
-		return thrust::device_pointer_cast(ptr);
-	}
+        if(status != cudaSuccess){
+            std::cerr << "ThrustCachingAllocator cuda error when allocating " << (n * sizeof(T)) << " bytes: " << cudaGetErrorString(status) << "\n";
+            throw std::bad_alloc();
+        }
+        return thrust::device_pointer_cast(ptr);
+    }
 
     void deallocate(pointer ptr, size_type n){
     	//std::cerr << "dealloc" << std::endl;

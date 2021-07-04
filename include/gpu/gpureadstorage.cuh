@@ -59,6 +59,10 @@ public:
         cudaStream_t stream
     ) const = 0;
 
+    virtual void getIdsOfAmbiguousReads(
+        read_number* ids
+    ) const = 0;
+
     virtual std::int64_t getNumberOfReadsWithN() const = 0;
 
     virtual MemoryUsage getMemoryInfo() const = 0;

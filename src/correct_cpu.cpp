@@ -164,8 +164,6 @@ correct_cpu(
             clfAgent
         );
 
-        ReadStorageHandle readStorageHandle = readStorage.makeHandle();
-
         std::vector<read_number> batchReadIds(myBatchsize);
         std::vector<unsigned int> batchEncodedData(myBatchsize * encodedSequencePitchInInts2Bit);
         std::vector<char> batchQualities(myBatchsize * qualityPitchInBytes);
@@ -189,14 +187,12 @@ correct_cpu(
             //collect input data of all reads in batch
 
             readStorage.gatherSequenceLengths(
-                readStorageHandle,
                 batchReadLengths.data(),
                 batchReadIds.data(),
                 batchReadIds.size()
             );
 
             readStorage.gatherSequences(
-                readStorageHandle,
                 batchEncodedData.data(),
                 encodedSequencePitchInInts2Bit,
                 batchReadIds.data(),
@@ -205,7 +201,6 @@ correct_cpu(
 
             if(correctionOptions.useQualityScores){
                 readStorage.gatherQualities(
-                    readStorageHandle,
                     batchQualities.data(),
                     qualityPitchInBytes,
                     batchReadIds.data(),
