@@ -452,16 +452,11 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void computeExtensionStepFromMsaKernel(
-        int numTasks,
         int insertSize,
         int insertSizeStddev,
-        int msaColumnPitchInElements,
+        const gpu::GPUMultiMSA multiMSA,
         const int* d_numCandidatesPerAnchor,
         const int* d_numCandidatesPerAnchorPrefixSum,
-        const gpu::MSAColumnProperties* d_msa_column_properties,
-        const std::uint8_t* d_consensusEncoded,
-        const char* d_consensusQuality,
-        const int* d_coverage,
         const int* d_anchorSequencesLength,
         const int* d_accumExtensionsLengths,
         const int* d_inputMateLengths,
@@ -483,20 +478,6 @@ namespace readextendergpukernels{
         float* d_goodscores
     ){
 
-        auto decodeConsensus = [](const std::uint8_t encoded){
-            char decoded = 'F';
-            if(encoded == std::uint8_t{0}){
-                decoded = 'A';
-            }else if(encoded == std::uint8_t{1}){
-                decoded = 'C';
-            }else if(encoded == std::uint8_t{2}){
-                decoded = 'G';
-            }else if(encoded == std::uint8_t{3}){
-                decoded = 'T';
-            }
-            return decoded;
-        };
-
         using BlockReduce = cub::BlockReduce<int, blocksize>;
         using BlockReduceFloat = cub::BlockReduce<float, blocksize>;
 
@@ -510,26 +491,21 @@ namespace readextendergpukernels{
 
         __shared__ int broadcastsmem_int;
 
-        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
             const int numCandidates = d_numCandidatesPerAnchor[t];
 
             if(numCandidates > 0){
-                const auto msaProps = d_msa_column_properties[t];
-
-                assert(msaProps.firstColumn_incl == 0);
-                assert(msaProps.lastColumn_excl <= msaColumnPitchInElements);
+                const gpu::GpuSingleMSA msa = multiMSA.getSingleMSA(t);
 
                 const int anchorLength = d_anchorSequencesLength[t];
                 int accumExtensionsLength = d_accumExtensionsLengths[t];
                 const int mateLength = d_inputMateLengths[t];
                 const bool isPaired = d_isPairedTask[t];
 
-                const int consensusLength = msaProps.lastColumn_excl - msaProps.firstColumn_incl;
+                const int consensusLength = msa.computeSize();
 
-                const std::uint8_t* const consensusEncoded = d_consensusEncoded + t * msaColumnPitchInElements;
-                auto consensusDecoded = thrust::transform_iterator(consensusEncoded, decodeConsensus);
-                const char* const consensusQuality = d_consensusQuality + t * msaColumnPitchInElements;
-                const int* const msacoverage = d_coverage + t * msaColumnPitchInElements;
+                auto consensusDecoded = msa.getDecodedConsensusIterator();
+                auto consensusQuality = msa.getConsensusQualityIterator();
 
                 extension::AbortReason* const abortReasonPtr = d_abortReasons + t;
                 char* const outputAnchor = d_outputAnchors + t * outputAnchorPitchInBytes;
@@ -548,7 +524,7 @@ namespace readextendergpukernels{
                 //coverage is monotonically decreasing. convert coverages to 1 if >= minCoverageForExtension, else 0. Find position of first 0
                 int myPos = consensusLength;
                 for(int i = anchorLength + threadIdx.x; i < consensusLength; i += blockDim.x){
-                    int flag = msacoverage[i] < minCoverageForExtension ? 0 : 1;
+                    int flag = msa.coverages[i] < minCoverageForExtension ? 0 : 1;
                     if(flag == 0 && i < myPos){
                         myPos = i;
                     }
@@ -708,16 +684,12 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void computeExtensionStepQualityKernel(
-        int numTasks,
         float* d_goodscores,
-        int msaColumnPitchInElements,
+        const gpu::GPUMultiMSA multiMSA,
         const extension::AbortReason* d_abortReasons,
         const bool* d_mateHasBeenFound,
         const int* accumExtensionLengthsBefore,
         const int* accumExtensionLengthsAfter,
-        const int* d_coverage,
-        const float* d_support,
-        const int* d_counts,
         const int* anchorLengths,
         const int* d_numCandidatesPerAnchor,
         const int* d_numCandidatesPerAnchorPrefixSum,
@@ -740,14 +712,17 @@ namespace readextendergpukernels{
 
         __shared__ typename AmbiguousColumnsChecker::SplitInfos smemSplitInfos;
 
-        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
             if(d_abortReasons[t] == extension::AbortReason::None && !d_mateHasBeenFound[t]){
+
+                const gpu::GpuSingleMSA msa = multiMSA.getSingleMSA(t);
+
                 const int extendedBy = accumExtensionLengthsAfter[t] - accumExtensionLengthsBefore[t];
                 const int anchorLength = anchorLengths[t];
 
-                const float* const mySupport = d_support + t * msaColumnPitchInElements;
-                const int* const myCounts = d_counts + t * 4 * msaColumnPitchInElements;
-                const int* const myCoverage = d_coverage + t * msaColumnPitchInElements;
+                const float* const mySupport = msa.support;
+                const int* const myCounts = msa.counts;
+                const int* const myCoverage = msa.coverages;
 
                 const int* const myCandidateLengths = d_candidateSequencesLengths + d_numCandidatesPerAnchorPrefixSum[t];
                 const int* const myCandidateShifts = d_alignment_shifts + d_numCandidatesPerAnchorPrefixSum[t];
@@ -768,10 +743,10 @@ namespace readextendergpukernels{
                 // }
 
                 AmbiguousColumnsChecker checker(
-                    myCounts + 0 * msaColumnPitchInElements,
-                    myCounts + 1 * msaColumnPitchInElements,
-                    myCounts + 2 * msaColumnPitchInElements,
-                    myCounts + 3 * msaColumnPitchInElements,
+                    myCounts + 0 * msa.columnPitchInElements,
+                    myCounts + 1 * msa.columnPitchInElements,
+                    myCounts + 2 * msa.columnPitchInElements,
+                    myCounts + 3 * msa.columnPitchInElements,
                     myCoverage
                 );
 
@@ -2689,28 +2664,15 @@ struct BatchData{
             H2D,
             stream
         ); CUERR;
-
-        d_consensusQuality.resizeUninitialized(numTasks * multiMSA.getMaximumMsaWidth(), stream);
-
-        multiMSA.computeConsensusQuality(
-            d_consensusQuality.data(),
-            multiMSA.getMaximumMsaWidth(),
-            stream
-        );
        
         //compute extensions
 
         readextendergpukernels::computeExtensionStepFromMsaKernel<128><<<numTasks, 128, 0, stream>>>(
-            numTasks,
             insertSize,
             insertSizeStddev,
-            multiMSA.getMaximumMsaWidth(),
+            multiMSA.multiMSAView(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
-            multiMSA.d_columnProperties.data(),
-            multiMSA.d_consensusEncoded.data(),
-            d_consensusQuality.data(),
-            multiMSA.d_coverages.data(),
             d_anchorSequencesLength.data(),
             d_accumExtensionsLengths.data(),
             d_inputMateLengths.data(),
@@ -2733,16 +2695,12 @@ struct BatchData{
         );
 
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<numTasks, 128, 0, stream>>>(
-            numTasks,
             d_goodscores.data(),
-            multiMSA.getMaximumMsaWidth(),
+            multiMSA.multiMSAView(),
             d_abortReasons.data(),
             d_outputMateHasBeenFound.data(),
             d_accumExtensionsLengths.data(),
             d_accumExtensionsLengthsOUT.data(),
-            multiMSA.d_coverages.data(),
-            multiMSA.d_support.data(),
-            multiMSA.d_counts.data(),
             d_anchorSequencesLength.data(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
@@ -3921,6 +3879,8 @@ struct BatchData{
                     D2H,
                     stream
                 ); CUERR;
+
+                d_consensusQuality.destroy();
 
                 cudaStreamSynchronize(stream); CUERR;
             }
