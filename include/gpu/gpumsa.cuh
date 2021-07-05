@@ -17,6 +17,8 @@
 #include <type_traits>
 
 #include <cub/cub.cuh>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
 
 #include <cooperative_groups.h>
 
@@ -1311,6 +1313,27 @@ namespace gpu{
             }
         }
 
+        __device__ __forceinline__
+        auto getConsensusQualityIterator() const{
+            return thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                [this](int pos){
+                    return getConsensusQualityOfPosition(pos);
+                }
+            );
+        }
+
+        __device__ __forceinline__
+        auto getDecodedConsensusIterator() const{
+            return thrust::make_transform_iterator(
+                thrust::make_counting_iterator(0),
+                [this](int pos){
+                    return getDecodedConsensusOfPosition(pos);
+                }
+            );
+        }
+
+
         template<class ThreadGroup>
         __device__ __forceinline__
         void computeConsensusQuality(
@@ -1321,17 +1344,12 @@ namespace gpu{
             const int begin = columnProperties->firstColumn_incl;
             const int end = columnProperties->lastColumn_excl;
 
+            auto consensusQualityIterator = getConsensusQualityIterator();
+
             for(int i = begin + group.thread_rank(); i < end; i += group.size()){
                 if(i - begin < maxlength){
-                    const float sup = support[i];
-                    //const float cov = coverages[i];
-
-                    //char q = getQualityChar(sup);
-
-                    //scale down quality depending on coverage
-                    //q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
-
-                    quality[i] = getQualityChar(sup);
+                    const int outpos = i - begin;
+                    quality[outpos] = consensusQualityIterator[i];
                 }
             }
         }
@@ -1343,27 +1361,15 @@ namespace gpu{
             char* decodedConsensus,
             int maxlength
         ) const {
-            auto decodeConsensus = [](const std::uint8_t encoded){
-                char decoded = 'F';
-                if(encoded == std::uint8_t{0}){
-                    decoded = 'A';
-                }else if(encoded == std::uint8_t{1}){
-                    decoded = 'C';
-                }else if(encoded == std::uint8_t{2}){
-                    decoded = 'G';
-                }else if(encoded == std::uint8_t{3}){
-                    decoded = 'T';
-                }
-                return decoded;
-            };
-
             const int begin = columnProperties->firstColumn_incl;
             const int end = columnProperties->lastColumn_excl;
+
+            auto decodedConsensusIterator = getDecodedConsensusIterator();
 
             for(int i = begin + group.thread_rank(); i < end; i += group.size()){
                 if(i - begin < maxlength){
                     const int outpos = i - begin;
-                    decodedConsensus[outpos] = decodeConsensus(consensus[i]);
+                    decodedConsensus[outpos] = decodedConsensusIterator[i];
                 }
             }
         }
@@ -1375,6 +1381,36 @@ namespace gpu{
 
             return end - begin;
         }
+
+    private:
+        __device__ __forceinline__
+        char getConsensusQualityOfPosition(int pos) const{
+            const float sup = support[pos];
+            //const float cov = coverages[pos];
+
+            //char q = getQualityChar(sup);
+
+            //scale down quality depending on coverage
+            //q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
+
+            return getQualityChar(sup);
+        }
+
+        __device__ __forceinline__
+        char getDecodedConsensusOfPosition(int pos) const{
+            const std::uint8_t encoded = consensus[pos];
+            char decoded = 'F';
+            if(encoded == std::uint8_t{0}){
+                decoded = 'A';
+            }else if(encoded == std::uint8_t{1}){
+                decoded = 'C';
+            }else if(encoded == std::uint8_t{2}){
+                decoded = 'G';
+            }else if(encoded == std::uint8_t{3}){
+                decoded = 'T';
+            }
+            return decoded;
+        };
 
     public:
         int columnPitchInElements;
