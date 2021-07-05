@@ -2591,50 +2591,6 @@ struct BatchData{
             firstStream
         );
   
-        d_consensusQuality.resizeUninitialized(numTasks * multiMSA.getMaximumMsaWidth(), firstStream);
-
-        //compute quality of consensus
-        helpers::lambda_kernel<<<numTasks, 256, 0, firstStream>>>(
-            [
-                consensusQuality = d_consensusQuality.data(),
-                multiMSA = multiMSA.multiMSAView(),
-                d_numCandidatesInMsa = d_numCandidatesPerAnchor2.data(),
-                //columnPitchInElements = msaColumnPitchInElements,
-                columnPitchInElements = multiMSA.getMaximumMsaWidth(),
-                numTasks = numTasks
-            ] __device__ (){
-
-                for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
-                    if(d_numCandidatesInMsa[t] > 0){
-                        const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
-
-                        const int begin = singleMSA.columnProperties->firstColumn_incl;
-                        const int end = singleMSA.columnProperties->lastColumn_excl;
-
-                        // if(threadIdx.x == 0){
-                        //     printf("t %d, begin %d end %d\n", t, begin, end);
-                        // }
-                        // __syncthreads();
-
-                        assert(begin >= 0);
-                        assert(end < columnPitchInElements);
-
-                        for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                            const float support = singleMSA.support[i];
-                            const float cov = singleMSA.coverages[i];
-
-                            char q = getQualityChar(support);
-
-                            //scale down quality depending on coverage
-                            q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
-
-                            consensusQuality[t * columnPitchInElements + i] = getQualityChar(support);
-                        }
-                    }
-                }
-            }
-        ); CUERR;
-
         CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), totalNumCandidates, false, firstStream); CUERR;
@@ -2733,6 +2689,14 @@ struct BatchData{
             H2D,
             stream
         ); CUERR;
+
+        d_consensusQuality.resizeUninitialized(numTasks * multiMSA.getMaximumMsaWidth(), stream);
+
+        multiMSA.computeConsensusQuality(
+            d_consensusQuality.data(),
+            multiMSA.getMaximumMsaWidth(),
+            stream
+        );
        
         //compute extensions
 
@@ -3916,68 +3880,23 @@ struct BatchData{
                 h_outputAnchorQualities.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 h_outputAnchors.resize(numFinishedTasks * resultMSAColumnPitchInElements);
                 h_anchorSequencesLength.resize(numFinishedTasks);
-                
-                //compute consensus quality, decoded consensus and compute consensus lengths per anchor
-                helpers::lambda_kernel<<<numFinishedTasks, 256, 0, stream>>>(
-                    [
-                        multiMSA = multiMSA.multiMSAView(),
-                        d_consensusLengths = d_anchorSequencesLength2.data(),
-                        d_decodedConsensus = d_decodedConsensus.data(),
-                        consensusQuality = d_consensusQuality.data(),
-                        d_numCandidatesInMsa = d_numCandidatesPerAnchor.data(),
-                        columnPitchInElements = multiMSA.getMaximumMsaWidth()
-                    ] __device__ (){
 
-                        auto decodeConsensus = [](const std::uint8_t encoded){
-                            char decoded = 'F';
-                            if(encoded == std::uint8_t{0}){
-                                decoded = 'A';
-                            }else if(encoded == std::uint8_t{1}){
-                                decoded = 'C';
-                            }else if(encoded == std::uint8_t{2}){
-                                decoded = 'G';
-                            }else if(encoded == std::uint8_t{3}){
-                                decoded = 'T';
-                            }
-                            return decoded;
-                        };
+                multiMSA.computeConsensusQuality(
+                    d_consensusQuality.data(),
+                    resultMSAColumnPitchInElements,
+                    stream
+                );
 
-                        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
+                multiMSA.computeConsensus(
+                    d_decodedConsensus.data(),
+                    resultMSAColumnPitchInElements,
+                    stream
+                );
 
-                            gpu::GpuSingleMSA msa = multiMSA.getSingleMSA(t);
-
-                            char* const taskConsensusQuality = consensusQuality + t * columnPitchInElements;
-                            const int begin = msa.columnProperties->firstColumn_incl;
-                            const int end = msa.columnProperties->lastColumn_excl;
-
-                            assert(begin >= 0);
-                            assert(end <= columnPitchInElements);
-
-                            if(threadIdx.x == 0){
-                                d_consensusLengths[t] = end - begin;
-                            }
-
-                            for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                                const float support = msa.support[i];
-                                // const float cov = taskCoverage[i];
-
-                                // char q = getQualityChar(support);
-
-                                // //scale down quality depending on coverage
-                                // q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
-
-                                taskConsensusQuality[i] = getQualityChar(support);
-                            }
-
-                            for(int i = begin + threadIdx.x; i < end; i += blockDim.x){
-                                const int outpos = i - begin;
-
-                                d_decodedConsensus[t * columnPitchInElements + outpos]
-                                    = decodeConsensus(msa.consensus[i]);
-                            }
-                        }
-                    }
-                ); CUERR;
+                multiMSA.computeMsaSizes(
+                    d_anchorSequencesLength2.data(),
+                    stream
+                );
 
                 cudaMemcpyAsync(
                     h_outputAnchors.data(),

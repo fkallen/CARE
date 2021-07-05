@@ -96,6 +96,55 @@ namespace gpu{
         }
     }
 
+    __global__
+    void computeMsaConsensusQualityKernel(
+        char* consensusQuality,
+        int consensusQualityPitchInBytes,
+        GPUMultiMSA multiMSA
+    ){
+        auto group = cg::this_thread_block();
+
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+            singleMSA.computeConsensusQuality(
+                group, 
+                consensusQuality + t * consensusQualityPitchInBytes, 
+                consensusQualityPitchInBytes
+            );
+        }
+    }
+
+    __global__
+    void computeDecodedMsaConsensusKernel(
+        char* consensus,
+        int consensusPitchInBytes,
+        GPUMultiMSA multiMSA
+    ){
+        auto group = cg::this_thread_block();
+
+        for(int t = blockIdx.x; t < multiMSA.numMSAs; t += gridDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+            singleMSA.computeDecodedConsensus(
+                group, 
+                consensus + t * consensusPitchInBytes, 
+                consensusPitchInBytes
+            );
+        }
+    }
+
+    __global__
+    void computeMsaSizesKernel(
+        int* sizes,
+        GPUMultiMSA multiMSA
+    ){
+
+        for(int t = threadIdx.x + blockIdx.x * blockDim.x; t < multiMSA.numMSAs; t += gridDim.x * blockDim.x){
+            const gpu::GpuSingleMSA singleMSA = multiMSA.getSingleMSA(t);
+
+            sizes[t] = singleMSA.computeSize();
+        }
+    }
+
 
 
     #ifdef __CUDACC_DEBUG__
@@ -929,6 +978,50 @@ namespace gpu{
             d_candidatesPerSubjectPrefixSum,
             numAnchors
         );
+    }
+
+    void callComputeMsaConsensusQualityKernel(
+        char* d_consensusQuality,
+        int consensusQualityPitchInBytes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = multiMSA.numMSAs;
+        computeMsaConsensusQualityKernel<<<grid, block, 0, stream>>>(
+            d_consensusQuality,
+            consensusQualityPitchInBytes,
+            multiMSA
+        ); CUERR;
+    }
+
+    void callComputeDecodedMsaConsensusKernel(
+        char* d_consensus,
+        int consensusPitchInBytes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = multiMSA.numMSAs;
+        computeDecodedMsaConsensusKernel<<<grid, block, 0, stream>>>(
+            d_consensus,
+            consensusPitchInBytes,
+            multiMSA
+        ); CUERR;
+    }
+
+    void callComputeMsaSizesKernel(
+        int* d_sizes,
+        GPUMultiMSA multiMSA,
+        cudaStream_t stream
+    ){
+        dim3 block = 128;
+        dim3 grid = SDIV(multiMSA.numMSAs, block.x);
+
+        computeMsaSizesKernel<<<grid, block, 0, stream>>>(
+            d_sizes,
+            multiMSA
+        ); CUERR;
     }
     
     void callMsaCandidateRefinementKernel_multiiter_async(

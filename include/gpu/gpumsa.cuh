@@ -1311,6 +1311,71 @@ namespace gpu{
             }
         }
 
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void computeConsensusQuality(
+            ThreadGroup& group,
+            char* quality,
+            int maxlength
+        ) const {
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            for(int i = begin + group.thread_rank(); i < end; i += group.size()){
+                if(i - begin < maxlength){
+                    const float sup = support[i];
+                    //const float cov = coverages[i];
+
+                    //char q = getQualityChar(sup);
+
+                    //scale down quality depending on coverage
+                    //q = char(float(q) * min(1.0f, cov * 1.0f / 5.0f));
+
+                    quality[i] = getQualityChar(sup);
+                }
+            }
+        }
+
+        template<class ThreadGroup>
+        __device__ __forceinline__
+        void computeDecodedConsensus(
+            ThreadGroup& group,
+            char* decodedConsensus,
+            int maxlength
+        ) const {
+            auto decodeConsensus = [](const std::uint8_t encoded){
+                char decoded = 'F';
+                if(encoded == std::uint8_t{0}){
+                    decoded = 'A';
+                }else if(encoded == std::uint8_t{1}){
+                    decoded = 'C';
+                }else if(encoded == std::uint8_t{2}){
+                    decoded = 'G';
+                }else if(encoded == std::uint8_t{3}){
+                    decoded = 'T';
+                }
+                return decoded;
+            };
+
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            for(int i = begin + group.thread_rank(); i < end; i += group.size()){
+                if(i - begin < maxlength){
+                    const int outpos = i - begin;
+                    decodedConsensus[outpos] = decodeConsensus(consensus[i]);
+                }
+            }
+        }
+
+        __device__ __forceinline__
+        int computeSize() const {
+            const int begin = columnProperties->firstColumn_incl;
+            const int end = columnProperties->lastColumn_excl;
+
+            return end - begin;
+        }
+
     public:
         int columnPitchInElements;
         std::uint8_t* consensus;

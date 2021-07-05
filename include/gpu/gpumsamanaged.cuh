@@ -190,6 +190,43 @@ namespace gpu{
             );
         }
 
+        void computeConsensusQuality(
+            char* d_consensusQuality,
+            int consensusQualityPitchInBytes,
+            cudaStream_t stream
+        ){
+            callComputeMsaConsensusQualityKernel(
+                d_consensusQuality,
+                consensusQualityPitchInBytes,
+                multiMSA,
+                stream
+            );
+        }
+
+        void computeConsensus(
+            char* d_consensus,
+            int consensusPitchInBytes,
+            cudaStream_t stream
+        ){
+            callComputeDecodedMsaConsensusKernel(
+                d_consensus,
+                consensusPitchInBytes,
+                multiMSA,
+                stream
+            );
+        }
+
+        void computeMsaSizes(
+            int* d_sizes,
+            cudaStream_t stream
+        ){
+            callComputeMsaSizesKernel(
+                d_sizes,
+                multiMSA,
+                stream
+            );
+        }
+
         void destroy(){
             d_consensusEncoded.destroy();
             d_counts.destroy();
