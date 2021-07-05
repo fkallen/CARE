@@ -1214,23 +1214,6 @@ namespace readextendergpukernels{
 }
 
 
-
-struct SequenceFlagMultiplier{
-    int pitch{};
-    const bool* flags{};
-
-    __host__ __device__
-    SequenceFlagMultiplier(const bool* flags_, int pitch_)
-        :pitch(pitch_), flags(flags_){
-
-    }
-
-    __host__ __device__
-    bool operator()(int i) const{
-        return flags[i / pitch];
-    }
-};
-
 struct BatchData{
     template<class T>
     using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
@@ -2179,7 +2162,7 @@ struct BatchData{
                 d_inputanchormatedata.data(),
                 thrust::make_transform_iterator(
                     thrust::make_counting_iterator(0),
-                    SequenceFlagMultiplier{d_mateIdHasBeenRemoved.data(), int(encodedSequencePitchInInts)}
+                    make_iterator_multiplier(d_mateIdHasBeenRemoved.data(), encodedSequencePitchInInts)
                 ),
                 d_sequencesOfMatesWhichShouldBeRemoved.data(),
                 thrust::make_discard_iterator(),
@@ -4365,7 +4348,7 @@ struct BatchData{
             d_candidateSequencesData.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepFlags, int(encodedSequencePitchInInts)}
+                make_iterator_multiplier(d_keepFlags, encodedSequencePitchInInts)
             ),
             d_candidateSequencesData2.data(),
             thrust::make_discard_iterator(),
@@ -4384,7 +4367,7 @@ struct BatchData{
         //     (const int*)d_candidateQualityScores.data(),
         //     thrust::make_transform_iterator(
         //         thrust::make_counting_iterator(0),
-        //         SequenceFlagMultiplier{d_keepFlags, int(qualityPitchInBytes / sizeof(int))}
+        //         make_iterator_multiplier(d_keepFlags, qualityPitchInBytes / sizeof(int))
         //     ),
         //     (int*)d_candidateQualities2.data(),
         //     thrust::make_discard_iterator(),
@@ -4513,7 +4496,7 @@ struct BatchData{
             d_candidateSequencesData.data(),
             thrust::make_transform_iterator(
                 thrust::make_counting_iterator(0),
-                SequenceFlagMultiplier{d_keepFlags, int(encodedSequencePitchInInts)}
+                make_iterator_multiplier(d_keepFlags, encodedSequencePitchInInts)
             ),
             d_candidateSequencesData2.data(),
             thrust::make_discard_iterator(),
@@ -4532,7 +4515,7 @@ struct BatchData{
         //     (const int*)d_candidateQualityScores.data(),
         //     thrust::make_transform_iterator(
         //         thrust::make_counting_iterator(0),
-        //         SequenceFlagMultiplier{d_keepFlags, int(qualityPitchInBytes / sizeof(int))}
+        //         make_iterator_multiplier(d_keepFlags, qualityPitchInBytes / sizeof(int))
         //     ),
         //     (int*)d_candidateQualities2.data(),
         //     thrust::make_discard_iterator(),
