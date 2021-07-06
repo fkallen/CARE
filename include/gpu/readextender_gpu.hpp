@@ -1217,7 +1217,6 @@ struct BatchData{
         BeforeMSA,
         BeforeExtend,
         BeforeUpdateUsedCandidateIds,
-        BeforeCopyToHost,
         BeforeUnpack,
         BeforePrepareNextIteration,
         Finished,
@@ -1235,8 +1234,7 @@ struct BatchData{
             case State::BeforeAlignmentFilter: return "BeforeAlignmentFilter";
             case State::BeforeMSA: return "BeforeMSA";
             case State::BeforeExtend: return "BeforeExtend";
-            case State::BeforeUpdateUsedCandidateIds: return "BeforeUpdateUsedCandidateIds";            
-            case State::BeforeCopyToHost: return "BeforeCopyToHost";
+            case State::BeforeUpdateUsedCandidateIds: return "BeforeUpdateUsedCandidateIds";
             case State::BeforeUnpack: return "BeforeUnpack";
             case State::BeforePrepareNextIteration: return "BeforePrepareNextIteration";
             case State::Finished: return "Finished";
@@ -1623,8 +1621,7 @@ struct BatchData{
             case BatchData::State::BeforeAlignmentFilter: filterAlignments(); break;
             case BatchData::State::BeforeMSA: computeMSAs(); break;
             case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(); break;
-            case BatchData::State::BeforeUpdateUsedCandidateIds: updateUsedCandidateIds(); break;            
-            case BatchData::State::BeforeCopyToHost: copyBuffersToHost(); break;
+            case BatchData::State::BeforeUpdateUsedCandidateIds: updateUsedCandidateIds(); break;
             case BatchData::State::BeforeUnpack: unpackResultsIntoTasks(); break;
             case BatchData::State::BeforePrepareNextIteration: prepareNextIteration(); break;
             case BatchData::State::Finished: break;
@@ -2637,21 +2634,9 @@ struct BatchData{
         outputAnchorQualityPitchInBytes = SDIV(qualityPitchInBytes, 128) * 128;
         decodedMatesRevCPitchInBytes = SDIV(decodedSequencePitchInBytes, 128) * 128;
 
-        h_accumExtensionsLengths.resize(numTasks);
-        h_abortReasons.resize(numTasks);
-        h_outputAnchors.resize(numTasks * outputAnchorPitchInBytes);
-        h_outputAnchorQualities.resize(numTasks * outputAnchorQualityPitchInBytes);
-        h_outputAnchorLengths.resize(numTasks);
-        h_outputMateHasBeenFound.resize(numTasks);
-        h_sizeOfGapToMate.resize(numTasks);
-        h_isFullyUsedCandidate.resize(totalNumCandidates);
-        h_goodscores.resize(numTasks);
-
-
         CachedDeviceUVector<int> d_accumExtensionsLengthsOUT(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<float> d_goodscores(numTasks, stream, *cubAllocator);
-
         
         d_isFullyUsedCandidate.resizeUninitialized(totalNumCandidates, stream);
         d_outputAnchors.resizeUninitialized(numTasks * outputAnchorPitchInBytes, stream);
@@ -2752,6 +2737,19 @@ struct BatchData{
             }
         );
 
+        cudaEventRecord(events[0], stream); CUERR;
+        cudaStreamWaitEvent(hostOutputStream, events[0], 0); CUERR;
+
+        h_accumExtensionsLengths.resize(numTasks);
+        h_abortReasons.resize(numTasks);
+        h_outputAnchors.resize(numTasks * outputAnchorPitchInBytes);
+        h_outputAnchorQualities.resize(numTasks * outputAnchorQualityPitchInBytes);
+        h_outputAnchorLengths.resize(numTasks);
+        h_outputMateHasBeenFound.resize(numTasks);
+        h_sizeOfGapToMate.resize(numTasks);
+        h_isFullyUsedCandidate.resize(totalNumCandidates);
+        h_goodscores.resize(numTasks);
+
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
                 d_accumExtensionsLengthsOUT.data(),
@@ -2770,7 +2768,7 @@ struct BatchData{
                 h_outputAnchorLengths.data(),
                 h_goodscores.data()
             )),
-            stream
+            hostOutputStream
         );
 
         cudaMemcpyAsync(
@@ -2778,7 +2776,7 @@ struct BatchData{
             d_outputAnchors.data(),
             sizeof(char) * outputAnchorPitchInBytes * numTasks,
             D2H,
-            stream
+            hostOutputStream
         ); CUERR;
 
         cudaMemcpyAsync(
@@ -2786,7 +2784,7 @@ struct BatchData{
             d_outputAnchorQualities.data(),
             sizeof(char) * outputAnchorQualityPitchInBytes * numTasks,
             D2H,
-            stream
+            hostOutputStream
         ); CUERR;
 
         cudaMemcpyAsync(
@@ -2794,7 +2792,7 @@ struct BatchData{
             d_isFullyUsedCandidate.data(),
             sizeof(bool) * totalNumCandidates,
             D2H,
-            stream
+            hostOutputStream
         ); CUERR;
 
         std::swap(d_accumExtensionsLengths, d_accumExtensionsLengthsOUT);
@@ -2973,25 +2971,13 @@ struct BatchData{
         
         }
 
-        setState(BatchData::State::BeforeCopyToHost);
-    }
-    
-    void copyBuffersToHost(){
-        assert(state == BatchData::State::BeforeCopyToHost);
-
-        nvtx::push_range("copyBuffersToHost", 8);
-
-
-        cudaStreamSynchronize(streams[0]); CUERR;
-        cudaStreamSynchronize(streams[1]); CUERR;
-
-        nvtx::pop_range();
-
         setState(BatchData::State::BeforeUnpack);
     }
-
+    
     void unpackResultsIntoTasks(){
         assert(state == BatchData::State::BeforeUnpack);
+
+        cudaStreamSynchronize(hostOutputStream); CUERR;
 
         for(int i = 0; i < numTasks; i++){ 
             auto& task = tasks[i];
@@ -4949,6 +4935,7 @@ struct BatchData{
     // tasḱ_mateQualityScoresReversed
     // tasḱ_mateHasBeenFound;
 
+    CudaStream hostOutputStream{};
     
     std::array<CudaEvent, 1> events{};
     std::array<cudaStream_t, 4> streams{};
