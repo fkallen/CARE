@@ -1309,6 +1309,7 @@ struct BatchData{
         d_inputMateLengths(cubAllocator_),
         d_isPairedTask(cubAllocator_),
         d_subjectSequencesData(cubAllocator_),
+        d_accumExtensionsLengths(cubAllocator_),
         d_usedReadIds(cubAllocator_),
         d_numUsedReadIdsPerAnchor(cubAllocator_),
         d_numUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
@@ -1449,6 +1450,7 @@ struct BatchData{
         d_isPairedTask.resize(newNumTasks, streams[0]);
         d_anchorReadIds.resize(newNumTasks, streams[0]);
         d_mateReadIds.resize(newNumTasks, streams[0]);
+        d_accumExtensionsLengths.resize(newNumTasks, streams[0]);
 
         cudaMemcpyAsync(
             d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts,
@@ -1498,6 +1500,12 @@ struct BatchData{
             streams[0]
         ); CUERR;
 
+        helpers::call_fill_kernel_async(
+            d_accumExtensionsLengths.data() + currentNumTasks,
+            numAdditionalTasks,
+            0,
+            streams[0]
+        ); CUERR;
 
         d_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes, streams[0]);
         cudaMemcpyAsync(
@@ -2640,7 +2648,6 @@ struct BatchData{
         h_goodscores.resize(numTasks);
 
 
-        CachedDeviceUVector<int> d_accumExtensionsLengths(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_accumExtensionsLengthsOUT(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_sizeOfGapToMate(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<float> d_goodscores(numTasks, stream, *cubAllocator);
@@ -2657,23 +2664,7 @@ struct BatchData{
         helpers::call_fill_kernel_async(d_abortReasons.data(), numTasks, extension::AbortReason::None, stream); CUERR;
         helpers::call_fill_kernel_async(d_isFullyUsedCandidate.data(), totalNumCandidates, false, stream); CUERR;
         helpers::call_fill_kernel_async(d_goodscores.data(), numTasks, 0.0f, stream); CUERR;
-
-
-        for(int i = 0; i < numTasks; i++){
-            const int index = i;
-            const auto& task = tasks[index];
-
-            h_accumExtensionsLengths[i] = task.accumExtensionLengths;
-        }
-
-        cudaMemcpyAsync(
-            d_accumExtensionsLengths.data(),
-            h_accumExtensionsLengths.data(),
-            sizeof(int) * numTasks,
-            H2D,
-            stream
-        ); CUERR;
-       
+      
         //compute extensions
 
         readextendergpukernels::computeExtensionStepFromMsaKernel<128><<<numTasks, 128, 0, stream>>>(
@@ -2805,6 +2796,8 @@ struct BatchData{
             D2H,
             stream
         ); CUERR;
+
+        std::swap(d_accumExtensionsLengths, d_accumExtensionsLengthsOUT);
 
         setState(BatchData::State::BeforeUpdateUsedCandidateIds);
     }
@@ -3257,7 +3250,8 @@ struct BatchData{
         CachedDeviceUVector<read_number> d_anchorReadIds2(newNumTasks, streams[0], *cubAllocator);
         CachedDeviceUVector<read_number> d_mateReadIds2(newNumTasks, streams[0], *cubAllocator);
         CachedDeviceUVector<int> d_inputMateLengths2(newNumTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<bool> d_isPairedTask2(newNumTasks, streams[0], *cubAllocator);;
+        CachedDeviceUVector<bool> d_isPairedTask2(newNumTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_accumExtensionsLengths2(newNumTasks, streams[0], *cubAllocator);
 
         d_anchorSequencesLength.resizeUninitialized(newNumTasks, streams[0]);
 
@@ -3267,7 +3261,8 @@ struct BatchData{
                 d_mateReadIds.data(),
                 d_outputAnchorLengths.data(),
                 d_inputMateLengths.data(),
-                d_isPairedTask.data()
+                d_isPairedTask.data(),
+                d_accumExtensionsLengths.data()
             )),
             d_isActive.data(),
             thrust::make_zip_iterator(thrust::make_tuple(
@@ -3275,7 +3270,8 @@ struct BatchData{
                 d_mateReadIds2.data(),
                 d_anchorSequencesLength.data(),
                 d_inputMateLengths2.data(),
-                d_isPairedTask2.data()
+                d_isPairedTask2.data(),
+                d_accumExtensionsLengths2.data()
             )),
             thrust::make_discard_iterator(),
             numTasks,
@@ -3286,6 +3282,7 @@ struct BatchData{
         std::swap(d_mateReadIds, d_mateReadIds2);
         std::swap(d_inputMateLengths, d_inputMateLengths2);
         std::swap(d_isPairedTask, d_isPairedTask2);
+        std::swap(d_accumExtensionsLengths, d_accumExtensionsLengths2);
 
 
         //set new encoded mate data
@@ -4874,6 +4871,7 @@ struct BatchData{
     CachedDeviceUVector<int> d_inputMateLengths{};
     CachedDeviceUVector<bool> d_isPairedTask{};
     CachedDeviceUVector<unsigned int> d_subjectSequencesData{};
+    CachedDeviceUVector<int> d_accumExtensionsLengths{};
 
     // -----
 
