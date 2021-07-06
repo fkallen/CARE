@@ -1206,6 +1206,36 @@ struct BatchData{
     template<class T>
     using PinnedBuffer = helpers::SimpleAllocationPinnedHost<T>;
 
+    struct ExtensionTaskCpuData{
+        bool pairedEnd = false;
+        bool mateHasBeenFound = false;
+        int id = 0;
+        int pairId = 0;
+        int myLength = 0;
+        int mateLength = 0;
+        int currentAnchorLength = 0;
+        int accumExtensionLengths = 0;
+        int iteration = 0;
+        float goodscore = 0.0f;
+        read_number myReadId = 0;
+        read_number mateReadId = 0;
+        extension::AbortReason abortReason = extension::AbortReason::None;
+        care::extension::ExtensionDirection direction{};
+        std::string decodedMateRevC{};
+        std::string mateQualityScoresReversed{};
+        std::vector<int> totalDecodedAnchorsLengths{};
+        std::vector<char> totalDecodedAnchorsFlat{};
+        std::vector<char> totalAnchorQualityScoresFlat{};
+        std::vector<int> totalAnchorBeginInExtendedRead{};
+
+        bool isActive(int insertSize, int insertSizeStddev) const noexcept{
+            return (iteration < insertSize 
+                && accumExtensionLengths < insertSize - (mateLength) + insertSizeStddev
+                && (abortReason == extension::AbortReason::None) 
+                && !mateHasBeenFound);
+        }
+    };
+
     enum class State{
         BeforeHash,
         BeforeRemoveIds,
@@ -1560,12 +1590,35 @@ struct BatchData{
 
         //save tasks and update indices of active tasks
 
-        tasks.insert(tasks.end(), std::make_move_iterator(extraTasksBegin), std::make_move_iterator(extraTasksEnd));        
+        tasks.reserve(tasks.size() + numAdditionalTasks);
 
-        for(const auto& task : tasks){
-            assert(task.totalDecodedAnchorsFlat.size() >= decodedSequencePitchInBytes);
-            assert(task.totalAnchorQualityScoresFlat.size() >= qualityPitchInBytes);
+        for(auto it = extraTasksBegin; it != extraTasksEnd; ++it){
+            ExtensionTaskCpuData data;
+            data.pairedEnd = it->pairedEnd;
+            data.mateHasBeenFound = it->mateHasBeenFound;
+            data.id = it->id;
+            data.pairId = it->pairId;
+            data.myLength = it->myLength;
+            data.mateLength = it->mateLength;
+            data.currentAnchorLength = it->currentAnchorLength;
+            data.accumExtensionLengths = it->accumExtensionLengths;
+            data.iteration = it->iteration;
+            data.goodscore = it->goodscore;
+            data.myReadId = it->myReadId;
+            data.mateReadId = it->mateReadId;
+            data.abortReason = it->abortReason;
+            data.direction = it->direction;
+            data.decodedMateRevC = std::move(it->decodedMateRevC);
+            data.mateQualityScoresReversed = std::move(it->mateQualityScoresReversed);
+            data.totalDecodedAnchorsLengths = std::move(it->totalDecodedAnchorsLengths);
+            data.totalDecodedAnchorsFlat = std::move(it->totalDecodedAnchorsFlat);
+            data.totalAnchorQualityScoresFlat = std::move(it->totalAnchorQualityScoresFlat);
+            data.totalAnchorBeginInExtendedRead = std::move(it->totalAnchorBeginInExtendedRead);
+
+            tasks.push_back(std::move(data));
         }
+
+        //tasks.insert(tasks.end(), std::make_move_iterator(extraTasksBegin), std::make_move_iterator(extraTasksEnd));        
 
         numTasks = tasks.size();
 
@@ -3093,8 +3146,6 @@ struct BatchData{
                     }
                 }
             }
-
-            task.abort = task.abortReason != extension::AbortReason::None;
         }
 
         handleEarlyExitOfTasks4();
@@ -3118,8 +3169,8 @@ struct BatchData{
         assert(numTasks == int(tasks.size()));
         const int totalTasksBefore = tasks.size() + finishedTasks.size();
 
-        std::vector<extension::Task> newActiveTasks;
-        std::vector<extension::Task> newlyFinishedTasks;
+        std::vector<ExtensionTaskCpuData> newActiveTasks;
+        std::vector<ExtensionTaskCpuData> newlyFinishedTasks;
         newActiveTasks.reserve(numTasks);
         newlyFinishedTasks.reserve(numTasks);
 
@@ -3457,8 +3508,8 @@ struct BatchData{
     std::vector<extension::ExtendResult> constructResults4(){
 
         //determine tasks in groups of 4
-        std::vector<extension::Task> finishedTasks4{};
-        std::vector<extension::Task> finishedTasksNot4{};
+        std::vector<ExtensionTaskCpuData> finishedTasks4{};
+        std::vector<ExtensionTaskCpuData> finishedTasksNot4{};
 
         {
             auto l = finishedTasks.begin();
@@ -3892,7 +3943,7 @@ struct BatchData{
             extension::ExtendResult extendResult;
             extendResult.direction = task.direction;
             extendResult.numIterations = task.iteration;
-            extendResult.aborted = task.abort;
+            extendResult.aborted = task.abortReason != extension::AbortReason::None;
             extendResult.abortReason = task.abortReason;
             extendResult.readId1 = task.myReadId;
             extendResult.readId2 = task.mateReadId;
@@ -4416,7 +4467,7 @@ struct BatchData{
         setState(BatchData::State::Finished);
     }
     
-    void addFinishedTask(extension::Task&& task){
+    void addFinishedTask(ExtensionTaskCpuData&& task){
         //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
         auto comp = [](const auto& l, const auto& r){
             return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
@@ -4425,14 +4476,14 @@ struct BatchData{
         finishedTasks.insert(where, std::move(task));
     }
 
-    void addSortedFinishedTasks(std::vector<extension::Task>& tasksToAdd){
+    void addSortedFinishedTasks(std::vector<ExtensionTaskCpuData>& tasksToAdd){
         //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
 
         auto comp = [](const auto& l, const auto& r){
             return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
         };
 
-        std::vector<extension::Task> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
+        std::vector<ExtensionTaskCpuData> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
 
         newFinishedTasks.erase(
             std::merge(
@@ -4471,12 +4522,10 @@ struct BatchData{
                         if(tasks[i + k].pairId == task.pairId){
                             if(tasks[i+k].id == task.id + 1){
                                 //disable LR partner task
-                                tasks[i + k].abort = true;
                                 tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
                             }else if(tasks[i+k].id == task.id + 2){
                                 //disable RL search task
                                 if(disableOtherStrand){
-                                    tasks[i + k].abort = true;
                                     tasks[i + k].abortReason = extension::AbortReason::OtherStrandFoundMate;
                                 }
                             }
@@ -4484,12 +4533,11 @@ struct BatchData{
                             break;
                         }
                     }
-                }else if(task.abort){
+                }else if(task.abortReason != extension::AbortReason::None){
                     for(int k = 1; k <= 4; k++){
                         if(tasks[i + k].pairId == task.pairId){
                             if(tasks[i+k].id == task.id + 1){
                                 //disable LR partner task  
-                                tasks[i + k].abort = true;
                                 tasks[i + k].abortReason = extension::AbortReason::PairedAnchorFinished;
                                 break;
                             }
@@ -4506,7 +4554,6 @@ struct BatchData{
                     if(tasks[i + 1].pairId == task.pairId){
                         if(tasks[i + 1].id == task.id + 1){
                             //disable RL partner task
-                            tasks[i + 1].abort = true;
                             tasks[i + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                         }
                     }
@@ -4516,7 +4563,6 @@ struct BatchData{
                             if(tasks[i - k].id == task.id - 2){
                                 //disable LR search task
                                 if(disableOtherStrand){
-                                    tasks[i - k].abort = true;
                                     tasks[i - k].abortReason = extension::AbortReason::OtherStrandFoundMate;
                                 }
                             }
@@ -4525,11 +4571,10 @@ struct BatchData{
                         }
                     }
                     
-                }else if(task.abort){
+                }else if(task.abortReason != extension::AbortReason::None){
                     if(tasks[i + 1].pairId == task.pairId){
                         if(tasks[i + 1].id == task.id + 1){
                             //disable RL partner task
-                            tasks[i + 1].abort = true;
                             tasks[i + 1].abortReason = extension::AbortReason::PairedAnchorFinished;
                         }
                     }
@@ -4939,8 +4984,10 @@ struct BatchData{
     
     std::array<CudaEvent, 1> events{};
     std::array<cudaStream_t, 4> streams{};
-    std::vector<extension::Task> tasks{};
-    std::vector<extension::Task> finishedTasks{};
+    //std::vector<extension::Task> tasks{};
+    //std::vector<extension::Task> finishedTasks{};
+    std::vector<ExtensionTaskCpuData> tasks{};
+    std::vector<ExtensionTaskCpuData> finishedTasks{};
 
 };
 
