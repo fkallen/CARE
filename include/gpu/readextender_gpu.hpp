@@ -118,7 +118,7 @@ namespace care{
         struct SplitInfo{
             char nuc;
             int column;
-            float ratio;
+            //float ratio;
 
             SplitInfo() = default;
 
@@ -126,7 +126,7 @@ namespace care{
             SplitInfo(char c, int n) : nuc(c), column(n){}
 
             __host__ __device__
-            SplitInfo(char c, int n, float f) : nuc(c), column(n), ratio(f){}
+            SplitInfo(char c, int n, float f) : nuc(c), column(n)/*, ratio(f)*/{}
         };
 
         struct SplitInfos{       
@@ -233,6 +233,9 @@ namespace care{
             // 11 -> nuc  matches second splitInfos
             constexpr int numPossibleColumnsPerFlag = 32; 
             //
+
+            if(splitInfos.numSplitInfos == 0) return 1;
+            if(splitInfos.numSplitInfos == 2) return 2;
 
             if(threadIdx.x == 0){
                 temp.numEncodedRows = 0;
@@ -474,8 +477,7 @@ namespace readextendergpukernels{
         bool* d_outputMateHasBeenFound,
         int* d_sizeOfGapToMate,
         int minCoverageForExtension,
-        int fixedStepsize,
-        float* d_goodscores
+        int fixedStepsize
     ){
 
         using BlockReduce = cub::BlockReduce<int, blocksize>;
@@ -752,7 +754,11 @@ namespace readextendergpukernels{
 
                 //int count = checker.getAmbiguousColumnCount(anchorLength, anchorLength + extendedBy, temp.reduce);
 
+                //auto a = clock();
+
                 checker.getSplitInfos(anchorLength, anchorLength + extendedBy, 0.4f, 0.6f, smemSplitInfos);
+
+                //auto b = clock();
 
                 int count = checker.getNumberOfSplits(
                     smemSplitInfos, 
@@ -766,8 +772,11 @@ namespace readextendergpukernels{
                     temp.columnschecker
                 );
 
+                //auto c = clock();
+
                 if(threadIdx.x == 0){
                     d_goodscores[t] = count;
+                    //printf("cand %d extendedBy %d, %lu %lu, infos %d, count %d\n", d_numCandidatesPerAnchor[t], extendedBy, b-a, c-b, smemSplitInfos.numSplitInfos, count);
                 }
                 
                 __syncthreads();
@@ -2690,8 +2699,7 @@ struct BatchData{
             d_outputMateHasBeenFound.data(),
             d_sizeOfGapToMate.data(),
             minCoverageForExtension,
-            maxextensionPerStep,
-            d_goodscores.data()
+            maxextensionPerStep
         );
 
         readextendergpukernels::computeExtensionStepQualityKernel<128><<<numTasks, 128, 0, stream>>>(
@@ -4460,7 +4468,7 @@ struct BatchData{
 
     void handleEarlyExitOfTasks4(){
 
-        constexpr bool disableOtherStrand = true;
+        constexpr bool disableOtherStrand = false;
 
         for(int i = 0; i < numTasks; i++){ 
             const auto& task = tasks[i];
