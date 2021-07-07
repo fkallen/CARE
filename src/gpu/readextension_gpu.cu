@@ -104,7 +104,7 @@ void initializePairedEndExtensionBatchData4(
 }
 
 
-MemoryFileFixedSize<ExtendedRead> 
+MemoryFileFixedSize<ExtendedRead>
 //std::vector<ExtendedRead>
 extend_gpu_pairedend(
     const GoodAlignmentProperties& goodAlignmentProperties,
@@ -1006,15 +1006,17 @@ extend_gpu_pairedend(
 
 
         helpers::SimpleAllocationPinnedHost<read_number> currentIds(2 * batchsizePairs);
-        helpers::SimpleAllocationPinnedHost<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
-        helpers::SimpleAllocationPinnedHost<int> currentReadLengths(2 * batchsizePairs);
-        helpers::SimpleAllocationPinnedHost<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
-
-        if(!correctionOptions.useQualityScores){
-            std::fill(currentQualityScores.begin(), currentQualityScores.end(), 'I');
-        }
+        helpers::SimpleAllocationDevice<unsigned int> currentEncodedReads(2 * encodedSequencePitchInInts * batchsizePairs);
+        helpers::SimpleAllocationDevice<int> currentReadLengths(2 * batchsizePairs);
+        helpers::SimpleAllocationDevice<char> currentQualityScores(2 * qualityPitchInBytes * batchsizePairs);
 
         CudaStream stream;
+
+        if(!correctionOptions.useQualityScores){
+            //std::fill(currentQualityScores.begin(), currentQualityScores.end(), 'I');
+            helpers::call_fill_kernel_async(currentQualityScores.data(), currentQualityScores.size(), 'I', stream);
+        }
+
 
         const bool isPairedEnd = true;
 
@@ -1032,6 +1034,11 @@ extend_gpu_pairedend(
             myCubAllocator
         );
         batchData->someId = ompThreadId;
+
+        batchData->encodedSequencePitchInInts = encodedSequencePitchInInts;
+        batchData->decodedSequencePitchInBytes = decodedSequencePitchInBytes;
+        batchData->msaColumnPitchInElements = msaColumnPitchInElements;
+        batchData->qualityPitchInBytes = qualityPitchInBytes;
 
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;
@@ -1119,39 +1126,10 @@ extend_gpu_pairedend(
                         stream
                     );
                 }
-
-                cudaStreamSynchronize(stream); CUERR;
-
+                
                 const int numReadPairsInBatch = numNewReadsInBatch / 2;
 
-                inputs.resize(numReadPairsInBatch); 
-
-                for(int i = 0; i < numReadPairsInBatch; i++){
-                    auto& input = inputs[i];
-
-                    input.readLength1 = currentReadLengths[2*i];
-                    input.readLength2 = currentReadLengths[2*i+1];
-                    input.readId1 = currentIds[2*i];
-                    input.readId2 = currentIds[2*i+1];
-                    input.encodedRead1.resize(encodedSequencePitchInInts);
-                    input.encodedRead2.resize(encodedSequencePitchInInts);
-                    std::copy_n(currentEncodedReads.get() + (2*i) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead1.begin());
-                    std::copy_n(currentEncodedReads.get() + (2*i + 1) * encodedSequencePitchInInts, encodedSequencePitchInInts, input.encodedRead2.begin());
-
-                    input.qualityScores1.resize(input.readLength1);
-                    input.qualityScores2.resize(input.readLength2);
-                    std::copy_n(currentQualityScores.get() + (2*i) * qualityPitchInBytes, input.readLength1, input.qualityScores1.begin());
-                    std::copy_n(currentQualityScores.get() + (2*i + 1) * qualityPitchInBytes, input.readLength2, input.qualityScores2.begin());
-                }
-                
-                initializePairedEndExtensionBatchData4(
-                    *batchData,
-                    inputs,
-                    encodedSequencePitchInInts, 
-                    decodedSequencePitchInBytes, 
-                    msaColumnPitchInElements,
-                    qualityPitchInBytes
-                );
+                batchData->addTasks(numReadPairsInBatch, currentIds.data(), currentReadLengths.data(), currentEncodedReads.data(), currentQualityScores.data(), stream);
 
                 batchData->setState(BatchData::State::BeforeHash);
 
@@ -1243,8 +1221,6 @@ extend_gpu_pairedend(
             nvtx::pop_range();
 
             progressThread.addProgress(numresults - repeated);
-
-            batchData->resetTasks();
         };
 
         //std::cerr << "thread " << ompThreadId << " begins main loop\n";

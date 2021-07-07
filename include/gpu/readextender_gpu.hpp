@@ -1273,12 +1273,13 @@ namespace readextendergpukernels{
 
         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
-        const int groupIdInBlock = groupId / numGroupsInBlock;
+        const int groupIdInBlock = groupId % numGroupsInBlock;
         const int numGroups = (blockDim.x * gridDim.x) / groupsize;
         
         const int numTasks = numReadPairs * 4;
 
         //handle scalars
+        #if 1
         for(int t = threadIdx.x + blockIdx.x * blockDim.x; t < numTasks; t += blockDim.x * gridDim.x){
             d_accumExtensionsLengths[t] = 0;
 
@@ -1313,6 +1314,9 @@ namespace readextendergpukernels{
             }
         }
 
+        #endif
+
+        #if 1
         //handle sequences
         for(int t = groupId; t < numTasks; t += numGroups){
             const int pairId = t / 4;
@@ -1325,22 +1329,11 @@ namespace readextendergpukernels{
             if(id == 0){
                 for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
                     myAnchorSequence[k] = myReadpairSequences[k];
-                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[encodedSequencePitchInInts + k];
+                    myMateSequence[k] = myReadpairSequences[encodedSequencePitchInInts + k];
                 }
-                group.sync();
-                if(group.thread_rank() == 0){
-                    SequenceHelpers::reverseComplementSequence2Bit(
-                        myMateSequence,
-                        &sharedEncodedSequence[groupIdInBlock][0],
-                        d_readpair_readLengths[2 * pairId + 1],
-                        [](auto i){return i;},
-                        [](auto i){return i;}
-                    );
-                }
-                group.sync();
             }else if(id == 1){
                 for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
-                    myAnchorSequence[k] = myReadpairSequences[encodedSequencePitchInInts + k];
+                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[encodedSequencePitchInInts + k];
                 }
                 group.sync();
                 if(group.thread_rank() == 0){
@@ -1356,19 +1349,8 @@ namespace readextendergpukernels{
             }else if(id == 2){
                 for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
                     myAnchorSequence[k] = myReadpairSequences[encodedSequencePitchInInts + k];
-                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[k];
+                    myMateSequence[k] = myReadpairSequences[k];
                 }
-                group.sync();
-                if(group.thread_rank() == 0){
-                    SequenceHelpers::reverseComplementSequence2Bit(
-                        myMateSequence,
-                        &sharedEncodedSequence[groupIdInBlock][0],
-                        d_readpair_readLengths[2 * pairId + 0],
-                        [](auto i){return i;},
-                        [](auto i){return i;}
-                    );
-                }
-                group.sync();
             }else{
                 //id == 3
                 for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
@@ -1387,6 +1369,9 @@ namespace readextendergpukernels{
                 group.sync();
             }
         }
+        #endif
+
+        #if 1
 
         //handle qualities
         for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
@@ -1396,7 +1381,6 @@ namespace readextendergpukernels{
             const int* const myReadPairLengths = d_readpair_readLengths + 2 * pairId;
             const char* const myReadpairQualities = d_readpair_qualities + 2 * pairId * qualityPitchInBytes;
             char* const myAnchorQualities = d_anchorQualityScores + t * qualityPitchInBytes;
-            //char* const myReversedMateQualites = d_inputMateReversedQualities + t * qualityPitchInBytes;
 
             //const int numInts = qualityPitchInBytes / sizeof(int);
             int l0 = myReadPairLengths[0];
@@ -1406,9 +1390,6 @@ namespace readextendergpukernels{
                 for(int k = threadIdx.x; k < l0; k += blockDim.x){
                     myAnchorQualities[k] = myReadpairQualities[k];
                 }
-                // for(int k = threadIdx.x; k < l1; k += blockDim.x){
-                //     myReversedMateQualites[k] = myReadpairQualities[qualityPitchInBytes + l1 - 1 - k];
-                // }
             }else if(id == 1){
                 for(int k = threadIdx.x; k < l1; k += blockDim.x){
                     myAnchorQualities[k] = myReadpairQualities[qualityPitchInBytes + l1 - 1 - k];
@@ -1417,9 +1398,6 @@ namespace readextendergpukernels{
                 for(int k = threadIdx.x; k < l1; k += blockDim.x){
                     myAnchorQualities[k] = myReadpairQualities[qualityPitchInBytes + k];
                 }
-                // for(int k = threadIdx.x; k < l0; k += blockDim.x){
-                //     myReversedMateQualites[k] = myReadpairQualities[l0 - 1 - k];
-                // }
             }else{
                 //id == 3
                 for(int k = threadIdx.x; k < l0; k += blockDim.x){
@@ -1427,6 +1405,8 @@ namespace readextendergpukernels{
                 }
             }
         }
+
+        #endif
     }
 }
 
@@ -1466,6 +1446,68 @@ struct BatchData{
                 && accumExtensionLengths < insertSize - (mateLength) + insertSizeStddev
                 && (abortReason == extension::AbortReason::None) 
                 && !mateHasBeenFound);
+        }
+
+        bool operator==(const ExtensionTaskCpuData& rhs) const{
+            if(pairedEnd != rhs.pairedEnd){
+                return false;
+            }
+            if(mateHasBeenFound != rhs.mateHasBeenFound){
+                return false;
+            }
+            if(id != rhs.id){
+                return false;
+            }
+            if(pairId != rhs.pairId){
+                return false;
+            }
+            if(myLength != rhs.myLength){
+                return false;
+            }
+            if(mateLength != rhs.mateLength){
+                return false;
+            }
+            if(currentAnchorLength != rhs.currentAnchorLength){
+                return false;
+            }
+            if(accumExtensionLengths != rhs.accumExtensionLengths){
+                return false;
+            }
+            if(iteration != rhs.iteration){
+                return false;
+            }
+            if(goodscore != rhs.goodscore){
+                return false;
+            }
+            if(myReadId != rhs.myReadId){
+                return false;
+            }
+            if(mateReadId != rhs.mateReadId){
+                return false;
+            }
+            if(abortReason != rhs.abortReason){
+                return false;
+            }
+            if(direction != rhs.direction){
+                return false;
+            }
+            if(decodedMateRevC != rhs.decodedMateRevC){
+                return false;
+            }
+            if(mateQualityScoresReversed != rhs.mateQualityScoresReversed){
+                return false;
+            }
+            if(totalDecodedAnchorsLengths != rhs.totalDecodedAnchorsLengths){
+                return false;
+            }
+            if(totalDecodedAnchorsFlat != rhs.totalDecodedAnchorsFlat){
+                return false;
+            }
+            if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead){
+                return false;
+            }
+
+            return true;
         }
     };
 
@@ -1939,6 +1981,8 @@ struct BatchData{
         d_accumExtensionsLengths.resize(newNumTasks, streams[0]);
         d_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes, streams[0]);
 
+        //CachedDeviceUVector<unsigned int> d_inputanchormatedataTmp(newNumTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
+
         readextendergpukernels::createGpuTaskData<128,8>
             <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
             numReadPairs,
@@ -1974,7 +2018,7 @@ struct BatchData{
 
         cudaMemcpyAsync(
             h_subjectSequencesDataDecoded.data(),
-            d_subjectSequencesDataDecoded.data(),
+            d_subjectSequencesDataDecoded.data() + currentNumTasks * decodedSequencePitchInBytes,
             sizeof(char) * numAdditionalTasks * decodedSequencePitchInBytes,
             D2H,
             streams[0]
@@ -2110,6 +2154,7 @@ struct BatchData{
                     data.totalDecodedAnchorsFlat.begin()
                 );
             }else if(id == 2){
+                data.decodedMateRevC.resize(data.mateLength);
                 std::copy(
                     h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes,
                     h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength,
@@ -4050,6 +4095,8 @@ struct BatchData{
             }
         }
 
+        //std::cerr << "finishedTasks: " << finishedTasks.size() << ", finishedTasks4: " << finishedTasks4.size() << ", finishedTasksNot4: " << finishedTasksNot4.size() << "\n";
+
         //update remaining finished tasks
         std::swap(finishedTasks, finishedTasksNot4);
 
@@ -5499,6 +5546,8 @@ struct BatchData{
     //std::vector<extension::Task> finishedTasks{};
     std::vector<ExtensionTaskCpuData> tasks{};
     std::vector<ExtensionTaskCpuData> finishedTasks{};
+
+    std::vector<ExtensionTaskCpuData> debugtasks{};
 
 };
 
