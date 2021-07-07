@@ -1411,7 +1411,7 @@ namespace readextendergpukernels{
 }
 
 
-struct BatchData{
+struct GpuReadExtender{
     template<class T>
     using DeviceBuffer = helpers::SimpleAllocationDevice<T>;
     //using DeviceBuffer = helpers::SimpleAllocationPinnedHost<T>;
@@ -1440,6 +1440,31 @@ struct BatchData{
         std::vector<char> totalDecodedAnchorsFlat{};
         std::vector<char> totalAnchorQualityScoresFlat{};
         std::vector<int> totalAnchorBeginInExtendedRead{};
+
+        std::size_t sizeInBytes() const{
+            std::size_t result = 0;
+            result += 1;
+            result += 1;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4;
+            result += 4 + sizeof(char) * decodedMateRevC.size();
+            result += 4 + sizeof(char) * mateQualityScoresReversed.size();
+            result += 4 + sizeof(int) * totalDecodedAnchorsLengths.size();
+            result += 4 + sizeof(char) * totalDecodedAnchorsFlat.size();
+            result += 4 + sizeof(char) * totalAnchorQualityScoresFlat.size();
+            result += 4 + sizeof(int) * totalAnchorBeginInExtendedRead.size();
+            return result;
+        }
 
         bool isActive(int insertSize, int insertSizeStddev) const noexcept{
             return (iteration < insertSize 
@@ -1544,7 +1569,7 @@ struct BatchData{
             case State::BeforePrepareNextIteration: return "BeforePrepareNextIteration";
             case State::Finished: return "Finished";
             case State::None: return "None";
-            default: return "Missing case BatchData::to_string(State)\n";
+            default: return "Missing case GpuReadExtender::to_string(State)\n";
         };
     }
 
@@ -1566,7 +1591,7 @@ struct BatchData{
 
 
 
-    BatchData(
+    GpuReadExtender(
         bool isPairedEnd_,
         const gpu::GpuReadStorage& rs, 
         const gpu::GpuMinhasher& gpuMinhasher_,
@@ -1657,7 +1682,7 @@ struct BatchData{
         numTasks = 0;   
     }
 
-    ~BatchData(){
+    ~GpuReadExtender(){
         gpuMinhasher->destroyHandle(minhashHandle);
     }
 
@@ -1897,6 +1922,8 @@ struct BatchData{
 
         numTasks = tasks.size();
 
+        alltimeMaximumNumberOfTasks = std::max(alltimeMaximumNumberOfTasks, numTasks);
+
         state = State::BeforeHash;
     }
 
@@ -1976,6 +2003,7 @@ struct BatchData{
         d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
         d_inputMateLengths.resize(newNumTasks, streams[0]);
         d_isPairedTask.resize(newNumTasks, streams[0]);
+        
         d_anchorReadIds.resize(newNumTasks, streams[0]);
         d_mateReadIds.resize(newNumTasks, streams[0]);
         d_accumExtensionsLengths.resize(newNumTasks, streams[0]);
@@ -2182,6 +2210,7 @@ struct BatchData{
         tasks.insert(tasks.end(), std::make_move_iterator(newTaskData.begin()), std::make_move_iterator(newTaskData.end()));
 
         numTasks = tasks.size();
+        alltimeMaximumNumberOfTasks = std::max(alltimeMaximumNumberOfTasks, numTasks);
 
         state = State::BeforeHash;
     }
@@ -2195,49 +2224,49 @@ struct BatchData{
     }
 
     void process(){
-        assert(state == BatchData::State::BeforeHash);
+        assert(state == GpuReadExtender::State::BeforeHash);
 
-        while(state != BatchData::State::Finished){
+        while(state != GpuReadExtender::State::Finished){
             performNextStep();
         }
     }
 
     void processOneIteration(){
-        assert(state == BatchData::State::BeforeHash || state == BatchData::State::Finished);
+        assert(state == GpuReadExtender::State::BeforeHash || state == GpuReadExtender::State::Finished);
 
-        while(state != BatchData::State::Finished){
+        while(state != GpuReadExtender::State::Finished){
             performNextStep();
 
-            if(state == BatchData::State::BeforeHash){
+            if(state == GpuReadExtender::State::BeforeHash){
                 break;
             }
         }
     }
 
     void performNextStep(){
-        const auto name = BatchData::to_string(state);
+        const auto name = GpuReadExtender::to_string(state);
 
         nvtx::push_range(name, static_cast<int>(state));
 
         switch(state){
-            case BatchData::State::BeforeHash: getCandidateReadIds(); break;
-            case BatchData::State::BeforeRemoveIds: removeUsedIdsAndMateIds(); break;
-            case BatchData::State::BeforeComputePairFlags: computePairFlagsGpu(); break;
-            case BatchData::State::BeforeLoadCandidates: loadCandidateSequenceData(); break;
-            case BatchData::State::BeforeEraseData: eraseDataOfRemovedMates(); break;
-            case BatchData::State::BeforeAlignment: calculateAlignments(); break;
-            case BatchData::State::BeforeAlignmentFilter: filterAlignments(); break;
-            case BatchData::State::BeforeMSA: computeMSAs(); break;
-            case BatchData::State::BeforeExtend: computeExtendedSequencesFromMSAs(); break;
-            case BatchData::State::BeforeUpdateUsedCandidateIds: updateUsedCandidateIds(); break;
-            case BatchData::State::BeforeUnpack: unpackResultsIntoTasks(); break;
-            case BatchData::State::BeforePrepareNextIteration: prepareNextIteration(); break;
-            case BatchData::State::Finished: break;
-            case BatchData::State::None: break;
+            case GpuReadExtender::State::BeforeHash: getCandidateReadIds(); break;
+            case GpuReadExtender::State::BeforeRemoveIds: removeUsedIdsAndMateIds(); break;
+            case GpuReadExtender::State::BeforeComputePairFlags: computePairFlagsGpu(); break;
+            case GpuReadExtender::State::BeforeLoadCandidates: loadCandidateSequenceData(); break;
+            case GpuReadExtender::State::BeforeEraseData: eraseDataOfRemovedMates(); break;
+            case GpuReadExtender::State::BeforeAlignment: calculateAlignments(); break;
+            case GpuReadExtender::State::BeforeAlignmentFilter: filterAlignments(); break;
+            case GpuReadExtender::State::BeforeMSA: computeMSAs(); break;
+            case GpuReadExtender::State::BeforeExtend: computeExtendedSequencesFromMSAs(); break;
+            case GpuReadExtender::State::BeforeUpdateUsedCandidateIds: updateUsedCandidateIds(); break;
+            case GpuReadExtender::State::BeforeUnpack: unpackResultsIntoTasks(); break;
+            case GpuReadExtender::State::BeforePrepareNextIteration: prepareNextIteration(); break;
+            case GpuReadExtender::State::Finished: break;
+            case GpuReadExtender::State::None: break;
             default: break;
         };
 
-        if(state == BatchData::State::Finished){
+        if(state == GpuReadExtender::State::Finished){
             assert(tasks.size() == 0);
             assert(finishedTasks.size() % 4 == 0);
         }
@@ -2246,7 +2275,7 @@ struct BatchData{
     }
 
     void getCandidateReadIds(){
-        assert(state == BatchData::State::BeforeHash);
+        assert(state == GpuReadExtender::State::BeforeHash);
 
         cudaStream_t stream = streams[0];
 
@@ -2302,11 +2331,11 @@ struct BatchData{
 
         totalNumCandidates = *h_numCandidates;
 
-        setState(BatchData::State::BeforeRemoveIds);
+        setState(GpuReadExtender::State::BeforeRemoveIds);
     }
 
     void removeUsedIdsAndMateIds(){
-        assert(state == BatchData::State::BeforeRemoveIds);
+        assert(state == GpuReadExtender::State::BeforeRemoveIds);
 
         cudaStream_t firstStream = streams[0];
 
@@ -2456,12 +2485,12 @@ struct BatchData{
         if(totalNumCandidates == 0){
             setStateToFinished();
         }else{
-            setState(BatchData::State::BeforeComputePairFlags);
+            setState(GpuReadExtender::State::BeforeComputePairFlags);
         }
     }
 
     void computePairFlagsGpu() {
-        assert(state == BatchData::State::BeforeComputePairFlags);
+        assert(state == GpuReadExtender::State::BeforeComputePairFlags);
 
         cudaStream_t stream = streams[0];
         DEBUGDEVICESYNC
@@ -2693,12 +2722,12 @@ struct BatchData{
 
         }
 
-        setState(BatchData::State::BeforeLoadCandidates);
+        setState(GpuReadExtender::State::BeforeLoadCandidates);
 
     }
 
     void loadCandidateSequenceData() {
-        assert(state == BatchData::State::BeforeLoadCandidates);
+        assert(state == GpuReadExtender::State::BeforeLoadCandidates);
 
         cudaStream_t stream = streams[0];
 
@@ -2725,11 +2754,11 @@ struct BatchData{
             stream
         );
 
-        setState(BatchData::State::BeforeEraseData);
+        setState(GpuReadExtender::State::BeforeEraseData);
     }
 
     void eraseDataOfRemovedMates(){
-        assert(state == BatchData::State::BeforeEraseData);
+        assert(state == GpuReadExtender::State::BeforeEraseData);
 
         cudaStream_t stream = streams[0];
 
@@ -2794,11 +2823,11 @@ struct BatchData{
             );
         }
 
-        setState(BatchData::State::BeforeAlignment);
+        setState(GpuReadExtender::State::BeforeAlignment);
     }
 
     void calculateAlignments(){
-        assert(state == BatchData::State::BeforeAlignment);
+        assert(state == GpuReadExtender::State::BeforeAlignment);
 
         cudaStream_t stream = streams[0];
 
@@ -2868,11 +2897,11 @@ struct BatchData{
 
         callAlignmentKernel(d_tempstorage.data(), tempstoragebytes);
 
-        setState(BatchData::State::BeforeAlignmentFilter);
+        setState(GpuReadExtender::State::BeforeAlignmentFilter);
     }
 
     void filterAlignments(){
-        assert(state == BatchData::State::BeforeAlignmentFilter);
+        assert(state == GpuReadExtender::State::BeforeAlignmentFilter);
 
         cudaStream_t stream = streams[0];
 
@@ -3094,12 +3123,12 @@ struct BatchData{
         if(totalNumCandidates == 0){
             setStateToFinished();
         }else{
-            setState(BatchData::State::BeforeMSA);
+            setState(GpuReadExtender::State::BeforeMSA);
         }
     }
 
     void computeMSAs(){
-        assert(state == BatchData::State::BeforeMSA);
+        assert(state == GpuReadExtender::State::BeforeMSA);
 
         cudaStream_t firstStream = streams[0];
         //cudaStream_t secondStream = firstStream;
@@ -3229,12 +3258,12 @@ struct BatchData{
             firstStream
         );
         
-        setState(BatchData::State::BeforeExtend);
+        setState(GpuReadExtender::State::BeforeExtend);
     }
 
 
     void computeExtendedSequencesFromMSAs(){
-        assert(state == BatchData::State::BeforeExtend);
+        assert(state == GpuReadExtender::State::BeforeExtend);
 
         cudaStream_t stream = streams[0];
 
@@ -3405,12 +3434,12 @@ struct BatchData{
 
         std::swap(d_accumExtensionsLengths, d_accumExtensionsLengthsOUT);
 
-        setState(BatchData::State::BeforeUpdateUsedCandidateIds);
+        setState(GpuReadExtender::State::BeforeUpdateUsedCandidateIds);
     }
 
 
     void updateUsedCandidateIds(){
-        assert(state == BatchData::State::BeforeUpdateUsedCandidateIds);
+        assert(state == GpuReadExtender::State::BeforeUpdateUsedCandidateIds);
 
         cudaStream_t stream = streams[0];
 
@@ -3579,11 +3608,11 @@ struct BatchData{
         
         }
 
-        setState(BatchData::State::BeforeUnpack);
+        setState(GpuReadExtender::State::BeforeUnpack);
     }
     
     void unpackResultsIntoTasks(){
-        assert(state == BatchData::State::BeforeUnpack);
+        assert(state == GpuReadExtender::State::BeforeUnpack);
 
         cudaStreamSynchronize(hostOutputStream); CUERR;
 
@@ -3711,11 +3740,11 @@ struct BatchData{
             task.iteration++;
         }
 
-        setState(BatchData::State::BeforePrepareNextIteration);
+        setState(GpuReadExtender::State::BeforePrepareNextIteration);
     }
 
     void prepareNextIteration(){
-        assert(state == BatchData::State::BeforePrepareNextIteration);
+        assert(state == GpuReadExtender::State::BeforePrepareNextIteration);
 
         //update list of active task indices
         h_newPositionsOfActiveTasks.resize(numTasks);
@@ -3747,6 +3776,20 @@ struct BatchData{
         addSortedFinishedTasks(newlyFinishedTasks);
         nvtx::pop_range();
 
+        std::size_t bytesFinishedTasks = 0;
+        for(const auto& task : finishedTasks){
+            bytesFinishedTasks += task.sizeInBytes();
+        }
+        std::size_t bytesTasks = 0;
+        for(const auto& task : tasks){
+            bytesTasks += task.sizeInBytes();
+        }
+        //std::cerr << "bytesTasks = " << bytesTasks << "\n";
+        //std::cerr << "bytesFinishedTasks = " << bytesFinishedTasks << "\n";
+
+        alltimetotalTaskBytes = std::max(alltimetotalTaskBytes, bytesTasks + bytesFinishedTasks);
+        //std::cerr << "alltimetotalTaskBytes = " << alltimetotalTaskBytes << "\n";
+
         const int totalTasksAfter = tasks.size() + finishedTasks.size();
         assert(totalTasksAfter == totalTasksBefore);
 
@@ -3772,7 +3815,7 @@ struct BatchData{
         numTasks = tasks.size();
 
         if(!isEmpty()){
-            setState(BatchData::State::BeforeHash);
+            setState(GpuReadExtender::State::BeforeHash);
         }else{
             setStateToFinished();
         }
@@ -3839,11 +3882,11 @@ struct BatchData{
 
         //set new anchorReadIds, mateReadIds, and anchor lengths
 
-        CachedDeviceUVector<read_number> d_anchorReadIds2(numTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<read_number> d_mateReadIds2(numTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_inputMateLengths2(numTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<bool> d_isPairedTask2(numTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_accumExtensionsLengths2(numTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<read_number> d_anchorReadIds2(alltimeMaximumNumberOfTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<read_number> d_mateReadIds2(alltimeMaximumNumberOfTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_inputMateLengths2(alltimeMaximumNumberOfTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedTask2(alltimeMaximumNumberOfTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_accumExtensionsLengths2(alltimeMaximumNumberOfTasks, streams[0], *cubAllocator);
 
         d_anchorSequencesLength.resizeUninitialized(newNumTasks, streams[0]);
 
@@ -3885,7 +3928,7 @@ struct BatchData{
 
         //set new encoded mate data
 
-        CachedDeviceUVector<unsigned int> d_inputanchormatedata2(numTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
+        CachedDeviceUVector<unsigned int> d_inputanchormatedata2(alltimeMaximumNumberOfTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
 
         cubSelectFlagged(
             d_inputanchormatedata.data(),
@@ -5029,7 +5072,7 @@ struct BatchData{
         tasks.clear();
         numTasks = 0;
 
-        setState(BatchData::State::Finished);
+        setState(GpuReadExtender::State::Finished);
     }
     
     void addFinishedTask(ExtensionTaskCpuData&& task){
@@ -5385,6 +5428,8 @@ struct BatchData{
     State state = State::None;
     int numTasks = 0;
     int someId = 0;
+    int alltimeMaximumNumberOfTasks = 0;
+    std::size_t alltimetotalTaskBytes = 0;
 
     int totalNumCandidates = 0;
 
@@ -5526,36 +5571,14 @@ struct BatchData{
 
     // -----
 
-    // tasḱ_accumExtensionLengths;
-    // tasḱ_pairedEnd;
-    // tasḱ_decodedMateRevC            
-    // tasḱ_numRemainingCandidates
-    // tasḱ_abortReason
-    // tasḱ_mateHasBeenFound
-    // tasḱ_currentAnchorLength
-    // tasḱ_totalDecodedAnchors
-    // tasḱ_totalAnchorQualityScores
-    // tasḱ_totalAnchorBeginInExtendedRead         
-    // tasḱ_abort
-    // tasḱ_iteration
-    // tasḱ_direction;
-    // tasḱ_myReadId;
-    // tasḱ_mateReadId;
-    // tasḱ_myLength;
-    // tasḱ_mateLength;
-    // tasḱ_mateQualityScoresReversed
-    // tasḱ_mateHasBeenFound;
+
 
     CudaStream hostOutputStream{};
     
     std::array<CudaEvent, 1> events{};
     std::array<cudaStream_t, 4> streams{};
-    //std::vector<extension::Task> tasks{};
-    //std::vector<extension::Task> finishedTasks{};
     std::vector<ExtensionTaskCpuData> tasks{};
     std::vector<ExtensionTaskCpuData> finishedTasks{};
-
-    std::vector<ExtensionTaskCpuData> debugtasks{};
 
 };
 
