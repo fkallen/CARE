@@ -1108,6 +1108,54 @@ namespace readextendergpukernels{
         }
     }
 
+    template<int groupsize>
+    __global__
+    void decodeSequencesFrom2BitKernel(
+        char* __restrict__ decodedSequences,
+        const unsigned int* __restrict__ encodedSequences,
+        const int* __restrict__ sequenceLengths,
+        int decodedSequencePitchInBytes,
+        int encodedSequencePitchInInts,
+        int numSequences
+    ){
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int numGroups = (blockDim.x * gridDim.x) / group.size();
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / group.size();
+
+        for(int a = groupId; a < numSequences; a += numGroups){
+            char* const out = decodedSequences + a * decodedSequencePitchInBytes;
+            const unsigned int* const in = encodedSequences + a * encodedSequencePitchInInts;
+            const int length = sequenceLengths[a];
+
+            const int nInts = SequenceHelpers::getEncodedNumInts2Bit(length);
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                unsigned int data = in[i];
+
+                if(i < nInts-1){
+                    //not last iteration. int encodes 16 chars
+                    __align__(16) char nucs[16];
+
+                    #pragma unroll
+                    for(int p = 0; p < 16; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        nucs[p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+                    ((int4*)out)[i] = *((const int4*)&nucs[0]);
+                }else{
+                    const int remaining = length - i * basesPerInt;
+
+                    for(int p = 0; p < remaining; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        out[i * basesPerInt + p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+                }
+            }
+        }
+    }
+
     template<int blocksize, int groupsize>
     __global__
     void filtermatekernel(
@@ -1192,6 +1240,191 @@ namespace readextendergpukernels{
                 d_usedReadIdsOut[outputOffset + i] = d_usedReadIdsIn[inputOffset + i];
                 //set new segment id
                 segmentIdsOut[outputOffset + i] = t;
+            }
+        }
+    }
+
+    template<int blocksize, int groupsize>
+    __global__
+    void createGpuTaskData(
+        int numReadPairs,
+        const read_number* __restrict__ d_readpair_readIds,
+        const int* __restrict__ d_readpair_readLengths,
+        const unsigned int* __restrict__ d_readpair_sequences,
+        const char* __restrict__ d_readpair_qualities,
+        unsigned int* __restrict__ d_subjectSequencesData,
+        int* __restrict__ d_anchorSequencesLength,
+        char* __restrict__ d_anchorQualityScores,
+        unsigned int* __restrict__ d_inputanchormatedata,
+        int* __restrict__ d_inputMateLengths,
+        bool* __restrict__ d_isPairedTask,
+        read_number* __restrict__ d_anchorReadIds,
+        read_number* __restrict__ d_mateReadIds,
+        int* __restrict__ d_accumExtensionsLengths,
+        int decodedSequencePitchInBytes,
+        int qualityPitchInBytes,
+        int encodedSequencePitchInInts
+    ){
+        constexpr int numGroupsInBlock = blocksize / groupsize;
+
+        __shared__ unsigned int sharedEncodedSequence[numGroupsInBlock][32];
+
+        assert(encodedSequencePitchInInts <= 32);
+
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = groupId / numGroupsInBlock;
+        const int numGroups = (blockDim.x * gridDim.x) / groupsize;
+        
+        const int numTasks = numReadPairs * 4;
+
+        //handle scalars
+        for(int t = threadIdx.x + blockIdx.x * blockDim.x; t < numTasks; t += blockDim.x * gridDim.x){
+            d_accumExtensionsLengths[t] = 0;
+
+            const int pairId = t / 4;
+            const int id = t % 4;
+
+            if(id == 0){
+                d_anchorReadIds[t] = d_readpair_readIds[2 * pairId + 0];
+                d_mateReadIds[t] = d_readpair_readIds[2 * pairId + 1];
+                d_anchorSequencesLength[t] = d_readpair_readLengths[2 * pairId + 0];
+                d_inputMateLengths[t] = d_readpair_readLengths[2 * pairId + 1];
+                d_isPairedTask[t] = true;
+            }else if(id == 1){
+                d_anchorReadIds[t] = d_readpair_readIds[2 * pairId + 1];
+                d_mateReadIds[t] = std::numeric_limits<read_number>::max();
+                d_anchorSequencesLength[t] = d_readpair_readLengths[2 * pairId + 1];
+                d_inputMateLengths[t] = 0;
+                d_isPairedTask[t] = false;
+            }else if(id == 2){
+                d_anchorReadIds[t] = d_readpair_readIds[2 * pairId + 1];
+                d_mateReadIds[t] = d_readpair_readIds[2 * pairId + 0];
+                d_anchorSequencesLength[t] = d_readpair_readLengths[2 * pairId + 1];
+                d_inputMateLengths[t] = d_readpair_readLengths[2 * pairId + 0];
+                d_isPairedTask[t] = true;
+            }else{
+                //id == 3
+                d_anchorReadIds[t] = d_readpair_readIds[2 * pairId + 0];
+                d_mateReadIds[t] = std::numeric_limits<read_number>::max();
+                d_anchorSequencesLength[t] = d_readpair_readLengths[2 * pairId + 0];
+                d_inputMateLengths[t] = 0;
+                d_isPairedTask[t] = false;
+            }
+        }
+
+        //handle sequences
+        for(int t = groupId; t < numTasks; t += numGroups){
+            const int pairId = t / 4;
+            const int id = t % 4;
+
+            const unsigned int* const myReadpairSequences = d_readpair_sequences + 2 * pairId * encodedSequencePitchInInts;
+            unsigned int* const myAnchorSequence = d_subjectSequencesData + t * encodedSequencePitchInInts;
+            unsigned int* const myMateSequence = d_inputanchormatedata + t * encodedSequencePitchInInts;
+
+            if(id == 0){
+                for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                    myAnchorSequence[k] = myReadpairSequences[k];
+                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[encodedSequencePitchInInts + k];
+                }
+                group.sync();
+                if(group.thread_rank() == 0){
+                    SequenceHelpers::reverseComplementSequence2Bit(
+                        myMateSequence,
+                        &sharedEncodedSequence[groupIdInBlock][0],
+                        d_readpair_readLengths[2 * pairId + 1],
+                        [](auto i){return i;},
+                        [](auto i){return i;}
+                    );
+                }
+                group.sync();
+            }else if(id == 1){
+                for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                    myAnchorSequence[k] = myReadpairSequences[encodedSequencePitchInInts + k];
+                }
+                group.sync();
+                if(group.thread_rank() == 0){
+                    SequenceHelpers::reverseComplementSequence2Bit(
+                        myAnchorSequence,
+                        &sharedEncodedSequence[groupIdInBlock][0],
+                        d_readpair_readLengths[2 * pairId + 1],
+                        [](auto i){return i;},
+                        [](auto i){return i;}
+                    );
+                }
+                group.sync();
+            }else if(id == 2){
+                for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                    myAnchorSequence[k] = myReadpairSequences[encodedSequencePitchInInts + k];
+                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[k];
+                }
+                group.sync();
+                if(group.thread_rank() == 0){
+                    SequenceHelpers::reverseComplementSequence2Bit(
+                        myMateSequence,
+                        &sharedEncodedSequence[groupIdInBlock][0],
+                        d_readpair_readLengths[2 * pairId + 0],
+                        [](auto i){return i;},
+                        [](auto i){return i;}
+                    );
+                }
+                group.sync();
+            }else{
+                //id == 3
+                for(int k = group.thread_rank(); k < encodedSequencePitchInInts; k += group.size()){
+                    sharedEncodedSequence[groupIdInBlock][k] = myReadpairSequences[k];
+                }
+                group.sync();
+                if(group.thread_rank() == 0){
+                    SequenceHelpers::reverseComplementSequence2Bit(
+                        myAnchorSequence,
+                        &sharedEncodedSequence[groupIdInBlock][0],
+                        d_readpair_readLengths[2 * pairId + 0],
+                        [](auto i){return i;},
+                        [](auto i){return i;}
+                    );
+                }
+                group.sync();
+            }
+        }
+
+        //handle qualities
+        for(int t = blockIdx.x; t < numTasks; t += gridDim.x){
+            const int pairId = t / 4;
+            const int id = t % 4;
+
+            const int* const myReadPairLengths = d_readpair_readLengths + 2 * pairId;
+            const char* const myReadpairQualities = d_readpair_qualities + 2 * pairId * qualityPitchInBytes;
+            char* const myAnchorQualities = d_anchorQualityScores + t * qualityPitchInBytes;
+            //char* const myReversedMateQualites = d_inputMateReversedQualities + t * qualityPitchInBytes;
+
+            //const int numInts = qualityPitchInBytes / sizeof(int);
+            int l0 = myReadPairLengths[0];
+            int l1 = myReadPairLengths[1];
+
+            if(id == 0){
+                for(int k = threadIdx.x; k < l0; k += blockDim.x){
+                    myAnchorQualities[k] = myReadpairQualities[k];
+                }
+                // for(int k = threadIdx.x; k < l1; k += blockDim.x){
+                //     myReversedMateQualites[k] = myReadpairQualities[qualityPitchInBytes + l1 - 1 - k];
+                // }
+            }else if(id == 1){
+                for(int k = threadIdx.x; k < l1; k += blockDim.x){
+                    myAnchorQualities[k] = myReadpairQualities[qualityPitchInBytes + l1 - 1 - k];
+                }
+            }else if(id == 2){
+                for(int k = threadIdx.x; k < l1; k += blockDim.x){
+                    myAnchorQualities[k] = myReadpairQualities[qualityPitchInBytes + k];
+                }
+                // for(int k = threadIdx.x; k < l0; k += blockDim.x){
+                //     myReversedMateQualites[k] = myReadpairQualities[l0 - 1 - k];
+                // }
+            }else{
+                //id == 3
+                for(int k = threadIdx.x; k < l0; k += blockDim.x){
+                    myAnchorQualities[k] = myReadpairQualities[l0 - 1 - k];
+                }
             }
         }
     }
@@ -1625,10 +1858,287 @@ struct BatchData{
         state = State::BeforeHash;
     }
 
-    void resetTasks(){
-        // state = State::BeforeHash;
-        // numTasks = 0;
-        // tasks.clear();
+    void addTasks(
+        int numReadPairs,
+        // for the arrays, two consecutive numbers / sequences belong to same read pair
+        const read_number* d_readpair_readIds,
+        const int* d_readpair_readLengths,
+        const unsigned int * d_readpair_sequences,
+        const char* d_readpair_qualities,
+        cudaStream_t stream
+    ){
+        if(numReadPairs == 0) return;
+
+        cudaEventRecord(events[0], stream); CUERR;
+        cudaStreamWaitEvent(streams[0], events[0], 0); CUERR;
+        cudaStreamWaitEvent(streams[1], events[0], 0); CUERR;
+
+        const int numAdditionalTasks = 4 * numReadPairs;
+        const int currentNumTasks = tasks.size();
+        const int newNumTasks = currentNumTasks + numAdditionalTasks;
+
+        h_anchorReadIds.resize(2 * numReadPairs);
+        h_anchorSequencesLength.resize(2 * numReadPairs);
+        h_anchorQualityScores.resize(2 * numReadPairs * qualityPitchInBytes);
+
+        cudaMemcpyAsync(
+            h_anchorReadIds.data(),
+            d_readpair_readIds,
+            sizeof(read_number) * 2 * numReadPairs,
+            D2H,
+            streams[1]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_anchorSequencesLength.data(),
+            d_readpair_readLengths,
+            sizeof(int) * 2 * numReadPairs,
+            D2H,
+            streams[1]
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_anchorQualityScores.data(),
+            d_readpair_qualities,
+            sizeof(char) * 2 * numReadPairs * qualityPitchInBytes,
+            D2H,
+            streams[1]
+        ); CUERR;
+
+        // set used ids to 0 for new tasks
+        d_numUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
+        d_numFullyUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
+        cudaMemsetAsync(d_numUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+        cudaMemsetAsync(d_numFullyUsedReadIdsPerAnchor.data() + currentNumTasks, 0, numAdditionalTasks * sizeof(int), streams[0]); CUERR;
+
+        d_numUsedReadIdsPerAnchorPrefixSum.resizeUninitialized(newNumTasks, streams[0]);
+        d_numFullyUsedReadIdsPerAnchorPrefixSum.resizeUninitialized(newNumTasks, streams[0]);
+
+        cubExclusiveSum(
+            d_numUsedReadIdsPerAnchor.data(), 
+            d_numUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumTasks, 
+            streams[0]
+        );
+
+        cubExclusiveSum(
+            d_numFullyUsedReadIdsPerAnchor.data(), 
+            d_numFullyUsedReadIdsPerAnchorPrefixSum.data(), 
+            newNumTasks, 
+            streams[0]
+        );
+
+        d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_anchorSequencesLength.resize(newNumTasks, streams[0]);
+        d_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes, streams[0]);
+        d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        d_inputMateLengths.resize(newNumTasks, streams[0]);
+        d_isPairedTask.resize(newNumTasks, streams[0]);
+        d_anchorReadIds.resize(newNumTasks, streams[0]);
+        d_mateReadIds.resize(newNumTasks, streams[0]);
+        d_accumExtensionsLengths.resize(newNumTasks, streams[0]);
+        d_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes, streams[0]);
+
+        readextendergpukernels::createGpuTaskData<128,8>
+            <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
+            numReadPairs,
+            d_readpair_readIds,
+            d_readpair_readLengths,
+            d_readpair_sequences,
+            d_readpair_qualities,
+            d_subjectSequencesData.data() + currentNumTasks * encodedSequencePitchInInts,
+            d_anchorSequencesLength.data() + currentNumTasks,
+            d_anchorQualityScores.data() + currentNumTasks * decodedSequencePitchInBytes,
+            d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts,
+            d_inputMateLengths.data() + currentNumTasks,
+            d_isPairedTask.data() + currentNumTasks,
+            d_anchorReadIds.data() + currentNumTasks,
+            d_mateReadIds.data() + currentNumTasks,
+            d_accumExtensionsLengths.data() + currentNumTasks,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            encodedSequencePitchInInts
+        ); CUERR;
+
+        readextendergpukernels::decodeSequencesFrom2BitKernel<8>
+            <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
+            d_subjectSequencesDataDecoded.data() + currentNumTasks * decodedSequencePitchInBytes,
+            d_subjectSequencesData.data() + currentNumTasks * encodedSequencePitchInInts,
+            d_anchorSequencesLength.data() + currentNumTasks,
+            decodedSequencePitchInBytes,
+            encodedSequencePitchInInts,
+            numAdditionalTasks
+        ); CUERR;
+
+        h_subjectSequencesDataDecoded.resize(numAdditionalTasks * decodedSequencePitchInBytes);
+
+        cudaMemcpyAsync(
+            h_subjectSequencesDataDecoded.data(),
+            d_subjectSequencesDataDecoded.data(),
+            sizeof(char) * numAdditionalTasks * decodedSequencePitchInBytes,
+            D2H,
+            streams[0]
+        ); CUERR;
+
+        std::vector<ExtensionTaskCpuData> newTaskData(numAdditionalTasks);
+        tasks.reserve(tasks.size() + numAdditionalTasks);
+
+        cudaStreamSynchronize(streams[1]); CUERR;
+
+        for(int t = 0; t < numAdditionalTasks; t++){
+            ExtensionTaskCpuData& data = newTaskData[t];
+            const int groupId = t / 4;
+            const int id = t % 4;
+
+            if(id == 0){
+                data.myReadId = h_anchorReadIds[2 * groupId + 0];
+                data.mateReadId = h_anchorReadIds[2 * groupId + 1];
+                data.myLength = h_anchorSequencesLength[2 * groupId + 0];
+                data.mateLength = h_anchorSequencesLength[2 * groupId + 1];
+                data.pairedEnd = true;
+                data.direction = extension::ExtensionDirection::LR;
+
+                data.totalAnchorQualityScoresFlat.resize(qualityPitchInBytes);
+                std::copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength,
+                    data.totalAnchorQualityScoresFlat.begin()
+                );
+
+                data.mateQualityScoresReversed.resize(data.mateLength);
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.mateLength,
+                    data.mateQualityScoresReversed.begin()
+                );
+            }else if(id == 1){
+                data.myReadId = h_anchorReadIds[2 * groupId + 1];
+                data.mateReadId = std::numeric_limits<read_number>::max();
+                data.myLength = h_anchorSequencesLength[2 * groupId + 1];
+                data.mateLength = 0;
+                data.pairedEnd = false;
+                data.direction = extension::ExtensionDirection::LR;
+
+                data.totalAnchorQualityScoresFlat.resize(qualityPitchInBytes);
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength,
+                    data.totalAnchorQualityScoresFlat.begin()
+                );
+
+                data.mateQualityScoresReversed.clear();
+            }else if(id == 2){
+                data.myReadId = h_anchorReadIds[2 * groupId + 1];
+                data.mateReadId = h_anchorReadIds[2 * groupId + 0];
+                data.myLength = h_anchorSequencesLength[2 * groupId + 1];
+                data.mateLength = h_anchorSequencesLength[2 * groupId + 0];
+                data.pairedEnd = true;
+                data.direction = extension::ExtensionDirection::RL;
+
+                data.totalAnchorQualityScoresFlat.resize(qualityPitchInBytes);
+                std::copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength,
+                    data.totalAnchorQualityScoresFlat.begin()
+                );
+
+                data.mateQualityScoresReversed.resize(data.mateLength);
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.mateLength,
+                    data.mateQualityScoresReversed.begin()
+                );
+            }else{
+                //id == 3
+                data.myReadId = h_anchorReadIds[2 * groupId + 0];
+                data.mateReadId = std::numeric_limits<read_number>::max();
+                data.myLength = h_anchorSequencesLength[2 * groupId + 0];
+                data.mateLength = 0;
+                data.pairedEnd =  false;
+                data.direction = extension::ExtensionDirection::RL;
+
+                data.totalAnchorQualityScoresFlat.resize(qualityPitchInBytes);
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength,
+                    data.totalAnchorQualityScoresFlat.begin()
+                );
+
+                data.mateQualityScoresReversed.clear();
+            }
+
+            data.mateHasBeenFound = false;
+            data.id = id;
+            data.pairId = data.myReadId / 2;
+            data.currentAnchorLength = data.myLength;
+            data.accumExtensionLengths = 0;
+            data.iteration = 0;
+            data.goodscore = 0.0f;
+            data.abortReason = extension::AbortReason::None;
+            
+            data.totalDecodedAnchorsLengths.push_back(data.myLength);
+            data.totalAnchorBeginInExtendedRead.push_back(0);
+        }
+
+        cudaStreamSynchronize(streams[0]); CUERR; //wait for decoded anchor sequences transfer
+
+        for(int t = 0; t < numAdditionalTasks; t++){
+            ExtensionTaskCpuData& data = newTaskData[t];
+            const int id = t % 4;
+
+            if(id == 0){
+                data.decodedMateRevC.resize(data.mateLength);
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength,
+                    data.decodedMateRevC.begin()
+                );
+
+                data.totalDecodedAnchorsFlat.resize(decodedSequencePitchInBytes);
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength,
+                    data.totalDecodedAnchorsFlat.begin()
+                );
+            }else if(id == 1){
+                data.decodedMateRevC.clear();
+
+                data.totalDecodedAnchorsFlat.resize(decodedSequencePitchInBytes);
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength,
+                    data.totalDecodedAnchorsFlat.begin()
+                );
+            }else if(id == 2){
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength,
+                    data.decodedMateRevC.begin()
+                );
+
+                data.totalDecodedAnchorsFlat.resize(decodedSequencePitchInBytes);
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength,
+                    data.totalDecodedAnchorsFlat.begin()
+                );
+            }else{
+                data.decodedMateRevC.clear();
+
+                data.totalDecodedAnchorsFlat.resize(decodedSequencePitchInBytes);
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength,
+                    data.totalDecodedAnchorsFlat.begin()
+                );
+            }
+        }
+
+        tasks.insert(tasks.end(), std::make_move_iterator(newTaskData.begin()), std::make_move_iterator(newTaskData.end()));
+
+        numTasks = tasks.size();
+
+        state = State::BeforeHash;
     }
 
     void setMaxExtensionPerStep(int e) noexcept{
@@ -4882,6 +5392,7 @@ struct BatchData{
 
     // ----- staging buffers for input
     PinnedBuffer<char> h_anchorQualityScores{};
+    PinnedBuffer<char> h_mateQualityScoresReversed{};
     PinnedBuffer<char> h_subjectSequencesDataDecoded{};
     PinnedBuffer<read_number> h_anchorReadIds{};
     PinnedBuffer<read_number> h_mateReadIds{};
