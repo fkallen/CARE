@@ -3899,7 +3899,7 @@ struct BatchData{
             streams[0]
         );
 
-        d_inputanchormatedata2.erase(d_inputanchormatedata2.begin() + newNumTasks, d_inputanchormatedata2.end(), streams[0]);
+        d_inputanchormatedata2.erase(d_inputanchormatedata2.begin() + newNumTasks * encodedSequencePitchInInts, d_inputanchormatedata2.end(), streams[0]);
 
         std::swap(d_inputanchormatedata, d_inputanchormatedata2);
         
