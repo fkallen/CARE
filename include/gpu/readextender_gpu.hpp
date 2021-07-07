@@ -3839,11 +3839,11 @@ struct BatchData{
 
         //set new anchorReadIds, mateReadIds, and anchor lengths
 
-        CachedDeviceUVector<read_number> d_anchorReadIds2(newNumTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<read_number> d_mateReadIds2(newNumTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_inputMateLengths2(newNumTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<bool> d_isPairedTask2(newNumTasks, streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_accumExtensionsLengths2(newNumTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<read_number> d_anchorReadIds2(numTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<read_number> d_mateReadIds2(numTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_inputMateLengths2(numTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<bool> d_isPairedTask2(numTasks, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_accumExtensionsLengths2(numTasks, streams[0], *cubAllocator);
 
         d_anchorSequencesLength.resizeUninitialized(newNumTasks, streams[0]);
 
@@ -3870,6 +3870,12 @@ struct BatchData{
             streams[0]
         );
 
+        d_anchorReadIds2.erase(d_anchorReadIds2.begin() + newNumTasks, d_anchorReadIds2.end(), streams[0]);
+        d_mateReadIds2.erase(d_mateReadIds2.begin() + newNumTasks, d_mateReadIds2.end(), streams[0]);
+        d_inputMateLengths2.erase(d_inputMateLengths2.begin() + newNumTasks, d_inputMateLengths2.end(), streams[0]);
+        d_isPairedTask2.erase(d_isPairedTask2.begin() + newNumTasks, d_isPairedTask2.end(), streams[0]);
+        d_accumExtensionsLengths2.erase(d_accumExtensionsLengths2.begin() + newNumTasks, d_accumExtensionsLengths2.end(), streams[0]);
+
         std::swap(d_anchorReadIds, d_anchorReadIds2);
         std::swap(d_mateReadIds, d_mateReadIds2);
         std::swap(d_inputMateLengths, d_inputMateLengths2);
@@ -3879,7 +3885,7 @@ struct BatchData{
 
         //set new encoded mate data
 
-        CachedDeviceUVector<unsigned int> d_inputanchormatedata2(newNumTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
+        CachedDeviceUVector<unsigned int> d_inputanchormatedata2(numTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
 
         cubSelectFlagged(
             d_inputanchormatedata.data(),
@@ -3892,6 +3898,8 @@ struct BatchData{
             numTasks * encodedSequencePitchInInts,
             streams[0]
         );
+
+        d_inputanchormatedata2.erase(d_inputanchormatedata2.begin() + newNumTasks, d_inputanchormatedata2.end(), streams[0]);
 
         std::swap(d_inputanchormatedata, d_inputanchormatedata2);
         
