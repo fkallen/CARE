@@ -5623,6 +5623,18 @@ struct GpuReadExtender{
             throw std::runtime_error("Error not sorted");
         }
 
+        auto mergelength = [&](int l, int r){
+            assert(l+1 == r);
+            assert(l % 2 == 0);
+
+            const int lengthR = dataExtendedReadLengths[r];
+   
+            auto overlapstart = dataRead2Begins[l];
+            const int resultsize = overlapstart + lengthR;
+            
+            return resultsize;
+        };
+
         //merge extensions of the same pair and same strand
         auto merge = [&](int l, int r, extension::ExtendResult& result){
             assert(l+1 == r);
@@ -5679,6 +5691,14 @@ struct GpuReadExtender{
 
             auto LRmatefoundfunc = [&](){
                 auto& myResult = results[p];
+
+                int resultsize = mergelength(i0, i1);
+                if(dataExtendedReadLengths[i3] > d3.myLength){
+                    resultsize += dataExtendedReadLengths[i3] - d3.myLength;
+                }
+                myResult.extendedRead.reserve(resultsize);
+                myResult.qualityScores.reserve(resultsize);
+
                 merge(i0,i1,myResult);
 
                 myResult.direction = d0.direction;
@@ -5720,6 +5740,14 @@ struct GpuReadExtender{
 
             auto RLmatefoundfunc = [&](){
                 auto& myResult = results[p];
+
+                int resultsize = mergelength(i2, i3);
+                if(dataExtendedReadLengths[i1] > d1.myLength){
+                    resultsize += dataExtendedReadLengths[i1] - d1.myLength;
+                }
+                myResult.extendedRead.reserve(resultsize);
+                myResult.qualityScores.reserve(resultsize);
+
                 merge(i2,i3,myResult);
 
                 myResult.direction = d2.direction;
@@ -5851,6 +5879,19 @@ struct GpuReadExtender{
                         myResult.aborted = false;
                     }
                 }
+
+                int resultsize = myResult.extendedRead.size();
+                if(!didMergeDifferentStrands){
+                    resultsize += dataExtendedReadLengths[i0];
+                }
+                if(didMergeDifferentStrands && dataExtendedReadLengths[i1] > d1.myLength){
+                    resultsize += dataExtendedReadLengths[i1] - d1.myLength;
+                }
+                if(dataExtendedReadLengths[i3] > d3.myLength){
+                    resultsize += dataExtendedReadLengths[i3] - d3.myLength;
+                }
+                myResult.extendedRead.reserve(resultsize);
+                myResult.qualityScores.reserve(resultsize);
 
                 if(!didMergeDifferentStrands){
                     //initialize result with d0
