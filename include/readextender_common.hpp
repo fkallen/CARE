@@ -54,6 +54,57 @@ namespace extension{
         read_number getReadPairId() const noexcept{
             return readId1 / 2;
         }
+
+        bool operator==(const ExtendResult& rhs) const noexcept{
+            if(mateHasBeenFound != rhs.mateHasBeenFound){ std::cerr << "error mateHasBeenFound\n"; return false;}
+            if(mergedFromReadsWithoutMate != rhs.mergedFromReadsWithoutMate){ std::cerr << "error mergedFromReadsWithoutMate\n"; return false;}
+            if(aborted != rhs.aborted){ std::cerr << "error aborted\n"; return false;}
+            if(numIterations != rhs.numIterations){ std::cerr << "error numIterations\n"; return false;}
+            if(originalLength != rhs.originalLength){ std::cerr << "error originalLength\n"; return false;}
+            if(originalMateLength != rhs.originalMateLength){ std::cerr << "error originalMateLength\n"; return false;}
+            if(read1begin != rhs.read1begin){ std::cerr << "error read1begin\n"; return false;}
+            if(read2begin != rhs.read2begin){ std::cerr << "error read2begin\n"; return false;}
+            if(goodscore != rhs.goodscore){ std::cerr << "error goodscore\n"; return false;}
+            if(direction != rhs.direction){ std::cerr << "error direction\n"; return false;}
+            if(abortReason != rhs.abortReason){ std::cerr << "error abortReason\n"; return false;}
+            if(readId1 != rhs.readId1){ std::cerr << "error readId1\n"; return false;}
+            if(readId2 != rhs.readId2){ std::cerr << "error readId2\n"; return false;}
+            if(extendedRead != rhs.extendedRead){
+                std::cerr << "error extendedRead " << readId1 << "\n";
+                std::cerr << extendedRead << "\n";
+                std::cerr << rhs.extendedRead << "\n";
+                 return false;
+            } 
+            if(qualityScores != rhs.qualityScores){
+                std::cerr << "error qualityScores " << readId1 << "\n";
+                std::cerr << qualityScores << "\n";
+                std::cerr << rhs.qualityScores << "\n";
+                 return false;
+            }
+            return true;
+
+            // auto tup = [](const auto& res){
+            //     return std::tie(
+            //         res.mateHasBeenFound,
+            //         res.mergedFromReadsWithoutMate,
+            //         res.aborted,
+            //         res.numIterations,
+            //         res.originalLength,
+            //         res.originalMateLength,
+            //         res.read1begin,
+            //         res.read2begin,
+            //         res.goodscore,
+            //         res.direction,
+            //         res.abortReason,
+            //         res.readId1,
+            //         res.readId2,
+            //         res.extendedRead,
+            //         res.qualityScores
+            //     );
+            // };
+
+            //return tup(*this) == tup(rhs);
+        }
     };
 
     struct Task{
