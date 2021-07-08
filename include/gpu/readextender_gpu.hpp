@@ -5643,11 +5643,12 @@ struct GpuReadExtender{
                 result.extendedRead.begin()
             );
 
-            std::copy_n(
+            auto sEnd = std::copy_n(
                 dataExtendedReadSequences + r * extendedReadSequencesPitch + finishedData[r].myLength, 
                 lengthR - finishedData[r].myLength, 
                 sIt
             );
+            assert(result.extendedRead.end() == sEnd);
 
             auto qIt = std::copy_n(
                 dataExtendedReadQualities + l * extendedReadQualitiesPitch, 
@@ -5655,11 +5656,12 @@ struct GpuReadExtender{
                 result.qualityScores.begin()
             );
 
-            std::copy_n(
+            auto qEnd = std::copy_n(
                 dataExtendedReadQualities + r * extendedReadQualitiesPitch + finishedData[r].myLength, 
                 lengthR - finishedData[r].myLength, 
                 qIt
             );
+            assert(result.qualityScores.end() == qEnd);
         };
 
         std::vector<extension::ExtendResult> results(numPairs);
@@ -5694,21 +5696,23 @@ struct GpuReadExtender{
 
                 if(dataExtendedReadLengths[i3] > d3.myLength){
                     //insert extensions of reverse complement of d3 at beginning of d0
-                    std::string r4revcNewPositions = SequenceHelpers::reverseComplementSequenceDecoded(
-                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength, 
-                        dataExtendedReadLengths[i3] - d3.myLength
-                    );
-                    std::string r4revNewQualities(
-                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength, 
-                        dataExtendedReadLengths[i3] - d3.myLength
-                    );
-                    std::reverse(r4revNewQualities.begin(), r4revNewQualities.end());
 
-                    myResult.extendedRead.insert(myResult.extendedRead.begin(), r4revcNewPositions.begin(), r4revcNewPositions.end());
-                    myResult.qualityScores.insert(myResult.qualityScores.begin(), r4revNewQualities.begin(), r4revNewQualities.end());
+                    myResult.extendedRead.insert(
+                        myResult.extendedRead.begin(),
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength,
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + dataExtendedReadLengths[i3]
+                    );
+                    SequenceHelpers::reverseComplementSequenceDecodedInplace(myResult.extendedRead.data(), dataExtendedReadLengths[i3] - d3.myLength);
 
-                    myResult.read1begin += r4revcNewPositions.size();
-                    myResult.read2begin += r4revcNewPositions.size();
+                    myResult.qualityScores.insert(
+                        myResult.qualityScores.begin(),
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength,
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + dataExtendedReadLengths[i3]
+                    );
+                    std::reverse(myResult.qualityScores.begin(), myResult.qualityScores.begin() + dataExtendedReadLengths[i3] - d3.myLength);
+                    
+                    myResult.read1begin += dataExtendedReadLengths[i3] - d3.myLength;
+                    myResult.read2begin += dataExtendedReadLengths[i3] - d3.myLength;
                 }
 
                 myResult.mergedFromReadsWithoutMate = false;
@@ -5879,24 +5883,28 @@ struct GpuReadExtender{
                 if(dataExtendedReadLengths[i3] > d3.myLength){
                     //insert extensions of reverse complement of d3 at beginning
 
-                    std::string r4revcNewPositions = SequenceHelpers::reverseComplementSequenceDecoded(
-                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength,
+                    myResult.extendedRead.insert(
+                        myResult.extendedRead.begin(), 
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength, 
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + dataExtendedReadLengths[i3]
+                    );
+
+                    SequenceHelpers::reverseComplementSequenceDecodedInplace(
+                        myResult.extendedRead.data(), 
                         dataExtendedReadLengths[i3] - d3.myLength
                     );
+
+                    myResult.qualityScores.insert(
+                        myResult.qualityScores.begin(), 
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength, 
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + dataExtendedReadLengths[i3]
+                    );
+
+                    std::reverse(myResult.qualityScores.begin(), myResult.qualityScores.begin() + dataExtendedReadLengths[i3] - d3.myLength);
                     
-                    assert(d3.myLength > 0);
-                    std::string r4revNewQualities(
-                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength,
-                        dataExtendedReadLengths[i3] - d3.myLength
-                    );
-                    std::reverse(r4revNewQualities.begin(), r4revNewQualities.end());
-
-                    myResult.extendedRead.insert(myResult.extendedRead.begin(), r4revcNewPositions.begin(), r4revcNewPositions.end());
-                    myResult.qualityScores.insert(myResult.qualityScores.begin(), r4revNewQualities.begin(), r4revNewQualities.end());
-
-                    myResult.read1begin += r4revcNewPositions.size();
+                    myResult.read1begin += dataExtendedReadLengths[i3] - d3.myLength;
                     if(myResult.mateHasBeenFound){
-                        myResult.read2begin += r4revcNewPositions.size();
+                        myResult.read2begin += dataExtendedReadLengths[i3] - d3.myLength;
                     }
                 }
 
