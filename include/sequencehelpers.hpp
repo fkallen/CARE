@@ -323,6 +323,48 @@ namespace care{
             reverseComplementSequence2Bit(rcencodedsequence, encodedsequence, length, identity, identity);
         }
 
+        template<class CopyType = char, class Group>
+        DEVICEQUALIFIER
+        static constexpr void decodeSequence2Bit(Group& group, const unsigned int* input, int sequencelength, char* output){
+            //output must be aligned to sizeof(CopyType) bytes
+            constexpr int copyTypeSize = sizeof(CopyType);
+            static_assert(copyTypeSize == 1 || copyTypeSize == 2 || copyTypeSize == 4 || copyTypeSize == 8 || copyTypeSize == 16, "Invalid CopyType");
+
+            const int nInts = SequenceHelpers::getEncodedNumInts2Bit(sequencelength);
+            constexpr int basesPerInt = SequenceHelpers::basesPerInt2Bit();
+
+            for(int i = group.thread_rank(); i < nInts; i += group.size()){
+                unsigned int data = input[i];
+
+                if(i < nInts-1){
+                    //not last iteration. int encodes 16 chars
+                    __align__(16) char nucs[16];
+
+                    #ifdef __CUDA_ARCH__
+                    #pragma unroll
+                    #endif
+                    for(int p = 0; p < 16; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        nucs[p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+
+                    #ifdef __CUDA_ARCH__
+                    #pragma unroll
+                    #endif
+                    for(int p = 0; p < 16 / copyTypeSize; p++){
+                        ((CopyType*)output)[(16 / copyTypeSize)*i + p] = *((const CopyType*)&nucs[p]);
+                    }
+                }else{
+                    const int remaining = sequencelength - i * basesPerInt;
+
+                    for(int p = 0; p < remaining; p++){
+                        const std::uint8_t encodedBase = SequenceHelpers::getEncodedNucFromInt2Bit(data, p);
+                        output[i * basesPerInt + p] = SequenceHelpers::decodeBase(encodedBase);
+                    }
+                }
+            }
+        }
+
 
 
 
@@ -408,7 +450,6 @@ namespace care{
             auto identity = [](auto i){return i;};
             return getEncodedNuc2BitHiLo(encodedsequence, length, position, identity);
         }
-
 
         HD_WARNING_DISABLE
         template<class IndexTransformation>
