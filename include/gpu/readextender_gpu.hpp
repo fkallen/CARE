@@ -5635,7 +5635,7 @@ struct GpuReadExtender{
             return resultsize;
         };
 
-        //merge extensions of the same pair and same strand
+        //merge extensions of the same pair and same strand and append to result
         auto merge = [&](int l, int r, extension::ExtendResult& result){
             assert(l+1 == r);
             assert(l % 2 == 0);
@@ -5645,14 +5645,16 @@ struct GpuReadExtender{
    
             auto overlapstart = dataRead2Begins[l];
             const int resultsize = overlapstart + lengthR;
+
+            const int oldSize = result.extendedRead.size();
             
-            result.extendedRead.resize(resultsize);
-            result.qualityScores.resize(resultsize);
+            result.extendedRead.resize(oldSize + resultsize);
+            result.qualityScores.resize(oldSize + resultsize);
 
             auto sIt = std::copy_n(
                 dataExtendedReadSequences + l * extendedReadSequencesPitch, 
                 lengthL,
-                result.extendedRead.begin()
+                result.extendedRead.begin() + oldSize
             );
 
             auto sEnd = std::copy_n(
@@ -5665,7 +5667,7 @@ struct GpuReadExtender{
             auto qIt = std::copy_n(
                 dataExtendedReadQualities + l * extendedReadQualitiesPitch, 
                 lengthL,
-                result.qualityScores.begin()
+                result.qualityScores.begin() + oldSize
             );
 
             auto qEnd = std::copy_n(
@@ -5699,20 +5701,6 @@ struct GpuReadExtender{
                 myResult.extendedRead.reserve(resultsize);
                 myResult.qualityScores.reserve(resultsize);
 
-                merge(i0,i1,myResult);
-
-                myResult.direction = d0.direction;
-                myResult.numIterations = d0.iteration;
-                myResult.aborted = d0.abortReason != extension::AbortReason::None;
-                myResult.abortReason = d0.abortReason;
-                myResult.readId1 = d0.myReadId;
-                myResult.readId2 = d0.mateReadId;
-                myResult.originalLength = d0.myLength;
-                myResult.originalMateLength = d0.mateLength;
-                myResult.read1begin = 0;
-                myResult.goodscore = d0.goodscore;
-                myResult.read2begin = dataRead2Begins[i0];
-                myResult.mateHasBeenFound = d0.mateHasBeenFound;
 
                 if(dataExtendedReadLengths[i3] > d3.myLength){
                     //insert extensions of reverse complement of d3 at beginning of d0
@@ -5730,7 +5718,24 @@ struct GpuReadExtender{
                         dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + dataExtendedReadLengths[i3]
                     );
                     std::reverse(myResult.qualityScores.begin(), myResult.qualityScores.begin() + dataExtendedReadLengths[i3] - d3.myLength);
-                    
+                }
+
+                merge(i0,i1,myResult);
+
+                myResult.direction = d0.direction;
+                myResult.numIterations = d0.iteration;
+                myResult.aborted = d0.abortReason != extension::AbortReason::None;
+                myResult.abortReason = d0.abortReason;
+                myResult.readId1 = d0.myReadId;
+                myResult.readId2 = d0.mateReadId;
+                myResult.originalLength = d0.myLength;
+                myResult.originalMateLength = d0.mateLength;
+                myResult.read1begin = 0;
+                myResult.goodscore = d0.goodscore;
+                myResult.read2begin = dataRead2Begins[i0];
+                myResult.mateHasBeenFound = d0.mateHasBeenFound;
+
+                if(dataExtendedReadLengths[i3] > d3.myLength){                    
                     myResult.read1begin += dataExtendedReadLengths[i3] - d3.myLength;
                     myResult.read2begin += dataExtendedReadLengths[i3] - d3.myLength;
                 }
@@ -5837,6 +5842,8 @@ struct GpuReadExtender{
                 constexpr float maxRelativeErrorInOverlap = 0.05;
 
                 bool didMergeDifferentStrands = false;
+                std::pair<std::string, std::string> possibleOverlapResult;
+
                 if(r1l + r3l >= insertSize - insertSizeStddev + minimumOverlap){
                     std::string r3revc = SequenceHelpers::reverseComplementSequenceDecoded(
                         dataExtendedReadSequences + i2 * extendedReadSequencesPitch, 
@@ -5846,8 +5853,6 @@ struct GpuReadExtender{
                     MismatchRatioGlueDecider decider(minimumOverlap, maxRelativeErrorInOverlap);
                     //WeightedGapGluer gluer(d0.myLength);
                     QualityWeightedGapGluer gluer(d0.myLength, d2.myLength);
-
-                    std::vector<std::pair<std::string, std::string>> possibleResults;
 
                     const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
 
@@ -5861,27 +5866,17 @@ struct GpuReadExtender{
                         );
 
                         if(decision.has_value()){
-                            possibleResults.emplace_back(gluer(*decision));
+                            possibleOverlapResult = gluer(*decision);
+                            didMergeDifferentStrands = true;
                             break;
                         }
-                    }
-
-                    if(possibleResults.size() > 0){
-                        didMergeDifferentStrands = true;
-
-                        auto& mergeresult = possibleResults.front();
-
-                        myResult.extendedRead = std::move(mergeresult.first);
-                        myResult.qualityScores = std::move(mergeresult.second);
-                        myResult.read2begin = myResult.extendedRead.size() - d2.myLength;
-                        myResult.originalMateLength = d2.myLength;
-                        myResult.mateHasBeenFound = true;
-                        myResult.aborted = false;
                     }
                 }
 
                 int resultsize = myResult.extendedRead.size();
-                if(!didMergeDifferentStrands){
+                if(didMergeDifferentStrands){
+                    resultsize += possibleOverlapResult.first.size();
+                }else{
                     resultsize += dataExtendedReadLengths[i0];
                 }
                 if(didMergeDifferentStrands && dataExtendedReadLengths[i1] > d1.myLength){
@@ -5893,7 +5888,39 @@ struct GpuReadExtender{
                 myResult.extendedRead.reserve(resultsize);
                 myResult.qualityScores.reserve(resultsize);
 
-                if(!didMergeDifferentStrands){
+                if(dataExtendedReadLengths[i3] > d3.myLength){
+                    //insert extensions of reverse complement of d3 at beginning
+
+                    myResult.extendedRead.insert(
+                        myResult.extendedRead.begin(), 
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength, 
+                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + dataExtendedReadLengths[i3]
+                    );
+
+                    SequenceHelpers::reverseComplementSequenceDecodedInplace(
+                        myResult.extendedRead.data(), 
+                        dataExtendedReadLengths[i3] - d3.myLength
+                    );
+
+                    myResult.qualityScores.insert(
+                        myResult.qualityScores.begin(), 
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength, 
+                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + dataExtendedReadLengths[i3]
+                    );
+
+                    std::reverse(myResult.qualityScores.begin(), myResult.qualityScores.begin() + dataExtendedReadLengths[i3] - d3.myLength);
+                }
+
+                if(didMergeDifferentStrands){
+                    auto& mergeresult = possibleOverlapResult;
+
+                    myResult.extendedRead.insert(myResult.extendedRead.end(), mergeresult.first.begin(), mergeresult.first.end());
+                    myResult.qualityScores.insert(myResult.qualityScores.end(), mergeresult.second.begin(), mergeresult.second.end());
+                    myResult.read2begin = myResult.extendedRead.size() - d2.myLength;
+                    myResult.originalMateLength = d2.myLength;
+                    myResult.mateHasBeenFound = true;
+                    myResult.aborted = false;
+                }else{
                     //initialize result with d0
                     myResult.extendedRead.insert(
                         myResult.extendedRead.end(), 
@@ -5921,33 +5948,20 @@ struct GpuReadExtender{
                     );
                 }
 
-                if(dataExtendedReadLengths[i3] > d3.myLength){
-                    //insert extensions of reverse complement of d3 at beginning
+                if(didMergeDifferentStrands){
+                    myResult.read2begin = possibleOverlapResult.first.size() - d2.myLength;
+                }else{
+                    myResult.read2begin = dataRead2Begins[i0];
+                }
 
-                    myResult.extendedRead.insert(
-                        myResult.extendedRead.begin(), 
-                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + d3.myLength, 
-                        dataExtendedReadSequences + i3 * extendedReadSequencesPitch + dataExtendedReadLengths[i3]
-                    );
-
-                    SequenceHelpers::reverseComplementSequenceDecodedInplace(
-                        myResult.extendedRead.data(), 
-                        dataExtendedReadLengths[i3] - d3.myLength
-                    );
-
-                    myResult.qualityScores.insert(
-                        myResult.qualityScores.begin(), 
-                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + d3.myLength, 
-                        dataExtendedReadQualities + i3 * extendedReadQualitiesPitch + dataExtendedReadLengths[i3]
-                    );
-
-                    std::reverse(myResult.qualityScores.begin(), myResult.qualityScores.begin() + dataExtendedReadLengths[i3] - d3.myLength);
-                    
+                if(dataExtendedReadLengths[i3] > d3.myLength){                    
                     myResult.read1begin += dataExtendedReadLengths[i3] - d3.myLength;
                     if(myResult.mateHasBeenFound){
                         myResult.read2begin += dataExtendedReadLengths[i3] - d3.myLength;
                     }
                 }
+
+
 
                 myResult.mergedFromReadsWithoutMate = didMergeDifferentStrands;
             }
