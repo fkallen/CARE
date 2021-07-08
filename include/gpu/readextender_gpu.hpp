@@ -4587,6 +4587,7 @@ struct GpuReadExtender{
                 return std::vector<extension::ExtendResult>{};
             }
             cudaStream_t stream = streams[0];
+            //cudaStream_t stream2 = streams[1];
 
             h_numCandidatesPerAnchor.resize(numFinishedTasks);
             h_numCandidatesPerAnchorPrefixSum.resize(numFinishedTasks + 1);
@@ -4753,7 +4754,7 @@ struct GpuReadExtender{
                 d_candidateSequencesData.resizeUninitialized(numCandidates * encodedSequencePitchInInts, stream);
                 CachedDeviceUVector<char> d_candidateSequencesDataDecoded(decodedSequencePitchInBytes * numCandidates, stream, *cubAllocator);
 
-                for(int i = 0; i < numFinishedTasks; i++){
+                for(int i = 0, seen = 0, totalSeen = 0; i < numFinishedTasks; i++){
                     const auto& task = finishedTasks4[i];
 
                     const int num = h_numCandidatesPerAnchor[i];
@@ -4764,6 +4765,28 @@ struct GpuReadExtender{
                         task.totalDecodedAnchorsFlat.end(),
                         h_outputAnchors + offset * decodedSequencePitchInBytes
                     );
+
+                    seen += num;
+
+                    if(seen >= 2048 || (i == numFinishedTasks - 1)){
+                        cudaMemcpyAsync(
+                            d_candidateSequencesDataDecoded.data() + totalSeen * decodedSequencePitchInBytes,
+                            h_outputAnchors.data() + totalSeen * decodedSequencePitchInBytes,
+                            sizeof(char) * decodedSequencePitchInBytes * seen,
+                            H2D,
+                            stream
+                        ); CUERR;
+
+                        totalSeen += seen;
+                        seen = 0;
+                    }
+                }
+
+                for(int i = 0; i < numFinishedTasks; i++){
+                    const auto& task = finishedTasks4[i];
+
+                    const int num = h_numCandidatesPerAnchor[i];
+                    const int offset = h_numCandidatesPerAnchorPrefixSum[i];
 
                     std::copy(
                         task.totalDecodedAnchorsLengths.begin() + 1,
@@ -4780,13 +4803,13 @@ struct GpuReadExtender{
                     stream
                 ); CUERR;
 
-                cudaMemcpyAsync(
-                    d_candidateSequencesDataDecoded.data(),
-                    h_outputAnchors.data(),
-                    sizeof(char) * decodedSequencePitchInBytes * numCandidates,
-                    H2D,
-                    stream
-                ); CUERR;
+                // cudaMemcpyAsync(
+                //     d_candidateSequencesDataDecoded.data(),
+                //     h_outputAnchors.data(),
+                //     sizeof(char) * decodedSequencePitchInBytes * numCandidates,
+                //     H2D,
+                //     stream
+                // ); CUERR;
 
                 readextendergpukernels::encodeSequencesTo2BitKernel<8>
                 <<<SDIV(numCandidates, (128 / 8)), 128, 0, streams[0]>>>(
