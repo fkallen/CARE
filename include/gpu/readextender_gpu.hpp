@@ -4942,6 +4942,7 @@ struct GpuReadExtender{
                     stream
                 );
 
+                //replace positions which are covered by anchor and mate with the original data
                 helpers::lambda_kernel<<<SDIV(numFinishedTasks,(128 / 32)), 128,0, stream>>>(
                     [
                         resultMSAColumnPitchInElements = resultMSAColumnPitchInElements,
@@ -5046,7 +5047,7 @@ struct GpuReadExtender{
             }
         }
 
-        std::vector<extension::ExtendResult> extendResultsTmp = makePairResultsFromFinishedTasks(
+        std::vector<extension::ExtendResult> extendResults = makePairResultsFromFinishedTasks(
             finishedTasks4.size() / 4,
             finishedTasks4.size(),
             finishedTasks4.data(),
@@ -5059,78 +5060,6 @@ struct GpuReadExtender{
         );
 
         nvtx::pop_range();
-
-        nvtx::push_range("updateResults", 3);
-
-        std::vector<extension::ExtendResult> extendResults;
-        extendResults.reserve(finishedTasks4.size());
-
-        for(std::size_t t = 0; t < finishedTasks4.size(); t++){
-            const auto& task = finishedTasks4[t];
-
-            //std::cerr << task.allFullyUsedCandidateReadIdPairs.size() << " / " << task.allUsedCandidateReadIdPairs.size() << "\n";
-
-            extension::ExtendResult extendResult;
-            extendResult.direction = task.direction;
-            extendResult.numIterations = task.iteration;
-            extendResult.aborted = task.abortReason != extension::AbortReason::None;
-            extendResult.abortReason = task.abortReason;
-            extendResult.readId1 = task.myReadId;
-            extendResult.readId2 = task.mateReadId;
-            extendResult.originalLength = task.myLength;
-            extendResult.originalMateLength = task.mateLength;
-            extendResult.read1begin = 0;
-            extendResult.goodscore = task.goodscore;
-
-            // std::cerr << "task " << x << ". iteration = " << task.iteration << ", abort = " << task.abort << ", abortReasond = " << extension::to_string(task.abortReason)
-            //     << ", matefound = " << task.mateHasBeenFound << ", id = " << task.id << ", myReadid = " << task.myReadId << "\n";
-
-            // x++;
-
-            //construct extended read
-
-            const int numsteps = task.totalDecodedAnchorsLengths.size();
-
-            const int gpuLength = h_anchorSequencesLength[t];
-            std::string extendedRead(h_outputAnchors.data() + t * resultMSAColumnPitchInElements, gpuLength);
-            std::string extendedReadQuality(h_outputAnchorQualities.data() + t * resultMSAColumnPitchInElements, gpuLength);
-
-            if(task.mateHasBeenFound){
-                extendResult.read2begin = extendedRead.length() - task.decodedMateRevC.size();
-            }else{
-                extendResult.read2begin = -1;
-            }
-
-            extendResult.extendedRead = std::move(extendedRead);
-            extendResult.qualityScores = std::move(extendedReadQuality);
-
-            extendResult.mateHasBeenFound = task.mateHasBeenFound;
-
-            extendResults.emplace_back(std::move(extendResult));
-        }
-
-        nvtx::pop_range();
-
-        nvtx::push_range("combinePairedEndDirectionResults4", 4);
-
-        // std::vector<extension::ExtendResult> extendResultsCombined = extension::combinePairedEndDirectionResults4(
-        //     extendResults,
-        //     insertSize,
-        //     insertSizeStddev
-        // );
-
-        extension::combinePairedEndDirectionResults4Inplace(
-            extendResults,
-            insertSize,
-            insertSizeStddev
-        );
-
-        nvtx::pop_range();
-
-        if(extendResultsTmp != extendResults){
-            //assert(extendResultsTmp == extendResults);
-            assert(false);
-        }
 
         return extendResults;
     }

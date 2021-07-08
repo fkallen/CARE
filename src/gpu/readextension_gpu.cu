@@ -1247,7 +1247,7 @@ extend_gpu_pairedend(
 
         //gpuReadExtender->printTransitions = true;
         //std::cerr << "thread " << ompThreadId << " finished main loop\n";
- 
+
         // constexpr int increment = 1;
         // constexpr int limit = 10;
 
