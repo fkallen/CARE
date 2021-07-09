@@ -5285,80 +5285,10 @@ struct GpuReadExtender{
             stream
         ); CUERR;
 
-        cudaStreamSynchronize(stream); CUERR;
-
-        if(*h_numCpuPairIdsToProcess > 0){
-
-            h_cpuTaskResultSequences.resize(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements);
-            h_cpuTaskResultQualities.resize(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements);
-            h_cpuTaskResultLengths.resize(4 * (*h_numCpuPairIdsToProcess));
-
-            CachedDeviceUVector<char> d_charbuffer(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements, stream, *cubAllocator);
-            CachedDeviceUVector<char> d_charbuffer2(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements, stream, *cubAllocator);
-
-            //for each pair which should be processed on host, compact its 4 task sequences, qualities, and lengths. Then copy to host
-
-            //compact sequences and qualities
-            cubSelectFlagged(
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_decodedConsensus.data(),
-                    d_consensusQuality.data()
-                )),                        
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    make_iterator_multiplier(
-                        thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}), 
-                        4 * resultMSAColumnPitchInElements //4 sequences
-                    )
-                ),
-                thrust::make_zip_iterator(thrust::make_tuple(
-                    d_charbuffer.data(),
-                    d_charbuffer2.data()
-                )),  
-                thrust::make_discard_iterator(),
-                numFinishedTasks * resultMSAColumnPitchInElements,
-                stream
-            );
-
-            cudaMemcpyAsync(
-                h_cpuTaskResultSequences.data(),
-                d_charbuffer.data(),
-                sizeof(char) * 4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements,
-                D2H,
-                stream
-            ); CUERR;
-
-            cudaMemcpyAsync(
-                h_cpuTaskResultQualities.data(),
-                d_charbuffer2.data(),
-                sizeof(char) * 4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements,
-                D2H,
-                stream
-            ); CUERR;
-
-            d_charbuffer.destroy();
-
-            //compact lengths directly into pinned buffer
-            cubSelectFlagged(
-                d_resultLengths.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    make_iterator_multiplier(
-                        thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}), 
-                        4 //4 lenghts
-                    )
-                ),
-                h_cpuTaskResultLengths.data(),
-                thrust::make_discard_iterator(),
-                numFinishedTasks,
-                stream
-            );                    
-        }
-
         cudaEventRecord(cpuTaskResultDataEvent, stream); CUERR;
 
-        d_numCpuPairIdsToProcess.destroy();
-        d_cpuPairIdsToProcess.destroy();
+
+
 
         CachedDeviceUVector<int> d_numGpuPairIdsToProcess(1, stream, *cubAllocator);
         CachedDeviceUVector<int> d_gpuPairIdsToProcess(numFinishedTasks / 4, stream, *cubAllocator);
@@ -5494,7 +5424,82 @@ struct GpuReadExtender{
             stream
         ); CUERR;
 
-        d_consensusQuality.destroy();                 
+        cudaEventRecord(gpuPairResultDataEvent, stream); CUERR;
+
+        {
+        cudaEventSynchronize(cpuTaskResultDataEvent); CUERR;
+        if(*h_numCpuPairIdsToProcess > 0){
+
+            h_cpuTaskResultSequences.resize(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements);
+            h_cpuTaskResultQualities.resize(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements);
+            h_cpuTaskResultLengths.resize(4 * (*h_numCpuPairIdsToProcess));
+
+            CachedDeviceUVector<char> d_charbuffer(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements, stream2, *cubAllocator);
+            CachedDeviceUVector<char> d_charbuffer2(4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements, stream2, *cubAllocator);
+
+            //for each pair which should be processed on host, compact its 4 task sequences, qualities, and lengths. Then copy to host
+
+            //compact sequences and qualities
+            cubSelectFlagged(
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_decodedConsensus.data(),
+                    d_consensusQuality.data()
+                )),                        
+                thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    make_iterator_multiplier(
+                        thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}), 
+                        4 * resultMSAColumnPitchInElements //4 sequences
+                    )
+                ),
+                thrust::make_zip_iterator(thrust::make_tuple(
+                    d_charbuffer.data(),
+                    d_charbuffer2.data()
+                )),  
+                thrust::make_discard_iterator(),
+                numFinishedTasks * resultMSAColumnPitchInElements,
+                stream2
+            );
+
+            cudaMemcpyAsync(
+                h_cpuTaskResultSequences.data(),
+                d_charbuffer.data(),
+                sizeof(char) * 4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements,
+                D2H,
+                stream2
+            ); CUERR;
+
+            cudaMemcpyAsync(
+                h_cpuTaskResultQualities.data(),
+                d_charbuffer2.data(),
+                sizeof(char) * 4 * (*h_numCpuPairIdsToProcess) * resultMSAColumnPitchInElements,
+                D2H,
+                stream2
+            ); CUERR;
+
+            //compact lengths directly into pinned buffer
+            cubSelectFlagged(
+                d_resultLengths.data(),
+                thrust::make_transform_iterator(
+                    thrust::make_counting_iterator(0),
+                    make_iterator_multiplier(
+                        thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}), 
+                        4 //4 lenghts
+                    )
+                ),
+                h_cpuTaskResultLengths.data(),
+                thrust::make_discard_iterator(),
+                numFinishedTasks,
+                stream2
+            );
+
+            cudaEventRecord(cpuTaskResultDataEvent, stream2); CUERR;               
+        }
+       
+        d_numCpuPairIdsToProcess.destroy();
+        d_cpuPairIdsToProcess.destroy();
+        }
+
 
         cudaEventSynchronize(cpuTaskResultDataEvent); CUERR; //wait for task result data for processing on cpu
 
@@ -5525,7 +5530,7 @@ struct GpuReadExtender{
             resultMSAColumnPitchInElements
         ); 
 
-        cudaStreamSynchronize(stream); CUERR; //wait for gpu pair result data to pack them into ExtensionResult
+        cudaEventSynchronize(gpuPairResultDataEvent); CUERR; //wait for gpu pair result data to pack them into ExtensionResult
 
         cpuResultVector.resize(cpuResultVector.size() + (*h_numGpuPairIdsToProcess));
 
@@ -6879,6 +6884,7 @@ struct GpuReadExtender{
     CudaEvent h_numFullyUsedReadIdsEvent{};
     CudaEvent h_numFullyUsedReadIds2Event{};
     CudaEvent cpuTaskResultDataEvent{};
+    CudaEvent gpuPairResultDataEvent{};
 
     // -----
 
