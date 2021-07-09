@@ -785,6 +785,238 @@ namespace readextendergpukernels{
         }
     }
 
+    //requires external shared memory of 2*outputPitch per group in block
+    template<int blocksize>
+    __global__
+    void makePairResultsFromFinishedTasksKernel(
+        const int* __restrict__ numPairIdsToProcessPtr,
+        const int* __restrict__ pairIdsToProcess,
+        bool* __restrict__ outputAnchorIsLR,
+        char* __restrict__ outputSequences,
+        char* __restrict__ outputQualities,
+        int* __restrict__ outputLengths,
+        int* __restrict__ outRead1Begins,
+        int* __restrict__ outRead2Begins,
+        int outputPitch,
+        const int* __restrict__ originalReadLengths,
+        const int* __restrict__ dataExtendedReadLengths,
+        const char* __restrict__ dataExtendedReadSequences,
+        const char* __restrict__ dataExtendedReadQualities,
+        const bool* __restrict__ dataMateHasBeenFound,
+        const float* __restrict__ dataGoodScores,
+        int inputPitch
+    ){
+        auto group = cg::this_thread_block();
+        const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
+        const int groupIdInGrid = (threadIdx.x + blockDim.x * blockIdx.x) / group.size();
+
+        const int numPairIdsToProcess = *numPairIdsToProcessPtr;
+
+        extern __shared__ int smemForResults[];
+        char* const smemChars = (char*)&smemForResults[0];
+        char* const smemSequence = smemChars;
+        char* const smemQualities = smemSequence + outputPitch;
+
+        auto computeRead2Begin = [&](int i){
+            if(dataMateHasBeenFound[i]){
+                //extendedRead.length() - task.decodedMateRevC.length();
+                return dataExtendedReadLengths[i] - originalReadLengths[i+1];
+            }else{
+                return -1;
+            }
+        };
+
+        auto mergelength = [&](int l, int r){
+            assert(l+1 == r);
+            assert(l % 2 == 0);
+
+            const int lengthR = dataExtendedReadLengths[r];
+
+            const int read2begin = computeRead2Begin(l);
+   
+            auto overlapstart = read2begin;
+
+            const int resultsize = overlapstart + lengthR;
+            
+            return resultsize;
+        };
+
+        //merge extensions of the same pair and same strand and append to result
+        auto merge = [&](auto& group, int l, int r, char* sequenceOutput, char* qualityOutput){
+            assert(l+1 == r);
+            assert(l % 2 == 0);
+
+            const int lengthL = dataExtendedReadLengths[l];
+            const int lengthR = dataExtendedReadLengths[r];
+            const int originalLengthR = originalReadLengths[r];
+   
+            auto overlapstart = computeRead2Begin(l);
+
+            for(int i = group.thread_rank(); i < lengthL; i += group.size()){
+                sequenceOutput[i] 
+                    = dataExtendedReadSequences[l * inputPitch + i];
+            }
+
+            for(int i = group.thread_rank(); i < lengthR - originalLengthR; i += group.size()){
+                sequenceOutput[lengthL + i] 
+                    = dataExtendedReadSequences[r * inputPitch + originalLengthR + i];
+            }
+
+            for(int i = group.thread_rank(); i < lengthL; i += group.size()){
+                qualityOutput[i] 
+                    = dataExtendedReadQualities[l * inputPitch + i];
+            }
+
+            for(int i = group.thread_rank(); i < lengthR - originalLengthR; i += group.size()){
+                qualityOutput[lengthL + i] 
+                    = dataExtendedReadQualities[r * inputPitch + originalLengthR + i];
+            }
+        };
+    
+        //process pair at position pairIdsToProcess[posInList] and store to result position posInList
+        for(int posInList = groupIdInGrid; posInList < numPairIdsToProcess; posInList += numGroupsInGrid){
+            const int p = pairIdsToProcess[posInList];
+
+            const int i0 = 4 * p + 0;
+            const int i1 = 4 * p + 1;
+            const int i2 = 4 * p + 2;
+            const int i3 = 4 * p + 3;
+
+            char* const myResultSequence = outputSequences + posInList * outputPitch;
+            char* const myResultQualities = outputQualities + posInList * outputPitch;
+            int* const myResultRead1Begins = outRead1Begins + posInList;
+            int* const myResultRead2Begins = outRead2Begins + posInList;
+            int* const myResultLengths = outputLengths + posInList;
+            bool* const myResultAnchorIsLR = outputAnchorIsLR + posInList;
+
+            auto LRmatefoundfunc = [&](){
+                const int extendedReadLength3 = dataExtendedReadLengths[i3];
+                const int originalLength3 = originalReadLengths[i3];
+
+                int resultsize = mergelength(i0, i1);
+                if(extendedReadLength3 > originalLength3){
+                    resultsize += extendedReadLength3 - originalLength3;
+                }                
+
+                int currentsize = 0;
+
+                if(extendedReadLength3 > originalLength3){
+                    //insert extensions of reverse complement of d3 at beginning
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength3 - originalLength3); k += group.size()){
+                        myResultSequence[k] = SequenceHelpers::complementBaseDecoded(
+                            dataExtendedReadSequences[i3 * inputPitch + originalLength3 + (extendedReadLength3 - originalLength3) - 1 - k]
+                        );
+                    }
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength3 - originalLength3); k += group.size()){
+                        myResultQualities[k] = 
+                            dataExtendedReadQualities[i3 * inputPitch + originalLength3 + (extendedReadLength3 - originalLength3) - 1 - k];
+                    }
+
+                    currentsize = (extendedReadLength3 - originalLength3);
+                }
+
+                merge(group, i0, i1, myResultSequence + currentsize, myResultQualities + currentsize);
+
+                int read1begin = 0;
+                int read2begin = computeRead2Begin(i0);
+
+                if(extendedReadLength3 > originalLength3){                    
+                    read1begin += (extendedReadLength3 - originalLength3);
+                    read2begin += (extendedReadLength3 - originalLength3);
+                }
+
+                if(group.thread_rank() == 0){
+                    *myResultRead1Begins = read1begin;
+                    *myResultRead2Begins = read2begin;
+                    *myResultLengths = resultsize;
+                    *myResultAnchorIsLR = true;
+                }
+            };
+
+            auto RLmatefoundfunc = [&](){
+                const int extendedReadLength1 = dataExtendedReadLengths[i1];
+                const int originalLength1 = originalReadLengths[i1];
+
+                const int mergedLength = mergelength(i2, i3);
+                int resultsize = mergedLength;
+                if(extendedReadLength1 > originalLength1){
+                    resultsize += extendedReadLength1 - originalLength1;
+                }
+
+                merge(group, i2, i3, smemSequence, smemQualities);
+
+                group.sync();
+
+                for(int k = group.thread_rank(); k < mergedLength; k += group.size()){
+                    myResultSequence[k] = SequenceHelpers::complementBaseDecoded(
+                        smemSequence[mergedLength - 1 - k]
+                    );
+                }
+
+                for(int k = group.thread_rank(); k < mergedLength; k += group.size()){
+                    myResultQualities[k] = smemQualities[mergedLength - 1 - k];
+                }
+
+                group.sync();
+
+                const int sizeOfRightExtension = mergedLength - (computeRead2Begin(i2) + originalReadLengths[i3]);
+
+                int read1begin = 0;
+                int newread2begin = mergedLength - (read1begin + originalReadLengths[i2]);
+                int newread2length = originalReadLengths[i2];
+                int newread1begin = sizeOfRightExtension;
+                int newread1length = originalReadLengths[i3];
+
+                assert(newread1begin >= 0);
+                assert(newread2begin >= 0);
+                assert(newread1begin + newread1length <= mergedLength);
+                assert(newread2begin + newread2length <= mergedLength);
+
+                if(extendedReadLength1 > originalLength1){
+                    //insert extensions of d1 at end
+                    for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
+                        myResultSequence[mergedLength + k] = 
+                            dataExtendedReadSequences[i1 * inputPitch + originalLength1 + k];                        
+                    }
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
+                        myResultQualities[mergedLength + k] = 
+                            dataExtendedReadQualities[i1 * inputPitch + originalLength1 + k];                        
+                    }
+                }
+
+                read1begin = newread1begin;
+                const int read2begin = newread2begin;
+                
+                if(group.thread_rank() == 0){
+                    *myResultRead1Begins = read1begin;
+                    *myResultRead2Begins = read2begin;
+                    *myResultLengths = resultsize;
+                    *myResultAnchorIsLR = false;
+                }
+            };
+
+            if(dataMateHasBeenFound[i0] && dataMateHasBeenFound[i2]){
+                if(dataGoodScores[i0] < dataGoodScores[i2]){
+                    LRmatefoundfunc();
+                }else{
+                    RLmatefoundfunc();
+                }
+            }else 
+            if(dataMateHasBeenFound[i0]){
+                LRmatefoundfunc();
+            }else if(dataMateHasBeenFound[i2]){
+                RLmatefoundfunc();                
+            }else{
+                //nope. kernel cannot handle this case
+                assert(false);
+            }
+
+        }
+    }
+
     template<int blocksize, int itemsPerThread, bool inclusive, class T>
     __global__
     void prefixSumSingleBlockKernel(
@@ -4579,15 +4811,29 @@ struct GpuReadExtender{
         nvtx::pop_range();
 
         int resultMSAColumnPitchInElements = 1024;
+        cudaStream_t stream = streams[0];
+            //cudaStream_t stream2 = streams[1];
+
+        PinnedBuffer<bool> h_outputAnchorIsLR;
+        PinnedBuffer<char> h_pairResultSequences;
+        PinnedBuffer<char> h_pairResultQualities;
+        PinnedBuffer<int> h_pairResultLengths;
+        PinnedBuffer<int> h_pairResultRead1Begins;
+        PinnedBuffer<int> h_pairResultRead2Begins;
+        PinnedBuffer<float> h_goodscores;
+        PinnedBuffer<int> h_numPairIdsToProcess(1);
+        PinnedBuffer<int> h_pairIdsToProcess;
+        *h_numPairIdsToProcess = 0;
+        int outputPitch = 2048;
+
+        bool emptyCandidates = false;
 
         nvtx::push_range("constructResults4", 2);
         {
             const int numFinishedTasks = finishedTasks4.size();
             if(numFinishedTasks == 0){
                 return std::vector<extension::ExtendResult>{};
-            }
-            cudaStream_t stream = streams[0];
-            //cudaStream_t stream2 = streams[1];
+            }            
 
             h_numCandidatesPerAnchor.resize(numFinishedTasks);
             h_numCandidatesPerAnchorPrefixSum.resize(numFinishedTasks + 1);
@@ -4609,6 +4855,7 @@ struct GpuReadExtender{
 
             //if there are no candidates, the resulting sequences will be identical to the input anchors. no computing required
             if(numCandidates == 0){
+                emptyCandidates = true;
 
                 resultMSAColumnPitchInElements = decodedSequencePitchInBytes;
 
@@ -5050,13 +5297,175 @@ struct GpuReadExtender{
                     stream
                 ); CUERR;
 
-                d_consensusQuality.destroy();
 
-                cudaStreamSynchronize(stream); CUERR;
+                CachedDeviceUVector<bool> d_isSimpleResultConstruction(numFinishedTasks / 4, stream, *cubAllocator);
+
+                helpers::lambda_kernel<<<SDIV(numFinishedTasks / 4, 128), 128, 0, stream>>>(
+                    [
+                        numFinishedTasks = numFinishedTasks,
+                        d_isSimpleResultConstruction = d_isSimpleResultConstruction.data(),
+                        d_mateHasBeenFound = d_mateHasBeenFound.data()
+                    ] __device__(){
+                        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                        const int stride = blockDim.x * gridDim.x;
+
+                        for(int i = tid; i < numFinishedTasks / 4; i += stride){
+                            d_isSimpleResultConstruction[i] = 
+                                d_mateHasBeenFound[4*i + 0] || d_mateHasBeenFound[4*i + 2];
+                        }
+                    }
+                ); CUERR;
+
+                CachedDeviceUVector<int> d_numPairIdsToProcess(1, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_pairIdsToProcess(numFinishedTasks / 4, stream, *cubAllocator);
+
+                h_pairIdsToProcess.resize(numFinishedTasks / 4);
+                h_numPairIdsToProcess.resize(1);
+
+                cubSelectFlagged(
+                    thrust::make_counting_iterator(0),
+                    d_isSimpleResultConstruction.data(),
+                    d_pairIdsToProcess.data(),
+                    d_numPairIdsToProcess.data(),
+                    numFinishedTasks / 4,
+                    stream
+                );
+
+                cudaMemcpyAsync(
+                    h_pairIdsToProcess.data(),
+                    d_pairIdsToProcess.data(),
+                    sizeof(int) * numFinishedTasks / 4,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_numPairIdsToProcess.data(),
+                    d_numPairIdsToProcess.data(),
+                    sizeof(int),
+                    D2H,
+                    stream
+                ); CUERR;
+
+
+                outputPitch = 2048; //TODO
+
+                
+
+                CachedDeviceUVector<bool> d_outputAnchorIsLR(numFinishedTasks / 4, stream, *cubAllocator);
+                CachedDeviceUVector<char> d_pairResultSequences(numFinishedTasks / 4 * outputPitch, stream, *cubAllocator);
+                CachedDeviceUVector<char> d_pairResultQualities(numFinishedTasks / 4 * outputPitch, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_pairResultLengths(numFinishedTasks / 4, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_pairResultRead1Begins(numFinishedTasks / 4, stream, *cubAllocator);
+                CachedDeviceUVector<int> d_pairResultRead2Begins(numFinishedTasks / 4, stream, *cubAllocator);
+                
+
+                h_outputAnchorIsLR.resize(numFinishedTasks / 4);
+                h_pairResultSequences.resize(numFinishedTasks / 4 * outputPitch);
+                h_pairResultQualities.resize(numFinishedTasks / 4 * outputPitch);
+                h_pairResultLengths.resize(numFinishedTasks / 4);
+                h_pairResultRead1Begins.resize(numFinishedTasks / 4);
+                h_pairResultRead2Begins.resize(numFinishedTasks / 4);                
+
+                CachedDeviceUVector<float> d_goodscores(numFinishedTasks, stream, *cubAllocator);
+                h_goodscores.resize(numFinishedTasks);
+
+                for(std::size_t t = 0; t < finishedTasks4.size(); t++){
+                    const auto& task = finishedTasks4[t];
+                    h_goodscores[t] = task.goodscore;
+                }
+
+                cudaMemcpyAsync(
+                    d_goodscores.data(),
+                    h_goodscores.data(),
+                    sizeof(float) * numFinishedTasks,
+                    H2D,
+                    stream
+                ); CUERR;
+
+                const std::size_t smem = 2 * outputPitch;
+
+                readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<numFinishedTasks / 4, 128, smem, stream>>>(
+                    d_numPairIdsToProcess.data(),
+                    d_pairIdsToProcess.data(),
+                    d_outputAnchorIsLR.data(),
+                    d_pairResultSequences.data(),
+                    d_pairResultQualities.data(),
+                    d_pairResultLengths.data(),
+                    d_pairResultRead1Begins.data(),
+                    d_pairResultRead2Begins.data(),
+                    outputPitch,
+                    d_anchorSequencesLength2.data(), //originalReadLengths,
+                    d_resultLengths.data(),
+                    d_decodedConsensus.data(),
+                    d_consensusQuality.data(),
+                    d_mateHasBeenFound.data(),
+                    d_goodscores.data(),
+                    resultMSAColumnPitchInElements
+                );
+
+                cudaMemcpyAsync(
+                    h_outputAnchorIsLR.data(),
+                    d_outputAnchorIsLR.data(),
+                    sizeof(bool) * numFinishedTasks / 4,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_pairResultSequences.data(),
+                    d_pairResultSequences.data(),
+                    sizeof(char) * numFinishedTasks / 4 * outputPitch,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_pairResultQualities.data(),
+                    d_pairResultQualities.data(),
+                    sizeof(char) * numFinishedTasks / 4 * outputPitch,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_pairResultLengths.data(),
+                    d_pairResultLengths.data(),
+                    sizeof(int) * numFinishedTasks / 4,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_pairResultRead1Begins.data(),
+                    d_pairResultRead1Begins.data(),
+                    sizeof(int) * numFinishedTasks / 4,
+                    D2H,
+                    stream
+                ); CUERR;
+
+                cudaMemcpyAsync(
+                    h_pairResultRead2Begins.data(),
+                    d_pairResultRead2Begins.data(),
+                    sizeof(int) * numFinishedTasks / 4,
+                    D2H,
+                    stream
+                ); CUERR;
+
+
+
+
+
+
+                d_consensusQuality.destroy();                
             }
 
         }
         nvtx::pop_range();
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        //std::cerr << "simple cases: " << (*h_numPairIdsToProcess) << " / " << (finishedTasks4.size() / 4) << "\n";
 
         nvtx::push_range("newresultcombination", 6);
 
@@ -5081,6 +5490,97 @@ struct GpuReadExtender{
             resultMSAColumnPitchInElements,
             resultMSAColumnPitchInElements
         );
+
+        //const int toCheck = std::min(10, (*h_numPairIdsToProcess));
+        const int toCheck = (*h_numPairIdsToProcess);
+
+        for(int k = 0; k < toCheck; k++){
+            assert(!emptyCandidates);
+            const int index = h_pairIdsToProcess[k];
+            const auto& result = extendResults[index];
+
+            const char* gpuSeq = &h_pairResultSequences[k * outputPitch];
+            const char* gpuQual = &h_pairResultQualities[k * outputPitch];
+            const int gpuLength = h_pairResultLengths[k];
+            const int read1begin = h_pairResultRead1Begins[k];
+            const int read2begin = h_pairResultRead2Begins[k];
+            const bool anchorIsLR = h_outputAnchorIsLR[k]; 
+
+            bool error = false;
+
+            std::string s1(gpuSeq, gpuLength);
+            if(s1 != result.extendedRead){
+                std::cerr << "cpu: " << result.extendedRead << "\n";
+                std::cerr << "gpu: " << s1 << "\n";
+                error = true;
+            }
+
+            std::string s2(gpuQual, gpuLength);
+            if(s2 != result.qualityScores){
+                std::cerr << "cpu: " << result.qualityScores << "\n";
+                std::cerr << "gpu: " << s2 << "\n";
+                error = true;
+            }
+            if(error){
+                std::cerr << "k = " << k << ", index = " << index << "\n";
+            }
+            assert(!error);
+
+            const int i0 = 4 * index + 0;
+            //const int i1 = 4 * index + 1;
+            const int i2 = 4 * index + 2;
+            //const int i3 = 4 * index + 3;
+
+            const auto& d0 = finishedTasks4[i0]; //LR search
+            //const auto& d1 = finishedTasks4[i1]; //LR partner
+            const auto& d2 = finishedTasks4[i2]; //RL search
+            //const auto& d3 = finishedTasks4[i3]; //RL partner
+
+            //if anchorIsLR, use d0 as reference, else use d2 as reference and switch anchorlength and matelength
+            extension::ExtendResult gpuResult;
+
+            if(anchorIsLR){
+
+                gpuResult.direction = d0.direction;
+                gpuResult.numIterations = d0.iteration;
+                gpuResult.aborted = d0.abortReason != extension::AbortReason::None;
+                gpuResult.abortReason = d0.abortReason;
+                gpuResult.readId1 = d0.myReadId;
+                gpuResult.readId2 = d0.mateReadId;
+                gpuResult.originalLength = d0.myLength;
+                gpuResult.originalMateLength = d0.mateLength;
+                gpuResult.read1begin = read1begin;
+                gpuResult.goodscore = d0.goodscore;
+                gpuResult.read2begin = read2begin;
+                gpuResult.mateHasBeenFound = d0.mateHasBeenFound;
+                gpuResult.extendedRead = std::move(s1);
+                gpuResult.qualityScores = std::move(s2);
+
+            }else{
+                gpuResult.direction = d2.direction;
+                gpuResult.numIterations = d2.iteration;
+                gpuResult.aborted = d2.abortReason != extension::AbortReason::None;
+                gpuResult.abortReason = d2.abortReason;
+                gpuResult.readId1 = d2.myReadId;
+                gpuResult.readId2 = d2.mateReadId;
+                gpuResult.originalLength = d2.mateLength;
+                gpuResult.originalMateLength = d2.myLength;
+                gpuResult.read1begin = read1begin;
+                gpuResult.goodscore = d2.goodscore;
+                gpuResult.read2begin = read2begin;
+                gpuResult.mateHasBeenFound = d2.mateHasBeenFound;
+                gpuResult.extendedRead = std::move(s1);
+                gpuResult.qualityScores = std::move(s2);
+            }
+
+            assert(gpuResult == result);
+
+            // std::cerr << "cpu: " << result.extendedRead << "\n";
+
+            // std::cerr << "gpu: ";
+            // std::copy_n(gpuSeq, gpuLength, std::ostream_iterator<char>(std::cerr, ""));
+            // std::cerr << "\n";
+        }
 
         nvtx::pop_range();
 
@@ -5766,6 +6266,7 @@ struct GpuReadExtender{
                 }else{
                     RLmatefoundfunc();
                 }
+                
             }else 
             if(d0.mateHasBeenFound){
                 LRmatefoundfunc();
