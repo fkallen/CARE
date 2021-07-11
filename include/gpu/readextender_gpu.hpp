@@ -1389,18 +1389,20 @@ namespace readextendergpukernels{
         }
     }
 
+
     template<int blocksize, int groupsize>
     __global__
     void filtermatekernel(
         const unsigned int* __restrict__ anchormatedata,
         const unsigned int* __restrict__ candidatefwddata,
-        //const unsigned int* __restrict__ candidatefwddata2,
         int encodedSequencePitchInInts,
         const int* __restrict__ numCandidatesPerAnchor,
         const int* __restrict__ numCandidatesPerAnchorPrefixSum,
-        const int* __restrict__ activeTaskIndices,
-        int numTasksWithRemovedMate,
-        bool* __restrict__ output_keepflags
+        const bool* __restrict__ mateIdHasBeenRemoved,
+        int numTasks,
+        bool* __restrict__ output_keepflags,
+        int initialNumCandidates,
+        const int* currentNumCandidatesPtr
     ){
 
         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
@@ -1415,36 +1417,55 @@ namespace readextendergpukernels{
 
         unsigned int* sharedMate = smem + groupindexinblock * encodedSequencePitchInInts;
 
-        for(int task = groupindex; task < numTasksWithRemovedMate; task += numgroups){
+        const int currentNumCandidates = *currentNumCandidatesPtr;
 
-            const int globalTaskIndex = activeTaskIndices[task];
-            const int numCandidates = numCandidatesPerAnchor[globalTaskIndex];
-            const int candidatesOffset = numCandidatesPerAnchorPrefixSum[globalTaskIndex];
+        for(int task = groupindex; task < numTasks; task += numgroups){
+            const int numCandidates = numCandidatesPerAnchor[task];
+            const int candidatesOffset = numCandidatesPerAnchorPrefixSum[task];
 
-            for(int p = group.thread_rank(); p < encodedSequencePitchInInts; p++){
-                sharedMate[p] = anchormatedata[encodedSequencePitchInInts * task + p];
-            }
-            group.sync();
+            if(mateIdHasBeenRemoved[task]){
 
-            //compare mate to candidates. 1 thread per candidate
-            for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
-                bool doKeep = false;
-                const unsigned int* const candidateptr = candidatefwddata + encodedSequencePitchInInts * (candidatesOffset + c);
+                for(int p = group.thread_rank(); p < encodedSequencePitchInInts; p++){
+                    sharedMate[p] = anchormatedata[encodedSequencePitchInInts * task + p];
+                }
+                group.sync();
 
-                for(int p = 0; p < encodedSequencePitchInInts; p++){
-                    const unsigned int aaa = sharedMate[p];
-                    const unsigned int bbb = candidateptr[p];
+                //compare mate to candidates. 1 thread per candidate
+                for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
+                    bool doKeep = false;
+                    const unsigned int* const candidateptr = candidatefwddata + encodedSequencePitchInInts * (candidatesOffset + c);
 
-                    if(aaa != bbb){
-                        doKeep = true;
-                        break;
+                    for(int p = 0; p < encodedSequencePitchInInts; p++){
+                        const unsigned int aaa = sharedMate[p];
+                        const unsigned int bbb = candidateptr[p];
+
+                        if(aaa != bbb){
+                            doKeep = true;
+                            break;
+                        }
                     }
+
+                    output_keepflags[(candidatesOffset + c)] = doKeep;
                 }
 
-                output_keepflags[(candidatesOffset + c)] = doKeep;
+                group.sync();
+
             }
+            // else{
+            //     for(int c = group.thread_rank(); c < numCandidates; c += group.size()){
+            //         output_keepflags[(candidatesOffset + c)] = true;
+            //     }
+            // }
+        }
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+        for(int i = currentNumCandidates + tid; i < initialNumCandidates; i += stride){
+            output_keepflags[i] = false;
         }
     }
+
+
 
     template<int groupsize>
     __global__
@@ -3410,71 +3431,43 @@ struct GpuReadExtender{
 
         cudaStream_t stream = streams[0];
 
-        CachedDeviceUVector<int> d_positionsOfAnchorsToRemoveMateSequence(numTasks, stream, *cubAllocator);
+        // cubReduceSum(d_mateIdHasBeenRemoved.data(), h_numAnchorsWithRemovedMates.data(), numTasks, stream);
+        // cudaEventRecord(h_numAnchorsWithRemovedMatesEvent, stream); CUERR;
 
-        //determine task ids with removed mates
-        cubSelectFlagged(
-            thrust::make_counting_iterator(0),
+        CachedDeviceUVector<bool> d_keepflags(initialNumCandidates, stream, *cubAllocator);
+
+        //compute flags of candidates which should not be removed. Candidates which should be removed are identical to mate sequence
+
+        helpers::call_fill_kernel_async(d_keepflags.data(), initialNumCandidates, true, stream);
+
+        constexpr int groupsize = 32;
+        constexpr int blocksize = 128;
+        constexpr int groupsperblock = blocksize / groupsize;
+        dim3 block(blocksize,1,1);
+        dim3 grid(SDIV(numTasks * groupsize, blocksize), 1, 1);
+        const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
+
+        readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
+            d_inputanchormatedata.data(),
+            d_candidateSequencesData.data(),
+            encodedSequencePitchInInts,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
             d_mateIdHasBeenRemoved.data(),
-            d_positionsOfAnchorsToRemoveMateSequence.data(),
-            h_numAnchorsWithRemovedMates.data(),
             numTasks,
+            d_keepflags.data(),
+            initialNumCandidates,
+            d_numCandidatesPerAnchorPrefixSum.data() + numTasks
+        ); CUERR;
+
+        //cudaEventSynchronize(h_numAnchorsWithRemovedMatesEvent); CUERR;
+
+        //if(*h_numAnchorsWithRemovedMates > 0){
+        compactCandidateDataByFlagsExcludingAlignments(
+            d_keepflags.data(),
             stream
         );
-        cudaEventRecord(h_numAnchorsWithRemovedMatesEvent, stream); CUERR;
-
-        cudaEventSynchronize(h_numAnchorsWithRemovedMatesEvent); CUERR; //wait for h_numAnchorsWithRemovedMates
-        const int numTasksWithMateRemoved = *h_numAnchorsWithRemovedMates;
-
-        //std::cerr << "numTasksWithMateRemoved: " << numTasksWithMateRemoved << " / " << numTasks << "\n";
-
-        if(numTasksWithMateRemoved > 0){
-
-            CachedDeviceUVector<bool> d_keepflags(initialNumCandidates, stream, *cubAllocator);
-
-            CachedDeviceUVector<unsigned int> d_sequencesOfMatesWhichShouldBeRemoved(numTasks * encodedSequencePitchInInts, stream, *cubAllocator);
-
-            //Gather mate sequence data of tasks which removed mate read id from candidate list
-
-            cubSelectFlagged(
-                d_inputanchormatedata.data(),
-                thrust::make_transform_iterator(
-                    thrust::make_counting_iterator(0),
-                    make_iterator_multiplier(d_mateIdHasBeenRemoved.data(), encodedSequencePitchInInts)
-                ),
-                d_sequencesOfMatesWhichShouldBeRemoved.data(),
-                thrust::make_discard_iterator(),
-                numTasks * encodedSequencePitchInInts,
-                stream
-            );
-
-            constexpr int groupsize = 32;
-            constexpr int blocksize = 128;
-            constexpr int groupsperblock = blocksize / groupsize;
-            dim3 block(blocksize,1,1);
-            dim3 grid(SDIV(numTasksWithMateRemoved * groupsize, blocksize), 1, 1);
-            const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
-
-            //compute flags of candidates which should not be removed. Candidates which should be removed are identical to mate sequence
-            helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
-            helpers::call_fill_kernel_async(d_keepflags.data() + totalNumCandidates, (initialNumCandidates - totalNumCandidates), false, stream);
-
-            readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-                d_sequencesOfMatesWhichShouldBeRemoved.data(),
-                d_candidateSequencesData.data(),
-                encodedSequencePitchInInts,
-                d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum.data(),
-                d_positionsOfAnchorsToRemoveMateSequence.data(),
-                numTasksWithMateRemoved,
-                d_keepflags.data()
-            ); CUERR;
-
-            compactCandidateDataByFlagsExcludingAlignments(
-                d_keepflags.data(),
-                stream
-            );
-        }
+        //}
 
         setState(GpuReadExtender::State::BeforeAlignment);
     }
