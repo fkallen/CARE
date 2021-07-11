@@ -2996,13 +2996,7 @@ struct GpuReadExtender{
         assert(state == GpuReadExtender::State::BeforeRemoveIds);
 
         cudaStream_t firstStream = streams[0];
-
-        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
-
-        h_numCandidatesPerAnchor.resize(numTasks);
-
-        //determine required temp bytes for following cub calls, and allocate temp storage
-               
+             
         CachedDeviceUVector<bool> d_shouldBeKept(totalNumCandidates, firstStream, *cubAllocator);
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);        
 
@@ -3024,19 +3018,11 @@ struct GpuReadExtender{
             numTasks,
             pairedEnd
         );
-        CUERR;
-
-        cudaMemcpyAsync(
-            h_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchor2.data(),
-            sizeof(int) * numTasks,
-            D2H,
-            firstStream
-        ); CUERR;       
+        CUERR;  
 
         //copy selected candidate ids
 
-        assert(d_candidateReadIds2.data() != nullptr);
+        CachedDeviceUVector<read_number> d_candidateReadIds2(totalNumCandidates, firstStream, *cubAllocator);
         assert(h_numCandidates.data() != nullptr);
 
         assert(d_candidateReadIds.size() >= totalNumCandidates);

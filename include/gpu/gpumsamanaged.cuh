@@ -76,7 +76,7 @@ namespace gpu{
             const unsigned int* d_candidateSequences,
             const char* d_candidateQualities,
             const bool* d_isPairedCandidate,
-            int numCandidates,
+            int maxNumCandidates,
             const int* d_numAnchors,
             std::size_t encodedSequencePitchInInts,
             std::size_t qualityPitchInBytes,
@@ -116,7 +116,7 @@ namespace gpu{
                 d_numAnchors,
                 desiredAlignmentMaxErrorRate,
                 numAnchors,
-                numCandidates,
+                maxNumCandidates,
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
@@ -144,7 +144,7 @@ namespace gpu{
             const unsigned int* d_candidateSequences,
             const char* d_candidateQualities,
             const bool* d_isPairedCandidate,
-            int numCandidates,
+            int maxNumCandidates,
             const int* d_numAnchors,
             std::size_t encodedSequencePitchInInts,
             std::size_t qualityPitchInBytes,
@@ -154,7 +154,7 @@ namespace gpu{
             int numIterations,
             cudaStream_t stream
         ){
-            CachedDeviceUVector<bool> d_temp(numCandidates, stream, *cubAllocator);
+            CachedDeviceUVector<bool> d_temp(maxNumCandidates, stream, *cubAllocator);
 
             callMsaCandidateRefinementKernel_multiiter_async(
                 d_newCandidatePositionsInSegments,
@@ -177,7 +177,7 @@ namespace gpu{
                 d_numAnchors,
                 desiredAlignmentMaxErrorRate,
                 numAnchors,
-                numCandidates,
+                maxNumCandidates,
                 useQualityScores,
                 encodedSequencePitchInInts,
                 qualityPitchInBytes,
