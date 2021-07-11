@@ -3551,98 +3551,10 @@ struct GpuReadExtender{
 
         cudaStream_t stream = streams[0];
 
-        const int numAnchors = numTasks;
-
-        CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, stream, *cubAllocator);
-
-        h_numCandidates.resize(1);
-
-        CachedDeviceUVector<unsigned int> d_candidateSequencesData2(encodedSequencePitchInInts * initialNumCandidates, stream, *cubAllocator);
-
         CachedDeviceUVector<bool> d_keepflags(initialNumCandidates, stream, *cubAllocator);
 
-        helpers::call_fill_kernel_async(d_keepflags.data(), totalNumCandidates, true, stream);
-        helpers::call_fill_kernel_async(d_keepflags.data() + totalNumCandidates, (initialNumCandidates - totalNumCandidates), false, stream);
-
         dim3 block(128,1,1);
-        dim3 grid(numAnchors, 1, 1);
-
-        #if 0
-            //filter alignments of candidates. d_keepflags[i] will be set to false if candidate[i] should be removed
-        //d_numCandidatesPerAnchor2[i] contains new number of candidates for anchor i
-        helpers::lambda_kernel<<<grid, block, 0, stream>>>(
-            [
-                d_alignment_best_alignment_flags = d_alignment_best_alignment_flags.data(),
-                d_alignment_shifts = d_alignment_shifts.data(),
-                d_alignment_overlaps = d_alignment_overlaps.data(),
-                d_alignment_nOps = d_alignment_nOps.data(),
-                d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-                d_isPairedCandidate = d_isPairedCandidate.data(),
-                d_keepflags = d_keepflags.data(),
-                min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
-                numAnchors
-            ] __device__ (){
-
-                using BlockReduceFloat = cub::BlockReduce<float, 128>;
-                using BlockReduceInt = cub::BlockReduce<int, 128>;
-
-                __shared__ union {
-                    typename BlockReduceFloat::TempStorage floatreduce;
-                    typename BlockReduceInt::TempStorage intreduce;
-                } cubtemp;
-
-                __shared__ int intbroadcast;
-                __shared__ float floatbroadcast;
-
-                for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
-                    const int num = d_numCandidatesPerAnchor[a];
-                    const int offset = d_numCandidatesPerAnchorPrefixSum[a];
-                    const float anchorLength = d_anchorSequencesLength[a];
-                    int removed = 0;
-
-                    //loop over candidates to compute relative overlap threshold
-
-                    for(int c = threadIdx.x; c < num; c += blockDim.x){
-                        
-                        const auto alignmentflag = d_alignment_best_alignment_flags[offset + c];
-                        const int shift = d_alignment_shifts[offset + c];
-
-                        if(alignmentflag != BestAlignment_t::None && shift >= 0){
-                            if(d_isPairedCandidate[offset+c]){
-                                d_keepflags[offset + c] = true; //paired candidates always pass
-                            }else{
-                                const float overlap = d_alignment_overlaps[offset + c];
-                                const float numMismatches = d_alignment_nOps[offset + c];                          
-                                const float relativeOverlap = overlap / anchorLength;
-                                const float errorrate = numMismatches / overlap;
-
-                                if(fleq(errorrate, 0.03f)){
-                                    d_keepflags[offset + c] = true;
-                                }else{
-                                    d_keepflags[offset + c] = false;
-                                    removed++;
-                                }
-                            }
-                        }else{
-                            //remove alignment with negative shift or bad alignments
-                            d_keepflags[offset + c] = false;
-                            removed++;
-                        }                  
-                    }
-
-                    removed = BlockReduceInt(cubtemp.intreduce).Sum(removed);
-
-                    if(threadIdx.x == 0){
-                        d_numCandidatesPerAnchor2[a] = num - removed;
-                    }
-                    __syncthreads();
-                }
-            }
-        ); CUERR;
-        #else
+        dim3 grid(numTasks, 1, 1);
 
         //filter alignments of candidates. d_keepflags[i] will be set to false if candidate[i] should be removed
         //d_numCandidatesPerAnchor2[i] contains new number of candidates for anchor i
@@ -3653,12 +3565,13 @@ struct GpuReadExtender{
                 d_alignment_overlaps = d_alignment_overlaps.data(),
                 d_anchorSequencesLength = d_anchorSequencesLength.data(),
                 d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
                 d_isPairedCandidate = d_isPairedCandidate.data(),
                 d_keepflags = d_keepflags.data(),
                 min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
-                numAnchors
+                numAnchors = numTasks,
+                currentNumCandidatesPtr = d_numCandidatesPerAnchorPrefixSum.data() + numTasks,
+                initialNumCandidates = initialNumCandidates
             ] __device__ (){
 
                 using BlockReduceFloat = cub::BlockReduce<float, 128>;
@@ -3676,10 +3589,13 @@ struct GpuReadExtender{
                     const int num = d_numCandidatesPerAnchor[a];
                     const int offset = d_numCandidatesPerAnchorPrefixSum[a];
                     const float anchorLength = d_anchorSequencesLength[a];
-                    int removed = 0;
 
                     int threadReducedGoodAlignmentExists = 0;
                     float threadReducedRelativeOverlapThreshold = 0.0f;
+
+                    for(int c = threadIdx.x; c < num; c += blockDim.x){
+                        d_keepflags[offset + c] = true;
+                    }
 
                     //loop over candidates to compute relative overlap threshold
 
@@ -3701,7 +3617,6 @@ struct GpuReadExtender{
                         }else{
                             //remove alignment with negative shift or bad alignments
                             d_keepflags[offset + c] = false;
-                            removed++;
                         }                       
                     }
 
@@ -3735,7 +3650,6 @@ struct GpuReadExtender{
         
                                     if(!fgeq(relativeOverlap, blockreducedRelativeOverlapThreshold)){
                                         d_keepflags[offset + c] = false;
-                                        removed++;
                                     }
                                 }
                             }
@@ -3748,16 +3662,16 @@ struct GpuReadExtender{
                         // }
                     }
 
-                    removed = BlockReduceInt(cubtemp.intreduce).Sum(removed);
-
-                    if(threadIdx.x == 0){
-                        d_numCandidatesPerAnchor2[a] = num - removed;
-                    }
                     __syncthreads();
+                }
+            
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
+                for(int i = *currentNumCandidatesPtr + tid; i < initialNumCandidates; i += stride){
+                    d_keepflags[i] = false;
                 }
             }
         ); CUERR;
-        #endif
 
         compactCandidateDataByFlags(
             d_keepflags.data(),
