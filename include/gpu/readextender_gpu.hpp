@@ -2981,7 +2981,7 @@ struct GpuReadExtender{
         if(totalNumValues == 0){
             cudaMemsetAsync(d_numCandidatesPerAnchor.data(), 0, sizeof(int) * numTasks , stream); CUERR;
             cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int) * (1 + numTasks), stream); CUERR;
-            totalNumCandidates = 0;
+            *h_numCandidates = 0;
             initialNumCandidates = 0;
 
             setStateToFinished();
@@ -3009,8 +3009,7 @@ struct GpuReadExtender{
 
         cudaStreamSynchronize(stream); CUERR;
 
-        totalNumCandidates = *h_numCandidates;
-        initialNumCandidates = totalNumCandidates;
+        initialNumCandidates = *h_numCandidates;
 
         setState(GpuReadExtender::State::BeforeRemoveIds);
     }
@@ -3089,7 +3088,6 @@ struct GpuReadExtender{
         );
 
         cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
-        totalNumCandidates = *h_numCandidates;
    
         #ifdef DO_ONLY_REMOVE_MATE_IDS
             std::swap(d_candidateReadIds, d_candidateReadIds2);
@@ -3107,7 +3105,7 @@ struct GpuReadExtender{
                 d_numCandidatesPerAnchor2.data(),
                 d_numCandidatesPerAnchorPrefixSum2.data(),
                 d_segmentIdsOfCandidates2.data(),
-                totalNumCandidates,
+                *h_numCandidates,
                 numTasks,
                 d_fullyUsedReadIds.data(),
                 d_numFullyUsedReadIdsPerAnchor.data(),
@@ -3122,18 +3120,18 @@ struct GpuReadExtender{
                 firstStream
             );
 
-            totalNumCandidates = std::distance(d_candidateReadIds.data(), d_candidateReadIds_end);
+            *h_numCandidates = std::distance(d_candidateReadIds.data(), d_candidateReadIds_end);
 
         #endif
 
-        h_candidateReadIds.resize(totalNumCandidates);
+        h_candidateReadIds.resize(*h_numCandidates);
         cudaEventRecord(events[0], firstStream);
         cudaStreamWaitEvent(hostOutputStream, events[0], 0); CUERR;
 
         cudaMemcpyAsync(
             h_candidateReadIds.data(),
             d_candidateReadIds.data(),
-            sizeof(read_number) * totalNumCandidates,
+            sizeof(read_number) * (*h_numCandidates),
             D2H,
             hostOutputStream
         ); CUERR;
@@ -3154,11 +3152,12 @@ struct GpuReadExtender{
         );
 
         //removeUsedIdsAndMateIds is a compaction step. check early exit.
-        if(totalNumCandidates == 0){
-            setStateToFinished();
-        }else{
+        // cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+        // if(*h_numCandidates == 0){
+        //     setStateToFinished();
+        // }else{
             setState(GpuReadExtender::State::BeforeComputePairFlags);
-        }
+        //}
     }
 
     void computePairFlagsGpu() {
@@ -3404,6 +3403,7 @@ struct GpuReadExtender{
         d_candidateSequencesData.resizeUninitialized(encodedSequencePitchInInts * initialNumCandidates, stream);
 
         cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
         gpuReadStorage->gatherSequences(
             readStorageHandle,
@@ -3411,7 +3411,7 @@ struct GpuReadExtender{
             encodedSequencePitchInInts,
             h_candidateReadIds.data(),
             d_candidateReadIds.data(), //device accessible
-            totalNumCandidates,
+            *h_numCandidates,
             stream
         );
 
@@ -3419,7 +3419,7 @@ struct GpuReadExtender{
             readStorageHandle,
             d_candidateSequencesLength.data(),
             d_candidateReadIds.data(),
-            totalNumCandidates,
+            *h_numCandidates,
             stream
         );
 
@@ -3679,11 +3679,12 @@ struct GpuReadExtender{
         );
 
         //filterAlignments is a compaction step. check early exit.
-        if(totalNumCandidates == 0){
-            setStateToFinished();
-        }else{
+        // cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+        // if(*h_numCandidates == 0){
+        //     setStateToFinished();
+        // }else{
             setState(GpuReadExtender::State::BeforeMSA);
-        }
+        //}
     }
 
     void computeMSAs(){
@@ -4011,6 +4012,8 @@ struct GpuReadExtender{
             stream
         );
 
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+
         {
 
             const int maxoutputsize = initialNumCandidates + *h_numUsedReadIds;
@@ -4027,7 +4030,7 @@ struct GpuReadExtender{
                 d_numCandidatesPerAnchor.data(),
                 d_numCandidatesPerAnchorPrefixSum.data(),
                 d_segmentIdsOfCandidates.data(),
-                totalNumCandidates,
+                *h_numCandidates,
                 numTasks,
                 d_usedReadIds.data(),
                 d_numUsedReadIdsPerAnchor.data(),
@@ -5529,6 +5532,7 @@ struct GpuReadExtender{
         if(correctionOptions->useQualityScores){
 
             cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
+            cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
             gpuReadStorage->gatherQualities(
                 readStorageHandle,
@@ -5536,14 +5540,14 @@ struct GpuReadExtender{
                 qualityPitchInBytes,
                 h_candidateReadIds.data(),
                 d_candidateReadIds.data(),
-                totalNumCandidates,
+                *h_numCandidates,
                 stream
             );
 
         }else{
             helpers::call_fill_kernel_async(
                 outputQualityScores,
-                qualityPitchInBytes * totalNumCandidates,
+                qualityPitchInBytes * initialNumCandidates,
                 'I',
                 stream
             ); CUERR;
@@ -5585,6 +5589,9 @@ struct GpuReadExtender{
             )
         );
 
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+        const int currentNumCandidates = *h_numCandidates;
+
         //compact 1d arrays
 
         cubSelectFlagged(
@@ -5603,7 +5610,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_candidateReadIds.data(),
             d_candidateReadIds2.data(),
-            sizeof(read_number) * totalNumCandidates,
+            sizeof(read_number) * currentNumCandidates,
             D2H,
             hostOutputStream
         ); CUERR;
@@ -5621,10 +5628,6 @@ struct GpuReadExtender{
         std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
 
         d_numCandidatesPerAnchor2.destroy();
-
-        // d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
-        // d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
-        // d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
 
         std::swap(d_candidateReadIds, d_candidateReadIds2);
         std::swap(d_candidateSequencesLength, d_candidateSequencesLength2);
@@ -5679,8 +5682,6 @@ struct GpuReadExtender{
             stream
         );
 
-        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
-        totalNumCandidates = *h_numCandidates; 
     }
 
 
@@ -5731,6 +5732,9 @@ struct GpuReadExtender{
             )
         );
 
+        cudaEventSynchronize(h_numCandidatesEvent); CUERR;
+        const int currentNumCandidates = *h_numCandidates;
+
         //compact 1d arrays
 
         cubSelectFlagged(
@@ -5749,7 +5753,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_candidateReadIds.data(),
             d_candidateReadIds2.data(),
-            sizeof(read_number) * totalNumCandidates,
+            sizeof(read_number) * currentNumCandidates,
             D2H,
             hostOutputStream
         ); CUERR;
@@ -5766,14 +5770,6 @@ struct GpuReadExtender{
         std::swap(d_numCandidatesPerAnchor, d_numCandidatesPerAnchor2); 
 
         d_numCandidatesPerAnchor2.destroy();
-
-        // d_alignment_nOps2.erase(d_alignment_nOps2.begin() + totalNumCandidates, d_alignment_nOps2.end(), stream);
-        // d_alignment_overlaps2.erase(d_alignment_overlaps2.begin() + totalNumCandidates, d_alignment_overlaps2.end(), stream);
-        // d_alignment_shifts2.erase(d_alignment_shifts2.begin() + totalNumCandidates, d_alignment_shifts2.end(), stream);
-        // d_alignment_best_alignment_flags2.erase(d_alignment_best_alignment_flags2.begin() + totalNumCandidates, d_alignment_best_alignment_flags2.end(), stream);
-        // d_candidateReadIds2.erase(d_candidateReadIds2.begin() + totalNumCandidates, d_candidateReadIds2.end(), stream);
-        // d_candidateSequencesLength2.erase(d_candidateSequencesLength2.begin() + totalNumCandidates, d_candidateSequencesLength2.end(), stream);
-        // d_isPairedCandidate2.erase(d_isPairedCandidate2.begin() + totalNumCandidates, d_isPairedCandidate2.end(), stream);
 
         std::swap(d_alignment_nOps, d_alignment_nOps2);
         std::swap(d_alignment_overlaps, d_alignment_overlaps2);
@@ -5835,9 +5831,6 @@ struct GpuReadExtender{
             d_numCandidatesPerAnchorPrefixSum.data(),
             stream
         );
-
-        cudaEventSynchronize(h_numCandidatesEvent); CUERR; //wait for h_numCandidates
-        totalNumCandidates = *h_numCandidates;
     }
 
     void setStateToFinished(){
@@ -6606,7 +6599,6 @@ struct GpuReadExtender{
     int alltimeMaximumNumberOfTasks = 0;
     std::size_t alltimetotalTaskBytes = 0;
 
-    int totalNumCandidates = 0;
     int initialNumCandidates = 0;
 
     int deviceId{};

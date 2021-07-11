@@ -1155,7 +1155,7 @@ extend_gpu_pairedend(
             int repeated = 0;
 
             nvtx::push_range("convert extension results", 7);
-           
+
             for(int i = 0; i < numresults; i++){
                 auto& extensionOutput = extensionResults[i];
                 const int extendedReadLength = extensionOutput.extendedRead.size();
