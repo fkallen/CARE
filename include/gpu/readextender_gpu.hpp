@@ -4430,9 +4430,8 @@ struct GpuReadExtender{
 
         h_newPositionsOfActiveTasks.resize(newPosSize);
         std::swap(tasks, newActiveTasks);
-        nvtx::push_range("addSortedFinishedTasks", 5);
-        addSortedFinishedTasks(newlyFinishedTasks);
-        nvtx::pop_range();
+
+        addFinishedTasks(newlyFinishedTasks);
 
         std::size_t bytesFinishedTasks = 0;
         for(const auto& task : finishedTasks){
@@ -4479,7 +4478,6 @@ struct GpuReadExtender{
         }
         
     }
-
 
     void updateBuffersForNextIteration(int* d_newPositionsOfActiveTasks, int newNumTasks){
         nvtx::push_range("removeUsedIdsOfFinishedTasks", 6);
@@ -4630,13 +4628,6 @@ struct GpuReadExtender{
 
         assert(newNumTasks <= numTasks);
 
-        // {
-        //     std::size_t free, total;
-        //     cudaMemGetInfo(&free, &total);
-        //     std::cerr << "before removeUsedIdsOfFinishedTasks " << free << "\n";
-        // }
-
-
         //update used ids
 
         {
@@ -4772,41 +4763,47 @@ struct GpuReadExtender{
         std::vector<ExtensionTaskCpuData> finishedTasks4{};
         std::vector<ExtensionTaskCpuData> finishedTasksNot4{};
 
-        auto l = finishedTasks.begin();
-        auto r = finishedTasks.begin();
+        std::map<int, FixedCapacityVector<std::size_t, 4>> pairIdToPositionMap{};
 
-        while(r != finishedTasks.end()){
+        for(std::size_t i = 0; i < finishedTasks.size(); i++){
+            const auto& task = finishedTasks[i];
+            pairIdToPositionMap[task.pairId].push_back(i);
+        }
 
-            while(r != finishedTasks.end() && l->pairId == r->pairId){
-                ++r;
-            }
+        std::size_t size4 = 0;
+        std::size_t sizeNot4 = 0;
 
-            if(std::distance(l,r) == 4){
-                finishedTasks4.insert(
-                    finishedTasks4.end(), 
-                    std::make_move_iterator(l), 
-                    std::make_move_iterator(r)
-                );
+        for(const auto& p : pairIdToPositionMap){
+            if(p.second.size() == 4){
+                size4 += 4;
             }else{
-                assert(std::distance(l,r) < 4);
-                finishedTasksNot4.insert(
-                    finishedTasksNot4.end(), 
-                    std::make_move_iterator(l), 
-                    std::make_move_iterator(r)
-                );
+                sizeNot4 += p.second.size();
             }
+        }
 
-            l = r;
+        finishedTasks4.reserve(size4);
+        finishedTasksNot4.reserve(sizeNot4);
+
+        for(auto& p : pairIdToPositionMap){
+            if(p.second.size() == 4){
+                std::sort(p.second.begin(), p.second.end(), [&](const auto& l, const auto& r){
+                    return finishedTasks[l].id < finishedTasks[r].id;
+                });
+
+                for(std::size_t k = 0; k < p.second.size(); k++){
+                    finishedTasks4.push_back(std::move(finishedTasks[p.second[k]]));
+                }
+            }else{
+                for(std::size_t k = 0; k < p.second.size(); k++){
+                    finishedTasksNot4.push_back(std::move(finishedTasks[p.second[k]]));
+                }
+            }
         }
 
         //std::cerr << "finishedTasks: " << finishedTasks.size() << ", finishedTasks4: " << finishedTasks4.size() << ", finishedTasksNot4: " << finishedTasksNot4.size() << "\n";
 
         //update remaining finished tasks
         std::swap(finishedTasks, finishedTasksNot4);
-
-        nvtx::push_range("clear finishedTasksNot4", 0);
-        finishedTasksNot4.clear();
-        nvtx::pop_range();
 
         return finishedTasks4;
     }
@@ -5935,10 +5932,7 @@ struct GpuReadExtender{
     }
 
     void setStateToFinished(){
-        // for(auto&& task : tasks){
-        //     addFinishedTask(std::move(task));
-        // }
-        addSortedFinishedTasks(tasks);
+        addFinishedTasks(tasks);
         tasks.clear();
         numTasks = 0;
 
@@ -5946,36 +5940,11 @@ struct GpuReadExtender{
     }
     
     void addFinishedTask(ExtensionTaskCpuData&& task){
-        //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
-        auto comp = [](const auto& l, const auto& r){
-            return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
-        };
-        auto where = std::upper_bound(finishedTasks.begin(), finishedTasks.end(), task, comp);
-        finishedTasks.insert(where, std::move(task));
+        finishedTasks.push_back(std::move(task));
     }
 
-    void addSortedFinishedTasks(std::vector<ExtensionTaskCpuData>& tasksToAdd){
-        //finished tasks must be stored sorted by pairId. Tasks with same pairId are sorted by id
-
-        auto comp = [](const auto& l, const auto& r){
-            return std::tie(l.pairId, l.id) < std::tie(r.pairId, r.id);
-        };
-
-        std::vector<ExtensionTaskCpuData> newFinishedTasks(finishedTasks.size() + tasksToAdd.size());
-
-        newFinishedTasks.erase(
-            std::merge(
-                std::make_move_iterator(tasksToAdd.begin()), 
-                std::make_move_iterator(tasksToAdd.end()), 
-                std::make_move_iterator(finishedTasks.begin()), 
-                std::make_move_iterator(finishedTasks.end()), 
-                newFinishedTasks.begin(),
-                comp
-            ),
-            newFinishedTasks.end()
-        );
-
-        std::swap(newFinishedTasks, finishedTasks);
+    void addFinishedTasks(std::vector<ExtensionTaskCpuData>& tasksToAdd){
+        finishedTasks.insert(finishedTasks.end(), std::make_move_iterator(tasksToAdd.begin()), std::make_move_iterator(tasksToAdd.end()));
     }
 
     void handleEarlyExitOfTasks4(){
