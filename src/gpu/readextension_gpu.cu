@@ -1099,7 +1099,7 @@ extend_gpu_pairedend(
                     readStorageHandle,
                     currentEncodedReads.get(),
                     encodedSequencePitchInInts,
-                    currentIds.get(),
+                    makeAsyncConstBufferWrapper(currentIds.get()),
                     currentIds.get(), //device accessible
                     numNewReadsInBatch,
                     stream
@@ -1120,7 +1120,7 @@ extend_gpu_pairedend(
                         readStorageHandle,
                         currentQualityScores.get(),
                         qualityPitchInBytes,
-                        currentIds.get(),
+                        makeAsyncConstBufferWrapper(currentIds.get()),
                         currentIds.get(), //device accessible
                         numNewReadsInBatch,
                         stream

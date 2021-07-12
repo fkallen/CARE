@@ -381,7 +381,7 @@ namespace gpu{
                     sequencehandle,
                     d_sequenceData,
                     encodedSequencePitchInInts,
-                    h_indices,
+                    makeAsyncConstBufferWrapper(h_indices.data()),
                     d_indices,
                     curBatchsize,
                     stream

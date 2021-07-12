@@ -11,6 +11,7 @@
 #include <gpu/gpucorrectorkernels.cuh>
 #include <gpu/cudagraphhelpers.cuh>
 #include <gpu/gpureadstorage.cuh>
+#include <gpu/asyncresult.cuh>
 
 #include <config.hpp>
 #include <util.hpp>
@@ -344,7 +345,7 @@ namespace gpu{
                 readstorageHandle,
                 ecinput.d_anchor_sequences_data.get(),
                 encodedSequencePitchInInts,
-                ecinput.h_anchorReadIds.get(),
+                makeAsyncConstBufferWrapper(ecinput.h_anchorReadIds.get()),
                 ecinput.d_anchorReadIds.get(),
                 (*ecinput.h_numAnchors.get()),
                 stream
@@ -2096,7 +2097,7 @@ namespace gpu{
                 readstorageHandle,
                 d_candidate_sequences_data.get(),
                 encodedSequencePitchInInts,
-                currentInput->h_candidate_read_ids,
+                makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                 d_candidate_read_ids,
                 currentNumCandidates,
                 stream
@@ -2124,7 +2125,7 @@ namespace gpu{
                     readstorageHandle,
                     d_anchor_qualities,
                     qualityPitchInBytes,
-                    currentInput->h_anchorReadIds,
+                    makeAsyncConstBufferWrapper(currentInput->h_anchorReadIds.data()),
                     d_anchorReadIds,
                     maxAnchors,
                     stream
@@ -2134,7 +2135,7 @@ namespace gpu{
                     readstorageHandle,
                     d_candidate_qualities,
                     qualityPitchInBytes,
-                    currentInput->h_candidate_read_ids.get(),
+                    makeAsyncConstBufferWrapper(currentInput->h_candidate_read_ids.data()),
                     d_candidate_read_ids.get(),
                     currentNumCandidates,
                     stream

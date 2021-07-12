@@ -361,7 +361,7 @@ public:
             ReadStorageHandle& handle,
             unsigned int* d_sequence_data,
             size_t outSequencePitchInInts,
-            const read_number* h_readIds,
+            const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
             const read_number* d_readIds,
             int numSequences,
             cudaStream_t stream
@@ -376,6 +376,9 @@ public:
             initCallerData(callerData);
 
             auto& gatherHandleS = callerData.handleS;
+
+            h_readIdsAsync.wait();
+            const read_number* h_readIds = h_readIdsAsync.data();
 
             gatherSequenceDataToGpuBufferAsync(
                 nullptr,
@@ -394,7 +397,7 @@ public:
             ReadStorageHandle& handle,
             char* d_quality_data,
             size_t out_quality_pitch,
-            const read_number* h_readIds,
+            const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
             const read_number* d_readIds,
             int numSequences,
             cudaStream_t stream
@@ -409,6 +412,9 @@ public:
             initCallerData(callerData);
 
             auto& gatherHandleQ = callerData.handleQ;
+
+            h_readIdsAsync.wait();
+            const read_number* h_readIds = h_readIdsAsync.data();
 
             gatherQualitiesToGpuBufferAsync(
                 nullptr,

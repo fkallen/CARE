@@ -87,7 +87,7 @@ namespace gpu{
                 gpuHandle,
                 d_sequence_data,
                 outSequencePitchInInts,
-                readIds,
+                makeAsyncConstBufferWrapper(readIds),
                 d_readIds,
                 numSequences,
                 stream
@@ -130,7 +130,7 @@ namespace gpu{
                 gpuHandle,
                 d_quality_data,
                 out_quality_pitch,
-                readIds,
+                makeAsyncConstBufferWrapper(readIds),
                 d_readIds,
                 numSequences,
                 stream

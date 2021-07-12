@@ -548,7 +548,7 @@ public: //inherited GPUReadStorage interface
         ReadStorageHandle& handle,
         unsigned int* d_sequence_data,
         size_t outSequencePitchInInts,
-        const read_number* h_readIds,
+        const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream
@@ -599,6 +599,9 @@ public: //inherited GPUReadStorage interface
             const std::size_t sequencepitch = sizeof(unsigned int) * outSequencePitchInInts;
 
             constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
+
+            h_readIdsAsync.wait();
+            const read_number* h_readIds = h_readIdsAsync.data();
 
             if(hasGpuSequences()){
 
@@ -809,7 +812,7 @@ public: //inherited GPUReadStorage interface
         ReadStorageHandle& handle,
         char* d_quality_data,
         size_t out_quality_pitch,
-        const read_number* h_readIds,
+        const AsyncConstBufferWrapper<read_number> h_readIdsAsync,
         const read_number* d_readIds,
         int numSequences,
         cudaStream_t stream
@@ -857,6 +860,9 @@ public: //inherited GPUReadStorage interface
         auto hostGather = [&](){
 
             constexpr std::size_t memorylimitbatch = 1 << 19; // 512KB
+
+            h_readIdsAsync.wait();
+            const read_number* h_readIds = h_readIdsAsync.data();
 
             if(hasGpuQualities()){
 

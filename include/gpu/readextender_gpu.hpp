@@ -3409,7 +3409,7 @@ struct GpuReadExtender{
             readStorageHandle,
             d_candidateSequencesData.data(),
             encodedSequencePitchInInts,
-            h_candidateReadIds.data(),
+            makeAsyncConstBufferWrapper(h_candidateReadIds.data()),
             d_candidateReadIds.data(), //device accessible
             *h_numCandidates,
             stream
@@ -3465,6 +3465,7 @@ struct GpuReadExtender{
         //if(*h_numAnchorsWithRemovedMates > 0){
         compactCandidateDataByFlagsExcludingAlignments(
             d_keepflags.data(),
+            true,
             stream
         );
         //}
@@ -3675,6 +3676,7 @@ struct GpuReadExtender{
 
         compactCandidateDataByFlags(
             d_keepflags.data(),
+            false,
             stream
         );
 
@@ -3815,6 +3817,7 @@ struct GpuReadExtender{
 
         compactCandidateDataByFlags(
             d_shouldBeKept.data(),
+            false,
             firstStream
         );
         
@@ -5538,7 +5541,7 @@ struct GpuReadExtender{
                 readStorageHandle,
                 outputQualityScores,
                 qualityPitchInBytes,
-                h_candidateReadIds.data(),
+                makeAsyncConstBufferWrapper(h_candidateReadIds.data()),
                 d_candidateReadIds.data(),
                 *h_numCandidates,
                 stream
@@ -5556,6 +5559,7 @@ struct GpuReadExtender{
 
     void compactCandidateDataByFlagsExcludingAlignments(
         const bool* d_keepFlags,
+        bool updateHostCandidateReadIds,
         cudaStream_t stream
     ){
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, stream, *cubAllocator);
@@ -5605,18 +5609,19 @@ struct GpuReadExtender{
 
         cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
 
-        cudaStreamWaitEvent(hostOutputStream, h_numCandidatesEvent, 0); CUERR;           
+        if(updateHostCandidateReadIds){
+            cudaStreamWaitEvent(hostOutputStream, h_numCandidatesEvent, 0); CUERR;           
 
-        cudaMemcpyAsync(
-            h_candidateReadIds.data(),
-            d_candidateReadIds2.data(),
-            sizeof(read_number) * currentNumCandidates,
-            D2H,
-            hostOutputStream
-        ); CUERR;
+            cudaMemcpyAsync(
+                h_candidateReadIds.data(),
+                d_candidateReadIds2.data(),
+                sizeof(read_number) * currentNumCandidates,
+                D2H,
+                hostOutputStream
+            ); CUERR;
 
-        cudaEventRecord(h_candidateReadIdsEvent, hostOutputStream); CUERR;        
-
+            cudaEventRecord(h_candidateReadIdsEvent, hostOutputStream); CUERR;  
+        }
 
         cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
         cubInclusiveSum(
@@ -5687,6 +5692,7 @@ struct GpuReadExtender{
 
     void compactCandidateDataByFlags(
         const bool* d_keepFlags,
+        bool updateHostCandidateReadIds,
         cudaStream_t stream
     ){
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, stream, *cubAllocator);
@@ -5748,17 +5754,19 @@ struct GpuReadExtender{
 
         cudaEventRecord(h_numCandidatesEvent, stream); CUERR;
 
-        cudaStreamWaitEvent(hostOutputStream, h_numCandidatesEvent, 0); CUERR;           
+        if(updateHostCandidateReadIds){
+            cudaStreamWaitEvent(hostOutputStream, h_numCandidatesEvent, 0); CUERR;           
 
-        cudaMemcpyAsync(
-            h_candidateReadIds.data(),
-            d_candidateReadIds2.data(),
-            sizeof(read_number) * currentNumCandidates,
-            D2H,
-            hostOutputStream
-        ); CUERR;
+            cudaMemcpyAsync(
+                h_candidateReadIds.data(),
+                d_candidateReadIds2.data(),
+                sizeof(read_number) * currentNumCandidates,
+                D2H,
+                hostOutputStream
+            ); CUERR;
 
-        cudaEventRecord(h_candidateReadIdsEvent, hostOutputStream); CUERR;   
+            cudaEventRecord(h_candidateReadIdsEvent, hostOutputStream); CUERR;  
+        }
 
         cudaMemsetAsync(d_numCandidatesPerAnchorPrefixSum.data(), 0, sizeof(int), stream); CUERR;
         cubInclusiveSum(
