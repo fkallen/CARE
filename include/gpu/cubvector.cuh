@@ -50,7 +50,8 @@ namespace care{
         CachedDeviceUVector& operator=(CachedDeviceUVector&& rhs) noexcept{
 
             if(data_ != nullptr){
-                allocator_->DeviceFree(data_);
+                cudaError_t status = allocator_->DeviceFree(data_);
+                throwOnError(status);
             }            
 
             data_ = rhs.data_;
@@ -80,7 +81,8 @@ namespace care{
         
         void destroy(){
             if(data_ != nullptr){
-                allocator_->DeviceFree(data_);
+                cudaError_t status = allocator_->DeviceFree(data_);
+                throwOnError(status);
             }
             size_ = 0;
             capacity_ = 0;
@@ -100,10 +102,14 @@ namespace care{
         bool reserveUninitialized(size_t newcapacity, cudaStream_t stream){
 
             if(capacity_ < newcapacity){
+                cudaError_t status = cudaSuccess;
+
                 if(data_ != nullptr){
-                    allocator_->DeviceFree(data_);
+                    status = allocator_->DeviceFree(data_);
+                    throwOnError(status);
                 }
-                allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, stream); CUERR;
+                status = allocator_->DeviceAllocate((void**)&data_, sizeof(T) * newcapacity, stream); CUERR;
+                throwOnError(status);
                 capacity_ = newcapacity;
 
                 return true;
@@ -125,17 +131,26 @@ namespace care{
         bool reserve(size_t newcapacity, cudaStream_t stream){
 
             if(capacity_ < newcapacity){
+                cudaError_t status = cudaSuccess;
+
                 T* datanew = nullptr;
-                allocator_->DeviceAllocate((void**)&datanew, sizeof(T) * newcapacity, stream); CUERR;
+                status = allocator_->DeviceAllocate((void**)&datanew, sizeof(T) * newcapacity, stream);
+                throwOnError(status);
+
                 if(data_ != nullptr){
-                    cudaMemcpyAsync(
+                    cudaError_t status = cudaMemcpyAsync(
                         datanew,
                         data_,
                         sizeof(T) * size_,
                         D2D,
                         stream
-                    ); CUERR;
+                    );
+
+                    throwOnError(status);
+
                     allocator_->DeviceFree(data_);
+
+                    throwOnError(status);
                 }
 
                 data_ = datanew;
@@ -164,13 +179,15 @@ namespace care{
             if(last < end()){
                 const std::size_t elementsAfterRangeToErase = end() - last;
 
-                cudaMemcpyAsync(
+                cudaError_t status = cudaMemcpyAsync(
                     first,
                     last,
                     sizeof(T) * elementsAfterRangeToErase,
                     D2D,
                     stream
-                ); CUERR;
+                );
+
+                throwOnError(status);
             }
 
             size_ -= std::distance(first, last);
@@ -183,13 +200,14 @@ namespace care{
             if(rangesize > 0){
                 const std::size_t oldsize = size();
                 bool realloc = resize(size() + rangesize, stream);
-                cudaMemcpyAsync(
+                cudaError_t status = cudaMemcpyAsync(
                     data() + oldsize,
                     rangeBegin,
                     sizeof(T) * rangesize,
                     cudaMemcpyDefault,
                     stream
-                ); CUERR;
+                );
+                throwOnError(status);
 
                 return realloc;
             }
@@ -226,6 +244,16 @@ namespace care{
 
         bool empty() const noexcept{
             return size() == 0;
+        }
+
+    private:
+        void throwOnError(cudaError_t status) const{
+            if(status != cudaSuccess){
+                
+                std::string msg = "CUDA Error: " << cudaGetErrorString(status);
+                std::cerr << msg << "\n";
+                throw std::runtime_error(msg);
+            }
         }
     };
 
