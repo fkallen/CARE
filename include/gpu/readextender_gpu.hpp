@@ -2945,6 +2945,8 @@ struct GpuReadExtender{
             default: break;
         };
 
+        cudaDeviceSynchronize(); CUERR; //DEBUG
+
         if(state == GpuReadExtender::State::Finished){
             assert(tasks.size() == 0);
             assert(finishedTasks.size() % 4 == 0);
@@ -3402,14 +3404,14 @@ struct GpuReadExtender{
         d_candidateSequencesLength.resizeUninitialized(initialNumCandidates, stream);
         d_candidateSequencesData.resizeUninitialized(encodedSequencePitchInInts * initialNumCandidates, stream);
 
-        cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
+        //cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
         cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
         gpuReadStorage->gatherSequences(
             readStorageHandle,
             d_candidateSequencesData.data(),
             encodedSequencePitchInInts,
-            makeAsyncConstBufferWrapper(h_candidateReadIds.data()),
+            makeAsyncConstBufferWrapper(h_candidateReadIds.data(), h_candidateReadIdsEvent),
             d_candidateReadIds.data(), //device accessible
             *h_numCandidates,
             stream
@@ -5534,14 +5536,14 @@ struct GpuReadExtender{
 
         if(correctionOptions->useQualityScores){
 
-            cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
+            //cudaEventSynchronize(h_candidateReadIdsEvent); CUERR;
             cudaEventSynchronize(h_numCandidatesEvent); CUERR;
 
             gpuReadStorage->gatherQualities(
                 readStorageHandle,
                 outputQualityScores,
                 qualityPitchInBytes,
-                makeAsyncConstBufferWrapper(h_candidateReadIds.data()),
+                makeAsyncConstBufferWrapper(h_candidateReadIds.data(), h_candidateReadIdsEvent),
                 d_candidateReadIds.data(),
                 *h_numCandidates,
                 stream
