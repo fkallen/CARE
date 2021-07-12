@@ -326,6 +326,8 @@ namespace care{
         template<class CopyType = char, class Group>
         DEVICEQUALIFIER
         static constexpr void decodeSequence2Bit(Group& group, const unsigned int* input, int sequencelength, char* output){
+            #ifdef CUDA_ARCH
+
             //output must be aligned to sizeof(CopyType) bytes
             constexpr int copyTypeSize = sizeof(CopyType);
             static_assert(copyTypeSize == 1 || copyTypeSize == 2 || copyTypeSize == 4 || copyTypeSize == 8 || copyTypeSize == 16, "Invalid CopyType");
@@ -363,6 +365,8 @@ namespace care{
                     }
                 }
             }
+
+            #endif
         }
 
 
