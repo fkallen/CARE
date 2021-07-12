@@ -250,8 +250,8 @@ namespace care{
         void throwOnError(cudaError_t status) const{
             if(status != cudaSuccess){
                 
-                std::string msg = "CUDA Error: " << cudaGetErrorString(status);
-                std::cerr << msg << "\n";
+                std::string msg = cudaGetErrorString(status);
+                std::cerr << "CUDA Error: " << msg << "\n";
                 throw std::runtime_error(msg);
             }
         }
