@@ -1022,6 +1022,10 @@ extend_gpu_pairedend(
         const bool isPairedEnd = true;
 
         auto gpuReadExtender = std::make_unique<GpuReadExtender>(
+            encodedSequencePitchInInts,
+            decodedSequencePitchInBytes,
+            qualityPitchInBytes,
+            msaColumnPitchInElements,
             isPairedEnd,
             gpuReadStorage, 
             minhasher,
@@ -1035,11 +1039,6 @@ extend_gpu_pairedend(
             myCubAllocator
         );
         gpuReadExtender->someId = ompThreadId;
-
-        gpuReadExtender->encodedSequencePitchInInts = encodedSequencePitchInInts;
-        gpuReadExtender->decodedSequencePitchInBytes = decodedSequencePitchInBytes;
-        gpuReadExtender->msaColumnPitchInElements = msaColumnPitchInElements;
-        gpuReadExtender->qualityPitchInBytes = qualityPitchInBytes;
 
         int minCoverageForExtension = 3;
         int fixedStepsize = 20;

@@ -1794,6 +1794,9 @@ struct GpuReadExtender{
 
         std::size_t entries = 0;
         std::size_t reservedEntries = 0;
+        std::size_t encodedSequencePitchInInts = 0;
+        std::size_t decodedSequencePitchInBytes = 0;
+        std::size_t qualityPitchInBytes = 0;
         thrust::host_vector<bool> pairedEnd{};
         thrust::host_vector<bool> mateHasBeenFound{};
         HostVector<int> id{};
@@ -1814,9 +1817,22 @@ struct GpuReadExtender{
         HostVector<HostVector<char>> totalAnchorQualityScoresFlat{};
         HostVector<HostVector<int>> totalAnchorBeginInExtendedRead{};
 
-        SoAExtensionTaskCpuData() : SoAExtensionTaskCpuData(0) {}
+        HostVector<char> soadecodedMateRevC{};
+        HostVector<char> soamateQualityScoresReversed{};
+        HostVector<int> soatotalDecodedAnchorsLengths{};
+        HostVector<char> soatotalDecodedAnchorsFlat{};
+        HostVector<char> soatotalAnchorQualityScoresFlat{};
+        HostVector<int> soatotalAnchorBeginInExtendedRead{};
+        HostVector<int> soaNumEntriesPerTask{};
+        HostVector<int> soaNumEntriesPerTaskPrefixSum{};
 
-        SoAExtensionTaskCpuData(int size) {
+        SoAExtensionTaskCpuData() : SoAExtensionTaskCpuData(0,0,0,0) {}
+
+        SoAExtensionTaskCpuData(int size, std::size_t encodedSequencePitchInInts_, std::size_t decodedSequencePitchInBytes_, std::size_t qualityPitchInBytes_) 
+            : encodedSequencePitchInInts(encodedSequencePitchInInts_), 
+                decodedSequencePitchInBytes(decodedSequencePitchInBytes_), 
+                qualityPitchInBytes(qualityPitchInBytes_)
+        {
             resize(size);
         }
 
@@ -1840,6 +1856,15 @@ struct GpuReadExtender{
             totalDecodedAnchorsFlat.clear();
             totalAnchorQualityScoresFlat.clear();
             totalAnchorBeginInExtendedRead.clear();
+
+            soadecodedMateRevC.clear();
+            soamateQualityScoresReversed.clear();
+            soatotalDecodedAnchorsLengths.clear();
+            soatotalDecodedAnchorsFlat.clear();
+            soatotalAnchorQualityScoresFlat.clear();
+            soatotalAnchorBeginInExtendedRead.clear();
+            soaNumEntriesPerTask.clear();
+            soaNumEntriesPerTaskPrefixSum.clear();
         }
 
         void reserve(int newsize){
@@ -1862,6 +1887,15 @@ struct GpuReadExtender{
             totalDecodedAnchorsFlat.reserve(newsize);
             totalAnchorQualityScoresFlat.reserve(newsize);
             totalAnchorBeginInExtendedRead.reserve(newsize);
+
+            soadecodedMateRevC.reserve(newsize);
+            soamateQualityScoresReversed.reserve(newsize);
+            soatotalDecodedAnchorsLengths.reserve(newsize);
+            soatotalDecodedAnchorsFlat.reserve(newsize);
+            soatotalAnchorQualityScoresFlat.reserve(newsize);
+            soatotalAnchorBeginInExtendedRead.reserve(newsize);
+            soaNumEntriesPerTask.reserve(newsize);
+            soaNumEntriesPerTaskPrefixSum.reserve(newsize);
 
             reservedEntries = newsize;
         }
@@ -1887,11 +1921,29 @@ struct GpuReadExtender{
             totalAnchorQualityScoresFlat.resize(newsize);
             totalAnchorBeginInExtendedRead.resize(newsize);
 
+            soadecodedMateRevC.resize(newsize);
+            soamateQualityScoresReversed.resize(newsize);
+            soatotalDecodedAnchorsLengths.resize(newsize);
+            soatotalDecodedAnchorsFlat.resize(newsize);
+            soatotalAnchorQualityScoresFlat.resize(newsize);
+            soatotalAnchorBeginInExtendedRead.resize(newsize);
+            soaNumEntriesPerTask.resize(newsize);
+            soaNumEntriesPerTaskPrefixSum.resize(newsize);
+
             entries = newsize;
             reservedEntries = std::max(entries, reservedEntries);
         }
 
+        bool checkPitch(const SoAExtensionTaskCpuData& rhs) const noexcept{
+            if(encodedSequencePitchInInts != rhs.encodedSequencePitchInInts) return false;
+            if(decodedSequencePitchInBytes != rhs.decodedSequencePitchInBytes) return false;
+            if(qualityPitchInBytes != rhs.qualityPitchInBytes) return false;
+            return true;
+        }
+
         void append(const SoAExtensionTaskCpuData& rhs){
+            assert(checkPitch(rhs));
+
             pairedEnd.insert(pairedEnd.end(), rhs.pairedEnd.begin(), rhs.pairedEnd.end());
             mateHasBeenFound.insert(mateHasBeenFound.end(), rhs.mateHasBeenFound.begin(), rhs.mateHasBeenFound.end());
             id.insert(id.end(), rhs.id.begin(), rhs.id.end());
@@ -1912,34 +1964,51 @@ struct GpuReadExtender{
             totalAnchorQualityScoresFlat.insert(totalAnchorQualityScoresFlat.end(), rhs.totalAnchorQualityScoresFlat.begin(), rhs.totalAnchorQualityScoresFlat.end());
             totalAnchorBeginInExtendedRead.insert(totalAnchorBeginInExtendedRead.end(), rhs.totalAnchorBeginInExtendedRead.begin(), rhs.totalAnchorBeginInExtendedRead.end());
 
+            soadecodedMateRevC.insert(soadecodedMateRevC.end(), rhs.soadecodedMateRevC.begin(), rhs.soadecodedMateRevC.end());
+            soamateQualityScoresReversed.insert(soamateQualityScoresReversed.end(), rhs.soamateQualityScoresReversed.begin(), rhs.soamateQualityScoresReversed.end());
+
+            soatotalDecodedAnchorsLengths.insert(soatotalDecodedAnchorsLengths.end(), rhs.soatotalDecodedAnchorsLengths.begin(), rhs.soatotalDecodedAnchorsLengths.end());
+            soatotalAnchorBeginInExtendedRead.insert(soatotalAnchorBeginInExtendedRead.end(), rhs.soatotalAnchorBeginInExtendedRead.begin(), rhs.soatotalAnchorBeginInExtendedRead.end());
+            soatotalDecodedAnchorsFlat.insert(soatotalDecodedAnchorsFlat.end(), rhs.soatotalDecodedAnchorsFlat.begin(), rhs.soatotalDecodedAnchorsFlat.end());
+            soatotalAnchorQualityScoresFlat.insert(soatotalAnchorQualityScoresFlat.end(), rhs.soatotalAnchorQualityScoresFlat.begin(), rhs.soatotalAnchorQualityScoresFlat.end());
+            soaNumEntriesPerTask.insert(soaNumEntriesPerTask.end(), rhs.soaNumEntriesPerTask.begin(), rhs.soaNumEntriesPerTask.end());
+            soaNumEntriesPerTaskPrefixSum.insert(soaNumEntriesPerTaskPrefixSum.end(), rhs.soaNumEntriesPerTaskPrefixSum.begin(), rhs.soaNumEntriesPerTaskPrefixSum.end());
+
+            //fix appended prefixsum
+            if(entries > 0){
+                for(std::size_t i = 0; i < rhs.entries; i++){
+                    soaNumEntriesPerTaskPrefixSum.at(entries + i) += soaNumEntriesPerTaskPrefixSum.at(entries-1);
+                }
+            }
+
             entries = pairedEnd.size();
             reservedEntries = std::max(entries, reservedEntries);
         }
 
-        void append(const SoAExtensionTaskCpuData& rhs, int which){
-            pairedEnd.push_back(rhs.pairedEnd[which]);
-            mateHasBeenFound.push_back(rhs.mateHasBeenFound[which]);
-            id.push_back(rhs.id[which]);
-            pairId.push_back(rhs.pairId[which]);
-            myLength.push_back(rhs.myLength[which]);
-            mateLength.push_back(rhs.mateLength[which]);
-            accumExtensionLengths.push_back(rhs.accumExtensionLengths[which]);
-            iteration.push_back(rhs.iteration[which]);
-            goodscore.push_back(rhs.goodscore[which]);
-            myReadId.push_back(rhs.myReadId[which]);
-            mateReadId.push_back(rhs.mateReadId[which]);
-            abortReason.push_back(rhs.abortReason[which]);
-            direction.push_back(rhs.direction[which]);
-            decodedMateRevC.push_back(std::move(rhs.decodedMateRevC[which]));
-            mateQualityScoresReversed.push_back(std::move(rhs.mateQualityScoresReversed[which]));
-            totalDecodedAnchorsLengths.push_back(std::move(rhs.totalDecodedAnchorsLengths[which]));
-            totalDecodedAnchorsFlat.push_back(std::move(rhs.totalDecodedAnchorsFlat[which]));
-            totalAnchorQualityScoresFlat.push_back(std::move(rhs.totalAnchorQualityScoresFlat[which]));
-            totalAnchorBeginInExtendedRead.push_back(std::move(rhs.totalAnchorBeginInExtendedRead[which]));
+        // void append(const SoAExtensionTaskCpuData& rhs, int which){
+        //     pairedEnd.push_back(rhs.pairedEnd[which]);
+        //     mateHasBeenFound.push_back(rhs.mateHasBeenFound[which]);
+        //     id.push_back(rhs.id[which]);
+        //     pairId.push_back(rhs.pairId[which]);
+        //     myLength.push_back(rhs.myLength[which]);
+        //     mateLength.push_back(rhs.mateLength[which]);
+        //     accumExtensionLengths.push_back(rhs.accumExtensionLengths[which]);
+        //     iteration.push_back(rhs.iteration[which]);
+        //     goodscore.push_back(rhs.goodscore[which]);
+        //     myReadId.push_back(rhs.myReadId[which]);
+        //     mateReadId.push_back(rhs.mateReadId[which]);
+        //     abortReason.push_back(rhs.abortReason[which]);
+        //     direction.push_back(rhs.direction[which]);
+        //     decodedMateRevC.push_back(std::move(rhs.decodedMateRevC[which]));
+        //     mateQualityScoresReversed.push_back(std::move(rhs.mateQualityScoresReversed[which]));
+        //     totalDecodedAnchorsLengths.push_back(std::move(rhs.totalDecodedAnchorsLengths[which]));
+        //     totalDecodedAnchorsFlat.push_back(std::move(rhs.totalDecodedAnchorsFlat[which]));
+        //     totalAnchorQualityScoresFlat.push_back(std::move(rhs.totalAnchorQualityScoresFlat[which]));
+        //     totalAnchorBeginInExtendedRead.push_back(std::move(rhs.totalAnchorBeginInExtendedRead[which]));
 
-            entries++;
-            reservedEntries = std::max(entries, reservedEntries);
-        }
+        //     entries++;
+        //     reservedEntries = std::max(entries, reservedEntries);
+        // }
 
         bool isEqualTo(int which, const ExtensionTaskCpuData& rhs) const noexcept{
             if(pairedEnd[which] != rhs.pairedEnd){ std::cerr << "error pairedEnd\n"; return false;}
@@ -1961,6 +2030,8 @@ struct GpuReadExtender{
             if(totalDecodedAnchorsFlat[which] != rhs.totalDecodedAnchorsFlat){ std::cerr << "error totalDecodedAnchorsFlat\n"; return false;}
             if(totalAnchorQualityScoresFlat[which] != rhs.totalAnchorQualityScoresFlat){ std::cerr << "error totalAnchorQualityScoresFlat\n"; return false;}
             if(totalAnchorBeginInExtendedRead[which] != rhs.totalAnchorBeginInExtendedRead){ std::cerr << "error totalAnchorBeginInExtendedRead\n"; return false;}
+
+            //TODO soadata
 
             return true;
         }
@@ -2003,7 +2074,7 @@ struct GpuReadExtender{
 
             int numTrue = std::count_if(selectionFlags, selectionFlags + entries, thrust::identity<bool>{});
 
-            SoAExtensionTaskCpuData selection(numTrue);
+            SoAExtensionTaskCpuData selection(numTrue, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes);
 
             auto inputScalars1Begin = thrust::make_zip_iterator(thrust::make_tuple(
                 pairedEnd.begin(),
@@ -2085,31 +2156,33 @@ struct GpuReadExtender{
                 thrust::identity<bool>{}
             );
 
+            //TODO soa
+
             #endif
 
             return selection;
         }
 
-        void sortByPairIdAndId(){
-            HostVector<int> indices(entries);
-            std::iota(indices.begin(), indices.end(), 0);
+        // void sortByPairIdAndId(){
+        //     HostVector<int> indices(entries);
+        //     std::iota(indices.begin(), indices.end(), 0);
 
-            thrust::sort(thrust::host, indices.begin(), indices.begin() + entries,
-                [
-                    pairIds = pairId.data(),
-                    ids = id.data()
-                ] (int l, int r){
-                    if(pairIds[l] < pairIds[r]) return true;
-                    if(pairIds[l] > pairIds[r]) return false;
-                    return ids[l] < ids[r];
-                }
-            );
+        //     thrust::sort(thrust::host, indices.begin(), indices.begin() + entries,
+        //         [
+        //             pairIds = pairId.data(),
+        //             ids = id.data()
+        //         ] (int l, int r){
+        //             if(pairIds[l] < pairIds[r]) return true;
+        //             if(pairIds[l] > pairIds[r]) return false;
+        //             return ids[l] < ids[r];
+        //         }
+        //     );
 
-            if(!thrust::equal(indices.begin(), indices.end(), thrust::make_counting_iterator(0))){
-                auto newdata = gather(indices.begin(), indices.begin() + entries);
-                std::swap(*this, newdata);
-            }
-        }
+        //     if(!thrust::equal(indices.begin(), indices.end(), thrust::make_counting_iterator(0))){
+        //         auto newdata = gather(indices.begin(), indices.begin() + entries);
+        //         std::swap(*this, newdata);
+        //     }
+        // }
 
         template<class MapIter>
         SoAExtensionTaskCpuData gather(MapIter mapBegin, MapIter mapEnd){
@@ -2117,7 +2190,7 @@ struct GpuReadExtender{
 
             auto gathersize = thrust::distance(mapBegin, mapEnd);
 
-            SoAExtensionTaskCpuData selection(gathersize);
+            SoAExtensionTaskCpuData selection(gathersize, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes);
 
             auto inputScalars1Begin = thrust::make_zip_iterator(thrust::make_tuple(
                 pairedEnd.begin(),
@@ -2196,11 +2269,171 @@ struct GpuReadExtender{
                 outputVectors1Begin
             );
 
+            gatherSoaData(selection, mapBegin, mapEnd);            
+
             nvtx::pop_range();
 
             return selection;
         }
 
+        template<class MapIter>
+        void gatherSoaData(SoAExtensionTaskCpuData& selection, MapIter mapBegin, MapIter mapEnd){
+            assert(checkPitch(selection));
+
+            auto gathersize = thrust::distance(mapBegin, mapEnd);
+
+            selection.soaNumEntriesPerTask.resize(gathersize);
+            selection.soaNumEntriesPerTaskPrefixSum.resize(gathersize);
+
+            for(auto it = mapBegin; it != mapEnd; ++it){
+                assert(soaNumEntriesPerTask.size() > *it);
+            }
+
+            thrust::gather(
+                mapBegin,
+                mapEnd,
+                soaNumEntriesPerTask.begin(),
+                selection.soaNumEntriesPerTask.begin()
+            );
+
+            thrust::exclusive_scan(
+                selection.soaNumEntriesPerTask.begin(),
+                selection.soaNumEntriesPerTask.end(),
+                selection.soaNumEntriesPerTaskPrefixSum.begin()
+            );
+
+            std::size_t irregularsize = 42; //selection.soaNumEntriesPerTaskPrefixSum[gathersize - 1] + selection.soaNumEntriesPerTask[gathersize - 1];
+
+            selection.soadecodedMateRevC.resize(gathersize * decodedSequencePitchInBytes);
+            selection.soamateQualityScoresReversed.resize(gathersize * qualityPitchInBytes);
+
+            selection.soatotalDecodedAnchorsLengths.resize(irregularsize);
+            selection.soatotalAnchorBeginInExtendedRead.resize(irregularsize);
+            selection.soatotalDecodedAnchorsFlat.resize(irregularsize * decodedSequencePitchInBytes);
+            selection.soatotalAnchorQualityScoresFlat.resize(irregularsize * qualityPitchInBytes);
+
+        #if 1
+
+            for(auto it = mapBegin; it != mapEnd; ++it){
+                std::size_t destindex = thrust::distance(mapBegin, it);
+                std::size_t srcindex = *it;
+
+                for(std::size_t k = 0; k < decodedSequencePitchInBytes; k++){
+                    selection.soadecodedMateRevC[destindex * decodedSequencePitchInBytes + k]
+                        = soadecodedMateRevC[srcindex * decodedSequencePitchInBytes + k];
+                }
+
+                for(std::size_t k = 0; k < qualityPitchInBytes; k++){
+                    selection.soamateQualityScoresReversed[destindex * qualityPitchInBytes + k]
+                        = soamateQualityScoresReversed[srcindex * qualityPitchInBytes + k];
+                }
+            }
+
+            for(auto it = mapBegin; it != mapEnd; ++it){
+                std::size_t destindex = thrust::distance(mapBegin, it);
+                std::size_t srcindex = *it;
+
+                int destoffset = selection.soaNumEntriesPerTaskPrefixSum[destindex];
+                int srcoffset = soaNumEntriesPerTaskPrefixSum[srcindex];
+                int num = soaNumEntriesPerTask[srcindex];
+
+                for(int k = 0; k < num; k++){
+                    selection.soatotalDecodedAnchorsLengths[destoffset + k] 
+                        = soatotalDecodedAnchorsLengths[srcoffset + k];
+                }
+
+                for(int k = 0; k < num; k++){
+                    selection.soatotalAnchorBeginInExtendedRead[destoffset + k] 
+                        = soatotalAnchorBeginInExtendedRead[srcoffset + k];
+                }
+
+                std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
+
+                for(std::size_t k = 0; k < pitchnum1; k++){
+                    selection.soatotalDecodedAnchorsFlat[destoffset + k] 
+                        = soatotalDecodedAnchorsFlat[srcoffset + k];
+                }
+
+                std::size_t pitchnum2 = qualityPitchInBytes * num;
+
+                for(std::size_t k = 0; k < pitchnum2; k++){
+                    selection.soatotalAnchorQualityScoresFlat[destoffset + k] 
+                        = soatotalAnchorQualityScoresFlat[srcoffset + k];
+                }
+            }
+        #else
+
+            for(auto it = mapBegin; it != mapEnd; ++it){
+                std::size_t destindex = thrust::distance(mapBegin, it);
+                std::size_t srcindex = *it;
+
+                for(std::size_t k = 0; k < decodedSequencePitchInBytes; k++){
+                    selection.soadecodedMateRevC.at(destindex * decodedSequencePitchInBytes + k)
+                        = soadecodedMateRevC.at(srcindex * decodedSequencePitchInBytes + k);
+                }
+
+                for(std::size_t k = 0; k < qualityPitchInBytes; k++){
+                    selection.soamateQualityScoresReversed.at(destindex * qualityPitchInBytes + k)
+                        = soamateQualityScoresReversed.at(srcindex * qualityPitchInBytes + k);
+                }
+            }
+
+            for(auto it = mapBegin; it != mapEnd; ++it){
+                std::size_t destindex = thrust::distance(mapBegin, it);
+                std::size_t srcindex = *it;
+
+                int destoffset = selection.soaNumEntriesPerTaskPrefixSum.at(destindex);
+                int srcoffset = soaNumEntriesPerTaskPrefixSum.at(srcindex);
+                int num = soaNumEntriesPerTask.at(srcindex);
+
+                for(int k = 0; k < num; k++){
+                    selection.soatotalDecodedAnchorsLengths.at(destoffset + k) 
+                        = soatotalDecodedAnchorsLengths.at(srcoffset + k);
+                }
+
+                for(int k = 0; k < num; k++){
+                    selection.soatotalAnchorBeginInExtendedRead.at(destoffset + k) 
+                        = soatotalAnchorBeginInExtendedRead.at(srcoffset + k);
+                }
+
+                std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
+
+                for(std::size_t k = 0; k < pitchnum1; k++){
+                    selection.soatotalDecodedAnchorsFlat.at(destoffset + k) 
+                        = soatotalDecodedAnchorsFlat.at(srcoffset + k);
+                }
+
+                std::size_t pitchnum2 = qualityPitchInBytes * num;
+
+                for(std::size_t k = 0; k < pitchnum2; k++){
+                    selection.soatotalAnchorQualityScoresFlat.at(destoffset + k)
+                        = soatotalAnchorQualityScoresFlat.at(srcoffset + k);
+                }
+            }
+
+        #endif
+
+        }
+
+        
+        void addSoaData(
+            const int* addNumEntriesPerTask,
+            const int* addNumEntriesPerTaskPrefixSum,
+            const int* addTotalDecodedAnchorsLengths,
+            const int* addTotalAnchorBeginInExtendedRead,
+            const char* addTotalDecodedAnchorsFlat,
+            const char* addTotalAnchorQualityScoresFlat
+        ){
+            // selection.soaNumEntriesPerTask.resize(gathersize);
+            // selection.soaNumEntriesPerTaskPrefixSum.resize(gathersize);
+
+            // selection.soatotalDecodedAnchorsLengths.resize(irregularsize);
+            // selection.soatotalAnchorBeginInExtendedRead.resize(irregularsize);
+            // selection.soatotalDecodedAnchorsFlat.resize(irregularsize * decodedSequencePitchInBytes);
+            // selection.soatotalAnchorQualityScoresFlat.resize(irregularsize * qualityPitchInBytes);
+        }
+        
+        
         std::size_t sizeInBytes() const{
             std::size_t result = 0;
             for(std::size_t i = 0; i < entries; i++){
@@ -2225,6 +2458,7 @@ struct GpuReadExtender{
                 result += 4 + sizeof(char) * totalAnchorQualityScoresFlat[i].size();
                 result += 4 + sizeof(int) * totalAnchorBeginInExtendedRead[i].size();
             }
+            //TODO soa
             return result;
         }
 
@@ -2300,6 +2534,7 @@ struct GpuReadExtender{
             if(totalAnchorBeginInExtendedRead != rhs.totalAnchorBeginInExtendedRead){
                 return false;
             }
+            //TODO soa
 
             return true;
         }
@@ -2358,9 +2593,11 @@ struct GpuReadExtender{
         state = newstate;
     }
 
-
-
     GpuReadExtender(
+        std::size_t encodedSequencePitchInInts_,
+        std::size_t decodedSequencePitchInBytes_,
+        std::size_t qualityPitchInBytes_,
+        std::size_t msaColumnPitchInElements_,
         bool isPairedEnd_,
         const gpu::GpuReadStorage& rs, 
         const gpu::GpuMinhasher& gpuMinhasher_,
@@ -2450,6 +2687,14 @@ struct GpuReadExtender{
         *h_numCandidates = 0;
         *h_numAnchorsWithRemovedMates = 0;
         *h_numFullyUsedReadIds2 = 0;
+
+        encodedSequencePitchInInts = encodedSequencePitchInInts_;
+        decodedSequencePitchInBytes = decodedSequencePitchInBytes_;
+        qualityPitchInBytes = qualityPitchInBytes_;
+        msaColumnPitchInElements = msaColumnPitchInElements_;
+
+        soaTasks = SoAExtensionTaskCpuData(0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes);
+        soaFinishedTasks = SoAExtensionTaskCpuData(0, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes);
 
         numTasks = 0;   
     }
@@ -2687,7 +2932,20 @@ struct GpuReadExtender{
         }
 
 
-        SoAExtensionTaskCpuData newSoaTaskData(numAdditionalTasks);
+        SoAExtensionTaskCpuData newSoaTaskData(numAdditionalTasks, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes);
+
+        newSoaTaskData.soadecodedMateRevC.resize(numAdditionalTasks * decodedSequencePitchInBytes);
+        newSoaTaskData.soamateQualityScoresReversed.resize(numAdditionalTasks * qualityPitchInBytes);
+        newSoaTaskData.soatotalDecodedAnchorsLengths.resize(numAdditionalTasks);
+        newSoaTaskData.soatotalDecodedAnchorsFlat.resize(numAdditionalTasks * decodedSequencePitchInBytes);
+        newSoaTaskData.soatotalAnchorQualityScoresFlat.resize(numAdditionalTasks * qualityPitchInBytes);
+        newSoaTaskData.soatotalAnchorBeginInExtendedRead.resize(numAdditionalTasks);
+        newSoaTaskData.soaNumEntriesPerTask.resize(numAdditionalTasks);
+        newSoaTaskData.soaNumEntriesPerTaskPrefixSum.resize(numAdditionalTasks);
+
+        thrust::fill(newSoaTaskData.soaNumEntriesPerTask.begin(), newSoaTaskData.soaNumEntriesPerTask.end(), 1);
+        thrust::sequence(newSoaTaskData.soaNumEntriesPerTaskPrefixSum.begin(), newSoaTaskData.soaNumEntriesPerTaskPrefixSum.end(), 0);
+        thrust::fill(newSoaTaskData.soatotalAnchorBeginInExtendedRead.begin(), newSoaTaskData.soatotalAnchorBeginInExtendedRead.end(), 0);
 
         for(int t = 0; t < numAdditionalTasks; t++){
             SoAExtensionTaskCpuData& data = newSoaTaskData;
@@ -2715,6 +2973,17 @@ struct GpuReadExtender{
                     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.mateLength[t],
                     data.mateQualityScoresReversed[t].begin()
                 );
+
+                std::copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
+                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                );
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.mateLength[t],
+                    data.soamateQualityScoresReversed.begin() + t * qualityPitchInBytes
+                );
             }else if(id == 1){
                 data.myReadId[t] = h_anchorReadIds[2 * groupId + 1];
                 data.mateReadId[t] = std::numeric_limits<read_number>::max();
@@ -2731,6 +3000,12 @@ struct GpuReadExtender{
                 );
 
                 data.mateQualityScoresReversed[t].clear();
+
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
+                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                );
             }else if(id == 2){
                 data.myReadId[t] = h_anchorReadIds[2 * groupId + 1];
                 data.mateReadId[t] = h_anchorReadIds[2 * groupId + 0];
@@ -2752,6 +3027,18 @@ struct GpuReadExtender{
                     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.mateLength[t],
                     data.mateQualityScoresReversed[t].begin()
                 );
+
+                std::copy(
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
+                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                );
+
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.mateLength[t],
+                    data.soamateQualityScoresReversed.begin() + t * qualityPitchInBytes
+                );
             }else{
                 //id == 3
                 data.myReadId[t] = h_anchorReadIds[2 * groupId + 0];
@@ -2769,6 +3056,12 @@ struct GpuReadExtender{
                 );
 
                 data.mateQualityScoresReversed[t].clear();
+
+                std::reverse_copy(
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
+                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                );
             }
 
             data.mateHasBeenFound[t] = false;
@@ -2781,6 +3074,8 @@ struct GpuReadExtender{
             
             data.totalDecodedAnchorsLengths[t].push_back(data.myLength[t]);
             data.totalAnchorBeginInExtendedRead[t].push_back(0);
+
+            data.soatotalDecodedAnchorsLengths[t] = data.myLength[t];
         }
 
 
@@ -2857,6 +3152,18 @@ struct GpuReadExtender{
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
                     data.totalDecodedAnchorsFlat[t].begin()
                 );
+
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength[t],
+                    data.soadecodedMateRevC.begin() + t * decodedSequencePitchInBytes
+                );
+
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                );
             }else if(id == 1){
                 data.decodedMateRevC[t].clear();
 
@@ -2865,6 +3172,12 @@ struct GpuReadExtender{
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
                     data.totalDecodedAnchorsFlat[t].begin()
+                );
+
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
                 );
             }else if(id == 2){
                 data.decodedMateRevC[t].resize(data.mateLength[t]);
@@ -2880,6 +3193,17 @@ struct GpuReadExtender{
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
                     data.totalDecodedAnchorsFlat[t].begin()
                 );
+
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength[t],
+                    data.soadecodedMateRevC.begin() + t * decodedSequencePitchInBytes
+                );
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                );
             }else{
                 data.decodedMateRevC[t].clear();
 
@@ -2888,6 +3212,12 @@ struct GpuReadExtender{
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
                     data.totalDecodedAnchorsFlat[t].begin()
+                );
+
+                std::copy(
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
                 );
             }
         }
