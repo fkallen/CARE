@@ -75,6 +75,8 @@ void initializePairedEndExtensionBatchData4(
     std::size_t qualityPitchInBytes
 ){
 
+    assert(false); //cannot be used any longer
+
     const int batchsizePairs = inputs.size();
 
     if(batchsizePairs == 0) return;
@@ -98,8 +100,7 @@ void initializePairedEndExtensionBatchData4(
     //     std::cerr << task.pairId << " ";
     // }
     // std::cerr << "\n";
-
-    gpuReadExtender.addTasks(std::make_move_iterator(tasks.begin()), std::make_move_iterator(tasks.end()));
+    //gpuReadExtender.addTasks(std::make_move_iterator(tasks.begin()), std::make_move_iterator(tasks.end()));
     
 }
 
