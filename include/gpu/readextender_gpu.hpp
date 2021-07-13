@@ -1923,6 +1923,31 @@ struct GpuReadExtender{
             entries = pairedEnd.size();
         }
 
+        void append(const SoAExtensionTaskCpuData& rhs, int which){
+            pairedEnd.push_back(rhs.pairedEnd[which]);
+            mateHasBeenFound.push_back(rhs.mateHasBeenFound[which]);
+            id.push_back(rhs.id[which]);
+            pairId.push_back(rhs.pairId[which]);
+            myLength.push_back(rhs.myLength[which]);
+            mateLength.push_back(rhs.mateLength[which]);
+            currentAnchorLength.push_back(rhs.currentAnchorLength[which]);
+            accumExtensionLengths.push_back(rhs.accumExtensionLengths[which]);
+            iteration.push_back(rhs.iteration[which]);
+            goodscore.push_back(rhs.goodscore[which]);
+            myReadId.push_back(rhs.myReadId[which]);
+            mateReadId.push_back(rhs.mateReadId[which]);
+            abortReason.push_back(rhs.abortReason[which]);
+            direction.push_back(rhs.direction[which]);
+            decodedMateRevC.push_back(std::move(rhs.decodedMateRevC[which]);
+            mateQualityScoresReversed.push_back(std::move(rhs.mateQualityScoresReversed[which]));
+            totalDecodedAnchorsLengths.push_back(std::move(rhs.totalDecodedAnchorsLengths[which]));
+            totalDecodedAnchorsFlat.push_back(std::move(rhs.totalDecodedAnchorsFlat[which]));
+            totalAnchorQualityScoresFlat.push_back(std::move(rhs.totalAnchorQualityScoresFlat[which]));
+            totalAnchorBeginInExtendedRead.push_back(std::move(rhs.totalAnchorBeginInExtendedRead[which]));
+
+            entries++;
+        }
+
         SoAExtensionTaskCpuData select(bool* selectionFlags) const{
             int numTrue = std::count_if(selectionFlags, selectionFlags + entries, thrust::identity<bool>{});
 
@@ -2945,8 +2970,6 @@ struct GpuReadExtender{
             default: break;
         };
 
-        cudaDeviceSynchronize(); CUERR; //DEBUG
-
         if(state == GpuReadExtender::State::Finished){
             assert(tasks.size() == 0);
             assert(finishedTasks.size() % 4 == 0);
@@ -3467,7 +3490,7 @@ struct GpuReadExtender{
         //if(*h_numAnchorsWithRemovedMates > 0){
         compactCandidateDataByFlagsExcludingAlignments(
             d_keepflags.data(),
-            true,
+            false,
             stream
         );
         //}
@@ -3678,7 +3701,7 @@ struct GpuReadExtender{
 
         compactCandidateDataByFlags(
             d_keepflags.data(),
-            false,
+            true, //copy candidate read ids to host because they might be needed to load quality scores
             stream
         );
 
