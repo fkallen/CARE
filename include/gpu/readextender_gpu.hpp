@@ -1682,7 +1682,6 @@ struct GpuReadExtender{
         int pairId = 0;
         int myLength = 0;
         int mateLength = 0;
-        int currentAnchorLength = 0;
         int accumExtensionLengths = 0;
         int iteration = 0;
         float goodscore = 0.0f;
@@ -1748,9 +1747,6 @@ struct GpuReadExtender{
             if(mateLength != rhs.mateLength){
                 return false;
             }
-            if(currentAnchorLength != rhs.currentAnchorLength){
-                return false;
-            }
             if(accumExtensionLengths != rhs.accumExtensionLengths){
                 return false;
             }
@@ -1792,61 +1788,6 @@ struct GpuReadExtender{
         }
     };
 
-    // struct ExtensionTaskCpuDataNonOwning{
-    //     bool pairedEnd = false;
-    //     bool mateHasBeenFound = false;
-    //     int id = 0;
-    //     int pairId = 0;
-    //     int myLength = 0;
-    //     int mateLength = 0;
-    //     int currentAnchorLength = 0;
-    //     int accumExtensionLengths = 0;
-    //     int iteration = 0;
-    //     float goodscore = 0.0f;
-    //     read_number myReadId = 0;
-    //     read_number mateReadId = 0;
-    //     extension::AbortReason abortReason = extension::AbortReason::None;
-    //     care::extension::ExtensionDirection direction{};
-    //     std::vector<char>* decodedMateRevC{};
-    //     std::vector<char>* mateQualityScoresReversed{};
-    //     std::vector<int>* totalDecodedAnchorsLengths{};
-    //     std::vector<char>* totalDecodedAnchorsFlat{};
-    //     std::vector<char>* totalAnchorQualityScoresFlat{};
-    //     std::vector<int>* totalAnchorBeginInExtendedRead{};
-
-    //     std::size_t sizeInBytes() const{
-    //         std::size_t result = 0;
-    //         result += 1;
-    //         result += 1;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4;
-    //         result += 4 + sizeof(char) * decodedMateRevC->size();
-    //         result += 4 + sizeof(char) * mateQualityScoresReversed->size();
-    //         result += 4 + sizeof(int) * totalDecodedAnchorsLengths->size();
-    //         result += 4 + sizeof(char) * totalDecodedAnchorsFlat->size();
-    //         result += 4 + sizeof(char) * totalAnchorQualityScoresFlat->size();
-    //         result += 4 + sizeof(int) * totalAnchorBeginInExtendedRead->size();
-    //         return result;
-    //     }
-
-    //     bool isActive(int insertSize, int insertSizeStddev) const noexcept{
-    //         return (*iteration < insertSize 
-    //             && *accumExtensionLengths < insertSize - (*mateLength) + insertSizeStddev
-    //             && (*abortReason == extension::AbortReason::None) 
-    //             && !*mateHasBeenFound);
-    //     }
-    // };
-
     struct SoAExtensionTaskCpuData{
         std::size_t entries = 0;
         std::size_t reservedEntries = 0;
@@ -1856,7 +1797,6 @@ struct GpuReadExtender{
         thrust::host_vector<int> pairId{};
         thrust::host_vector<int> myLength{};
         thrust::host_vector<int> mateLength{};
-        thrust::host_vector<int> currentAnchorLength{};
         thrust::host_vector<int> accumExtensionLengths{};
         thrust::host_vector<int> iteration{};
         thrust::host_vector<float> goodscore{};
@@ -1884,7 +1824,6 @@ struct GpuReadExtender{
             pairId.clear();
             myLength.clear();
             mateLength.clear();
-            currentAnchorLength.clear();
             accumExtensionLengths.clear();
             iteration.clear();
             goodscore.clear();
@@ -1901,26 +1840,25 @@ struct GpuReadExtender{
         }
 
         void reserve(int newsize){
-            pairedEnd.resize(newsize);
-            mateHasBeenFound.resize(newsize);
-            id.resize(newsize);
-            pairId.resize(newsize);
-            myLength.resize(newsize);
-            mateLength.resize(newsize);
-            currentAnchorLength.resize(newsize);
-            accumExtensionLengths.resize(newsize);
-            iteration.resize(newsize);
-            goodscore.resize(newsize);
-            myReadId.resize(newsize);
-            mateReadId.resize(newsize);
-            abortReason.resize(newsize);
-            direction.resize(newsize);
-            decodedMateRevC.resize(newsize);
-            mateQualityScoresReversed.resize(newsize);
-            totalDecodedAnchorsLengths.resize(newsize);
-            totalDecodedAnchorsFlat.resize(newsize);
-            totalAnchorQualityScoresFlat.resize(newsize);
-            totalAnchorBeginInExtendedRead.resize(newsize);
+            pairedEnd.reserve(newsize);
+            mateHasBeenFound.reserve(newsize);
+            id.reserve(newsize);
+            pairId.reserve(newsize);
+            myLength.reserve(newsize);
+            mateLength.reserve(newsize);
+            accumExtensionLengths.reserve(newsize);
+            iteration.reserve(newsize);
+            goodscore.reserve(newsize);
+            myReadId.reserve(newsize);
+            mateReadId.reserve(newsize);
+            abortReason.reserve(newsize);
+            direction.reserve(newsize);
+            decodedMateRevC.reserve(newsize);
+            mateQualityScoresReversed.reserve(newsize);
+            totalDecodedAnchorsLengths.reserve(newsize);
+            totalDecodedAnchorsFlat.reserve(newsize);
+            totalAnchorQualityScoresFlat.reserve(newsize);
+            totalAnchorBeginInExtendedRead.reserve(newsize);
 
             reservedEntries = newsize;
         }
@@ -1932,7 +1870,6 @@ struct GpuReadExtender{
             pairId.resize(newsize);
             myLength.resize(newsize);
             mateLength.resize(newsize);
-            currentAnchorLength.resize(newsize);
             accumExtensionLengths.resize(newsize);
             iteration.resize(newsize);
             goodscore.resize(newsize);
@@ -1958,7 +1895,6 @@ struct GpuReadExtender{
             pairId.insert(pairId.end(), rhs.pairId.begin(), rhs.pairId.end());
             myLength.insert(myLength.end(), rhs.myLength.begin(), rhs.myLength.end());
             mateLength.insert(mateLength.end(), rhs.mateLength.begin(), rhs.mateLength.end());
-            currentAnchorLength.insert(currentAnchorLength.end(), rhs.currentAnchorLength.begin(), rhs.currentAnchorLength.end());
             accumExtensionLengths.insert(accumExtensionLengths.end(), rhs.accumExtensionLengths.begin(), rhs.accumExtensionLengths.end());
             iteration.insert(iteration.end(), rhs.iteration.begin(), rhs.iteration.end());
             goodscore.insert(goodscore.end(), rhs.goodscore.begin(), rhs.goodscore.end());
@@ -1984,7 +1920,6 @@ struct GpuReadExtender{
             pairId.push_back(rhs.pairId[which]);
             myLength.push_back(rhs.myLength[which]);
             mateLength.push_back(rhs.mateLength[which]);
-            currentAnchorLength.push_back(rhs.currentAnchorLength[which]);
             accumExtensionLengths.push_back(rhs.accumExtensionLengths[which]);
             iteration.push_back(rhs.iteration[which]);
             goodscore.push_back(rhs.goodscore[which]);
@@ -2010,7 +1945,6 @@ struct GpuReadExtender{
             if(pairId[which] != rhs.pairId){ std::cerr << "error pairId\n"; return false;}
             if(myLength[which] != rhs.myLength){ std::cerr << "error myLength\n"; return false;}
             if(mateLength[which] != rhs.mateLength){ std::cerr << "error mateLength\n"; return false;}
-            if(currentAnchorLength[which] != rhs.currentAnchorLength){ std::cerr << "error currentAnchorLength\n"; return false;}
             if(accumExtensionLengths[which] != rhs.accumExtensionLengths){ std::cerr << "error accumExtensionLengths\n"; return false;}
             if(iteration[which] != rhs.iteration){ std::cerr << "error iteration\n"; return false;}
             if(goodscore[which] != rhs.goodscore){ std::cerr << "error goodscore\n"; return false;}
@@ -2034,7 +1968,7 @@ struct GpuReadExtender{
                 return false;
             }
 
-            for(int i = 0; i < entries; i++){
+            for(std::size_t i = 0; i < entries; i++){
                 if(!isEqualTo(i, rhs[i])){
                     std::cerr << "error position " << i << "\n"; 
                     return false;
@@ -2071,7 +2005,6 @@ struct GpuReadExtender{
                 pairId.begin(),
                 myLength.begin(),
                 mateLength.begin(),
-                currentAnchorLength.begin(),
                 accumExtensionLengths.begin()
             ));
 
@@ -2082,7 +2015,6 @@ struct GpuReadExtender{
                 selection.pairId.begin(),
                 selection.myLength.begin(),
                 selection.mateLength.begin(),
-                selection.currentAnchorLength.begin(),
                 selection.accumExtensionLengths.begin()
             ));            
 
@@ -2185,7 +2117,6 @@ struct GpuReadExtender{
                 pairId.begin(),
                 myLength.begin(),
                 mateLength.begin(),
-                currentAnchorLength.begin(),
                 accumExtensionLengths.begin()
             ));
 
@@ -2196,7 +2127,6 @@ struct GpuReadExtender{
                 selection.pairId.begin(),
                 selection.myLength.begin(),
                 selection.mateLength.begin(),
-                selection.currentAnchorLength.begin(),
                 selection.accumExtensionLengths.begin()
             ));            
 
@@ -2262,7 +2192,7 @@ struct GpuReadExtender{
 
         std::size_t sizeInBytes() const{
             std::size_t result = 0;
-            for(int i = 0; i < entries; i++){
+            for(std::size_t i = 0; i < entries; i++){
                 result += 1;
                 result += 1;
                 result += 4;
@@ -2297,7 +2227,7 @@ struct GpuReadExtender{
         std::unique_ptr<bool[]> getActiveFlags(int insertSize, int insertSizeStddev) const{
             auto flags = std::make_unique<bool[]>(entries);
 
-            for(int i = 0; i < entries; i++){
+            for(std::size_t i = 0; i < entries; i++){
                 flags[i] = isActive(i, insertSize, insertSizeStddev);
             }
 
@@ -2321,9 +2251,6 @@ struct GpuReadExtender{
                 return false;
             }
             if(mateLength != rhs.mateLength){
-                return false;
-            }
-            if(currentAnchorLength != rhs.currentAnchorLength){
                 return false;
             }
             if(accumExtensionLengths != rhs.accumExtensionLengths){
@@ -2739,7 +2666,6 @@ struct GpuReadExtender{
             data.mateHasBeenFound = false;
             data.id = id;
             data.pairId = data.myReadId / 2;
-            data.currentAnchorLength = data.myLength;
             data.accumExtensionLengths = 0;
             data.iteration = 0;
             data.goodscore = 0.0f;
@@ -2837,7 +2763,6 @@ struct GpuReadExtender{
             data.mateHasBeenFound[t] = false;
             data.id[t] = id;
             data.pairId[t] = data.myReadId[t] / 2;
-            data.currentAnchorLength[t] = data.myLength[t];
             data.accumExtensionLengths[t] = 0;
             data.iteration[t] = 0;
             data.goodscore[t] = 0.0f;
@@ -4275,7 +4200,6 @@ struct GpuReadExtender{
                 if(!task.mateHasBeenFound){
                     const int newlength = h_outputAnchorLengths[i];
                     
-                    task.currentAnchorLength = newlength;
                     task.accumExtensionLengths = h_accumExtensionsLengths[i];
 
                     task.totalDecodedAnchorsFlat.resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
@@ -4377,7 +4301,7 @@ struct GpuReadExtender{
 
         assert(numTasks == soaTasks.entries);
 
-        for(int i = 0; i < soaTasks.entries; i++){ 
+        for(std::size_t i = 0; i < soaTasks.entries; i++){ 
             soaTasks.goodscore[i] += h_goodscores[i];
 
             soaTasks.abortReason[i] = h_abortReasons[i];
@@ -4389,7 +4313,6 @@ struct GpuReadExtender{
                 if(!soaTasks.mateHasBeenFound[i]){
                     const int newlength = h_outputAnchorLengths[i];
                     
-                    soaTasks.currentAnchorLength[i] = newlength;
                     soaTasks.accumExtensionLengths[i] = h_accumExtensionsLengths[i];
 
                     soaTasks.totalDecodedAnchorsFlat[i].resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
@@ -4497,7 +4420,7 @@ struct GpuReadExtender{
             task.iteration++;
         }
 
-        for(int i = 0; i < soaTasks.entries; i++){
+        for(std::size_t i = 0; i < soaTasks.entries; i++){
             soaTasks.iteration[i]++;
         }
 
@@ -6244,7 +6167,7 @@ struct GpuReadExtender{
         }
 
 
-        for(int i = 0; i < soaTasks.entries; i++){ 
+        for(std::size_t i = 0; i < soaTasks.entries; i++){ 
             const int whichtype = soaTasks.id[i] % 4;
 
             //whichtype 0: LR, strand1 searching mate to the right.
