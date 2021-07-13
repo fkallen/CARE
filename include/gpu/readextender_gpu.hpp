@@ -1789,27 +1789,30 @@ struct GpuReadExtender{
     };
 
     struct SoAExtensionTaskCpuData{
+        template<class T>
+        using HostVector = std::vector<T>;
+
         std::size_t entries = 0;
         std::size_t reservedEntries = 0;
         thrust::host_vector<bool> pairedEnd{};
         thrust::host_vector<bool> mateHasBeenFound{};
-        thrust::host_vector<int> id{};
-        thrust::host_vector<int> pairId{};
-        thrust::host_vector<int> myLength{};
-        thrust::host_vector<int> mateLength{};
-        thrust::host_vector<int> accumExtensionLengths{};
-        thrust::host_vector<int> iteration{};
-        thrust::host_vector<float> goodscore{};
-        thrust::host_vector<read_number> myReadId{};
-        thrust::host_vector<read_number> mateReadId{};
-        thrust::host_vector<extension::AbortReason> abortReason{};
-        thrust::host_vector<extension::ExtensionDirection> direction{};
-        thrust::host_vector<thrust::host_vector<char>> decodedMateRevC{};
-        thrust::host_vector<thrust::host_vector<char>> mateQualityScoresReversed{};
-        thrust::host_vector<thrust::host_vector<int>> totalDecodedAnchorsLengths{};
-        thrust::host_vector<thrust::host_vector<char>> totalDecodedAnchorsFlat{};
-        thrust::host_vector<thrust::host_vector<char>> totalAnchorQualityScoresFlat{};
-        thrust::host_vector<thrust::host_vector<int>> totalAnchorBeginInExtendedRead{};
+        HostVector<int> id{};
+        HostVector<int> pairId{};
+        HostVector<int> myLength{};
+        HostVector<int> mateLength{};
+        HostVector<int> accumExtensionLengths{};
+        HostVector<int> iteration{};
+        HostVector<float> goodscore{};
+        HostVector<read_number> myReadId{};
+        HostVector<read_number> mateReadId{};
+        HostVector<extension::AbortReason> abortReason{};
+        HostVector<extension::ExtensionDirection> direction{};
+        HostVector<HostVector<char>> decodedMateRevC{};
+        HostVector<HostVector<char>> mateQualityScoresReversed{};
+        HostVector<HostVector<int>> totalDecodedAnchorsLengths{};
+        HostVector<HostVector<char>> totalDecodedAnchorsFlat{};
+        HostVector<HostVector<char>> totalAnchorQualityScoresFlat{};
+        HostVector<HostVector<int>> totalAnchorBeginInExtendedRead{};
 
         SoAExtensionTaskCpuData() : SoAExtensionTaskCpuData(0) {}
 
@@ -1963,6 +1966,7 @@ struct GpuReadExtender{
         }
 
         bool operator==(const std::vector<ExtensionTaskCpuData>& rhs){
+            //return true;
             if(rhs.size() != entries){ 
                 std::cerr << "error entries\n"; 
                 return false;
@@ -1980,7 +1984,8 @@ struct GpuReadExtender{
         template<class FlagIter>
         SoAExtensionTaskCpuData select(FlagIter selectionFlags){
             #if 1
-            thrust::host_vector<int> positions(entries);
+            nvtx::push_range("soa_select", 1);
+            HostVector<int> positions(entries);
 
             auto positions_end = thrust::copy_if(
                 thrust::make_counting_iterator(0),
@@ -1991,6 +1996,8 @@ struct GpuReadExtender{
             );
 
             SoAExtensionTaskCpuData selection = gather(positions.begin(), positions_end);
+
+            nvtx::pop_range();
 
             #else
 
@@ -2084,7 +2091,7 @@ struct GpuReadExtender{
         }
 
         void sortByPairIdAndId(){
-            thrust::host_vector<int> indices(entries);
+            HostVector<int> indices(entries);
             std::iota(indices.begin(), indices.end(), 0);
 
             thrust::sort(thrust::host, indices.begin(), indices.begin() + entries,
@@ -2106,6 +2113,8 @@ struct GpuReadExtender{
 
         template<class MapIter>
         SoAExtensionTaskCpuData gather(MapIter mapBegin, MapIter mapEnd){
+            nvtx::push_range("soa_gather", 2);
+
             auto gathersize = thrust::distance(mapBegin, mapEnd);
 
             SoAExtensionTaskCpuData selection(gathersize);
@@ -2186,6 +2195,8 @@ struct GpuReadExtender{
                 inputVectors1Begin,
                 outputVectors1Begin
             );
+
+            nvtx::pop_range();
 
             return selection;
         }
@@ -4301,6 +4312,8 @@ struct GpuReadExtender{
 
         assert(numTasks == soaTasks.entries);
 
+        nvtx::push_range("soa_unpack", 1);
+
         for(std::size_t i = 0; i < soaTasks.entries; i++){ 
             soaTasks.goodscore[i] += h_goodscores[i];
 
@@ -4411,6 +4424,8 @@ struct GpuReadExtender{
                 }
             }
         }
+
+        nvtx::pop_range();
 
         handleEarlyExitOfTasks4();
 
