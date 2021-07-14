@@ -21,7 +21,8 @@
 #include <readextender_common.hpp>
 #include <gpu/cubvector.cuh>
 #include <gpu/cuda_block_select.cuh>
-
+#include <mystringview.hpp>
+#include <gpu/gpustringglueing.cuh>
 
 #include <algorithm>
 #include <vector>
@@ -806,7 +807,9 @@ namespace readextendergpukernels{
         const char* __restrict__ dataExtendedReadQualities,
         const bool* __restrict__ dataMateHasBeenFound,
         const float* __restrict__ dataGoodScores,
-        int inputPitch
+        int inputPitch,
+        int insertSize,
+        int insertSizeStddev
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
@@ -817,7 +820,13 @@ namespace readextendergpukernels{
         extern __shared__ int smemForResults[];
         char* const smemChars = (char*)&smemForResults[0];
         char* const smemSequence = smemChars;
-        char* const smemQualities = smemSequence + outputPitch;
+        char* const smemSequence2 = smemSequence + outputPitch;
+        char* const smemQualities = smemSequence2; //alias
+
+        using BlockReduce = cub::BlockReduce<int, blocksize>;
+
+
+        __shared__ typename gpu::MismatchRatioGlueDecider<blocksize>::TempStorage smemDecider;
 
         auto computeRead2Begin = [&](int i){
             if(dataMateHasBeenFound[i]){
@@ -1014,6 +1023,127 @@ namespace readextendergpukernels{
             }else{
                 //nope. kernel cannot handle this case
                 assert(false);
+
+                constexpr int minimumOverlap = 40;
+                constexpr float maxRelativeErrorInOverlap = 0.05;
+
+                int read1begin = 0;
+                int read2begin = computeRead2Begin(i0);
+                int currentsize = 0;
+
+                const int extendedReadLength0 = dataExtendedReadLengths[i0];
+                const int extendedReadLength1 = dataExtendedReadLengths[i1];
+                const int extendedReadLength2 = dataExtendedReadLengths[i2];
+                const int extendedReadLength3 = dataExtendedReadLengths[i3];
+
+                const int originalLength0 = originalReadLengths[i0];
+                const int originalLength1 = originalReadLengths[i1];
+                const int originalLength2 = originalReadLengths[i2];
+                const int originalLength3 = originalReadLengths[i3];
+
+                //insert extensions of reverse complement of d3 at beginning
+                if(extendedReadLength3 > originalLength3){
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength3 - originalLength3); k += group.size()){
+                        myResultSequence[k] = SequenceHelpers::complementBaseDecoded(
+                            dataExtendedReadSequences[i3 * inputPitch + originalLength3 + (extendedReadLength3 - originalLength3) - 1 - k]
+                        );
+                    }
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength3 - originalLength3); k += group.size()){
+                        myResultQualities[k] = 
+                            dataExtendedReadQualities[i3 * inputPitch + originalLength3 + (extendedReadLength3 - originalLength3) - 1 - k];
+                    }
+
+                    currentsize = (extendedReadLength3 - originalLength3);
+                }
+
+                //try to find overlap of d0 and revc(d2)
+
+                
+
+                bool didMergeDifferentStrands = false;
+
+                if(extendedReadLength0 + extendedReadLength2 >= insertSize - insertSizeStddev + minimumOverlap){
+                    //copy sequences to smem
+
+                    for(int k = group.thread_rank(); k < extendedReadLength2; k += group.size()){
+                        smemSequence[k] = dataExtendedReadSequences[i0 * inputPitch + k];
+                    }
+
+                    for(int k = group.thread_rank(); k < extendedReadLength2; k += group.size()){
+                        smemSequence2[k] = SequenceHelpers::complementBaseDecoded(
+                            dataExtendedReadSequences[i2 * inputPitch + extendedReadLength3 - 1 - k]
+                        );
+                    }
+
+                    group.sync();
+
+                    const int maxNumberOfPossibilities = 2*insertSizeStddev + 1;
+
+                    gpu::MismatchRatioGlueDecider<blocksize> decider(smemDecider, minimumOverlap, maxRelativeErrorInOverlap);
+                    gpu::QualityWeightedGapGluer gluer(originalLength0, originalLength2);
+
+                    for(int p = 0; p < maxNumberOfPossibilities; p++){                       
+
+                        const int resultlength = insertSize - insertSizeStddev + p;
+
+                        auto decision = decider(
+                            MyStringView(smemSequence, extendedReadLength0), 
+                            MyStringView(smemSequence2, extendedReadLength2), 
+                            resultlength,
+                            MyStringView(&dataExtendedReadQualities[i0 * inputPitch], extendedReadLength0),
+                            MyStringView(&dataExtendedReadQualities[i2 * inputPitch], extendedReadLength2)
+                        );
+
+                        if(decision.valid){
+                            gluer(group, decision, myResultSequence + currentsize, myResultQualities + currentsize);
+                            currentsize += resultlength;
+                            
+                            didMergeDifferentStrands = true;
+                            break;
+                        }
+                    }
+                }
+
+                if(didMergeDifferentStrands){
+                    read2begin = currentsize - originalLength2;
+                    // myResult.mateHasBeenFound = true;
+                    // myResult.aborted = false;
+                }else{
+                    //initialize result with d0
+                    for(int k = group.thread_rank(); k < extendedReadLength0; k += group.size()){
+                        myResultSequence[currentsize + k] = dataExtendedReadSequences[i0 * inputPitch + k];
+                    }
+
+                    for(int k = group.thread_rank(); k < extendedReadLength0; k += group.size()){
+                        myResultQualities[currentsize + k] = dataExtendedReadQualities[i0 * inputPitch + k];
+                    }
+
+                    currentsize += extendedReadLength0;
+                }
+
+                if(didMergeDifferentStrands && extendedReadLength1 > originalLength1){
+
+                    //insert extensions of d1 at end
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
+                        myResultSequence[currentsize + k] = dataExtendedReadSequences[i0 * inputPitch + originalLength1 + k];
+                    }
+
+                    for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
+                        myResultQualities[currentsize + k] = dataExtendedReadQualities[i0 * inputPitch + originalLength1 + k];
+                    }
+
+                    currentsize += (extendedReadLength1 - originalLength1);
+                }
+
+                if(group.thread_rank() == 0){
+                    *myResultRead1Begins = read1begin;
+                    *myResultRead2Begins = read2begin;
+                    *myResultLengths = currentsize;
+                    *myResultAnchorIsLR = true;
+                }
             }
 
         }
@@ -5771,7 +5901,9 @@ struct GpuReadExtender{
             d_consensusQuality.data(),
             d_mateHasBeenFound.data(),
             d_goodscores.data(),
-            resultMSAColumnPitchInElements
+            resultMSAColumnPitchInElements,
+            insertSize,
+            insertSizeStddev
         );
 
         cudaMemcpyAsync(
@@ -6589,7 +6721,9 @@ struct GpuReadExtender{
             d_consensusQuality.data(),
             d_mateHasBeenFound.data(),
             d_goodscores.data(),
-            resultMSAColumnPitchInElements
+            resultMSAColumnPitchInElements,
+            insertSize,
+            insertSizeStddev
         );
 
         cudaMemcpyAsync(
