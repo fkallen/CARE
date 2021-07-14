@@ -1804,6 +1804,7 @@ struct GpuReadExtender{
         std::size_t qualityPitchInBytes = 0;
         thrust::host_vector<bool> pairedEnd{};
         thrust::host_vector<bool> mateHasBeenFound{};
+        thrust::host_vector<bool> overwriteLastResultWithMate{};
         HostVector<int> id{};
         HostVector<int> pairId{};
         HostVector<int> myLength{};
@@ -1844,6 +1845,7 @@ struct GpuReadExtender{
         void clear(){
             pairedEnd.clear();
             mateHasBeenFound.clear();
+            overwriteLastResultWithMate.clear();
             id.clear();
             pairId.clear();
             myLength.clear();
@@ -1875,6 +1877,7 @@ struct GpuReadExtender{
         void reserve(int newsize){
             pairedEnd.reserve(newsize);
             mateHasBeenFound.reserve(newsize);
+            overwriteLastResultWithMate.reserve(newsize);
             id.reserve(newsize);
             pairId.reserve(newsize);
             myLength.reserve(newsize);
@@ -1908,6 +1911,7 @@ struct GpuReadExtender{
         void resize(int newsize){
             pairedEnd.resize(newsize);
             mateHasBeenFound.resize(newsize);
+            overwriteLastResultWithMate.resize(newsize);
             id.resize(newsize);
             pairId.resize(newsize);
             myLength.resize(newsize);
@@ -1951,6 +1955,7 @@ struct GpuReadExtender{
 
             pairedEnd.insert(pairedEnd.end(), rhs.pairedEnd.begin(), rhs.pairedEnd.end());
             mateHasBeenFound.insert(mateHasBeenFound.end(), rhs.mateHasBeenFound.begin(), rhs.mateHasBeenFound.end());
+            overwriteLastResultWithMate.insert(overwriteLastResultWithMate.end(), rhs.overwriteLastResultWithMate.begin(), rhs.overwriteLastResultWithMate.end());
             id.insert(id.end(), rhs.id.begin(), rhs.id.end());
             pairId.insert(pairId.end(), rhs.pairId.begin(), rhs.pairId.end());
             myLength.insert(myLength.end(), rhs.myLength.begin(), rhs.myLength.end());
@@ -2018,6 +2023,7 @@ struct GpuReadExtender{
         bool isEqualTo(int which, const ExtensionTaskCpuData& rhs) const noexcept{
             if(pairedEnd[which] != rhs.pairedEnd){ std::cerr << "error pairedEnd\n"; return false;}
             if(mateHasBeenFound[which] != rhs.mateHasBeenFound){ std::cerr << "error mateHasBeenFound\n"; return false;}
+            if(overwriteLastResultWithMate[which] != rhs.overwriteLastResultWithMate){ std::cerr << "error overwriteLastResultWithMate\n"; return false;}
             if(id[which] != rhs.id){ std::cerr << "error id\n"; return false;}
             if(pairId[which] != rhs.pairId){ std::cerr << "error pairId\n"; return false;}
             if(myLength[which] != rhs.myLength){ std::cerr << "error myLength\n"; return false;}
@@ -2031,10 +2037,10 @@ struct GpuReadExtender{
             if(direction[which] != rhs.direction){ std::cerr << "error direction\n"; return false;}
             if(decodedMateRevC[which] != rhs.decodedMateRevC){ std::cerr << "error decodedMateRevC\n"; return false;}
             if(mateQualityScoresReversed[which] != rhs.mateQualityScoresReversed){ std::cerr << "error mateQualityScoresReversed\n"; return false;}
-            // if(totalDecodedAnchorsLengths[which] != rhs.totalDecodedAnchorsLengths){ std::cerr << "error totalDecodedAnchorsLengths\n"; return false;}
-            // if(totalDecodedAnchorsFlat[which] != rhs.totalDecodedAnchorsFlat){ std::cerr << "error totalDecodedAnchorsFlat\n"; return false;}
-            // if(totalAnchorQualityScoresFlat[which] != rhs.totalAnchorQualityScoresFlat){ std::cerr << "error totalAnchorQualityScoresFlat\n"; return false;}
-            // if(totalAnchorBeginInExtendedRead[which] != rhs.totalAnchorBeginInExtendedRead){ std::cerr << "error totalAnchorBeginInExtendedRead\n"; return false;}
+            if(totalDecodedAnchorsLengths[which] != rhs.totalDecodedAnchorsLengths){ std::cerr << "error totalDecodedAnchorsLengths\n"; return false;}
+            if(totalDecodedAnchorsFlat[which] != rhs.totalDecodedAnchorsFlat){ std::cerr << "error totalDecodedAnchorsFlat\n"; return false;}
+            if(totalAnchorQualityScoresFlat[which] != rhs.totalAnchorQualityScoresFlat){ std::cerr << "error totalAnchorQualityScoresFlat\n"; return false;}
+            if(totalAnchorBeginInExtendedRead[which] != rhs.totalAnchorBeginInExtendedRead){ std::cerr << "error totalAnchorBeginInExtendedRead\n"; return false;}
 
             //TODO soadata
 
@@ -2200,6 +2206,7 @@ struct GpuReadExtender{
             auto inputScalars1Begin = thrust::make_zip_iterator(thrust::make_tuple(
                 pairedEnd.begin(),
                 mateHasBeenFound.begin(),
+                overwriteLastResultWithMate.begin(),
                 id.begin(),
                 pairId.begin(),
                 myLength.begin(),
@@ -2210,6 +2217,7 @@ struct GpuReadExtender{
             auto outputScalars1Begin = thrust::make_zip_iterator(thrust::make_tuple(
                 selection.pairedEnd.begin(),
                 selection.mateHasBeenFound.begin(),
+                selection.overwriteLastResultWithMate.begin(),
                 selection.id.begin(),
                 selection.pairId.begin(),
                 selection.myLength.begin(),
@@ -2925,6 +2933,7 @@ struct GpuReadExtender{
             }
 
             data.mateHasBeenFound = false;
+            data.overwriteLastResultWithMate = false;
             data.id = id;
             data.pairId = data.myReadId / 2;
             data.accumExtensionLengths = 0;
@@ -3070,6 +3079,7 @@ struct GpuReadExtender{
             }
 
             data.mateHasBeenFound[t] = false;
+            data.overwriteLastResultWithMate[t] = false;
             data.id[t] = id;
             data.pairId[t] = data.myReadId[t] / 2;
             data.accumExtensionLengths[t] = 0;
@@ -4595,103 +4605,43 @@ struct GpuReadExtender{
 
                 const int myNumDecodedAnchors = soaTasks.totalDecodedAnchorsLengths[i].size();
 
+                const int newlength = h_outputAnchorLengths[i];
+                    
+                soaTasks.accumExtensionLengths[i] = h_accumExtensionsLengths[i];
+
+                soaTasks.totalDecodedAnchorsFlat[i].resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
+                assert(newlength <= decodedSequencePitchInBytes);
+                std::copy_n(
+                    h_outputAnchors.data() + i * outputAnchorPitchInBytes,
+                    newlength,
+                    soaTasks.totalDecodedAnchorsFlat[i].begin()
+                        + myNumDecodedAnchors * decodedSequencePitchInBytes
+                );
+                soaTasks.totalDecodedAnchorsLengths[i].push_back(newlength);
+
+                soaTasks.totalAnchorQualityScoresFlat[i].resize((myNumDecodedAnchors+1) * qualityPitchInBytes);
+                assert(newlength <= qualityPitchInBytes);
+                std::copy_n(
+                    h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes,
+                    newlength,
+                    soaTasks.totalAnchorQualityScoresFlat[i].begin()
+                        + myNumDecodedAnchors * qualityPitchInBytes
+                );
+
+
+                soaTasks.totalAnchorBeginInExtendedRead[i].push_back(soaTasks.accumExtensionLengths[i]);
+
                 if(!soaTasks.mateHasBeenFound[i]){
-                    const int newlength = h_outputAnchorLengths[i];
-                    
-                    soaTasks.accumExtensionLengths[i] = h_accumExtensionsLengths[i];
-
-                    soaTasks.totalDecodedAnchorsFlat[i].resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
-                    assert(newlength <= decodedSequencePitchInBytes);
-                    std::copy_n(
-                        h_outputAnchors.data() + i * outputAnchorPitchInBytes,
-                        newlength,
-                        soaTasks.totalDecodedAnchorsFlat[i].begin()
-                            + myNumDecodedAnchors * decodedSequencePitchInBytes
-                    );
-                    soaTasks.totalDecodedAnchorsLengths[i].push_back(newlength);
-
-                    soaTasks.totalAnchorQualityScoresFlat[i].resize((myNumDecodedAnchors+1) * qualityPitchInBytes);
-                    assert(newlength <= qualityPitchInBytes);
-                    std::copy_n(
-                        h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes,
-                        newlength,
-                        soaTasks.totalAnchorQualityScoresFlat[i].begin()
-                            + myNumDecodedAnchors * qualityPitchInBytes
-                    );
-
-
-                    soaTasks.totalAnchorBeginInExtendedRead[i].push_back(soaTasks.accumExtensionLengths[i]);
-                    
+                    //nothing else to do                    
                 }else{
                     const int sizeofGap = h_sizeOfGapToMate[i];
                     if(sizeofGap == 0){
-                        soaTasks.accumExtensionLengths[i] = h_accumExtensionsLengths[i];
-                        soaTasks.totalAnchorBeginInExtendedRead[i].push_back(soaTasks.accumExtensionLengths[i]);
-  
-                        soaTasks.totalDecodedAnchorsFlat[i].resize((myNumDecodedAnchors+1) * decodedSequencePitchInBytes);
-                        assert(soaTasks.mateLength[i] <= decodedSequencePitchInBytes);
-                        std::copy(
-                            soaTasks.decodedMateRevC[i].begin(),
-                            soaTasks.decodedMateRevC[i].end(),
-                            soaTasks.totalDecodedAnchorsFlat[i].begin()
-                                + myNumDecodedAnchors * decodedSequencePitchInBytes
-                        );
-                        soaTasks.totalDecodedAnchorsLengths[i].push_back(soaTasks.mateLength[i]);
-
-                        soaTasks.totalAnchorQualityScoresFlat[i].resize((myNumDecodedAnchors + 1) * qualityPitchInBytes);
-                        assert(soaTasks.mateLength[i] <= qualityPitchInBytes);
-                        std::copy(
-                            soaTasks.mateQualityScoresReversed[i].begin(),
-                            soaTasks.mateQualityScoresReversed[i].end(),
-                            soaTasks.totalAnchorQualityScoresFlat[i].begin()
-                                + myNumDecodedAnchors * qualityPitchInBytes
-                        );
+                        soaTasks.overwriteLastResultWithMate[i] = true;
 
                     }else{
                         const int newlength = h_outputAnchorLengths[i];
-
-                        soaTasks.totalDecodedAnchorsFlat[i].resize((myNumDecodedAnchors+2) * decodedSequencePitchInBytes);
-                        soaTasks.totalAnchorQualityScoresFlat[i].resize((myNumDecodedAnchors + 2) * qualityPitchInBytes);
-
-                        soaTasks.accumExtensionLengths[i] = h_accumExtensionsLengths[i];
-                        assert(newlength <= decodedSequencePitchInBytes);
-                        std::copy_n(
-                            h_outputAnchors.data() + i * outputAnchorPitchInBytes,
-                            newlength,
-                            soaTasks.totalDecodedAnchorsFlat[i].begin()
-                                + myNumDecodedAnchors * decodedSequencePitchInBytes
-                        );
-                        soaTasks.totalDecodedAnchorsLengths[i].push_back(newlength);
-
-                        assert(newlength <= qualityPitchInBytes);
-                        std::copy_n(
-                            h_outputAnchorQualities.data() + i * outputAnchorQualityPitchInBytes,
-                            newlength,
-                            soaTasks.totalAnchorQualityScoresFlat[i].begin()
-                                + myNumDecodedAnchors * qualityPitchInBytes
-                        );
-
-                        soaTasks.totalAnchorBeginInExtendedRead[i].push_back(soaTasks.accumExtensionLengths[i]);
-
                         soaTasks.accumExtensionLengths[i] += newlength;
                         soaTasks.totalAnchorBeginInExtendedRead[i].push_back(soaTasks.accumExtensionLengths[i]);
-                        //soaTasks.totalDecodedAnchors.emplace_back(soaTasks.decodedMateRevC);
-                        assert(soaTasks.mateLength[i] <= decodedSequencePitchInBytes);
-                        std::copy(
-                            soaTasks.decodedMateRevC[i].begin(),
-                            soaTasks.decodedMateRevC[i].end(),
-                            soaTasks.totalDecodedAnchorsFlat[i].begin()
-                                + (myNumDecodedAnchors + 1) * decodedSequencePitchInBytes
-                        );
-                        soaTasks.totalDecodedAnchorsLengths[i].push_back(soaTasks.mateLength[i]);
-                        
-                        assert(soaTasks.mateLength[i] <= qualityPitchInBytes);
-                        std::copy(
-                            soaTasks.mateQualityScoresReversed[i].begin(),
-                            soaTasks.mateQualityScoresReversed[i].end(),
-                            soaTasks.totalAnchorQualityScoresFlat[i].begin()
-                                + (myNumDecodedAnchors + 1) * qualityPitchInBytes
-                        );
                     }
                 }
             }
