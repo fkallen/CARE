@@ -800,6 +800,8 @@ namespace readextendergpukernels{
         int* __restrict__ outputLengths,
         int* __restrict__ outRead1Begins,
         int* __restrict__ outRead2Begins,
+        bool* __restrict__ outMateHasBeenFound,
+        bool* __restrict__ outMergedDifferentStrands,
         int outputPitch,
         const int* __restrict__ originalReadLengths,
         const int* __restrict__ dataExtendedReadLengths,
@@ -809,7 +811,8 @@ namespace readextendergpukernels{
         const float* __restrict__ dataGoodScores,
         int inputPitch,
         int insertSize,
-        int insertSizeStddev
+        int insertSizeStddev,
+        int debugindex
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
@@ -886,6 +889,8 @@ namespace readextendergpukernels{
     
         //process pair at position pairIdsToProcess[posInList] and store to result position posInList
         for(int posInList = groupIdInGrid; posInList < numPairIdsToProcess; posInList += numGroupsInGrid){
+            group.sync(); //reuse smem
+
             const int p = pairIdsToProcess[posInList];
 
             const int i0 = 4 * p + 0;
@@ -899,6 +904,9 @@ namespace readextendergpukernels{
             int* const myResultRead2Begins = outRead2Begins + posInList;
             int* const myResultLengths = outputLengths + posInList;
             bool* const myResultAnchorIsLR = outputAnchorIsLR + posInList;
+            bool* const myResultMateHasBeenFound = outMateHasBeenFound + posInList;
+            bool* const myResultMergedDifferentStrands = outMergedDifferentStrands + posInList;
+            
 
             auto LRmatefoundfunc = [&](){
                 const int extendedReadLength3 = dataExtendedReadLengths[i3];
@@ -943,6 +951,8 @@ namespace readextendergpukernels{
                     *myResultRead2Begins = read2begin;
                     *myResultLengths = resultsize;
                     *myResultAnchorIsLR = true;
+                    *myResultMateHasBeenFound = true;
+                    *myResultMergedDifferentStrands = false;
                 }
             };
 
@@ -1006,6 +1016,8 @@ namespace readextendergpukernels{
                     *myResultRead2Begins = read2begin;
                     *myResultLengths = resultsize;
                     *myResultAnchorIsLR = false;
+                    *myResultMateHasBeenFound = true;
+                    *myResultMergedDifferentStrands = false;
                 }
             };
 
@@ -1014,15 +1026,15 @@ namespace readextendergpukernels{
                     LRmatefoundfunc();
                 }else{
                     RLmatefoundfunc();
-                }
+                }                
             }else 
             if(dataMateHasBeenFound[i0]){
-                LRmatefoundfunc();
+                LRmatefoundfunc();                
             }else if(dataMateHasBeenFound[i2]){
                 RLmatefoundfunc();                
             }else{
-                //nope. kernel cannot handle this case
-                assert(false);
+                
+                //assert(false); //nope. kernel cannot handle this case
 
                 constexpr int minimumOverlap = 40;
                 constexpr float maxRelativeErrorInOverlap = 0.05;
@@ -1041,6 +1053,33 @@ namespace readextendergpukernels{
                 const int originalLength2 = originalReadLengths[i2];
                 const int originalLength3 = originalReadLengths[i3];
 
+                if(group.thread_rank() == 0 && posInList == debugindex){
+                    printf("d0 %d %d\n", extendedReadLength0, originalLength0);
+                    for(int k = 0; k < extendedReadLength0; k++){
+                        printf("%c", dataExtendedReadSequences[i0 * inputPitch + k]);
+                    }
+                    printf("\n");
+
+                    printf("d1 %d %d\n", extendedReadLength1, originalLength1);
+                    for(int k = 0; k < extendedReadLength1; k++){
+                        printf("%c", dataExtendedReadSequences[i1 * inputPitch + k]);
+                    }
+                    printf("\n");
+
+                    printf("d2 %d %d\n", extendedReadLength2, originalLength2);
+                    for(int k = 0; k < extendedReadLength2; k++){
+                        printf("%c", dataExtendedReadSequences[i2 * inputPitch + k]);
+                    }
+                    printf("\n");
+
+                    printf("d3 %d %d\n", extendedReadLength3, originalLength3);
+                    for(int k = 0; k < extendedReadLength3; k++){
+                        printf("%c", dataExtendedReadSequences[i3 * inputPitch + k]);
+                    }
+                    printf("\n");
+                }   
+                group.sync();
+
                 //insert extensions of reverse complement of d3 at beginning
                 if(extendedReadLength3 > originalLength3){
 
@@ -1056,6 +1095,14 @@ namespace readextendergpukernels{
                     }
 
                     currentsize = (extendedReadLength3 - originalLength3);
+
+                    if(group.thread_rank() == 0 && posInList == debugindex){
+                        printf("d3ext begin\n");
+                        for(int k = 0; k < currentsize; k++){
+                            printf("%c", myResultSequence[k]);
+                        }
+                        printf("\n");
+                    }
                 }
 
                 //try to find overlap of d0 and revc(d2)
@@ -1067,13 +1114,13 @@ namespace readextendergpukernels{
                 if(extendedReadLength0 + extendedReadLength2 >= insertSize - insertSizeStddev + minimumOverlap){
                     //copy sequences to smem
 
-                    for(int k = group.thread_rank(); k < extendedReadLength2; k += group.size()){
+                    for(int k = group.thread_rank(); k < extendedReadLength0; k += group.size()){
                         smemSequence[k] = dataExtendedReadSequences[i0 * inputPitch + k];
                     }
 
                     for(int k = group.thread_rank(); k < extendedReadLength2; k += group.size()){
                         smemSequence2[k] = SequenceHelpers::complementBaseDecoded(
-                            dataExtendedReadSequences[i2 * inputPitch + extendedReadLength3 - 1 - k]
+                            dataExtendedReadSequences[i2 * inputPitch + extendedReadLength2 - 1 - k]
                         );
                     }
 
@@ -1128,14 +1175,21 @@ namespace readextendergpukernels{
                     //insert extensions of d1 at end
 
                     for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
-                        myResultSequence[currentsize + k] = dataExtendedReadSequences[i0 * inputPitch + originalLength1 + k];
+                        myResultSequence[currentsize + k] = dataExtendedReadSequences[i1 * inputPitch + originalLength1 + k];
                     }
 
                     for(int k = group.thread_rank(); k < (extendedReadLength1 - originalLength1); k += group.size()){
-                        myResultQualities[currentsize + k] = dataExtendedReadQualities[i0 * inputPitch + originalLength1 + k];
+                        myResultQualities[currentsize + k] = dataExtendedReadQualities[i1 * inputPitch + originalLength1 + k];
                     }
 
                     currentsize += (extendedReadLength1 - originalLength1);
+                }
+
+                if(extendedReadLength3 > originalLength3){
+                    read1begin += extendedReadLength3 - originalLength3;
+                    if(didMergeDifferentStrands){
+                        read2begin += extendedReadLength3 - originalLength3;
+                    }
                 }
 
                 if(group.thread_rank() == 0){
@@ -1143,6 +1197,8 @@ namespace readextendergpukernels{
                     *myResultRead2Begins = read2begin;
                     *myResultLengths = currentsize;
                     *myResultAnchorIsLR = true;
+                    *myResultMateHasBeenFound = didMergeDifferentStrands;
+                    *myResultMergedDifferentStrands = didMergeDifferentStrands;
                 }
             }
 
@@ -5787,7 +5843,8 @@ struct GpuReadExtender{
 
         cubSelectFlagged(
             thrust::make_counting_iterator(0),
-            thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}),
+            //thrust::make_transform_iterator(d_isSimpleResultConstruction.data(), thrust::logical_not<bool>{}),
+            thrust::make_constant_iterator(false),
             d_cpuPairIdsToProcess.data(),
             d_numCpuPairIdsToProcess.data(),
             numFinishedTasks / 4,
@@ -5823,7 +5880,8 @@ struct GpuReadExtender{
 
         cubSelectFlagged(
             thrust::make_counting_iterator(0),
-            d_isSimpleResultConstruction.data(),
+            //d_isSimpleResultConstruction.data(),
+            thrust::make_constant_iterator(true),
             d_gpuPairIdsToProcess.data(),
             d_numGpuPairIdsToProcess.data(),
             numFinishedTasks / 4,
@@ -5858,6 +5916,8 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> d_pairResultLengths(numFinishedTasks / 4, stream, *cubAllocator);
         CachedDeviceUVector<int> d_pairResultRead1Begins(numFinishedTasks / 4, stream, *cubAllocator);
         CachedDeviceUVector<int> d_pairResultRead2Begins(numFinishedTasks / 4, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_pairResultMateHasBeenFound(numFinishedTasks / 4, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_pairResultMergedDifferentStrands(numFinishedTasks / 4, stream, *cubAllocator);
         
 
         h_pairResultAnchorIsLR.resize(numFinishedTasks / 4);
@@ -5865,7 +5925,20 @@ struct GpuReadExtender{
         h_pairResultQualities.resize(numFinishedTasks / 4 * outputPitch);
         h_pairResultLengths.resize(numFinishedTasks / 4);
         h_pairResultRead1Begins.resize(numFinishedTasks / 4);
-        h_pairResultRead2Begins.resize(numFinishedTasks / 4);                
+        h_pairResultRead2Begins.resize(numFinishedTasks / 4);
+        h_pairResultMateHasBeenFound.resize(numFinishedTasks / 4);
+        h_pairResultMergedDifferentStrands.resize(numFinishedTasks / 4);
+
+        int debugindex = -1;
+        for(int i = 0; i < numFinishedTasks; i++){
+            const auto& task = finishedTasks4[i];
+
+            if(task.myReadId == 620){
+                debugindex = i / 4;
+                break;
+            }
+        }
+        
 
         CachedDeviceUVector<float> d_goodscores(numFinishedTasks, stream, *cubAllocator);
         h_goodscores.resize(numFinishedTasks);
@@ -5885,7 +5958,8 @@ struct GpuReadExtender{
 
         const std::size_t smem = 2 * outputPitch;
 
-        readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<numFinishedTasks / 4, 128, smem, stream>>>(
+        //readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<numFinishedTasks / 4, 128, smem, stream>>>(
+        readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<1, 128, smem, stream>>>(
             d_numGpuPairIdsToProcess.data(),
             d_gpuPairIdsToProcess.data(),
             d_pairResultAnchorIsLR.data(),
@@ -5894,6 +5968,8 @@ struct GpuReadExtender{
             d_pairResultLengths.data(),
             d_pairResultRead1Begins.data(),
             d_pairResultRead2Begins.data(),
+            d_pairResultMateHasBeenFound.data(),
+            d_pairResultMergedDifferentStrands.data(),
             outputPitch,
             d_anchorSequencesLength2.data(), //originalReadLengths,
             d_resultLengths.data(),
@@ -5903,8 +5979,26 @@ struct GpuReadExtender{
             d_goodscores.data(),
             resultMSAColumnPitchInElements,
             insertSize,
-            insertSizeStddev
+            insertSizeStddev,
+            debugindex
         );
+
+        
+        cudaMemcpyAsync(
+            h_pairResultMateHasBeenFound.data(),
+            d_pairResultMateHasBeenFound.data(),
+            sizeof(bool) * numFinishedTasks / 4,
+            D2H,
+            stream
+        ); CUERR;
+
+        cudaMemcpyAsync(
+            h_pairResultMergedDifferentStrands.data(),
+            d_pairResultMergedDifferentStrands.data(),
+            sizeof(bool) * numFinishedTasks / 4,
+            D2H,
+            stream
+        ); CUERR;
 
         cudaMemcpyAsync(
             h_pairResultAnchorIsLR.data(),
@@ -6074,7 +6168,10 @@ struct GpuReadExtender{
             const int gpuLength = h_pairResultLengths[k];
             const int read1begin = h_pairResultRead1Begins[k];
             const int read2begin = h_pairResultRead2Begins[k];
-            const bool anchorIsLR = h_pairResultAnchorIsLR[k]; 
+            const bool anchorIsLR = h_pairResultAnchorIsLR[k];
+            const bool mateHasBeenFound = h_pairResultMateHasBeenFound[k];
+            const bool mergedDifferentStrands = h_pairResultMergedDifferentStrands[k];
+            
 
             std::string s1(gpuSeq, gpuLength);
             std::string s2(gpuQual, gpuLength);
@@ -6086,11 +6183,15 @@ struct GpuReadExtender{
             const auto& d2 = finishedTasks4[i2]; //RL search
 
             if(anchorIsLR){
+                if(mateHasBeenFound){
+                    gpuResult.abortReason = extension::AbortReason::None;
+                }else{
+                    gpuResult.abortReason = d0.abortReason;
+                }
 
                 gpuResult.direction = d0.direction;
                 gpuResult.numIterations = d0.iteration;
-                gpuResult.aborted = d0.abortReason != extension::AbortReason::None;
-                gpuResult.abortReason = d0.abortReason;
+                gpuResult.aborted = gpuResult.abortReason != extension::AbortReason::None;                
                 gpuResult.readId1 = d0.myReadId;
                 gpuResult.readId2 = d0.mateReadId;
                 gpuResult.originalLength = d0.myLength;
@@ -6098,15 +6199,20 @@ struct GpuReadExtender{
                 gpuResult.read1begin = read1begin;
                 gpuResult.goodscore = d0.goodscore;
                 gpuResult.read2begin = read2begin;
-                gpuResult.mateHasBeenFound = d0.mateHasBeenFound;
+                gpuResult.mateHasBeenFound = mateHasBeenFound;
                 gpuResult.extendedRead = std::move(s1);
                 gpuResult.qualityScores = std::move(s2);
+                gpuResult.mergedFromReadsWithoutMate = mergedDifferentStrands;
 
             }else{
+                if(mateHasBeenFound){
+                    gpuResult.abortReason = extension::AbortReason::None;
+                }else{
+                    gpuResult.abortReason = d2.abortReason;
+                }
                 gpuResult.direction = d2.direction;
                 gpuResult.numIterations = d2.iteration;
-                gpuResult.aborted = d2.abortReason != extension::AbortReason::None;
-                gpuResult.abortReason = d2.abortReason;
+                gpuResult.aborted = gpuResult.abortReason != extension::AbortReason::None;
                 gpuResult.readId1 = d2.myReadId;
                 gpuResult.readId2 = d2.mateReadId;
                 gpuResult.originalLength = d2.mateLength;
@@ -6114,9 +6220,10 @@ struct GpuReadExtender{
                 gpuResult.read1begin = read1begin;
                 gpuResult.goodscore = d2.goodscore;
                 gpuResult.read2begin = read2begin;
-                gpuResult.mateHasBeenFound = d2.mateHasBeenFound;
+                gpuResult.mateHasBeenFound = mateHasBeenFound;
                 gpuResult.extendedRead = std::move(s1);
                 gpuResult.qualityScores = std::move(s2);
+                gpuResult.mergedFromReadsWithoutMate = mergedDifferentStrands;
             }
         }
 
@@ -6124,20 +6231,21 @@ struct GpuReadExtender{
 
         //cpuResultVector.insert(cpuResultVector.end(), std::make_move_iterator(gpuResultVector.begin()), std::make_move_iterator(gpuResultVector.end()));
 
-        auto soaresult = constructResults4SoA();
-        if(soaresult.size() != cpuResultVector.size()){
-            assert(false);
-        }
-        for(std::size_t i = 0; i < soaresult.size(); i++){
-            assert(soaresult[i] == cpuResultVector[i]);
-        }
-        assert(soaresult == cpuResultVector);
+         auto asdsgfd = getFinishedSoaTasksOfFinishedPairsAndRemoveThemFromList();
+        // auto soaresult = constructResults4SoA();
+        // if(soaresult.size() != cpuResultVector.size()){
+        //     assert(false);
+        // }
+        // for(std::size_t i = 0; i < soaresult.size(); i++){
+        //     assert(soaresult[i] == cpuResultVector[i]);
+        // }
+        // assert(soaresult == cpuResultVector);
 
         return cpuResultVector;
     }
 
 
-
+#if 0
     std::vector<extension::ExtendResult> constructResults4SoA(){
 
         auto finishedTasks4 = getFinishedSoaTasksOfFinishedPairsAndRemoveThemFromList();
@@ -6928,7 +7036,7 @@ struct GpuReadExtender{
 
         return cpuResultVector;
     }
-
+#endif
 
 
     //helpers
@@ -7867,7 +7975,6 @@ struct GpuReadExtender{
 
                     myResult.extendedRead.insert(myResult.extendedRead.end(), mergeresult.first.begin(), mergeresult.first.end());
                     myResult.qualityScores.insert(myResult.qualityScores.end(), mergeresult.second.begin(), mergeresult.second.end());
-                    myResult.read2begin = myResult.extendedRead.size() - d2.myLength;
                     myResult.originalMateLength = d2.myLength;
                     myResult.mateHasBeenFound = true;
                     myResult.aborted = false;
@@ -8057,7 +8164,6 @@ struct GpuReadExtender{
 
                     myResult.extendedRead.insert(myResult.extendedRead.end(), mergeresult.first.begin(), mergeresult.first.end());
                     myResult.qualityScores.insert(myResult.qualityScores.end(), mergeresult.second.begin(), mergeresult.second.end());
-                    myResult.read2begin = myResult.extendedRead.size() - finishedData.myLength[d2];
                     myResult.originalMateLength = finishedData.myLength[d2];
                     myResult.mateHasBeenFound = true;
                     myResult.aborted = false;
@@ -8490,6 +8596,8 @@ struct GpuReadExtender{
     PinnedBuffer<int> h_pairResultLengths{};
     PinnedBuffer<int> h_pairResultRead1Begins{};
     PinnedBuffer<int> h_pairResultRead2Begins{};
+    PinnedBuffer<bool> h_pairResultMateHasBeenFound{};
+    PinnedBuffer<bool> h_pairResultMergedDifferentStrands{};
 
     PinnedBuffer<int> h_numGpuPairIdsToProcess{};
     PinnedBuffer<int> h_numCpuPairIdsToProcess{};
