@@ -2144,15 +2144,15 @@ struct GpuReadExtender{
             totalAnchorQualityScoresFlat.resize(newsize);
             totalAnchorBeginInExtendedRead.resize(newsize);
 
-            soadecodedMateRevC.resize(newsize);
-            soamateQualityScoresReversed.resize(newsize);
-            soainputAnchorsDecoded.resize(newsize);
-            soainputQualities.resize(newsize);
+            soadecodedMateRevC.resize(newsize * decodedSequencePitchInBytes);
+            soamateQualityScoresReversed.resize(newsize * qualityPitchInBytes);
+            soainputAnchorsDecoded.resize(newsize * decodedSequencePitchInBytes);
+            soainputQualities.resize(newsize * qualityPitchInBytes);
             soainputAnchorLengths.resize(newsize);
-            soatotalDecodedAnchorsLengths.resize(newsize);
-            soatotalDecodedAnchorsFlat.resize(newsize);
-            soatotalAnchorQualityScoresFlat.resize(newsize);
-            soatotalAnchorBeginInExtendedRead.resize(newsize);
+            // soatotalDecodedAnchorsLengths.resize(newsize);
+            // soatotalDecodedAnchorsFlat.resize(newsize);
+            // soatotalAnchorQualityScoresFlat.resize(newsize);
+            // soatotalAnchorBeginInExtendedRead.resize(newsize);
             soaNumEntriesPerTask.resize(newsize);
             soaNumEntriesPerTaskPrefixSum.resize(newsize);
 
@@ -3290,16 +3290,19 @@ struct GpuReadExtender{
 
         newSoaTaskData.soadecodedMateRevC.resize(numAdditionalTasks * decodedSequencePitchInBytes);
         newSoaTaskData.soamateQualityScoresReversed.resize(numAdditionalTasks * qualityPitchInBytes);
-        newSoaTaskData.soatotalDecodedAnchorsLengths.resize(numAdditionalTasks);
-        newSoaTaskData.soatotalDecodedAnchorsFlat.resize(numAdditionalTasks * decodedSequencePitchInBytes);
-        newSoaTaskData.soatotalAnchorQualityScoresFlat.resize(numAdditionalTasks * qualityPitchInBytes);
-        newSoaTaskData.soatotalAnchorBeginInExtendedRead.resize(numAdditionalTasks);
+        // newSoaTaskData.soatotalDecodedAnchorsLengths.resize(numAdditionalTasks);
+        // newSoaTaskData.soatotalDecodedAnchorsFlat.resize(numAdditionalTasks * decodedSequencePitchInBytes);
+        // newSoaTaskData.soatotalAnchorQualityScoresFlat.resize(numAdditionalTasks * qualityPitchInBytes);
+        //newSoaTaskData.soatotalAnchorBeginInExtendedRead.resize(numAdditionalTasks);
         newSoaTaskData.soaNumEntriesPerTask.resize(numAdditionalTasks);
         newSoaTaskData.soaNumEntriesPerTaskPrefixSum.resize(numAdditionalTasks);
 
-        thrust::fill(newSoaTaskData.soaNumEntriesPerTask.begin(), newSoaTaskData.soaNumEntriesPerTask.end(), 1);
-        thrust::sequence(newSoaTaskData.soaNumEntriesPerTaskPrefixSum.begin(), newSoaTaskData.soaNumEntriesPerTaskPrefixSum.end(), 0);
-        thrust::fill(newSoaTaskData.soatotalAnchorBeginInExtendedRead.begin(), newSoaTaskData.soatotalAnchorBeginInExtendedRead.end(), 0);
+        // thrust::fill(newSoaTaskData.soaNumEntriesPerTask.begin(), newSoaTaskData.soaNumEntriesPerTask.end(), 1);
+        // thrust::sequence(newSoaTaskData.soaNumEntriesPerTaskPrefixSum.begin(), newSoaTaskData.soaNumEntriesPerTaskPrefixSum.end(), 0);
+        // thrust::fill(newSoaTaskData.soatotalAnchorBeginInExtendedRead.begin(), newSoaTaskData.soatotalAnchorBeginInExtendedRead.end(), 0);
+
+        thrust::fill(newSoaTaskData.soaNumEntriesPerTask.begin(), newSoaTaskData.soaNumEntriesPerTask.end(), 0);
+        thrust::fill(newSoaTaskData.soaNumEntriesPerTaskPrefixSum.begin(), newSoaTaskData.soaNumEntriesPerTaskPrefixSum.end(), 0);
 
         for(int t = 0; t < numAdditionalTasks; t++){
             SoAExtensionTaskCpuData& data = newSoaTaskData;
@@ -3334,11 +3337,11 @@ struct GpuReadExtender{
                     data.mateQualityScoresReversed[t].begin()
                 );
 
-                std::copy(
-                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
-                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
-                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
-                );
+                // std::copy(
+                //     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                //     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
+                //     data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                // );
                 std::reverse_copy(
                     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
                     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.mateLength[t],
@@ -3367,11 +3370,11 @@ struct GpuReadExtender{
 
                 data.mateQualityScoresReversed[t].clear();
 
-                std::reverse_copy(
-                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
-                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
-                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
-                );
+                // std::reverse_copy(
+                //     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                //     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
+                //     data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                // );
             }else if(id == 2){
                 data.myReadId[t] = h_anchorReadIds[2 * groupId + 1];
                 data.mateReadId[t] = h_anchorReadIds[2 * groupId + 0];
@@ -3400,11 +3403,11 @@ struct GpuReadExtender{
                     data.mateQualityScoresReversed[t].begin()
                 );
 
-                std::copy(
-                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
-                    h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
-                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
-                );
+                // std::copy(
+                //     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes,
+                //     h_anchorQualityScores + (2 * groupId + 1) * qualityPitchInBytes + data.myLength[t],
+                //     data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                // );
 
                 std::reverse_copy(
                     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
@@ -3435,11 +3438,11 @@ struct GpuReadExtender{
 
                 data.mateQualityScoresReversed[t].clear();
 
-                std::reverse_copy(
-                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
-                    h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
-                    data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
-                );
+                // std::reverse_copy(
+                //     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes,
+                //     h_anchorQualityScores + (2 * groupId) * qualityPitchInBytes + data.myLength[t],
+                //     data.soatotalAnchorQualityScoresFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * qualityPitchInBytes
+                // );
             }
 
             data.mateHasBeenFound[t] = false;
@@ -3454,7 +3457,7 @@ struct GpuReadExtender{
             data.totalDecodedAnchorsLengths[t].push_back(data.myLength[t]);
             data.totalAnchorBeginInExtendedRead[t].push_back(0);
 
-            data.soatotalDecodedAnchorsLengths[t] = data.myLength[t];
+            //data.soatotalDecodedAnchorsLengths[t] = data.myLength[t];
 
             data.soainputAnchorLengths[t] = h_anchorSequencesLength[2 * groupId + 0];
         }
@@ -3540,11 +3543,11 @@ struct GpuReadExtender{
                     data.soadecodedMateRevC.begin() + t * decodedSequencePitchInBytes
                 );
 
-                std::copy(
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
-                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
-                );
+                // std::copy(
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                //     data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                // );
 
                 std::copy(
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
@@ -3561,11 +3564,11 @@ struct GpuReadExtender{
                     data.totalDecodedAnchorsFlat[t].begin()
                 );
 
-                std::copy(
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
-                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
-                );
+                // std::copy(
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                //     data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                // );
 
                 std::copy(
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
@@ -3592,11 +3595,11 @@ struct GpuReadExtender{
                     h_subjectSequencesDataDecoded.data() + (t + 1) * decodedSequencePitchInBytes + data.mateLength[t],
                     data.soadecodedMateRevC.begin() + t * decodedSequencePitchInBytes
                 );
-                std::copy(
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
-                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
-                );
+                // std::copy(
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                //     data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                // );
 
                 std::copy(
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
@@ -3613,11 +3616,11 @@ struct GpuReadExtender{
                     data.totalDecodedAnchorsFlat[t].begin()
                 );
 
-                std::copy(
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
-                    h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
-                    data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
-                );
+                // std::copy(
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
+                //     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes + data.myLength[t],
+                //     data.soatotalDecodedAnchorsFlat.begin() + data.soaNumEntriesPerTaskPrefixSum[t] * decodedSequencePitchInBytes
+                // );
 
                 std::copy(
                     h_subjectSequencesDataDecoded.data() + (t) * decodedSequencePitchInBytes,
@@ -6679,7 +6682,7 @@ struct GpuReadExtender{
         h_numCandidatesPerAnchorPrefixSum.resize(numFinishedTasks + 1);
 
         for(int i = 0; i < numFinishedTasks; i++){
-            h_numCandidatesPerAnchor[i] = finishedTasks4.soaNumEntriesPerTask[i] - 1;
+            h_numCandidatesPerAnchor[i] = finishedTasks4.soaNumEntriesPerTask[i];
         }
 
         h_numCandidatesPerAnchorPrefixSum[0] = 0;
@@ -6782,7 +6785,7 @@ struct GpuReadExtender{
         h_outputAnchorQualities.resize(numFinishedTasks * qualityPitchInBytes);
 
         std::copy_n(finishedTasks4.soainputQualities.data(), numFinishedTasks * finishedTasks4.qualityPitchInBytes, h_outputAnchorQualities.data());
-        
+
         cudaMemcpyAsync(
             d_inputAnchorQualities.data(),
             h_outputAnchorQualities.data(),
@@ -6803,36 +6806,16 @@ struct GpuReadExtender{
         d_candidateSequencesData.resizeUninitialized(numCandidates * encodedSequencePitchInInts, stream);
         CachedDeviceUVector<char> d_candidateSequencesDataDecoded(decodedSequencePitchInBytes * numCandidates, stream, *cubAllocator);
 
-        for(int i = 0, seen = 0, totalSeen = 0; i < numFinishedTasks; i++){
+        std::copy_n(finishedTasks4.soatotalDecodedAnchorsLengths.data(), numCandidates, h_anchorSequencesLength.data());
+        std::copy_n(finishedTasks4.soatotalDecodedAnchorsFlat.data(), numCandidates * finishedTasks4.decodedSequencePitchInBytes, h_outputAnchors.data());
 
-            const int num = h_numCandidatesPerAnchor[i];
-            const int offset = h_numCandidatesPerAnchorPrefixSum[i];
-
-            const int soaoffset = finishedTasks4.soaNumEntriesPerTaskPrefixSum[i];
-            for(int k = 0; k < num; k++){
-                h_anchorSequencesLength[offset + k] = finishedTasks4.soatotalDecodedAnchorsLengths[soaoffset + 1 + k];
-                std::copy(
-                    finishedTasks4.soatotalDecodedAnchorsFlat.begin() + (soaoffset + 1 + k) * finishedTasks4.decodedSequencePitchInBytes,
-                    finishedTasks4.soatotalDecodedAnchorsFlat.begin() + (soaoffset + 1 + k) * finishedTasks4.decodedSequencePitchInBytes + h_anchorSequencesLength[offset + k],
-                    h_outputAnchors.data() + (offset + k) * decodedSequencePitchInBytes
-                );
-            }
-
-            seen += num;
-
-            if(seen >= 2048 || (i == numFinishedTasks - 1)){
-                cudaMemcpyAsync(
-                    d_candidateSequencesDataDecoded.data() + totalSeen * decodedSequencePitchInBytes,
-                    h_outputAnchors.data() + totalSeen * decodedSequencePitchInBytes,
-                    sizeof(char) * decodedSequencePitchInBytes * seen,
-                    H2D,
-                    stream
-                ); CUERR;
-
-                totalSeen += seen;
-                seen = 0;
-            }
-        }
+        cudaMemcpyAsync(
+            d_candidateSequencesDataDecoded.data(),
+            h_outputAnchors.data(),
+            sizeof(char) * decodedSequencePitchInBytes * numCandidates,
+            H2D,
+            stream
+        ); CUERR;
 
         cudaMemcpyAsync(
             d_candidateSequencesLength.data(),
@@ -6899,6 +6882,10 @@ struct GpuReadExtender{
         helpers::call_fill_kernel_async(d_isPairedCandidate.begin(), numCandidates, false, stream);
 
         h_sizeOfGapToMate.resize(numCandidates);
+        #if 1
+        std::copy_n(finishedTasks4.soatotalAnchorBeginInExtendedRead.data(), numCandidates, h_sizeOfGapToMate.data());
+        #else
+
         for(int i = 0; i < numFinishedTasks; i++){
 
             const int offset = h_numCandidatesPerAnchorPrefixSum[i];
@@ -6911,6 +6898,7 @@ struct GpuReadExtender{
                 h_sizeOfGapToMate.data() + offset
             );
         }
+        #endif
 
         cudaMemcpyAsync(
             d_alignment_shifts.data(),
