@@ -7331,6 +7331,8 @@ struct GpuReadExtender{
     //construct results for each group of 4 tasks belonging to the same read pair
     std::vector<extension::ExtendResult> constructResults4(){
 
+        nvtx::push_range("constructresults4 normal", 5);
+
         auto finishedTasks4 = getFinishedTasksOfFinishedPairsAndRemoveThemFromList();
 
         // auto soaFinishedTasks4 = getFinishedSoaTasksOfFinishedPairsAndRemoveThemFromList();
@@ -8238,6 +8240,8 @@ struct GpuReadExtender{
 
 #if 1
     std::vector<extension::ExtendResult> constructResults4SoA(){
+
+        nvtx::push_range("constructresults4 soa", 5);
 
         auto finishedTasks4 = getFinishedSoaTasksOfFinishedPairsAndRemoveThemFromList();
 
