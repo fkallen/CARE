@@ -9,6 +9,7 @@ namespace care{
     template<class T, int overprovisioningPercent = 0>
     struct CachedDeviceUVector{
     public:
+        using value_type = T;
         static_assert(overprovisioningPercent >= 0, "overprovisioningPercent < 0");
 
         static constexpr size_t getOverprovisionedSize(size_t requiredSize){
@@ -169,6 +170,10 @@ namespace care{
             bool result = reserve(newCapacity, stream);            
             size_ = newsize;
             return result;
+        }
+
+        void clear(){
+            size_ = 0;
         }
         
 
