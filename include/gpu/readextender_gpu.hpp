@@ -2119,6 +2119,7 @@ namespace readextendergpukernels{
 
 
 
+
 }
 
 
@@ -2166,6 +2167,24 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> soaNumEntriesPerTask{};
         CachedDeviceUVector<int> soaNumEntriesPerTaskPrefixSum{};
 
+        void consistencyCheck() const{
+            assert(size() == entries);
+            assert(pairedEnd.size() == size());
+            assert(mateHasBeenFound.size() == size());
+            assert(id.size() == size());
+            assert(pairId.size() == size());
+            assert(iteration.size() == size());
+            assert(goodscore.size() == size());
+            assert(myReadId.size() == size());
+            assert(mateReadId.size() == size());
+            assert(abortReason.size() == size());
+            assert(direction.size() == size());
+            assert(soainputmateLengths.size() == size());
+            assert(soainputAnchorLengths.size() == size());
+            assert(soaNumEntriesPerTask.size() == size());
+            assert(soaNumEntriesPerTaskPrefixSum.size() == size());
+        }
+
         SoAExtensionTaskGpuData(cub::CachingDeviceAllocator& cubAlloc_) : SoAExtensionTaskGpuData(cubAlloc_, 0,0,0,0, (cudaStream_t)0) {}
 
         SoAExtensionTaskGpuData(
@@ -2207,6 +2226,8 @@ struct GpuReadExtender{
         {
             cudaGetDevice(&deviceId); CUERR;
             resize(size, stream);
+
+            consistencyCheck();
         }
 
         std::size_t size() const noexcept{
@@ -2244,6 +2265,8 @@ struct GpuReadExtender{
             soaNumEntriesPerTaskPrefixSum.clear();
 
             entries = 0;
+
+            consistencyCheck();
         }
 
         void reserve(int newsize, cudaStream_t stream){
@@ -2269,6 +2292,8 @@ struct GpuReadExtender{
             soaNumEntriesPerTaskPrefixSum.reserve(newsize, stream);
 
             reservedEntries = newsize;
+
+            consistencyCheck();
         }
 
         void resize(int newsize, cudaStream_t stream){
@@ -2295,6 +2320,8 @@ struct GpuReadExtender{
 
             entries = newsize;
             reservedEntries = std::max(entries, reservedEntries);
+
+            consistencyCheck();
         }
 
         bool checkPitch(const SoAExtensionTaskGpuData& rhs) const noexcept{
@@ -2309,6 +2336,9 @@ struct GpuReadExtender{
 
             nvtx::push_range("soa append", 7);
 
+            rhs.consistencyCheck();
+
+            #if 0
             pairedEnd.append(rhs.pairedEnd.data(), rhs.pairedEnd.data() + rhs.pairedEnd.size(), stream);
             mateHasBeenFound.append(rhs.mateHasBeenFound.data(), rhs.mateHasBeenFound.data() + rhs.mateHasBeenFound.size(), stream);
             id.append(rhs.id.data(), rhs.id.data() + rhs.id.size(), stream);
@@ -2333,6 +2363,269 @@ struct GpuReadExtender{
             soatotalAnchorBeginInExtendedRead.append(rhs.soatotalAnchorBeginInExtendedRead.data(), rhs.soatotalAnchorBeginInExtendedRead.data() + rhs.soatotalAnchorBeginInExtendedRead.size(), stream);
             soaNumEntriesPerTask.append(rhs.soaNumEntriesPerTask.data(), rhs.soaNumEntriesPerTask.data() + rhs.soaNumEntriesPerTask.size(), stream);
             soaNumEntriesPerTaskPrefixSum.append(rhs.soaNumEntriesPerTaskPrefixSum.data(), rhs.soaNumEntriesPerTaskPrefixSum.data() + rhs.soaNumEntriesPerTaskPrefixSum.size(), stream);
+            #else 
+
+            //cudaDeviceSynchronize(); CUERR;
+            
+            if(rhs.size() > 0){
+                const int newsize = size() + rhs.size();
+
+                //create new arrays, copy both old arrays into it, then swap
+                CachedDeviceUVector<bool> newpairedEnd(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<bool> newmateHasBeenFound(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newid(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newpairId(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newiteration(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<float> newgoodscore(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<read_number> newmyReadId(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<read_number> newmateReadId(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<extension::AbortReason> newabortReason(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<extension::ExtensionDirection> newdirection(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoainputmateLengths(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoainputAnchorLengths(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoaNumEntriesPerTask(newsize, stream, *cubAllocator);
+                CachedDeviceUVector<int> newsoaNumEntriesPerTaskPrefixSum(newsize, stream, *cubAllocator);
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        pairedEnd.data(),
+                        mateHasBeenFound.data(),
+                        id.data(),
+                        pairId.data(),
+                        iteration.data(),
+                        goodscore.data(),
+                        myReadId.data(),
+                        mateReadId.data()
+                    )),
+                    size(),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newpairedEnd.data(),
+                        newmateHasBeenFound.data(),
+                        newid.data(),
+                        newpairId.data(),
+                        newiteration.data(),
+                        newgoodscore.data(),
+                        newmyReadId.data(),
+                        newmateReadId.data()
+                    )),
+                    stream
+                );
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        rhs.pairedEnd.data(),
+                        rhs.mateHasBeenFound.data(),
+                        rhs.id.data(),
+                        rhs.pairId.data(),
+                        rhs.iteration.data(),
+                        rhs.goodscore.data(),
+                        rhs.myReadId.data(),
+                        rhs.mateReadId.data()
+                    )),
+                    rhs.size(),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newpairedEnd.data() + size(),
+                        newmateHasBeenFound.data() + size(),
+                        newid.data() + size(),
+                        newpairId.data() + size(),
+                        newiteration.data() + size(),
+                        newgoodscore.data() + size(),
+                        newmyReadId.data() + size(),
+                        newmateReadId.data() + size()
+                    )),
+                    stream
+                );
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        abortReason.data(),
+                        direction.data(),
+                        soainputmateLengths.data(),
+                        soainputAnchorLengths.data(),
+                        soaNumEntriesPerTask.data(),
+                        soaNumEntriesPerTaskPrefixSum.data()
+                    )),
+                    size(),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newabortReason.data(),
+                        newdirection.data(),
+                        newsoainputmateLengths.data(),
+                        newsoainputAnchorLengths.data(),
+                        newsoaNumEntriesPerTask.data(),
+                        newsoaNumEntriesPerTaskPrefixSum.data()
+                    )),
+                    stream
+                );                
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        rhs.abortReason.data(),
+                        rhs.direction.data(),
+                        rhs.soainputmateLengths.data(),
+                        rhs.soainputAnchorLengths.data(),
+                        rhs.soaNumEntriesPerTask.data(),
+                        rhs.soaNumEntriesPerTaskPrefixSum.data()
+                    )),
+                    rhs.size(),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newabortReason.data() + size(),
+                        newdirection.data() + size(),
+                        newsoainputmateLengths.data() + size(),
+                        newsoainputAnchorLengths.data() + size(),
+                        newsoaNumEntriesPerTask.data() + size(),
+                        newsoaNumEntriesPerTaskPrefixSum.data() + size()
+                    )),
+                    stream
+                );
+
+                std::swap(pairedEnd, newpairedEnd);
+                std::swap(mateHasBeenFound, newmateHasBeenFound);
+                std::swap(id, newid);
+                std::swap(pairId, newpairId);
+                std::swap(iteration, newiteration);
+                std::swap(goodscore, newgoodscore);
+                std::swap(myReadId, newmyReadId);
+                std::swap(mateReadId, newmateReadId);
+                std::swap(abortReason, newabortReason);
+                std::swap(direction, newdirection);
+                std::swap(soainputmateLengths, newsoainputmateLengths);
+                std::swap(soainputAnchorLengths, newsoainputAnchorLengths);
+                std::swap(soaNumEntriesPerTask, newsoaNumEntriesPerTask);
+                std::swap(soaNumEntriesPerTaskPrefixSum, newsoaNumEntriesPerTaskPrefixSum);
+
+                newpairedEnd.destroy();
+                newmateHasBeenFound.destroy();
+                newid.destroy();
+                newpairId.destroy();
+                newiteration.destroy();
+                newgoodscore.destroy();
+                newmyReadId.destroy();
+                newmateReadId.destroy();
+                newabortReason.destroy();
+                newdirection.destroy();
+                newsoainputmateLengths.destroy();
+                newsoainputAnchorLengths.destroy();
+                newsoaNumEntriesPerTask.destroy();
+                newsoaNumEntriesPerTaskPrefixSum.destroy();
+
+                CachedDeviceUVector<unsigned int> newinputEncodedMate(newsize * encodedSequencePitchInInts, stream, *cubAllocator);
+                CachedDeviceUVector<unsigned int> newinputAnchorsEncoded(newsize * encodedSequencePitchInInts, stream, *cubAllocator);
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        inputEncodedMate.data(),
+                        inputAnchorsEncoded.data()
+                    )),
+                    size() * encodedSequencePitchInInts,
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newinputEncodedMate.data(),
+                        newinputAnchorsEncoded.data()
+                    )),
+                    stream
+                );
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        rhs.inputEncodedMate.data(),
+                        rhs.inputAnchorsEncoded.data()
+                    )),
+                    rhs.size() * encodedSequencePitchInInts,
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        newinputEncodedMate.data() + size() * encodedSequencePitchInInts,
+                        newinputAnchorsEncoded.data() + size() * encodedSequencePitchInInts
+                    )),
+                    stream
+                );
+
+                std::swap(inputEncodedMate, newinputEncodedMate);
+                std::swap(inputAnchorsEncoded, newinputAnchorsEncoded);
+
+                newinputEncodedMate.destroy();
+                newinputAnchorsEncoded.destroy(); 
+
+                assert(decodedSequencePitchInBytes % sizeof(int) == 0);
+
+                CachedDeviceUVector<char> newsoainputdecodedMateRevC(newsize * decodedSequencePitchInBytes, stream, *cubAllocator);
+                CachedDeviceUVector<char> newsoainputAnchorsDecoded(newsize * decodedSequencePitchInBytes, stream, *cubAllocator);
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        (int*)soainputdecodedMateRevC.data(),
+                        (int*)soainputAnchorsDecoded.data()
+                    )),
+                    size() * (decodedSequencePitchInBytes / sizeof(int)),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        (int*)newsoainputdecodedMateRevC.data(),
+                        (int*)newsoainputAnchorsDecoded.data()
+                    )),
+                    stream
+                );
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        (int*)rhs.soainputdecodedMateRevC.data(),
+                        (int*)rhs.soainputAnchorsDecoded.data()
+                    )),
+                    rhs.size() * (decodedSequencePitchInBytes / sizeof(int)),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        ((int*)newsoainputdecodedMateRevC.data()) + size() * (decodedSequencePitchInBytes / sizeof(int)),
+                        ((int*)newsoainputAnchorsDecoded.data()) + size() * (decodedSequencePitchInBytes / sizeof(int))
+                    )),
+                    stream
+                );
+
+                std::swap(soainputdecodedMateRevC, newsoainputdecodedMateRevC);
+                std::swap(soainputAnchorsDecoded, newsoainputAnchorsDecoded);
+
+                newsoainputdecodedMateRevC.destroy();
+                newsoainputAnchorsDecoded.destroy(); 
+
+                assert(qualityPitchInBytes % sizeof(int) == 0);
+
+                CachedDeviceUVector<char> newsoainputmateQualityScoresReversed(newsize * qualityPitchInBytes, stream, *cubAllocator);
+                CachedDeviceUVector<char> newsoainputAnchorQualities(newsize * qualityPitchInBytes, stream, *cubAllocator);
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        (int*)soainputmateQualityScoresReversed.data(),
+                        (int*)soainputAnchorQualities.data()
+                    )),
+                    size() * (qualityPitchInBytes / sizeof(int)),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        (int*)newsoainputmateQualityScoresReversed.data(),
+                        (int*)newsoainputAnchorQualities.data()
+                    )),
+                    stream
+                );
+
+                helpers::call_copy_n_kernel(
+                    thrust::make_zip_iterator(thrust::make_tuple(                    
+                        (int*)rhs.soainputmateQualityScoresReversed.data(),
+                        (int*)rhs.soainputAnchorQualities.data()
+                    )),
+                    rhs.size() * (qualityPitchInBytes / sizeof(int)),
+                    thrust::make_zip_iterator(thrust::make_tuple(
+                        ((int*)newsoainputmateQualityScoresReversed.data()) + size() * (qualityPitchInBytes / sizeof(int)),
+                        ((int*)newsoainputAnchorQualities.data()) + size() * (qualityPitchInBytes / sizeof(int))
+                    )),
+                    stream
+                );
+
+                std::swap(soainputmateQualityScoresReversed, newsoainputmateQualityScoresReversed);
+                std::swap(soainputAnchorQualities, newsoainputAnchorQualities);
+
+                newsoainputmateQualityScoresReversed.destroy();
+                newsoainputAnchorQualities.destroy(); 
+
+                soatotalDecodedAnchorsLengths.append(rhs.soatotalDecodedAnchorsLengths.data(), rhs.soatotalDecodedAnchorsLengths.data() + rhs.soatotalDecodedAnchorsLengths.size(), stream);
+                soatotalAnchorBeginInExtendedRead.append(rhs.soatotalAnchorBeginInExtendedRead.data(), rhs.soatotalAnchorBeginInExtendedRead.data() + rhs.soatotalAnchorBeginInExtendedRead.size(), stream);
+
+                soatotalDecodedAnchorsFlat.append(rhs.soatotalDecodedAnchorsFlat.data(), rhs.soatotalDecodedAnchorsFlat.data() + rhs.soatotalDecodedAnchorsFlat.size(), stream);
+                soatotalAnchorQualityScoresFlat.append(rhs.soatotalAnchorQualityScoresFlat.data(), rhs.soatotalAnchorQualityScoresFlat.data() + rhs.soatotalAnchorQualityScoresFlat.size(), stream);
+            }
+
+            #endif
+
 
             //fix appended prefixsum
             if(entries > 0 && rhs.entries > 0){
@@ -2352,6 +2645,8 @@ struct GpuReadExtender{
 
             entries += rhs.size();
             reservedEntries = std::max(entries, reservedEntries);
+
+            consistencyCheck();
 
             nvtx::pop_range();
         }
@@ -2374,6 +2669,8 @@ struct GpuReadExtender{
 
             SoAExtensionTaskGpuData selection = gather(positions.begin(), positions_end, stream);
             nvtx::pop_range();
+
+            selection.consistencyCheck();
 
             return selection;
         }
@@ -2444,6 +2741,8 @@ struct GpuReadExtender{
             gatherSoaData(selection, d_mapBegin, d_mapEnd, stream);   
 
             nvtx::pop_range();
+
+            selection.consistencyCheck();
 
             return selection;
         }
@@ -2779,6 +3078,8 @@ struct GpuReadExtender{
             std::swap(soatotalDecodedAnchorsFlat, newsoatotalDecodedAnchorsFlat);
             std::swap(soatotalAnchorQualityScoresFlat, newsoatotalAnchorQualityScoresFlat);
 
+            consistencyCheck();
+
         }
 
   
@@ -2841,6 +3142,8 @@ struct GpuReadExtender{
                     }
                 }
             );
+
+            consistencyCheck();
         }
 
     };
@@ -3169,7 +3472,8 @@ struct GpuReadExtender{
             d_subjectSequencesData.resize(numTasks * encodedSequencePitchInInts, streams[0]);
 
             //compact some data of tasks into contiguous buffers 
-            helpers::lambda_kernel<<<16, 256, 0, streams[0]>>>(
+            const int threads = numTasks * 32;
+            helpers::lambda_kernel<<<SDIV(threads, 256), 256, 0, streams[0]>>>(
                 [
                     numTasks = numTasks,
                     qualityPitchInBytes = qualityPitchInBytes,
