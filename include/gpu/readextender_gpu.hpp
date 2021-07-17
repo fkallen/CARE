@@ -2936,7 +2936,7 @@ struct GpuReadExtender{
         d_alignment_best_alignment_flags(cubAllocator_),
         d_numCandidatesPerAnchor(cubAllocator_),
         d_numCandidatesPerAnchorPrefixSum(cubAllocator_),
-        d_inputanchormatedata(cubAllocator_),
+        //d_inputanchormatedata(cubAllocator_),
         d_subjectSequencesDataDecoded(cubAllocator_),
         d_anchorQualityScores(cubAllocator_),
         d_anchorSequencesLength(cubAllocator_),
@@ -3028,14 +3028,14 @@ struct GpuReadExtender{
 
         SoAExtensionTaskGpuData newGpuSoaTaskData(*cubAllocator, numAdditionalTasks, encodedSequencePitchInInts, decodedSequencePitchInBytes, qualityPitchInBytes, streams[0]);
 
-        cudaMemsetAsync(newGpuSoaTaskData.inputAnchorsEncoded.data(), 0, sizeof(unsigned int) * newGpuSoaTaskData.inputAnchorsEncoded.size(), streams[0]); CUERR;
-        cudaMemsetAsync(newGpuSoaTaskData.inputEncodedMate.data(), 0, sizeof(unsigned int) * newGpuSoaTaskData.inputEncodedMate.size(), streams[0]); CUERR;
-        cudaMemsetAsync(newGpuSoaTaskData.soainputAnchorsDecoded.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputAnchorsDecoded.size(), streams[0]); CUERR;
-        cudaMemsetAsync(newGpuSoaTaskData.soainputdecodedMateRevC.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputdecodedMateRevC.size(), streams[0]); CUERR;
-        cudaMemsetAsync(newGpuSoaTaskData.soainputAnchorQualities.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputAnchorQualities.size(), streams[0]); CUERR;
-        cudaMemsetAsync(newGpuSoaTaskData.soainputmateQualityScoresReversed.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputmateQualityScoresReversed.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.inputAnchorsEncoded.data(), 0, sizeof(unsigned int) * newGpuSoaTaskData.inputAnchorsEncoded.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.inputEncodedMate.data(), 0, sizeof(unsigned int) * newGpuSoaTaskData.inputEncodedMate.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.soainputAnchorsDecoded.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputAnchorsDecoded.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.soainputdecodedMateRevC.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputdecodedMateRevC.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.soainputAnchorQualities.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputAnchorQualities.size(), streams[0]); CUERR;
+        // cudaMemsetAsync(newGpuSoaTaskData.soainputmateQualityScoresReversed.data(), 0, sizeof(char) * newGpuSoaTaskData.soainputmateQualityScoresReversed.size(), streams[0]); CUERR;
 
-        cudaStreamSynchronize(streams[0]); CUERR;
+        // cudaStreamSynchronize(streams[0]); CUERR;
 
         readextendergpukernels::createGpuTaskData<128,8>
             <<<SDIV(numAdditionalTasks, (128 / 8)), 128, 0, streams[0]>>>(
@@ -3069,11 +3069,11 @@ struct GpuReadExtender{
             encodedSequencePitchInInts
         );
         
-        cudaStreamSynchronize(streams[0]); CUERR;
+        // cudaStreamSynchronize(streams[0]); CUERR;
 
         tasks.append(newGpuSoaTaskData, streams[0]);
 
-        cudaStreamSynchronize(streams[0]); CUERR;
+        //cudaStreamSynchronize(streams[0]); CUERR;
 
         d_numUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
         d_numFullyUsedReadIdsPerAnchor.resize(newNumTasks, streams[0]);
@@ -3100,7 +3100,7 @@ struct GpuReadExtender{
 
         d_anchorQualityScores.resize(newNumTasks * qualityPitchInBytes, streams[0]);
         d_subjectSequencesData.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
-        d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
+        //d_inputanchormatedata.resize(newNumTasks * encodedSequencePitchInInts, streams[0]);
         d_subjectSequencesDataDecoded.resize(newNumTasks * decodedSequencePitchInBytes, streams[0]);
 
         d_anchorSequencesLength.resize(newNumTasks, streams[0]);
@@ -3128,13 +3128,13 @@ struct GpuReadExtender{
 
         helpers::call_copy_n_kernel(
             thrust::make_zip_iterator(thrust::make_tuple(
-                tasks.inputAnchorsEncoded.data() + currentNumTasks * encodedSequencePitchInInts,
-                tasks.inputEncodedMate.data() + currentNumTasks * encodedSequencePitchInInts
+                tasks.inputAnchorsEncoded.data() + currentNumTasks * encodedSequencePitchInInts
+                //tasks.inputEncodedMate.data() + currentNumTasks * encodedSequencePitchInInts
             )),
             numAdditionalTasks * encodedSequencePitchInInts,
             thrust::make_zip_iterator(thrust::make_tuple(
-                d_subjectSequencesData.data() + currentNumTasks * encodedSequencePitchInInts,
-                d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts
+                d_subjectSequencesData.data() + currentNumTasks * encodedSequencePitchInInts
+                //d_inputanchormatedata.data() + currentNumTasks * encodedSequencePitchInInts
             )),
             streams[0]
         );
@@ -3750,7 +3750,7 @@ struct GpuReadExtender{
         const std::size_t smembytes = sizeof(unsigned int) * groupsperblock * encodedSequencePitchInInts;
 
         readextendergpukernels::filtermatekernel<blocksize,groupsize><<<grid, block, smembytes, stream>>>(
-            d_inputanchormatedata.data(),
+            tasks.inputEncodedMate.data(),
             d_candidateSequencesData.data(),
             encodedSequencePitchInInts,
             d_numCandidatesPerAnchor.data(),
@@ -4171,7 +4171,7 @@ struct GpuReadExtender{
             outputAnchorQualityPitchInBytes,
             d_outputAnchorLengths.data(),
             d_isPairedTask.data(),
-            d_inputanchormatedata.data(),
+            tasks.inputEncodedMate.data(),
             encodedSequencePitchInInts,
             decodedMatesRevCPitchInBytes,
             d_outputMateHasBeenFound.data(),
@@ -4862,23 +4862,23 @@ struct GpuReadExtender{
 
         //set new encoded mate data
 
-        CachedDeviceUVector<unsigned int> d_inputanchormatedata2(alltimeMaximumNumberOfTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
+        // CachedDeviceUVector<unsigned int> d_inputanchormatedata2(alltimeMaximumNumberOfTasks * encodedSequencePitchInInts, streams[0], *cubAllocator);
 
-        cubSelectFlagged(
-            d_inputanchormatedata.data(),
-            thrust::make_transform_iterator(
-                thrust::make_counting_iterator(0),
-                make_iterator_multiplier(d_isActive.data(), encodedSequencePitchInInts)
-            ),
-            d_inputanchormatedata2.data(),
-            thrust::make_discard_iterator(),
-            numTasks * encodedSequencePitchInInts,
-            streams[0]
-        );
+        // cubSelectFlagged(
+        //     d_inputanchormatedata.data(),
+        //     thrust::make_transform_iterator(
+        //         thrust::make_counting_iterator(0),
+        //         make_iterator_multiplier(d_isActive.data(), encodedSequencePitchInInts)
+        //     ),
+        //     d_inputanchormatedata2.data(),
+        //     thrust::make_discard_iterator(),
+        //     numTasks * encodedSequencePitchInInts,
+        //     streams[0]
+        // );
 
-        d_inputanchormatedata2.erase(d_inputanchormatedata2.begin() + newNumTasks * encodedSequencePitchInInts, d_inputanchormatedata2.end(), streams[0]);
+        // d_inputanchormatedata2.erase(d_inputanchormatedata2.begin() + newNumTasks * encodedSequencePitchInInts, d_inputanchormatedata2.end(), streams[0]);
 
-        std::swap(d_inputanchormatedata, d_inputanchormatedata2);
+        // std::swap(d_inputanchormatedata, d_inputanchormatedata2);
         
         //convert new anchors to 2bit representation
 
@@ -6640,7 +6640,7 @@ struct GpuReadExtender{
 
     // ----- input data
 
-    CachedDeviceUVector<unsigned int> d_inputanchormatedata{};
+    //CachedDeviceUVector<unsigned int> d_inputanchormatedata{};
     CachedDeviceUVector<char> d_subjectSequencesDataDecoded{};
     CachedDeviceUVector<char> d_anchorQualityScores{};
     CachedDeviceUVector<int> d_anchorSequencesLength{};
