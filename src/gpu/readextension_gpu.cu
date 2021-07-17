@@ -341,7 +341,7 @@ extend_gpu_pairedend(
                 qualityPitchInBytes
             );
 
-            gpuReadExtender->setState(GpuReadExtender::State::BeforeHash);
+            gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
 
             nvtx::pop_range();
 
@@ -495,13 +495,13 @@ extend_gpu_pairedend(
                     *gpuReadExtender,
                     inputs,
                     encodedSequencePitchInInts, 
-                    decodedSequencePitchInBytes, 
+                    decodedSequencePitchInBytes,
                     msaColumnPitchInElements,
                     qualityPitchInBytes
                 );
                 #endif
 
-                gpuReadExtender->setState(GpuReadExtender::State::BeforeHash);
+                gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
             }else{
                 gpuReadExtender->setState(GpuReadExtender::State::None); //this should only happen if all reads have been processed
             }
@@ -572,7 +572,7 @@ extend_gpu_pairedend(
 
             if(gpuReadExtender->state == GpuReadExtender::State::None){
                 init();   
-                if(gpuReadExtender->state == GpuReadExtender::State::BeforeHash){
+                if(gpuReadExtender->state == GpuReadExtender::State::UpdateWorkingSet){
                     chooseWorkerQueue(gpuReadExtender);
                 }
             }else if(gpuReadExtender->state == GpuReadExtender::State::Finished){
@@ -819,7 +819,7 @@ extend_gpu_pairedend(
                 );
                 #endif
 
-                gpuReadExtender->setState(GpuReadExtender::State::BeforeHash);
+                gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
             }else{
                 gpuReadExtender->setState(GpuReadExtender::State::None); //this should only happen if all reads have been processed
             }
@@ -896,7 +896,7 @@ extend_gpu_pairedend(
 
             if(gpuReadExtender->state == GpuReadExtender::State::None){
                 init();   
-                if(gpuReadExtender->state == GpuReadExtender::State::BeforeHash){
+                if(gpuReadExtender->state == GpuReadExtender::State::UpdateWorkingSet){
                     workBatchesQueue.push(gpuReadExtender);
                 }
             }else if(gpuReadExtender->state == GpuReadExtender::State::Finished){
@@ -1131,7 +1131,7 @@ extend_gpu_pairedend(
 
                 gpuReadExtender->addTasks(numReadPairsInBatch, currentIds.data(), currentReadLengths.data(), currentEncodedReads.data(), currentQualityScores.data(), stream);
 
-                gpuReadExtender->setState(GpuReadExtender::State::BeforeHash);
+                gpuReadExtender->setState(GpuReadExtender::State::UpdateWorkingSet);
 
                 //std::cerr << "Added " << (numReadPairsInBatch * 4) << " new tasks to batch\n";
             }
