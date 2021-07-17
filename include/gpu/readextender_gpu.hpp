@@ -6799,9 +6799,11 @@ struct GpuReadExtender{
         assert(soaTasks == tasks);
         assert(soaFinishedTasks == finishedTasks);
 
-        const int totalTasksBefore = gpusoaTasks.size() + gpusoaFinishedTasks.size();
+        
 
         {
+            const int totalTasksBefore = gpusoaTasks.size() + gpusoaFinishedTasks.size();
+
             CachedDeviceUVector<bool> d_activeFlags(gpusoaTasks.size(), streams[0], *cubAllocator);
             gpusoaTasks.getActiveFlags(d_activeFlags.data(), insertSize, insertSizeStddev, streams[0]);
 
@@ -6824,6 +6826,29 @@ struct GpuReadExtender{
 
             addFinishedGpuSoaTasks(newlygpuSoaFinishedTasks, streams[0]);
             std::swap(gpusoaTasks, newgpuSoaActiveTasks);
+
+            const int totalTasksAfter = gpusoaTasks.size() + gpusoaFinishedTasks.size();
+            assert(totalTasksAfter == totalTasksBefore);
+
+            if(!isEmpty()){
+
+                CachedDeviceUVector<int> d_newPositionsOfActiveTasks(gpusoaTasks.size(), streams[0], *cubAllocator);
+
+                cubSelectFlagged(
+                    thrust::make_counting_iterator(0),
+                    d_activeFlags.data(),
+                    d_newPositionsOfActiveTasks.data(),
+                    thrust::make_discard_iterator(),
+                    d_activeFlags.size(),
+                    streams[0]
+                );
+
+                nvtx::push_range("updateBuffersForNextIteration", 6);
+
+                updateBuffersForNextIteration(d_newPositionsOfActiveTasks.data(), d_newPositionsOfActiveTasks.size());
+
+                nvtx::pop_range();
+            }
         }
 
 
@@ -6854,27 +6879,26 @@ struct GpuReadExtender{
         // alltimetotalTaskBytes = std::max(alltimetotalTaskBytes, bytesTasks + bytesFinishedTasks);
         //std::cerr << "alltimetotalTaskBytes = " << alltimetotalTaskBytes << "\n";
 
-        const int totalTasksAfter = gpusoaTasks.size() + gpusoaFinishedTasks.size();
-        assert(totalTasksAfter == totalTasksBefore);
 
-        if(!isEmpty()){
 
-            CachedDeviceUVector<int> d_newPositionsOfActiveTasks(h_newPositionsOfActiveTasks.size(), streams[0], *cubAllocator);
+        // if(!isEmpty()){
 
-            cudaMemcpyAsync(
-                d_newPositionsOfActiveTasks.data(),
-                h_newPositionsOfActiveTasks.data(),
-                sizeof(int) * h_newPositionsOfActiveTasks.size(),
-                H2D,
-                streams[0]
-            ); CUERR;
+        //     CachedDeviceUVector<int> d_newPositionsOfActiveTasks(h_newPositionsOfActiveTasks.size(), streams[0], *cubAllocator);
 
-            nvtx::push_range("updateBuffersForNextIteration", 6);
+        //     cudaMemcpyAsync(
+        //         d_newPositionsOfActiveTasks.data(),
+        //         h_newPositionsOfActiveTasks.data(),
+        //         sizeof(int) * h_newPositionsOfActiveTasks.size(),
+        //         H2D,
+        //         streams[0]
+        //     ); CUERR;
 
-            updateBuffersForNextIteration(d_newPositionsOfActiveTasks.data(), d_newPositionsOfActiveTasks.size());
+        //     nvtx::push_range("updateBuffersForNextIteration", 6);
 
-            nvtx::pop_range();
-        }
+        //     updateBuffersForNextIteration(d_newPositionsOfActiveTasks.data(), d_newPositionsOfActiveTasks.size());
+
+        //     nvtx::pop_range();
+        // }
 
         numTasks = gpusoaTasks.size();
 
