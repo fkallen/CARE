@@ -470,13 +470,45 @@ namespace readextendergpukernels{
 
     template<class Iter1, class T>
     __global__
-    void iotaKernel(Iter1 begin, Iter1 end, T init){
+    void iotaKernel(Iter1 outputbegin, Iter1 outputend, T init){
         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
         const int stride = blockDim.x * gridDim.x;
-        const int N = end - begin;
+        const int N = outputend - outputbegin;
 
         for(int i = tid; i < N; i += stride){
-            *(begin + i) = init + static_cast<T>(i);
+            *(outputbegin + i) = init + static_cast<T>(i);
+        }
+    }
+
+    template<int groupsize, class Iter, class SizeIter, class OffsetIter>
+    __global__
+    void segmentedIotaKernel(Iter outputbegin, SizeIter segmentsizes, OffsetIter segmentBeginOffsets, int numSegments){
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+        
+        const int numGroups = stride / groupsize;
+        const int groupId = tid / groupsize;
+
+        for(int s = groupId; s < numSegments; s += numGroups){
+            const int num = segmentsizes[s];
+            const int offset = segmentBeginOffsets[s];
+            
+            for(int i = group.thread_rank(); i < num; i += group.size()){
+                *(outputbegin + offset + i) = i;
+            }
+        }
+    }
+
+    template<class Iter1, class T>
+    __global__
+    void fillKernel(Iter1 begin, int N, T value){
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        for(int i = tid; i < N; i += stride){
+            *(begin + i) = value;
         }
     }
 
@@ -3318,7 +3350,6 @@ struct GpuReadExtender{
         d_numFullyUsedReadIdsPerAnchorPrefixSum(cubAllocator_),
         d_segmentIdsOfFullyUsedReadIds(cubAllocator_),
         multiMSA(cubAllocator_),
-        d_consensusQuality(cubAllocator_),
         d_outputAnchors(cubAllocator_),
         d_outputAnchorQualities(cubAllocator_),
         d_outputMateHasBeenFound(cubAllocator_),
@@ -4634,10 +4665,6 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> d_addAnchorLengths(numAdd, stream, *cubAllocator);
         CachedDeviceUVector<int> d_addAnchorBeginsInExtendedRead(numAdd, stream, *cubAllocator);
 
-        cudaMemsetAsync(d_addTotalDecodedAnchorsFlat.data(), 0, sizeof(char) * numAdd * outputAnchorPitchInBytes, stream); CUERR;
-        cudaMemsetAsync(d_addTotalAnchorQualityScoresFlat.data(), 0, sizeof(char) * numAdd * outputAnchorQualityPitchInBytes, stream); CUERR;
-
-
         assert(tasks.decodedSequencePitchInBytes >= outputAnchorPitchInBytes);
         assert(tasks.qualityPitchInBytes >= outputAnchorQualityPitchInBytes);
 
@@ -5620,14 +5647,12 @@ struct GpuReadExtender{
             stream
         ); CUERR;
 
-        helpers::lambda_kernel<<<1,1,0,stream>>>([
-            d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-            numFinishedTasks
-        ] __device__(){
-            d_numCandidatesPerAnchorPrefixSum[numFinishedTasks] = d_numCandidatesPerAnchorPrefixSum[numFinishedTasks - 1] + d_numCandidatesPerAnchor[numFinishedTasks - 1];
-        }); CUERR;
-        
+        readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
+            d_numCandidatesPerAnchorPrefixSum.data() + numFinishedTasks - 1, 
+            d_numCandidatesPerAnchor.data() + numFinishedTasks - 1, 
+            d_numCandidatesPerAnchorPrefixSum.data() + numFinishedTasks, 
+            1
+        ); CUERR;       
 
         
         cudaMemcpyAsync(
@@ -5649,132 +5674,71 @@ struct GpuReadExtender{
             return makePairResultsFromGpuSoaFinishedTasksWithoutCandidates(numFinishedTasks / 4, numFinishedTasks, finishedTasks4);
         }
 
-        CachedDeviceUVector<int> d_anchorSequencesLength2(numFinishedTasks, stream, *cubAllocator);
-        CachedDeviceUVector<unsigned int> d_inputAnchors(numFinishedTasks * encodedSequencePitchInInts, stream, *cubAllocator);
-        CachedDeviceUVector<bool> d_mateHasBeenFound(numFinishedTasks, stream, *cubAllocator);
-        CachedDeviceUVector<char> d_inputAnchorQualities(numFinishedTasks * qualityPitchInBytes, stream, *cubAllocator);
-
-        cudaMemcpyAsync(
-            d_anchorSequencesLength2.data(),
-            finishedTasks4.soainputAnchorLengths.data(),
-            sizeof(int) * numFinishedTasks,
-            D2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_inputAnchors.data(),
-            finishedTasks4.inputAnchorsEncoded.data(),
-            sizeof(unsigned int) * numFinishedTasks * encodedSequencePitchInInts,
-            D2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_mateHasBeenFound.data(),
-            finishedTasks4.mateHasBeenFound.data(),
-            sizeof(bool) * numFinishedTasks,
-            D2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_inputAnchorQualities.data(),
-            finishedTasks4.soainputAnchorQualities.data(),
-            sizeof(char) * numFinishedTasks * qualityPitchInBytes,
-            D2D,
-            stream
-        ); CUERR;
-
-        d_candidateSequencesLength.resizeUninitialized(numCandidates, stream);
         d_candidateSequencesData.resizeUninitialized(numCandidates * encodedSequencePitchInInts, stream);
-        CachedDeviceUVector<char> d_candidateSequencesDataDecoded(decodedSequencePitchInBytes * numCandidates, stream, *cubAllocator);
-
-        cudaMemcpyAsync(
-            d_candidateSequencesLength.data(),
-            finishedTasks4.soatotalDecodedAnchorsLengths.data(),
-            sizeof(int) * numCandidates,
-            D2D,
-            stream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            d_candidateSequencesDataDecoded.data(),
-            finishedTasks4.soatotalDecodedAnchorsFlat.data(),
-            sizeof(char) * numCandidates * decodedSequencePitchInBytes,
-            D2D,
-            stream
-        ); CUERR;
 
         readextendergpukernels::encodeSequencesTo2BitKernel<8>
         <<<SDIV(numCandidates, (128 / 8)), 128, 0, streams[0]>>>(
             d_candidateSequencesData.data(),
-            d_candidateSequencesDataDecoded.data(),
-            d_candidateSequencesLength.data(),
+            finishedTasks4.soatotalDecodedAnchorsFlat.data(),
+            finishedTasks4.soatotalDecodedAnchorsLengths.data(),
             decodedSequencePitchInBytes,
             encodedSequencePitchInInts,
             numCandidates
         ); CUERR;
 
-        //copy "candidate" qualities
-        // TODO if neccessary
-
 
         //sequence data has been transfered to gpu. now set up remaining msa input data
 
         d_alignment_overlaps.resizeUninitialized(numCandidates, stream);
-        d_alignment_shifts.resizeUninitialized(numCandidates, stream);
         d_alignment_nOps.resizeUninitialized(numCandidates, stream);
         d_alignment_best_alignment_flags.resizeUninitialized(numCandidates, stream);
         d_isPairedCandidate.resizeUninitialized(numCandidates, stream);
-        
-        helpers::call_fill_kernel_async(d_alignment_overlaps.begin(), numCandidates, 100, stream);
-        helpers::call_fill_kernel_async(d_alignment_nOps.begin(), numCandidates, 0, stream);
-        helpers::call_fill_kernel_async(d_alignment_best_alignment_flags.begin(), numCandidates, BestAlignment_t::Forward, stream);
-        helpers::call_fill_kernel_async(d_isPairedCandidate.begin(), numCandidates, false, stream);
 
-        cudaMemcpyAsync(
-            d_alignment_shifts.data(),
-            finishedTasks4.soatotalAnchorBeginInExtendedRead.data(),
-            sizeof(int) * numCandidates,
-            H2D,
-            stream
+        //fill the arrays such that msa will have good quality without pairedness
+        readextendergpukernels::fillKernel<<<SDIV(numCandidates, 128), 128, 0, stream>>>(
+            thrust::make_zip_iterator(thrust::make_tuple(
+                d_alignment_overlaps.begin(),
+                d_alignment_nOps.begin(),
+                d_alignment_best_alignment_flags.begin(),
+                d_isPairedCandidate.begin()
+            )), 
+            numCandidates, 
+            thrust::make_tuple(
+                100,
+                0,
+                BestAlignment_t::Forward,
+                false
+            )
         ); CUERR;
-
+        
         //all input data ready. now set up msa
 
         CachedDeviceUVector<int> indices1(numCandidates, stream, *cubAllocator);
 
-        helpers::lambda_kernel<<<numFinishedTasks, 128, 0, stream>>>(
-            [
-                indices1 = indices1.data(),
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
-            ] __device__ (){
-                const int num = d_numCandidatesPerAnchor[blockIdx.x];
-                const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
-                
-                for(int i = threadIdx.x; i < num; i += blockDim.x){
-                    indices1[offset + i] = i;
-                }
-            }
-        );
+        const int threads = 32 * numFinishedTasks;
+
+        readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
+            indices1.data(),
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            numFinishedTasks
+        ); CUERR;
 
         *h_numAnchors = numFinishedTasks;
 
         multiMSA.construct(
             d_alignment_overlaps.data(),
-            d_alignment_shifts.data(),
+            finishedTasks4.soatotalAnchorBeginInExtendedRead.data(),
             d_alignment_nOps.data(),
             d_alignment_best_alignment_flags.data(),
             indices1.data(),
             d_numCandidatesPerAnchor.data(),
             d_numCandidatesPerAnchorPrefixSum.data(),
-            d_anchorSequencesLength2.data(),
-            d_inputAnchors.data(),
+            finishedTasks4.soainputAnchorLengths.data(),
+            finishedTasks4.inputAnchorsEncoded.data(),
             nullptr, //anchor qualities
             numFinishedTasks,
-            d_candidateSequencesLength.data(),
+            finishedTasks4.soatotalDecodedAnchorsLengths.data(),
             d_candidateSequencesData.data(),
             nullptr, //candidate qualities
             d_isPairedCandidate.data(),
@@ -5795,8 +5759,7 @@ struct GpuReadExtender{
         resultMSAColumnPitchInElements = multiMSA.getMaximumMsaWidth();
 
         //compute quality of consensus
-        d_consensusQuality.resizeUninitialized(numFinishedTasks * resultMSAColumnPitchInElements, stream);
-
+        CachedDeviceUVector<char> d_consensusQuality(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
         CachedDeviceUVector<char> d_decodedConsensus(numFinishedTasks * resultMSAColumnPitchInElements, stream, *cubAllocator);
         CachedDeviceUVector<int> d_resultLengths(numFinishedTasks, stream, *cubAllocator);
         
@@ -5825,10 +5788,10 @@ struct GpuReadExtender{
                 d_decodedConsensus = d_decodedConsensus.data(),
                 d_consensusQuality = d_consensusQuality.data(),
                 d_resultLengths = d_resultLengths.data(),
-                d_inputAnchors = d_inputAnchors.data(),
-                d_inputAnchorLengths = d_anchorSequencesLength2.data(),
-                d_inputAnchorQualities = d_inputAnchorQualities.data(),
-                d_mateHasBeenFound = d_mateHasBeenFound.data(),
+                d_inputAnchors = finishedTasks4.inputAnchorsEncoded.data(),
+                d_inputAnchorLengths = finishedTasks4.soainputAnchorLengths.data(),
+                d_inputAnchorQualities = finishedTasks4.soainputAnchorQualities.data(),
+                d_mateHasBeenFound = finishedTasks4.mateHasBeenFound.data(),
                 encodedSequencePitchInInts = encodedSequencePitchInInts,
                 qualityPitchInBytes = qualityPitchInBytes
             ] __device__ (){
@@ -5945,11 +5908,11 @@ struct GpuReadExtender{
             d_pairResultMateHasBeenFound.data(),
             d_pairResultMergedDifferentStrands.data(),
             outputPitch,
-            d_anchorSequencesLength2.data(), //originalReadLengths,
+            finishedTasks4.soainputAnchorLengths.data(), 
             d_resultLengths.data(),
             d_decodedConsensus.data(),
             d_consensusQuality.data(),
-            d_mateHasBeenFound.data(),
+            finishedTasks4.mateHasBeenFound.data(),
             d_goodscores.data(),
             resultMSAColumnPitchInElements,
             insertSize,
@@ -6863,7 +6826,6 @@ struct GpuReadExtender{
     
     // ----- MSA data
     gpu::ManagedGPUMultiMSA multiMSA;
-    CachedDeviceUVector<char> d_consensusQuality{};
     // -----
 
     // ----- Extension output of a single iteration
