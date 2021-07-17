@@ -4092,7 +4092,6 @@ struct GpuReadExtender{
         h_numFullyUsedReadIds2.resize(1);
 
         h_numGpuPairIdsToProcess.resize(1);
-        h_numCpuPairIdsToProcess.resize(1);
 
         d_numAnchors.resize(1);
         d_numCandidates.resize(1);
@@ -4578,230 +4577,6 @@ struct GpuReadExtender{
         helpers::call_fill_kernel_async(d_isPairedCandidate.data(), initialNumCandidates, false, stream);
 
 
-        // h_firstTasksOfPairsToCheck.resize(numTasks);
-        // int numChecks = 0;
-
-        // for(int first = 0, second = 1; second < numTasks; ){
-        //     const int taskindex1 = first;
-        //     const int taskindex2 = second;
-
-        //     const bool areConsecutiveTasks = tasks[taskindex1].id + 1 == tasks[taskindex2].id;
-        //     const bool arePairedTasks = (tasks[taskindex1].id % 2) + 1 == (tasks[taskindex2].id % 2);
-
-        //     if(areConsecutiveTasks && arePairedTasks){
-        //         h_firstTasksOfPairsToCheck[numChecks] = first;
-        //         numChecks++;
-                
-        //         first += 2; second += 2;
-        //     }else{
-        //         first += 1; second += 1;
-        //     }
-        // }
-
-        // #if 0
-        // if(numChecks > 0){
-
-        //     CachedDeviceUVector<int> d_firstTasksOfPairsToCheck(numTasks, stream, *cubAllocator);
-
-        //     cudaMemcpyAsync(
-        //         d_firstTasksOfPairsToCheck.data(),
-        //         h_firstTasksOfPairsToCheck.data(),
-        //         sizeof(int) * numChecks,
-        //         H2D,
-        //         stream
-        //     ); CUERR;
-
-        //     dim3 block = 128;
-        //     dim3 grid = numChecks;
-
-        //     helpers::lambda_kernel<<<grid, block, 0, stream>>>(
-        //         [
-        //             numChecks,
-        //             d_firstTasksOfPairsToCheck = d_firstTasksOfPairsToCheck.data(),
-        //             d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-        //             d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(), // numTasks + 1
-        //             d_numCandidatesPerAnchorPrefixSumsize = d_numCandidatesPerAnchorPrefixSum.size(),
-        //             d_candidateReadIds = d_candidateReadIds.data(),
-        //             d_candidateReadIdssize = d_candidateReadIds.size(),
-        //             d_numUsedReadIdsPerAnchor = d_numUsedReadIdsPerAnchor.data(),
-        //             d_numUsedReadIdsPerAnchorsize = d_numUsedReadIdsPerAnchor.size(),
-        //             d_numUsedReadIdsPerAnchorPrefixSum = d_numUsedReadIdsPerAnchorPrefixSum.data(), // numTasks
-        //             d_numUsedReadIdsPerAnchorPrefixSumsize = d_numUsedReadIdsPerAnchorPrefixSum.size(), // numTasks
-        //             d_usedReadIds = d_usedReadIds.data(),
-        //             d_usedReadIdssize = d_usedReadIds.size(),
-
-        //             d_isPairedCandidate = d_isPairedCandidate.data()
-        //         ] __device__ (){
-
-        //             constexpr int numSharedElements = 1024;
-
-        //             __shared__ read_number sharedElements[numSharedElements];
-
-        //             //search elements of array1 in array2. if found, set output element to true
-        //             //array1 and array2 must be sorted
-        //             auto process = [&](
-        //                 const read_number* array1,
-        //                 int numElements1,
-        //                 const read_number* array2,
-        //                 int numElements2,
-        //                 bool* output,
-        //                 const read_number* boundary1,
-        //                 const read_number* boundary2,
-        //                 const bool* boundaryoutput
-        //             ){
-        //                 const int numIterations = SDIV(numElements2, numSharedElements);
-
-        //                 for(int iteration = 0; iteration < numIterations; iteration++){
-
-        //                     const int begin = iteration * numSharedElements;
-        //                     const int end = min((iteration+1) * numSharedElements, numElements2);
-        //                     const int num = end - begin;
-
-        //                     for(int i = threadIdx.x; i < num; i += blockDim.x){
-        //                         assert(array2 + begin + i < boundary2);
-        //                         sharedElements[i] = array2[begin + i];
-        //                     }
-
-        //                     __syncthreads();
-
-        //                     //TODO in iteration > 0, we may skip elements at the beginning of first range
-
-        //                     for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
-        //                         assert(output + i < boundaryoutput);
-        //                         if(!output[i]){
-        //                             assert(array1 + i < boundary1);
-        //                             const read_number readId = array1[i];
-        //                             const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
-
-        //                             const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
-        //                             if(found){
-        //                                 output[i] = true;
-        //                             }
-        //                         }
-        //                     }
-
-        //                     __syncthreads();
-        //                 }
-        //             };
-
-        //             auto process2 = [&](
-        //                 const read_number* array1,
-        //                 int numElements1,
-        //                 const read_number* array2,
-        //                 int numElements2,
-        //                 bool* output,
-        //                 const read_number* boundary1,
-        //                 const read_number* boundary2,
-        //                 const bool* boundaryoutput
-        //             ){
-        //                 const int numIterations = SDIV(numElements2, numSharedElements);
-
-        //                 for(int iteration = 0; iteration < numIterations; iteration++){
-
-        //                     const int begin = iteration * numSharedElements;
-        //                     const int end = min((iteration+1) * numSharedElements, numElements2);
-        //                     const int num = end - begin;
-
-        //                     for(int i = threadIdx.x; i < num; i += blockDim.x){
-        //                         assert(array2 + begin + i < boundary2);
-        //                         sharedElements[i] = array2[begin + i];
-        //                     }
-
-        //                     __syncthreads();
-
-        //                     //TODO in iteration > 0, we may skip elements at the beginning of first range
-
-        //                     for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
-        //                         assert(output + i < boundaryoutput);
-        //                         if(!output[i]){
-        //                             assert(array1 + i < boundary1);
-        //                             const read_number readId = array1[i];
-        //                             const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
-
-        //                             const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
-        //                             if(found){
-        //                                 output[i] = true;
-        //                             }
-        //                         }
-        //                     }
-
-        //                     __syncthreads();
-        //                 }
-        //             };
-
-        //             for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
-        //                 const int firstTask = d_firstTasksOfPairsToCheck[a];
-        //                 //const int secondTask = firstTask + 1;
-
-        //                 //check for pairs in current candidates
-        //                 assert(firstTask < d_numCandidatesPerAnchorPrefixSumsize);
-        //                 assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
-        //                 assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
-        //                 const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
-        //                 const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
-        //                 const int rangeEnd = d_numCandidatesPerAnchorPrefixSum[firstTask + 2];
-
-        //                 process(
-        //                     d_candidateReadIds + rangeBegin,
-        //                     rangeMid - rangeBegin,
-        //                     d_candidateReadIds + rangeMid,
-        //                     rangeEnd - rangeMid,
-        //                     d_isPairedCandidate + rangeBegin,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_isPairedCandidate + d_candidateReadIdssize
-        //                 );
-
-        //                 process(
-        //                     d_candidateReadIds + rangeMid,
-        //                     rangeEnd - rangeMid,
-        //                     d_candidateReadIds + rangeBegin,
-        //                     rangeMid - rangeBegin,
-        //                     d_isPairedCandidate + rangeMid,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_isPairedCandidate + d_candidateReadIdssize
-        //                 );
-
-        //                 //check for pairs in candidates of previous extension iterations
-
-        //                 assert(firstTask < d_numUsedReadIdsPerAnchorPrefixSumsize);
-        //                 assert(firstTask+1 < d_numUsedReadIdsPerAnchorPrefixSumsize);
-        //                 assert(firstTask+1 < d_numUsedReadIdsPerAnchorsize);
-
-        //                 const int usedRangeBegin = d_numUsedReadIdsPerAnchorPrefixSum[firstTask];                        
-        //                 const int usedRangeMid = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 1];
-        //                 const int usedRangeEnd = usedRangeMid + d_numUsedReadIdsPerAnchor[firstTask + 1];
-
-        //                 process2(
-        //                     d_candidateReadIds + rangeBegin,
-        //                     rangeMid - rangeBegin,
-        //                     d_usedReadIds + usedRangeMid,
-        //                     usedRangeEnd - usedRangeMid,
-        //                     d_isPairedCandidate + rangeBegin,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_usedReadIds + d_usedReadIdssize,
-        //                     d_isPairedCandidate + d_candidateReadIdssize
-        //                 );
-
-        //                 process2(
-        //                     d_candidateReadIds + rangeMid,
-        //                     rangeEnd - rangeMid,
-        //                     d_usedReadIds + usedRangeBegin,
-        //                     usedRangeMid - usedRangeBegin,
-        //                     d_isPairedCandidate + rangeMid,
-        //                     d_candidateReadIds + d_candidateReadIdssize,
-        //                     d_usedReadIds + d_usedReadIdssize,
-        //                     d_isPairedCandidate + d_candidateReadIdssize
-        //                 );
-        //             }
-        //         }
-        //     ); CUERR;
-
-        // }
-        // #endif
-
-
         CachedDeviceUVector<int> d_firstTasksOfPairsToCheck(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<bool> d_flags(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_numChecks(1, stream, *cubAllocator);
@@ -4840,19 +4615,6 @@ struct GpuReadExtender{
         );
 
         d_flags.destroy();
-
-        // int gpunumchecks = 0;
-        // cudaMemcpyAsync(&gpunumchecks, d_numChecks.data(), sizeof(int), D2H, stream); CUERR;
-        // cudaStreamSynchronize(stream); CUERR;
-        // std::vector<int> gpufirstTasksOfPairsToCheck(gpunumchecks);
-        // cudaMemcpyAsync(gpufirstTasksOfPairsToCheck.data(), d_firstTasksOfPairsToCheck.data(), sizeof(int) * gpunumchecks, D2H, stream); CUERR;
-        // cudaStreamSynchronize(stream); CUERR;
-
-        // assert(gpunumchecks == numChecks);
-        // //assert(std::equal(h_firstTasksOfPairsToCheck.begin(), h_firstTasksOfPairsToCheck.begin() + numChecks, gpufirstTasksOfPairsToCheck.begin() + numChecks));
-        // for(int i = 0; i <numChecks; i++){
-        //     assert(h_firstTasksOfPairsToCheck[i] == gpufirstTasksOfPairsToCheck[i]);
-        // }
 
         dim3 block = 128;
         dim3 grid = numTasks;
@@ -5631,6 +5393,7 @@ struct GpuReadExtender{
         assert(tasks.decodedSequencePitchInBytes >= outputAnchorPitchInBytes);
         assert(tasks.qualityPitchInBytes >= outputAnchorQualityPitchInBytes);
 
+        //rearrange extension step result before adding them to tasks
         helpers::lambda_kernel<<<numTasks, 128, 0, stream>>>(
             [
                 numTasks = numTasks,
@@ -5724,7 +5487,6 @@ struct GpuReadExtender{
             stream
         );
 
-        #if 1
         //increment iteration and check early exit of tasks
         helpers::lambda_kernel<<<SDIV(numTasks, 128), 128, 0, stream>>>(
             [
@@ -5817,7 +5579,6 @@ struct GpuReadExtender{
                 }
             }
         );
-        #endif
 
         nvtx::pop_range();
 
@@ -5862,63 +5623,6 @@ struct GpuReadExtender{
             }
         );
 
-        cudaEventRecord(events[0], stream); CUERR;
-        cudaStreamWaitEvent(hostOutputStream, events[0], 0); CUERR;
-
-        h_accumExtensionsLengths.resize(numTasks);
-        h_abortReasons.resize(numTasks);
-        h_outputAnchors.resize(numTasks * outputAnchorPitchInBytes);
-        h_outputAnchorQualities.resize(numTasks * outputAnchorQualityPitchInBytes);
-        h_outputAnchorLengths.resize(numTasks);
-        h_outputMateHasBeenFound.resize(numTasks);
-        h_sizeOfGapToMate.resize(numTasks);
-        h_isFullyUsedCandidate.resize(initialNumCandidates);
-        h_goodscores.resize(numTasks);
-
-        helpers::call_copy_n_kernel(
-            thrust::make_zip_iterator(thrust::make_tuple(
-                d_accumExtensionsLengthsOUT.data(),
-                d_abortReasons.data(),
-                d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate.data(),
-                d_outputAnchorLengths.data(),
-                d_goodscores.data()
-            )),
-            numTasks,
-            thrust::make_zip_iterator(thrust::make_tuple(
-                h_accumExtensionsLengths.data(),
-                h_abortReasons.data(),
-                h_outputMateHasBeenFound.data(),
-                h_sizeOfGapToMate.data(),
-                h_outputAnchorLengths.data(),
-                h_goodscores.data()
-            )),
-            hostOutputStream
-        );
-
-        cudaMemcpyAsync(
-            h_outputAnchors.data(),
-            d_outputAnchors.data(),
-            sizeof(char) * outputAnchorPitchInBytes * numTasks,
-            D2H,
-            hostOutputStream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            h_outputAnchorQualities.data(),
-            d_outputAnchorQualities.data(),
-            sizeof(char) * outputAnchorQualityPitchInBytes * numTasks,
-            D2H,
-            hostOutputStream
-        ); CUERR;
-
-        cudaMemcpyAsync(
-            h_isFullyUsedCandidate.data(),
-            d_isFullyUsedCandidate.data(),
-            sizeof(bool) * initialNumCandidates,
-            D2H,
-            hostOutputStream
-        ); CUERR;
 
         std::swap(d_accumExtensionsLengths, d_accumExtensionsLengthsOUT);
 
@@ -6558,17 +6262,6 @@ struct GpuReadExtender{
 
         d_temp.destroy();
 
-
-        // std::vector<int> h_sortedPairId(d_sortedPairId.size());
-        // std::vector<int> h_sortedindices(d_sortedindices.size());
-        // std::vector<int> h_counts_out(d_counts_out.size());
-        // std::vector<int> h_num_runs_out(d_num_runs_out.size());
-        // cudaMemcpyAsync(h_sortedPairId.data(), d_sortedPairId.data(), sizeof(int) * d_sortedPairId.size(), D2H, streams[0]); CUERR;
-        // cudaMemcpyAsync(h_sortedindices.data(), d_sortedindices.data(), sizeof(int) * d_sortedindices.size(), D2H, streams[0]); CUERR;
-        // cudaMemcpyAsync(h_counts_out.data(), d_counts_out.data(), sizeof(int) * d_counts_out.size(), D2H, streams[0]); CUERR;
-        // cudaMemcpyAsync(h_num_runs_out.data(), d_num_runs_out.data(), sizeof(int) * d_num_runs_out.size(), D2H, streams[0]); CUERR;
-        // cudaStreamSynchronize(streams[0]);
-
         //compute exclusive prefix sums to have stable output
         CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), streams[0], *cubAllocator);
         CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size(), streams[0], *cubAllocator);
@@ -6707,14 +6400,6 @@ struct GpuReadExtender{
 
         cudaStreamSynchronize(streams[0]); CUERR;
 
-        // std::vector<int> h_positions4(d_positions4.size());
-        // std::vector<int> h_positionsNot4(d_positionsNot4.size());
-        // std::vector<int> h_numPositions(d_numPositions.size());
-        // cudaMemcpyAsync(h_positions4.data(), d_positions4.data(), sizeof(int) * d_positions4.size(), D2H, streams[0]); CUERR;
-        // cudaMemcpyAsync(h_positionsNot4.data(), d_positionsNot4.data(), sizeof(int) * d_positionsNot4.size(), D2H, streams[0]); CUERR;
-        // cudaMemcpyAsync(h_numPositions.data(), d_numPositions.data(), sizeof(int) * d_numPositions.size(), D2H, streams[0]); CUERR;
-        // cudaStreamSynchronize(streams[0]);
-        
         SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
             d_positions4.data(), 
             d_positions4.data() + numPositions[0],
@@ -8112,18 +7797,6 @@ struct GpuReadExtender{
     CachedDeviceUVector<bool> d_isFullyUsedCandidate{};
     // -----
 
-    PinnedBuffer<int> h_firstTasksOfPairsToCheck;
-    PinnedBuffer<int> h_newPositionsOfActiveTasks{};
-
-    PinnedBuffer<int> h_accumExtensionsLengths;
-    PinnedBuffer<extension::AbortReason> h_abortReasons;
-    PinnedBuffer<char> h_outputAnchors;
-    PinnedBuffer<char> h_outputAnchorQualities;
-    PinnedBuffer<int> h_outputAnchorLengths;
-    PinnedBuffer<bool> h_outputMateHasBeenFound;
-    PinnedBuffer<int> h_sizeOfGapToMate;
-    PinnedBuffer<bool> h_isFullyUsedCandidate{};
-
     // ----- Pinned buffers for constructing output extended read pair from tasks
     PinnedBuffer<bool> h_pairResultAnchorIsLR{};
     PinnedBuffer<char> h_pairResultSequences{};
@@ -8135,15 +7808,7 @@ struct GpuReadExtender{
     PinnedBuffer<bool> h_pairResultMergedDifferentStrands{};
 
     PinnedBuffer<int> h_numGpuPairIdsToProcess{};
-    PinnedBuffer<int> h_numCpuPairIdsToProcess{};
     PinnedBuffer<int> h_gpuPairIdsToProcess{};
-    PinnedBuffer<int> h_cpuPairIdsToProcess{};
-
-    PinnedBuffer<char> h_cpuTaskResultSequences{};
-    PinnedBuffer<char> h_cpuTaskResultQualities{};
-    PinnedBuffer<int> h_cpuTaskResultLengths{};
-    
-    PinnedBuffer<float> h_goodscores{};
 
 
     PinnedBuffer<extension::AbortReason> h_gpuabortReasons{};
