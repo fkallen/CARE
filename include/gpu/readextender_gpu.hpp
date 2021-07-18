@@ -5349,7 +5349,7 @@ struct GpuReadExtender{
             streams[0]
         );
 
-        //compute exclusive prefix sums to have stable output
+        //compute exclusive prefix sums + total to have stable output
         CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), streams[0], *cubAllocator);
         CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size(), streams[0], *cubAllocator);
 
@@ -5396,10 +5396,11 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> d_positionsNot4(finishedTasks.size(), streams[0], *cubAllocator);
 
         CachedDeviceUVector<int> d_numPositions(2, streams[0], *cubAllocator);
+        helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, streams[0]);
 
-
-        helpers::lambda_kernel<<<1, 1024, 0, streams[0]>>>(
+        helpers::lambda_kernel<<<SDIV(finishedTasks.size(), 256), 256, 0, streams[0]>>>(
             [
+                numTasks = finishedTasks.size(),
                 d_positions4 = d_positions4.data(),
                 d_positionsNot4 = d_positionsNot4.data(),
                 d_run_endoffsets = d_counts_out.data(),
@@ -5409,21 +5410,25 @@ struct GpuReadExtender{
                 d_numPositions_out = d_numPositions.data(),
                 d_outputoffsetsPos4 = d_outputoffsetsPos4.data(),
                 d_outputoffsetsNotPos4 = d_outputoffsetsNotPos4.data()
+                //numPositions_out = h_numPositions
             ] __device__ (){
-                __shared__ int outputpos4;
-                __shared__ int outputposNot4;
+                __shared__ int count4;
+                __shared__ int countNot4;
 
                 if(threadIdx.x == 0){
-                    outputpos4 = 0;
-                    outputposNot4 = 0;
+                    count4 = 0;
+                    countNot4 = 0;
                 }
                 __syncthreads();
+
+                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+                const int stride = blockDim.x * gridDim.x;
 
                 const int numRuns = *d_num_runs;
 
                 auto group = cg::tiled_partition<4>(cg::this_thread_block());
-                const int numGroups = blockDim.x / 4;
-                const int groupId = threadIdx.x / 4;
+                const int numGroups = stride / 4;
+                const int groupId = tid / 4;
 
                 for(int t = groupId; t < numRuns; t += numGroups){
                     const int runBegin = (t == 0 ? 0 : d_run_endoffsets[t-1]);
@@ -5431,27 +5436,20 @@ struct GpuReadExtender{
 
                     const int size = runEnd - runBegin;
                     if(size < 4){
-                        int groupoutputbegin = 0;
                         if(group.thread_rank() == 0){
-                            groupoutputbegin = atomicAdd(&outputposNot4, size);
+                            atomicAdd(&countNot4, size);
                         }
-                        groupoutputbegin = group.shfl(groupoutputbegin, 0);
 
-                        // if(group.thread_rank() < size){
-                        //     d_positionsNot4[groupoutputbegin + group.thread_rank()]
-                        //         = d_sortedindices[runBegin + group.thread_rank()];
-                        // }
                         if(group.thread_rank() < size){
                             d_positionsNot4[d_outputoffsetsNotPos4[t] + group.thread_rank()]
                                 = d_sortedindices[runBegin + group.thread_rank()];
                         }
                     }else{
                         assert(size == 4);
-                        int groupoutputbegin = 0;
+
                         if(group.thread_rank() == 0){
-                            groupoutputbegin = atomicAdd(&outputpos4, 4);
+                            atomicAdd(&count4, 4);
                         }
-                        groupoutputbegin = group.shfl(groupoutputbegin, 0);
 
                         //sort 4 elements of same pairId by id. id is either 0,1,2, or 3
                         const int position = d_sortedindices[runBegin + group.thread_rank()];
@@ -5469,16 +5467,17 @@ struct GpuReadExtender{
             
                 __syncthreads();
                 if(threadIdx.x == 0){
-                    d_numPositions_out[0] = outputpos4;
-                    d_numPositions_out[1] = outputposNot4;
+                    atomicAdd(d_numPositions_out + 0, count4);
+                    atomicAdd(d_numPositions_out + 1, countNot4);
                 }
             }
         );
 
-        int numPositions[2];
+        h_anchorSequencesLength.resize(2);
+        int* h_numPositions = h_anchorSequencesLength.data();
 
         cudaMemcpyAsync(
-            &numPositions[0],
+            h_numPositions,
             d_numPositions.data(),
             sizeof(int) * 2,
             D2H,
@@ -5487,15 +5486,16 @@ struct GpuReadExtender{
 
         cudaStreamSynchronize(streams[0]); CUERR;
 
+
         SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
             d_positions4.data(), 
-            d_positions4.data() + numPositions[0],
+            d_positions4.data() + h_numPositions[0],
             streams[0]
         );
 
         SoAExtensionTaskGpuData gpufinishedTasksNot4 = finishedTasks.gather(
             d_positionsNot4.data(), 
-            d_positionsNot4.data() + numPositions[1],
+            d_positionsNot4.data() + h_numPositions[1],
             streams[0]
         );
 
