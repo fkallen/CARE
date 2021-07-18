@@ -3862,8 +3862,6 @@ struct GpuReadExtender{
 
         helpers::call_fill_kernel_async(d_flags.data(), numTasks, false, stream);
 
-        cudaMemsetAsync(d_flags.data(), 0, sizeof(bool) * numTasks, stream); CUERR;
-
         helpers::lambda_kernel<<<SDIV(numTasks, 128), 128, 0, stream>>>(
             [
                 numTasks = numTasks,
@@ -4131,8 +4129,9 @@ struct GpuReadExtender{
         CachedDeviceUVector<bool> d_keepflags(initialNumCandidates, stream, *cubAllocator);
 
         //compute flags of candidates which should not be removed. Candidates which should be removed are identical to mate sequence
-
         helpers::call_fill_kernel_async(d_keepflags.data(), initialNumCandidates, true, stream);
+
+        const int* d_currentNumCandidates = d_numCandidatesPerAnchorPrefixSum.data() + numTasks;
 
         constexpr int groupsize = 32;
         constexpr int blocksize = 128;
@@ -4151,7 +4150,7 @@ struct GpuReadExtender{
             numTasks,
             d_keepflags.data(),
             initialNumCandidates,
-            d_numCandidatesPerAnchorPrefixSum.data() + numTasks
+            d_currentNumCandidates
         ); CUERR;
 
         //cudaEventSynchronize(h_numAnchorsWithRemovedMatesEvent); CUERR;
@@ -5338,34 +5337,17 @@ struct GpuReadExtender{
 
         CachedDeviceUVector<int> d_counts_out(finishedTasks.size(), streams[0], *cubAllocator);
         CachedDeviceUVector<int> d_num_runs_out(1, streams[0], *cubAllocator);
-        
-        status = cub::DeviceRunLengthEncode::Encode(
-            nullptr, 
-            tempbytes, 
+
+        cubReduceByKey(
             d_sortedPairId.data(), 
-            cub::DiscardOutputIterator<>{}, 
-            d_counts_out.data(), 
-            d_num_runs_out.data(), 
+            cub::DiscardOutputIterator<>{},
+            thrust::make_constant_iterator(1),
+            d_counts_out.data(),
+            d_num_runs_out.data(),
+            thrust::plus<int>{},
             finishedTasks.size(),
             streams[0]
         );
-        assert(cudaSuccess == status);
-
-        d_temp.resize(tempbytes, streams[0]);
-
-        status = cub::DeviceRunLengthEncode::Encode(
-            d_temp.data(),
-            tempbytes, 
-            d_sortedPairId.data(), 
-            cub::DiscardOutputIterator<>{},  
-            d_counts_out.data(), 
-            d_num_runs_out.data(), 
-            finishedTasks.size(),
-            streams[0]
-        );
-        assert(cudaSuccess == status);
-
-        d_temp.destroy();
 
         //compute exclusive prefix sums to have stable output
         CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), streams[0], *cubAllocator);
@@ -6227,24 +6209,6 @@ struct GpuReadExtender{
         std::swap(d_candidateSequencesData, d_candidateSequencesData2);
         d_candidateSequencesData2.destroy();
 
-        //update candidate quality scores
-        // assert(qualityPitchInBytes % sizeof(int) == 0);
-        // CachedDeviceUVector<char> d_candidateQualities2(qualityPitchInBytes * initialNumCandidates, stream, *cubAllocator);
-
-        // cubSelectFlagged(
-        //     (const int*)d_candidateQualityScores.data(),
-        //     thrust::make_transform_iterator(
-        //         thrust::make_counting_iterator(0),
-        //         make_iterator_multiplier(d_keepFlags, qualityPitchInBytes / sizeof(int))
-        //     ),
-        //     (int*)d_candidateQualities2.data(),
-        //     thrust::make_discard_iterator(),
-        //     initialNumCandidates * qualityPitchInBytes / sizeof(int),
-        //     firstStream
-        // );
-
-        // std::swap(d_candidateQualityScores, d_candidateQualities2);
-
         setGpuSegmentIds(
             d_segmentIdsOfCandidates.data(),
             numTasks,
@@ -6699,6 +6663,54 @@ struct GpuReadExtender{
             num_segments, 
             d_begin_offsets, 
             d_end_offsets,
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+    }
+
+    template<typename KeysInputIteratorT, typename UniqueOutputIteratorT, typename ValuesInputIteratorT, typename AggregatesOutputIteratorT, typename NumRunsOutputIteratorT, typename ReductionOpT>
+    void cubReduceByKey(
+        KeysInputIteratorT d_keys_in,
+        UniqueOutputIteratorT d_unique_out,
+        ValuesInputIteratorT d_values_in,
+        AggregatesOutputIteratorT d_aggregates_out,
+        NumRunsOutputIteratorT d_num_runs_out,
+        ReductionOpT reduction_op,
+        int num_items,
+        cudaStream_t stream = 0,
+        bool debug_synchronous = false 
+    ) const {
+        std::size_t bytes = 0;
+        cudaError_t status = cudaSuccess;
+
+        status = cub::DeviceReduce::ReduceByKey(
+            nullptr, 
+            bytes, 
+            d_keys_in, 
+            d_unique_out,
+            d_values_in,
+            d_aggregates_out,
+            d_num_runs_out,
+            reduction_op,
+            num_items,
+            stream,
+            debug_synchronous
+        );
+        assert(status == cudaSuccess);
+
+        CachedDeviceUVector<char> temp(bytes, stream, *cubAllocator);
+
+        status = cub::DeviceReduce::ReduceByKey(
+            temp.data(), 
+            bytes, 
+            d_keys_in, 
+            d_unique_out,
+            d_values_in,
+            d_aggregates_out,
+            d_num_runs_out,
+            reduction_op,
+            num_items,
             stream,
             debug_synchronous
         );
