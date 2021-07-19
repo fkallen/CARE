@@ -456,6 +456,8 @@ namespace care{
 
 namespace readextendergpukernels{
 
+    //Utility
+
 
     template<class Iter1, class Iter2, class Iter3>
     __global__
@@ -511,6 +513,46 @@ namespace readextendergpukernels{
             *(begin + i) = value;
         }
     }
+
+    template<int blocksize, class InputIter, class OutputIter>
+    __global__
+    void minmaxSingleBlockKernel(InputIter begin, int N, OutputIter minmax){
+        using value_type_in = typename std::iterator_traits<InputIter>::value_type;
+        using value_type_out = typename std::iterator_traits<OutputIter>::value_type;
+        static_assert(std::is_same_v<value_type_in, value_type_out>);
+
+        using value_type = value_type_in;
+
+        using BlockReduce = cub::BlockReduce<value_type, blocksize>;
+        __shared__ typename BlockReduce::TempStorage temp1;
+        __shared__ typename BlockReduce::TempStorage temp2;
+
+        if(blockIdx.x == 0){
+
+            const int tid = threadIdx.x;
+            const int stride = blockDim.x;
+
+            value_type myMin = std::numeric_limits<value_type>::max();
+            value_type myMax = 0;
+
+            for(int i = tid; i < N; i += stride){
+                const value_type val = *(begin + i);
+                myMin = min(myMin, val);
+                myMax = max(myMax, val);
+            }
+
+            myMin = BlockReduce(temp1).Reduce(myMin, cub::Min{});
+            myMax = BlockReduce(temp2).Reduce(myMax, cub::Max{});
+
+            if(tid == 0){
+                *(minmax + 0) = myMin;
+                *(minmax + 1) = myMax;
+            }
+        }
+    }
+
+
+    //extender kernels
 
     template<int blocksize>
     __global__
@@ -5296,7 +5338,32 @@ struct GpuReadExtender{
     SoAExtensionTaskGpuData getFinishedGpuSoaTasksOfFinishedPairsAndRemoveThemFromList(){
         //determine tasks in groups of 4
 
-        #if 1
+        
+
+        //compute smallest and greatest pairId in tasks to compute the number of bits to sort using radix sort
+        CachedDeviceUVector<int> d_minmax(2, streams[0], *cubAllocator);
+
+        readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, streams[0]>>>(
+            finishedTasks.pairId.data(),
+            finishedTasks.size(),
+            d_minmax.data()
+        );        
+
+        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
+
+        int* const h_minmax = h_anchorSequencesLength.data();
+
+        cudaMemcpyAsync(
+            h_minmax,
+            d_minmax.data(),
+            sizeof(int) * 2,
+            D2H,
+            streams[0]
+        ); CUERR;
+
+        cudaStreamSynchronize(streams[0]); CUERR;
+
+        #if 0
         assert(finishedTasks.size() <= 4096);
 
         CachedDeviceUVector<int> d_positions4_debug(finishedTasks.size(), streams[0], *cubAllocator);
@@ -5535,27 +5602,46 @@ struct GpuReadExtender{
 
         cudaStreamSynchronize(streams[0]); CUERR;
 
-        //#else    
+        #else    
 
+        
+        CachedDeviceUVector<int> d_pairIds1(finishedTasks.size(), streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_pairIds2(finishedTasks.size(), streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_indices1(finishedTasks.size(), streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_incices2(finishedTasks.size(), streams[0], *cubAllocator);
 
-        CachedDeviceUVector<int> d_sortedPairId(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_indices(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_sortedindices(finishedTasks.size(), streams[0], *cubAllocator);
+        //decrease pair ids by smallest pair id to improve radix sort performance
+        readextendergpukernels::vectorAddKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, streams[0]>>>(
+            finishedTasks.pairId.data(),
+            thrust::make_constant_iterator(-h_minmax[0]),
+            d_pairIds1.data(),
+            finishedTasks.size()
+        );
 
-        readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, streams[0]>>>(d_indices.begin(), d_indices.end(), 0); CUERR;
+        
+
+        readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, streams[0]>>>(
+            d_indices1.begin(), 
+            d_indices1.end(), 
+            0
+        ); CUERR;
        
+        cub::DoubleBuffer<int> d_keys(d_pairIds1.data(), d_pairIds2.data());
+        cub::DoubleBuffer<int> d_values(d_indices1.data(), d_incices2.data());
+
+        const int begin_bit = 0;
+        const int end_bit = std::ceil(std::log2(h_minmax[1] - h_minmax[0]));
+
         cudaError_t status = cudaSuccess;
         std::size_t tempbytes = 0;
         status = cub::DeviceRadixSort::SortPairs(
             nullptr,
             tempbytes,
-            finishedTasks.pairId.data(),
-            d_sortedPairId.data(),
-            d_indices.data(),
-            d_sortedindices.data(),
+            d_keys,
+            d_values,
             finishedTasks.size(), 
-            0, 
-            sizeof(int) * (8), 
+            begin_bit, 
+            end_bit, 
             streams[0]
         );
         assert(cudaSuccess == status);
@@ -5565,22 +5651,24 @@ struct GpuReadExtender{
         status = cub::DeviceRadixSort::SortPairs(
             d_temp.data(),
             tempbytes,
-            finishedTasks.pairId.data(),
-            d_sortedPairId.data(),
-            d_indices.data(),
-            d_sortedindices.data(),
+            d_keys,
+            d_values,
             finishedTasks.size(), 
-            0, 
-            sizeof(int) * (8), 
+            begin_bit, 
+            end_bit, 
             streams[0]
         );
         assert(cudaSuccess == status);
+        d_temp.destroy();       
+
+        const int* d_theSortedPairIds = d_keys.Current();
+        const int* d_theSortedIndices = d_values.Current();
 
         CachedDeviceUVector<int> d_counts_out(finishedTasks.size(), streams[0], *cubAllocator);
         CachedDeviceUVector<int> d_num_runs_out(1, streams[0], *cubAllocator);
 
         cubReduceByKey(
-            d_sortedPairId.data(), 
+            d_theSortedPairIds, 
             cub::DiscardOutputIterator<>{},
             thrust::make_constant_iterator(1),
             d_counts_out.data(),
@@ -5589,6 +5677,9 @@ struct GpuReadExtender{
             finishedTasks.size(),
             streams[0]
         );
+
+        d_pairIds1.destroy();
+        d_pairIds2.destroy();
 
         //compute exclusive prefix sums + total to have stable output
         CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), streams[0], *cubAllocator);
@@ -5646,7 +5737,7 @@ struct GpuReadExtender{
                 d_positionsNot4 = d_positionsNot4.data(),
                 d_run_endoffsets = d_counts_out.data(),
                 d_num_runs = d_num_runs_out.data(),
-                d_sortedindices = d_sortedindices.data(),
+                d_sortedindices = d_theSortedIndices,
                 task_ids = finishedTasks.id.data(),
                 d_numPositions_out = d_numPositions.data(),
                 d_outputoffsetsPos4 = d_outputoffsetsPos4.data(),
@@ -5727,16 +5818,16 @@ struct GpuReadExtender{
 
         cudaStreamSynchronize(streams[0]); CUERR;
 
-        std::vector<int> h_positions4_debug(finishedTasks.size());
-        std::vector<int> h_positionsNot4_debug(finishedTasks.size());
-        std::vector<int> h_positions4(finishedTasks.size());
-        std::vector<int> h_positionsNot4(finishedTasks.size());
+        // std::vector<int> h_positions4_debug(finishedTasks.size());
+        // std::vector<int> h_positionsNot4_debug(finishedTasks.size());
+        // std::vector<int> h_positions4(finishedTasks.size());
+        // std::vector<int> h_positionsNot4(finishedTasks.size());
 
-        cudaMemcpyAsync(h_positions4_debug.data(), d_positions4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        cudaMemcpyAsync(h_positionsNot4_debug.data(), d_positionsNot4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        cudaMemcpyAsync(h_positions4.data(), d_positions4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        cudaMemcpyAsync(h_positionsNot4.data(), d_positionsNot4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        cudaStreamSynchronize(streams[0]); CUERR;
+        // cudaMemcpyAsync(h_positions4_debug.data(), d_positions4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
+        // cudaMemcpyAsync(h_positionsNot4_debug.data(), d_positionsNot4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
+        // cudaMemcpyAsync(h_positions4.data(), d_positions4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
+        // cudaMemcpyAsync(h_positionsNot4.data(), d_positionsNot4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
+        // cudaStreamSynchronize(streams[0]); CUERR;
         // std::cerr << h_numPositions[0] << " " << h_numPositions[1] << " "
         //     << h_numPositions_debug[0] << " " << h_numPositions_debug[1] << "\n";
 
@@ -5753,18 +5844,18 @@ struct GpuReadExtender{
         // std::copy(h_positionsNot4.begin(), h_positionsNot4.begin() + h_numPositions[1], std::ostream_iterator<int>(std::cerr , ","));
         // std::cerr << "\n";
 
-        assert(h_numPositions[0] == h_numPositions_debug[0]);
-        assert(h_numPositions[1] == h_numPositions_debug[1]);
+        // assert(h_numPositions[0] == h_numPositions_debug[0]);
+        // assert(h_numPositions[1] == h_numPositions_debug[1]);
 
-        assert(std::equal(
-            h_positions4_debug.begin(), h_positions4_debug.begin() + h_numPositions_debug[0],
-            h_positions4.begin(), h_positions4.begin() + h_numPositions[0]
-        ));
+        // assert(std::equal(
+        //     h_positions4_debug.begin(), h_positions4_debug.begin() + h_numPositions_debug[0],
+        //     h_positions4.begin(), h_positions4.begin() + h_numPositions[0]
+        // ));
 
-        assert(std::equal(
-            h_positionsNot4_debug.begin(), h_positionsNot4_debug.begin() + h_numPositions_debug[1],
-            h_positionsNot4.begin(), h_positionsNot4.begin() + h_numPositions[1]
-        ));
+        // assert(std::equal(
+        //     h_positionsNot4_debug.begin(), h_positionsNot4_debug.begin() + h_numPositions_debug[1],
+        //     h_positionsNot4.begin(), h_positionsNot4.begin() + h_numPositions[1]
+        // ));
 
         #endif
 
