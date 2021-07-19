@@ -528,7 +528,12 @@ namespace readextendergpukernels{
 
     template<int groupsize, class Iter, class SizeIter, class OffsetIter>
     __global__
-    void segmentedIotaKernel(Iter outputbegin, SizeIter segmentsizes, OffsetIter segmentBeginOffsets, int numSegments){
+    void segmentedIotaKernel(
+        Iter outputbegin, 
+        int numSegments, 
+        SizeIter segmentsizes, 
+        OffsetIter segmentBeginOffsets
+    ){
         auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
 
         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -900,6 +905,270 @@ namespace readextendergpukernels{
 
             if(areConsecutiveTasks && arePairedTasks){
                 d_flags[i] = true;
+            }
+        }
+    }
+
+    template<int blocksize, int smemSizeBytes>
+    __global__
+    void flagPairedCandidatesKernel(
+        const int* __restrict__ d_numChecks,
+        const int* __restrict__ d_firstTasksOfPairsToCheck,
+        const int* __restrict__ d_numCandidatesPerAnchor,
+        const int* __restrict__ d_numCandidatesPerAnchorPrefixSum,
+        const read_number* __restrict__ d_candidateReadIds,
+        const int* __restrict__ d_numUsedReadIdsPerAnchor,
+        const int* __restrict__ d_numUsedReadIdsPerAnchorPrefixSum,
+        const read_number* __restrict__ d_usedReadIds,
+        bool* __restrict__ d_isPairedCandidate
+    ){
+
+        constexpr int numSharedElements = SDIV(smemSizeBytes, sizeof(int));
+
+        __shared__ read_number sharedElements[numSharedElements];
+
+        //search elements of array1 in array2. if found, set output element to true
+        //array1 and array2 must be sorted
+        auto process = [&](
+            const read_number* array1,
+            int numElements1,
+            const read_number* array2,
+            int numElements2,
+            bool* output
+        ){
+            const int numIterations = SDIV(numElements2, numSharedElements);
+
+            for(int iteration = 0; iteration < numIterations; iteration++){
+
+                const int begin = iteration * numSharedElements;
+                const int end = min((iteration+1) * numSharedElements, numElements2);
+                const int num = end - begin;
+
+                for(int i = threadIdx.x; i < num; i += blockDim.x){
+                    sharedElements[i] = array2[begin + i];
+                }
+
+                __syncthreads();
+
+                //TODO in iteration > 0, we may skip elements at the beginning of first range
+
+                for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
+                    if(!output[i]){
+                        const read_number readId = array1[i];
+                        const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
+
+                        const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
+                        if(found){
+                            output[i] = true;
+                        }
+                    }
+                }
+
+                __syncthreads();
+            }
+        };
+
+        const int numChecks = *d_numChecks;
+
+        for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
+            const int firstTask = d_firstTasksOfPairsToCheck[a];
+            //const int secondTask = firstTask + 1;
+
+            //check for pairs in current candidates
+            const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
+            const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
+            const int rangeEnd = rangeMid + d_numCandidatesPerAnchor[firstTask + 1];
+
+            process(
+                d_candidateReadIds + rangeBegin,
+                rangeMid - rangeBegin,
+                d_candidateReadIds + rangeMid,
+                rangeEnd - rangeMid,
+                d_isPairedCandidate + rangeBegin
+            );
+
+            process(
+                d_candidateReadIds + rangeMid,
+                rangeEnd - rangeMid,
+                d_candidateReadIds + rangeBegin,
+                rangeMid - rangeBegin,
+                d_isPairedCandidate + rangeMid
+            );
+
+            //check for pairs in candidates of previous extension iterations
+
+            const int usedRangeBegin = d_numUsedReadIdsPerAnchorPrefixSum[firstTask];                        
+            const int usedRangeMid = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 1];
+            const int usedRangeEnd = usedRangeMid + d_numUsedReadIdsPerAnchor[firstTask + 1];
+
+            process(
+                d_candidateReadIds + rangeBegin,
+                rangeMid - rangeBegin,
+                d_usedReadIds + usedRangeMid,
+                usedRangeEnd - usedRangeMid,
+                d_isPairedCandidate + rangeBegin
+            );
+
+            process(
+                d_candidateReadIds + rangeMid,
+                rangeEnd - rangeMid,
+                d_usedReadIds + usedRangeBegin,
+                usedRangeMid - usedRangeBegin,
+                d_isPairedCandidate + rangeMid
+            );
+        }
+    }
+
+    template<int blocksize>
+    __global__
+    void flagGoodAlignmentsKernel(
+        const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+        const int* __restrict__ d_alignment_shifts,
+        const int* __restrict__ d_alignment_overlaps,
+        const int* __restrict__ d_anchorSequencesLength,
+        const int* __restrict__ d_numCandidatesPerAnchor,
+        const int* __restrict__ d_numCandidatesPerAnchorPrefixSum,
+        const bool* __restrict__ d_isPairedCandidate,
+        bool* __restrict__ d_keepflags,
+        float min_overlap_ratio,
+        int numAnchors,
+        const int* __restrict__ currentNumCandidatesPtr,
+        int initialNumCandidates
+    ){
+        using BlockReduceFloat = cub::BlockReduce<float, 128>;
+        using BlockReduceInt = cub::BlockReduce<int, 128>;
+
+        __shared__ union {
+            typename BlockReduceFloat::TempStorage floatreduce;
+            typename BlockReduceInt::TempStorage intreduce;
+        } cubtemp;
+
+        __shared__ int intbroadcast;
+        __shared__ float floatbroadcast;
+
+        for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
+            const int num = d_numCandidatesPerAnchor[a];
+            const int offset = d_numCandidatesPerAnchorPrefixSum[a];
+            const float anchorLength = d_anchorSequencesLength[a];
+
+            int threadReducedGoodAlignmentExists = 0;
+            float threadReducedRelativeOverlapThreshold = 0.0f;
+
+            for(int c = threadIdx.x; c < num; c += blockDim.x){
+                d_keepflags[offset + c] = true;
+            }
+
+            //loop over candidates to compute relative overlap threshold
+
+            for(int c = threadIdx.x; c < num; c += blockDim.x){
+                const auto alignmentflag = d_alignment_best_alignment_flags[offset + c];
+                const int shift = d_alignment_shifts[offset + c];
+
+                if(alignmentflag != BestAlignment_t::None && shift >= 0){
+                    if(!d_isPairedCandidate[offset+c]){
+                        const float overlap = d_alignment_overlaps[offset + c];                            
+                        const float relativeOverlap = overlap / anchorLength;
+                        
+                        if(relativeOverlap < 1.0f && fgeq(relativeOverlap, min_overlap_ratio)){
+                            threadReducedGoodAlignmentExists = 1;
+                            const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
+                            threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
+                        }
+                    }
+                }else{
+                    //remove alignment with negative shift or bad alignments
+                    d_keepflags[offset + c] = false;
+                }                       
+            }
+
+            int blockreducedGoodAlignmentExists = BlockReduceInt(cubtemp.intreduce)
+                .Sum(threadReducedGoodAlignmentExists);
+            if(threadIdx.x == 0){
+                intbroadcast = blockreducedGoodAlignmentExists;
+                //printf("task %d good: %d\n", a, blockreducedGoodAlignmentExists);
+            }
+            __syncthreads();
+
+            blockreducedGoodAlignmentExists = intbroadcast;
+
+            if(blockreducedGoodAlignmentExists > 0){
+                float blockreducedRelativeOverlapThreshold = BlockReduceFloat(cubtemp.floatreduce)
+                    .Reduce(threadReducedRelativeOverlapThreshold, cub::Max());
+                if(threadIdx.x == 0){
+                    floatbroadcast = blockreducedRelativeOverlapThreshold;
+                    //printf("task %d thresh: %f\n", a, blockreducedRelativeOverlapThreshold);
+                }
+                __syncthreads();
+
+                blockreducedRelativeOverlapThreshold = floatbroadcast;
+
+                // loop over candidates and remove those with an alignment overlap threshold smaller than the computed threshold
+                for(int c = threadIdx.x; c < num; c += blockDim.x){
+                    if(!d_isPairedCandidate[offset+c]){
+                        if(d_keepflags[offset + c]){
+                            const float overlap = d_alignment_overlaps[offset + c];                            
+                            const float relativeOverlap = overlap / anchorLength;                 
+
+                            if(!fgeq(relativeOverlap, blockreducedRelativeOverlapThreshold)){
+                                d_keepflags[offset + c] = false;
+                            }
+                        }
+                    }
+                }
+            }else{
+                //NOOP.
+                //if no good alignment exists, no candidate is removed. we will try to work with the not-so-good alignments
+                // if(threadIdx.x == 0){
+                //     printf("no good alignment,nc %d\n", num);
+                // }
+            }
+
+            __syncthreads();
+        }
+    
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+        for(int i = *currentNumCandidatesPtr + tid; i < initialNumCandidates; i += stride){
+            d_keepflags[i] = false;
+        }
+    }
+
+    template<int blocksize, int groupsize>
+    __global__
+    void convertLocalIndicesInSegmentsToGlobalFlags(
+        bool* __restrict__ d_flags,
+        const int* __restrict__ indices,
+        const int* __restrict__ segmentSizes,
+        const int* __restrict__ segmentOffsets,
+        int numSegments
+    ){
+        /*
+            Input:
+            indices: 0,1,2,0,0,0,0,3,5,0
+            segmentSizes: 6,4,1
+            segmentOffsets: 0,6,10,11
+
+            Output:
+            d_flags: 1,1,1,0,0,0,1,0,0,1,0,1
+
+            d_flags must be initialized with 0
+        */
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+        
+        const int numGroups = stride / groupsize;
+        const int groupId = tid / groupsize;
+
+
+        for(int s = groupId; s < numSegments; s += numGroups){        
+            const int num = segmentSizes[s];
+            const int offset = segmentOffsets[s];
+
+            for(int i = group.thread_rank(); i < num; i += group.size()){
+                const int globalIndex = indices[offset + i] + offset;
+                d_flags[globalIndex] = true;
             }
         }
     }
@@ -2028,23 +2297,7 @@ namespace readextendergpukernels{
         }
     }
 
-    __global__
-    void setSegmentIndicesKernel(
-        int* __restrict__ d_indices,
-        int N,
-        const int* __restrict__ d_segment_sizes,
-        const int* __restrict__ d_segment_sizes_prefixsum
-    ){
-        for(int segmentIndex = blockIdx.x; segmentIndex < N; segmentIndex += gridDim.x){
-            const int offset = d_segment_sizes_prefixsum[segmentIndex];
-            const int size = d_segment_sizes[segmentIndex];
-            int* const beginptr = &d_indices[offset];
 
-            for(int localindex = threadIdx.x; localindex < size; localindex += blockDim.x){
-                beginptr[localindex] = segmentIndex;
-            }
-        }
-    }
 
     //flag candidates to remove because they are equal to anchor id or equal to mate id
     __global__
@@ -2116,25 +2369,6 @@ namespace readextendergpukernels{
                 }else{
                     mateRemovedFlags[a] = false;
                 }
-            }
-        }
-    }
-
-    template<int dummy=0>
-    __global__
-    void setSegmentIdsOfCandidateskernel(
-        int* __restrict__ d_segmentIdsOfCandidates,
-        const int* __restrict__ numAnchorsPtr,
-        const int* __restrict__ d_candidates_per_anchor,
-        const int* __restrict__ d_candidates_per_anchor_prefixsum
-    ){
-        for(int anchorIndex = blockIdx.x; anchorIndex < *numAnchorsPtr; anchorIndex += gridDim.x){
-            const int offset = d_candidates_per_anchor_prefixsum[anchorIndex];
-            const int numCandidatesOfAnchor = d_candidates_per_anchor[anchorIndex];
-            int* const beginptr = &d_segmentIdsOfCandidates[offset];
-
-            for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += blockDim.x){
-                beginptr[localindex] = anchorIndex;
             }
         }
     }
@@ -4328,7 +4562,6 @@ struct GpuReadExtender{
 
         helpers::call_fill_kernel_async(d_isPairedCandidate.data(), initialNumCandidates, false, stream);
 
-
         CachedDeviceUVector<int> d_firstTasksOfPairsToCheck(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<bool> d_flags(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_numChecks(1, stream, *cubAllocator);
@@ -4352,194 +4585,17 @@ struct GpuReadExtender{
 
         d_flags.destroy();
 
-        dim3 block = 128;
-        dim3 grid = numTasks;
-
-        helpers::lambda_kernel<<<grid, block, 0, stream>>>(
-            [
-                d_numChecks = d_numChecks.data(),
-                d_firstTasksOfPairsToCheck = d_firstTasksOfPairsToCheck.data(),
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(), // numTasks + 1
-                d_numCandidatesPerAnchorPrefixSumsize = d_numCandidatesPerAnchorPrefixSum.size(),
-                d_candidateReadIds = d_candidateReadIds.data(),
-                d_candidateReadIdssize = d_candidateReadIds.size(),
-                d_numUsedReadIdsPerAnchor = d_numUsedReadIdsPerAnchor.data(),
-                d_numUsedReadIdsPerAnchorsize = d_numUsedReadIdsPerAnchor.size(),
-                d_numUsedReadIdsPerAnchorPrefixSum = d_numUsedReadIdsPerAnchorPrefixSum.data(), // numTasks
-                d_numUsedReadIdsPerAnchorPrefixSumsize = d_numUsedReadIdsPerAnchorPrefixSum.size(), // numTasks
-                d_usedReadIds = d_usedReadIds.data(),
-                d_usedReadIdssize = d_usedReadIds.size(),
-
-                d_isPairedCandidate = d_isPairedCandidate.data()
-            ] __device__ (){
-
-                constexpr int numSharedElements = 1024;
-
-                __shared__ read_number sharedElements[numSharedElements];
-
-                //search elements of array1 in array2. if found, set output element to true
-                //array1 and array2 must be sorted
-                auto process = [&](
-                    const read_number* array1,
-                    int numElements1,
-                    const read_number* array2,
-                    int numElements2,
-                    bool* output,
-                    const read_number* boundary1,
-                    const read_number* boundary2,
-                    const bool* boundaryoutput
-                ){
-                    const int numIterations = SDIV(numElements2, numSharedElements);
-
-                    for(int iteration = 0; iteration < numIterations; iteration++){
-
-                        const int begin = iteration * numSharedElements;
-                        const int end = min((iteration+1) * numSharedElements, numElements2);
-                        const int num = end - begin;
-
-                        for(int i = threadIdx.x; i < num; i += blockDim.x){
-                            assert(array2 + begin + i < boundary2);
-                            sharedElements[i] = array2[begin + i];
-                        }
-
-                        __syncthreads();
-
-                        //TODO in iteration > 0, we may skip elements at the beginning of first range
-
-                        for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
-                            assert(output + i < boundaryoutput);
-                            if(!output[i]){
-                                assert(array1 + i < boundary1);
-                                const read_number readId = array1[i];
-                                const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
-
-                                const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
-                                if(found){
-                                    output[i] = true;
-                                }
-                            }
-                        }
-
-                        __syncthreads();
-                    }
-                };
-
-                auto process2 = [&](
-                    const read_number* array1,
-                    int numElements1,
-                    const read_number* array2,
-                    int numElements2,
-                    bool* output,
-                    const read_number* boundary1,
-                    const read_number* boundary2,
-                    const bool* boundaryoutput
-                ){
-                    const int numIterations = SDIV(numElements2, numSharedElements);
-
-                    for(int iteration = 0; iteration < numIterations; iteration++){
-
-                        const int begin = iteration * numSharedElements;
-                        const int end = min((iteration+1) * numSharedElements, numElements2);
-                        const int num = end - begin;
-
-                        for(int i = threadIdx.x; i < num; i += blockDim.x){
-                            assert(array2 + begin + i < boundary2);
-                            sharedElements[i] = array2[begin + i];
-                        }
-
-                        __syncthreads();
-
-                        //TODO in iteration > 0, we may skip elements at the beginning of first range
-
-                        for(int i = threadIdx.x; i < numElements1; i += blockDim.x){
-                            assert(output + i < boundaryoutput);
-                            if(!output[i]){
-                                assert(array1 + i < boundary1);
-                                const read_number readId = array1[i];
-                                const read_number readIdToFind = readId % 2 == 0 ? readId + 1 : readId - 1;
-
-                                const bool found = thrust::binary_search(thrust::seq, sharedElements, sharedElements + num, readIdToFind);
-                                if(found){
-                                    output[i] = true;
-                                }
-                            }
-                        }
-
-                        __syncthreads();
-                    }
-                };
-
-                const int numChecks = *d_numChecks;
-
-                for(int a = blockIdx.x; a < numChecks; a += gridDim.x){
-                    const int firstTask = d_firstTasksOfPairsToCheck[a];
-                    //const int secondTask = firstTask + 1;
-
-                    //check for pairs in current candidates
-                    assert(firstTask < d_numCandidatesPerAnchorPrefixSumsize);
-                    assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
-                    assert(firstTask+2 < d_numCandidatesPerAnchorPrefixSumsize);
-                    const int rangeBegin = d_numCandidatesPerAnchorPrefixSum[firstTask];                        
-                    const int rangeMid = d_numCandidatesPerAnchorPrefixSum[firstTask + 1];
-                    const int rangeEnd = d_numCandidatesPerAnchorPrefixSum[firstTask + 2];
-
-                    process(
-                        d_candidateReadIds + rangeBegin,
-                        rangeMid - rangeBegin,
-                        d_candidateReadIds + rangeMid,
-                        rangeEnd - rangeMid,
-                        d_isPairedCandidate + rangeBegin,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_isPairedCandidate + d_candidateReadIdssize
-                    );
-
-                    process(
-                        d_candidateReadIds + rangeMid,
-                        rangeEnd - rangeMid,
-                        d_candidateReadIds + rangeBegin,
-                        rangeMid - rangeBegin,
-                        d_isPairedCandidate + rangeMid,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_isPairedCandidate + d_candidateReadIdssize
-                    );
-
-                    //check for pairs in candidates of previous extension iterations
-
-                    assert(firstTask < d_numUsedReadIdsPerAnchorPrefixSumsize);
-                    assert(firstTask+1 < d_numUsedReadIdsPerAnchorPrefixSumsize);
-                    assert(firstTask+1 < d_numUsedReadIdsPerAnchorsize);
-
-                    const int usedRangeBegin = d_numUsedReadIdsPerAnchorPrefixSum[firstTask];                        
-                    const int usedRangeMid = d_numUsedReadIdsPerAnchorPrefixSum[firstTask + 1];
-                    const int usedRangeEnd = usedRangeMid + d_numUsedReadIdsPerAnchor[firstTask + 1];
-
-                    process2(
-                        d_candidateReadIds + rangeBegin,
-                        rangeMid - rangeBegin,
-                        d_usedReadIds + usedRangeMid,
-                        usedRangeEnd - usedRangeMid,
-                        d_isPairedCandidate + rangeBegin,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_usedReadIds + d_usedReadIdssize,
-                        d_isPairedCandidate + d_candidateReadIdssize
-                    );
-
-                    process2(
-                        d_candidateReadIds + rangeMid,
-                        rangeEnd - rangeMid,
-                        d_usedReadIds + usedRangeBegin,
-                        usedRangeMid - usedRangeBegin,
-                        d_isPairedCandidate + rangeMid,
-                        d_candidateReadIds + d_candidateReadIdssize,
-                        d_usedReadIds + d_usedReadIdssize,
-                        d_isPairedCandidate + d_candidateReadIdssize
-                    );
-                }
-            }
-        ); CUERR;
+        readextendergpukernels::flagPairedCandidatesKernel<128,4096><<<numTasks, 128, 0, stream>>>(
+            d_numChecks.data(),
+            d_firstTasksOfPairsToCheck.data(),
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_candidateReadIds.data(),
+            d_numUsedReadIdsPerAnchor.data(),
+            d_numUsedReadIdsPerAnchorPrefixSum.data(),
+            d_usedReadIds.data(),
+            d_isPairedCandidate.data()
+        );
 
         setState(GpuReadExtender::State::BeforeLoadCandidates);
 
@@ -4706,124 +4762,21 @@ struct GpuReadExtender{
 
         CachedDeviceUVector<bool> d_keepflags(initialNumCandidates, stream, *cubAllocator);
 
-        dim3 block(128,1,1);
-        dim3 grid(numTasks, 1, 1);
+        const int* const d_currentNumCandidates = d_numCandidatesPerAnchorPrefixSum.data() + numTasks;
 
-        //filter alignments of candidates. d_keepflags[i] will be set to false if candidate[i] should be removed
-        //d_numCandidatesPerAnchor2[i] contains new number of candidates for anchor i
-        helpers::lambda_kernel<<<grid, block, 0, stream>>>(
-            [
-                d_alignment_best_alignment_flags = d_alignment_best_alignment_flags.data(),
-                d_alignment_shifts = d_alignment_shifts.data(),
-                d_alignment_overlaps = d_alignment_overlaps.data(),
-                d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-                d_isPairedCandidate = d_isPairedCandidate.data(),
-                d_keepflags = d_keepflags.data(),
-                min_overlap_ratio = goodAlignmentProperties->min_overlap_ratio,
-                numAnchors = numTasks,
-                currentNumCandidatesPtr = d_numCandidatesPerAnchorPrefixSum.data() + numTasks,
-                initialNumCandidates = initialNumCandidates
-            ] __device__ (){
-
-                using BlockReduceFloat = cub::BlockReduce<float, 128>;
-                using BlockReduceInt = cub::BlockReduce<int, 128>;
-
-                __shared__ union {
-                    typename BlockReduceFloat::TempStorage floatreduce;
-                    typename BlockReduceInt::TempStorage intreduce;
-                } cubtemp;
-
-                __shared__ int intbroadcast;
-                __shared__ float floatbroadcast;
-
-                for(int a = blockIdx.x; a < numAnchors; a += gridDim.x){
-                    const int num = d_numCandidatesPerAnchor[a];
-                    const int offset = d_numCandidatesPerAnchorPrefixSum[a];
-                    const float anchorLength = d_anchorSequencesLength[a];
-
-                    int threadReducedGoodAlignmentExists = 0;
-                    float threadReducedRelativeOverlapThreshold = 0.0f;
-
-                    for(int c = threadIdx.x; c < num; c += blockDim.x){
-                        d_keepflags[offset + c] = true;
-                    }
-
-                    //loop over candidates to compute relative overlap threshold
-
-                    for(int c = threadIdx.x; c < num; c += blockDim.x){
-                        const auto alignmentflag = d_alignment_best_alignment_flags[offset + c];
-                        const int shift = d_alignment_shifts[offset + c];
-
-                        if(alignmentflag != BestAlignment_t::None && shift >= 0){
-                            if(!d_isPairedCandidate[offset+c]){
-                                const float overlap = d_alignment_overlaps[offset + c];                            
-                                const float relativeOverlap = overlap / anchorLength;
-                                
-                                if(relativeOverlap < 1.0f && fgeq(relativeOverlap, min_overlap_ratio)){
-                                    threadReducedGoodAlignmentExists = 1;
-                                    const float tmp = floorf(relativeOverlap * 10.0f) / 10.0f;
-                                    threadReducedRelativeOverlapThreshold = fmaxf(threadReducedRelativeOverlapThreshold, tmp);
-                                }
-                            }
-                        }else{
-                            //remove alignment with negative shift or bad alignments
-                            d_keepflags[offset + c] = false;
-                        }                       
-                    }
-
-                    int blockreducedGoodAlignmentExists = BlockReduceInt(cubtemp.intreduce)
-                        .Sum(threadReducedGoodAlignmentExists);
-                    if(threadIdx.x == 0){
-                        intbroadcast = blockreducedGoodAlignmentExists;
-                        //printf("task %d good: %d\n", a, blockreducedGoodAlignmentExists);
-                    }
-                    __syncthreads();
-
-                    blockreducedGoodAlignmentExists = intbroadcast;
-
-                    if(blockreducedGoodAlignmentExists > 0){
-                        float blockreducedRelativeOverlapThreshold = BlockReduceFloat(cubtemp.floatreduce)
-                            .Reduce(threadReducedRelativeOverlapThreshold, cub::Max());
-                        if(threadIdx.x == 0){
-                            floatbroadcast = blockreducedRelativeOverlapThreshold;
-                            //printf("task %d thresh: %f\n", a, blockreducedRelativeOverlapThreshold);
-                        }
-                        __syncthreads();
-
-                        blockreducedRelativeOverlapThreshold = floatbroadcast;
-
-                        // loop over candidates and remove those with an alignment overlap threshold smaller than the computed threshold
-                        for(int c = threadIdx.x; c < num; c += blockDim.x){
-                            if(!d_isPairedCandidate[offset+c]){
-                                if(d_keepflags[offset + c]){
-                                    const float overlap = d_alignment_overlaps[offset + c];                            
-                                    const float relativeOverlap = overlap / anchorLength;                 
-        
-                                    if(!fgeq(relativeOverlap, blockreducedRelativeOverlapThreshold)){
-                                        d_keepflags[offset + c] = false;
-                                    }
-                                }
-                            }
-                        }
-                    }else{
-                        //NOOP.
-                        //if no good alignment exists, no candidate is removed. we will try to work with the not-so-good alignments
-                        // if(threadIdx.x == 0){
-                        //     printf("no good alignment,nc %d\n", num);
-                        // }
-                    }
-
-                    __syncthreads();
-                }
-            
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-                for(int i = *currentNumCandidatesPtr + tid; i < initialNumCandidates; i += stride){
-                    d_keepflags[i] = false;
-                }
-            }
+        readextendergpukernels::flagGoodAlignmentsKernel<128><<<numTasks, 128, 0, stream>>>(
+            d_alignment_best_alignment_flags.data(),
+            d_alignment_shifts.data(),
+            d_alignment_overlaps.data(),
+            d_anchorSequencesLength.data(),
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_isPairedCandidate.data(),
+            d_keepflags.data(),
+            goodAlignmentProperties->min_overlap_ratio,
+            numTasks,
+            d_currentNumCandidates,
+            initialNumCandidates
         ); CUERR;
 
         compactCandidateDataByFlags(
@@ -4832,13 +4785,7 @@ struct GpuReadExtender{
             stream
         );
 
-        //filterAlignments is a compaction step. check early exit.
-        // cudaEventSynchronize(h_numCandidatesEvent); CUERR;
-        // if(*h_numCandidates == 0){
-        //     setStateToFinished();
-        // }else{
-            setState(GpuReadExtender::State::BeforeMSA);
-        //}
+        setState(GpuReadExtender::State::BeforeMSA);
     }
 
     void computeMSAs(){
@@ -4854,22 +4801,15 @@ struct GpuReadExtender{
         CachedDeviceUVector<int> d_numCandidatesPerAnchor2(numTasks, firstStream, *cubAllocator);
 
         CachedDeviceUVector<int> indices1(initialNumCandidates, firstStream, *cubAllocator);
-        CachedDeviceUVector<int> indices2(initialNumCandidates, firstStream, *cubAllocator);       
+        CachedDeviceUVector<int> indices2(initialNumCandidates, firstStream, *cubAllocator); 
 
-        helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
-            [
-                indices1 = indices1.data(),
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
-            ] __device__ (){
-                const int num = d_numCandidatesPerAnchor[blockIdx.x];
-                const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
-                
-                for(int i = threadIdx.x; i < num; i += blockDim.x){
-                    indices1[offset + i] = i;
-                }
-            }
-        );
+        const int threads = 32 * numTasks;
+        readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, firstStream>>>(
+            indices1.data(),
+            numTasks,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data()
+        ); CUERR;
 
         *h_numAnchors = numTasks;
 
@@ -4935,32 +4875,16 @@ struct GpuReadExtender{
 
         helpers::call_fill_kernel_async(d_shouldBeKept.data(), initialNumCandidates, false, firstStream); CUERR;
 
-        //convert output indices from task-local indices to global flags
-        helpers::lambda_kernel<<<numTasks, 128, 0, firstStream>>>(
-            [
-                d_flagscandidates = d_shouldBeKept.data(),
-                indices2 = indices2.data(),
-                d_numCandidatesPerAnchor2 = d_numCandidatesPerAnchor2.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data()
-            ] __device__ (){
-                /*
-                    Input:
-                    indices2: 0,1,2,0,0,0,0,3,5,0
-                    d_numCandidatesPerAnchorPrefixSum: 0,6,10
-
-                    Output:
-                    d_flagscandidates: 1,1,1,0,0,0,1,0,0,1,0,1
-                */
-                const int num = d_numCandidatesPerAnchor2[blockIdx.x];
-                const int offset = d_numCandidatesPerAnchorPrefixSum[blockIdx.x];
-                
-                for(int i = threadIdx.x; i < num; i += blockDim.x){
-                    const int globalIndex = indices2[offset + i] + offset;
-                    d_flagscandidates[globalIndex] = true;
-                }
-            }
-        ); CUERR;
-
+        const int numThreads2 = numTasks * 32;
+        readextendergpukernels::convertLocalIndicesInSegmentsToGlobalFlags<128,32>
+        <<<SDIV(numThreads2, 128), 128, 0, firstStream>>>(
+            d_shouldBeKept.data(),
+            indices2.data(),
+            d_numCandidatesPerAnchor2.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            numTasks
+        ); CUERR
+     
         indices1.destroy();
         indices2.destroy();
         d_numCandidatesPerAnchor2.destroy();
@@ -6219,9 +6143,9 @@ struct GpuReadExtender{
 
         readextendergpukernels::segmentedIotaKernel<32><<<SDIV(threads, 128), 128, 0, stream>>>(
             indices1.data(),
+            numFinishedTasks,
             d_numCandidatesPerAnchor.data(),
-            d_numCandidatesPerAnchorPrefixSum.data(),
-            numFinishedTasks
+            d_numCandidatesPerAnchorPrefixSum.data()
         ); CUERR;
 
         *h_numAnchors = numFinishedTasks;
