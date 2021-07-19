@@ -1788,8 +1788,7 @@ namespace readextendergpukernels{
     template<int blocksize>
     __global__
     void makePairResultsFromFinishedTasksKernel(
-        const int* __restrict__ numPairIdsToProcessPtr,
-        const int* __restrict__ pairIdsToProcess,
+        int numResults,
         bool* __restrict__ outputAnchorIsLR,
         char* __restrict__ outputSequences,
         char* __restrict__ outputQualities,
@@ -1807,14 +1806,12 @@ namespace readextendergpukernels{
         const float* __restrict__ dataGoodScores,
         int inputPitch,
         int insertSize,
-        int insertSizeStddev,
-        int debugindex
+        int insertSizeStddev
+        //int debugindex
     ){
         auto group = cg::this_thread_block();
         const int numGroupsInGrid = (blockDim.x * gridDim.x) / group.size();
         const int groupIdInGrid = (threadIdx.x + blockDim.x * blockIdx.x) / group.size();
-
-        const int numPairIdsToProcess = *numPairIdsToProcessPtr;
 
         extern __shared__ int smemForResults[];
         char* const smemChars = (char*)&smemForResults[0];
@@ -1884,10 +1881,10 @@ namespace readextendergpukernels{
         };
     
         //process pair at position pairIdsToProcess[posInList] and store to result position posInList
-        for(int posInList = groupIdInGrid; posInList < numPairIdsToProcess; posInList += numGroupsInGrid){
+        for(int posInList = groupIdInGrid; posInList < numResults; posInList += numGroupsInGrid){
             group.sync(); //reuse smem
 
-            const int p = pairIdsToProcess[posInList];
+            const int p = posInList;
 
             const int i0 = 4 * p + 0;
             const int i1 = 4 * p + 1;
@@ -5551,21 +5548,29 @@ struct GpuReadExtender{
             CachedDeviceUVector<int> d_numUsedReadIdsPerAnchor2(newNumTasks, streams[0], *cubAllocator);
             CachedDeviceUVector<int> d_numUsedReadIdsPerAnchorPrefixSum2(newNumTasks, streams[0], *cubAllocator);      
 
-            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
-                [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks,
-                    newNumTasks,
-                    d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
-                    d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data()
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
+            helpers::call_compact_kernel_async(
+                d_numUsedReadIdsPerAnchor2.data(), 
+                d_numUsedReadIdsPerAnchor.data(), 
+                d_newPositionsOfActiveTasks, 
+                newNumTasks, 
+                streams[0]
+            );CUERR;
 
-                    for(int t = tid; t < newNumTasks; t += stride){
-                        d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
-                    }
-                }
-            ); CUERR;
+            // helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
+            //     [
+            //         indicesOfActiveTasks = d_newPositionsOfActiveTasks,
+            //         newNumTasks,
+            //         d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
+            //         d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data()
+            //     ] __device__ (){
+            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            //         const int stride = blockDim.x * gridDim.x;
+
+            //         for(int t = tid; t < newNumTasks; t += stride){
+            //             d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
+            //         }
+            //     }
+            // ); CUERR;
 
             cubReduceSum(
                 d_numUsedReadIdsPerAnchor2.data(), 
@@ -5615,21 +5620,29 @@ struct GpuReadExtender{
             CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchor2(newNumTasks, streams[0], *cubAllocator);
             CachedDeviceUVector<int> d_numFullyUsedReadIdsPerAnchorPrefixSum2(newNumTasks, streams[0], *cubAllocator);  
 
-            helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
-                [
-                    indicesOfActiveTasks = d_newPositionsOfActiveTasks,
-                    newNumTasks,
-                    d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
-                    d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data()
-                ] __device__ (){
-                    const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int stride = blockDim.x * gridDim.x;
+            helpers::call_compact_kernel_async(
+                d_numFullyUsedReadIdsPerAnchor2.data(), 
+                d_numFullyUsedReadIdsPerAnchor.data(), 
+                d_newPositionsOfActiveTasks, 
+                newNumTasks, 
+                streams[0]
+            );CUERR;
 
-                    for(int t = tid; t < newNumTasks; t += stride){
-                        d_numFullyUsedReadIdsPerAnchorOut[t] = d_numFullyUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
-                    }
-                }
-            ); CUERR;
+            // helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
+            //     [
+            //         indicesOfActiveTasks = d_newPositionsOfActiveTasks,
+            //         newNumTasks,
+            //         d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
+            //         d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data()
+            //     ] __device__ (){
+            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+            //         const int stride = blockDim.x * gridDim.x;
+
+            //         for(int t = tid; t < newNumTasks; t += stride){
+            //             d_numFullyUsedReadIdsPerAnchorOut[t] = d_numFullyUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
+            //         }
+            //     }
+            // ); CUERR;
             
             cubReduceSum(
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
@@ -6266,63 +6279,23 @@ struct GpuReadExtender{
         ); CUERR;
 
 
-        CachedDeviceUVector<int> d_numGpuPairIdsToProcess(1, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_gpuPairIdsToProcess(numFinishedTasks / 4, stream, *cubAllocator);
-
-        helpers::lambda_kernel<<<SDIV(numFinishedTasks / 4, 128), 128, 0, stream>>>(
-            [
-                numFinishedTasks, 
-                d_numGpuPairIdsToProcess = d_numGpuPairIdsToProcess.data(),
-                d_gpuPairIdsToProcess = d_gpuPairIdsToProcess.data()
-            ] __device__ (){
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-
-                if(tid == 0){
-                    *d_numGpuPairIdsToProcess = numFinishedTasks / 4;
-                }
-
-                for(int i = tid; i < numFinishedTasks / 4; i += stride){
-                    d_gpuPairIdsToProcess[i] = i;
-                }
-            }
-        ); CUERR;
-
-        h_gpuPairIdsToProcess.resize(numFinishedTasks / 4);
-        h_numGpuPairIdsToProcess.resize(1);
-
-        *h_numGpuPairIdsToProcess = numFinishedTasks / 4;
-        std::iota(h_gpuPairIdsToProcess.begin(), h_gpuPairIdsToProcess.end(), 0);
-
+        const int numResults = numFinishedTasks / 4;
 
         int outputPitch = 2048; //TODO        
 
-        CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numFinishedTasks / 4, stream, *cubAllocator);
-        CachedDeviceUVector<char> d_pairResultSequences(numFinishedTasks / 4 * outputPitch, stream, *cubAllocator);
-        CachedDeviceUVector<char> d_pairResultQualities(numFinishedTasks / 4 * outputPitch, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_pairResultLengths(numFinishedTasks / 4, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_pairResultRead1Begins(numFinishedTasks / 4, stream, *cubAllocator);
-        CachedDeviceUVector<int> d_pairResultRead2Begins(numFinishedTasks / 4, stream, *cubAllocator);
-        CachedDeviceUVector<bool> d_pairResultMateHasBeenFound(numFinishedTasks / 4, stream, *cubAllocator);
-        CachedDeviceUVector<bool> d_pairResultMergedDifferentStrands(numFinishedTasks / 4, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numResults, stream, *cubAllocator);
+        CachedDeviceUVector<char> d_pairResultSequences(numResults * outputPitch, stream, *cubAllocator);
+        CachedDeviceUVector<char> d_pairResultQualities(numResults * outputPitch, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_pairResultLengths(numResults, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_pairResultRead1Begins(numResults, stream, *cubAllocator);
+        CachedDeviceUVector<int> d_pairResultRead2Begins(numResults, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_pairResultMateHasBeenFound(numResults, stream, *cubAllocator);
+        CachedDeviceUVector<bool> d_pairResultMergedDifferentStrands(numResults, stream, *cubAllocator);
         
-        int debugindex = -1;           
-
-        CachedDeviceUVector<float> d_goodscores(numFinishedTasks, stream, *cubAllocator);
-
-        cudaMemcpyAsync(
-            d_goodscores.data(),
-            finishedTasks4.goodscore.data(),
-            sizeof(float) * numFinishedTasks,
-            D2D,
-            stream
-        ); CUERR;
-
         const std::size_t smem = 2 * outputPitch;
 
-        readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<numFinishedTasks / 4, 128, smem, stream>>>(
-            d_numGpuPairIdsToProcess.data(),
-            d_gpuPairIdsToProcess.data(),
+        readextendergpukernels::makePairResultsFromFinishedTasksKernel<128><<<numResults, 128, smem, stream>>>(
+            numResults,
             d_pairResultAnchorIsLR.data(),
             d_pairResultSequences.data(),
             d_pairResultQualities.data(),
@@ -6337,26 +6310,25 @@ struct GpuReadExtender{
             d_decodedConsensus.data(),
             d_consensusQuality.data(),
             finishedTasks4.mateHasBeenFound.data(),
-            d_goodscores.data(),
+            finishedTasks4.goodscore.data(),
             resultMSAColumnPitchInElements,
             insertSize,
-            insertSizeStddev,
-            debugindex
+            insertSizeStddev
         );
 
-        h_pairResultAnchorIsLR.resize(numFinishedTasks / 4);
-        h_pairResultSequences.resize(numFinishedTasks / 4 * outputPitch);
-        h_pairResultQualities.resize(numFinishedTasks / 4 * outputPitch);
-        h_pairResultLengths.resize(numFinishedTasks / 4);
-        h_pairResultRead1Begins.resize(numFinishedTasks / 4);
-        h_pairResultRead2Begins.resize(numFinishedTasks / 4);
-        h_pairResultMateHasBeenFound.resize(numFinishedTasks / 4);
-        h_pairResultMergedDifferentStrands.resize(numFinishedTasks / 4);
+        h_pairResultAnchorIsLR.resize(numResults);
+        h_pairResultSequences.resize(numResults * outputPitch);
+        h_pairResultQualities.resize(numResults * outputPitch);
+        h_pairResultLengths.resize(numResults);
+        h_pairResultRead1Begins.resize(numResults);
+        h_pairResultRead2Begins.resize(numResults);
+        h_pairResultMateHasBeenFound.resize(numResults);
+        h_pairResultMergedDifferentStrands.resize(numResults);
 
         cudaMemcpyAsync(
             h_pairResultMateHasBeenFound.data(),
             d_pairResultMateHasBeenFound.data(),
-            sizeof(bool) * numFinishedTasks / 4,
+            sizeof(bool) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6364,7 +6336,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultMergedDifferentStrands.data(),
             d_pairResultMergedDifferentStrands.data(),
-            sizeof(bool) * numFinishedTasks / 4,
+            sizeof(bool) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6372,7 +6344,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultAnchorIsLR.data(),
             d_pairResultAnchorIsLR.data(),
-            sizeof(bool) * numFinishedTasks / 4,
+            sizeof(bool) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6380,7 +6352,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultSequences.data(),
             d_pairResultSequences.data(),
-            sizeof(char) * numFinishedTasks / 4 * outputPitch,
+            sizeof(char) * numResults * outputPitch,
             D2H,
             stream
         ); CUERR;
@@ -6388,7 +6360,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultQualities.data(),
             d_pairResultQualities.data(),
-            sizeof(char) * numFinishedTasks / 4 * outputPitch,
+            sizeof(char) * numResults * outputPitch,
             D2H,
             stream
         ); CUERR;
@@ -6396,7 +6368,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultLengths.data(),
             d_pairResultLengths.data(),
-            sizeof(int) * numFinishedTasks / 4,
+            sizeof(int) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6404,7 +6376,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultRead1Begins.data(),
             d_pairResultRead1Begins.data(),
-            sizeof(int) * numFinishedTasks / 4,
+            sizeof(int) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6412,7 +6384,7 @@ struct GpuReadExtender{
         cudaMemcpyAsync(
             h_pairResultRead2Begins.data(),
             d_pairResultRead2Begins.data(),
-            sizeof(int) * numFinishedTasks / 4,
+            sizeof(int) * numResults,
             D2H,
             stream
         ); CUERR;
@@ -6420,13 +6392,12 @@ struct GpuReadExtender{
         cudaStreamSynchronize(stream); CUERR;
         cudaEventSynchronize(gpuPairResultDataEvent); CUERR;
 
-        std::vector<extension::ExtendResult> gpuResultVector(*h_numGpuPairIdsToProcess);      
+        std::vector<extension::ExtendResult> gpuResultVector(numResults);      
 
-        for(int k = 0; k < (*h_numGpuPairIdsToProcess); k++){
+        for(int k = 0; k < numResults; k++){
             auto& gpuResult = gpuResultVector[k];
 
-            const int index = h_gpuPairIdsToProcess[k];
-            assert(k == index);
+            const int index = k;
 
             const char* gpuSeq = &h_pairResultSequences[k * outputPitch];
             const char* gpuQual = &h_pairResultQualities[k * outputPitch];
