@@ -556,6 +556,283 @@ namespace readextendergpukernels{
 
     template<int blocksize>
     __global__
+    void computeSplitGatherIndicesDefaultKernel(
+        int numTasks,
+        int* __restrict__ d_positions4,
+        int* __restrict__ d_positionsNot4,
+        int* __restrict__ d_numPositions4_out,
+        int* __restrict__ d_numPositionsNot4_out,
+        const int* __restrict__ d_run_endoffsets,
+        const int* __restrict__ d_num_runs,
+        const int* __restrict__ d_sortedindices,
+        const int* __restrict__ task_ids,
+        const int* __restrict__ d_outputoffsetsPos4,
+        const int* __restrict__ d_outputoffsetsNotPos4
+    ){
+        __shared__ int count4;
+        __shared__ int countNot4;
+
+        if(threadIdx.x == 0){
+            count4 = 0;
+            countNot4 = 0;
+        }
+        __syncthreads();
+
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        const int numRuns = *d_num_runs;
+
+        auto group = cg::tiled_partition<4>(cg::this_thread_block());
+        const int numGroups = stride / 4;
+        const int groupId = tid / 4;
+
+        for(int t = groupId; t < numRuns; t += numGroups){
+            const int runBegin = (t == 0 ? 0 : d_run_endoffsets[t-1]);
+            const int runEnd = d_run_endoffsets[t];
+
+            const int size = runEnd - runBegin;
+            if(size < 4){
+                if(group.thread_rank() == 0){
+                    atomicAdd(&countNot4, size);
+                }
+
+                if(group.thread_rank() < size){
+                    d_positionsNot4[d_outputoffsetsNotPos4[t] + group.thread_rank()]
+                        = d_sortedindices[runBegin + group.thread_rank()];
+                }
+            }else{
+                assert(size == 4);
+
+                if(group.thread_rank() == 0){
+                    atomicAdd(&count4, 4);
+                }
+
+                //sort 4 elements of same pairId by id. id is either 0,1,2, or 3
+                const int position = d_sortedindices[runBegin + group.thread_rank()];
+                const int id = task_ids[position];
+                assert(0 <= id && id < 4);
+
+                for(int x = 0; x < 4; x++){
+                    if(id == x){
+                        //d_positions4[groupoutputbegin + x] = position;
+                        d_positions4[d_outputoffsetsPos4[t] + x] = position;
+                    }
+                }
+            }
+        }
+    
+        __syncthreads();
+        if(threadIdx.x == 0){
+            atomicAdd(d_numPositions4_out + 0, count4);
+            atomicAdd(d_numPositionsNot4_out + 0, countNot4);
+        }
+    }
+    
+    //requires external shared memory of size (sizeof(int) * numTasks * 2) bytes;
+    template<int blocksize, int elementsPerThread>
+    __global__
+    void computeSplitGatherIndicesSmallInputKernel(
+        int numTasks,
+        int* __restrict__ d_positions4,
+        int* __restrict__ d_positionsNot4,
+        int* __restrict__ d_numPositions4_out,
+        int* __restrict__ d_numPositionsNot4_out,
+        const int* __restrict__ task_pairIds,
+        const int* __restrict__ task_ids,
+        const int* __restrict__ d_minmax_pairId
+    ){
+
+        constexpr int maxInputSize = blocksize * elementsPerThread;
+
+        assert(blockDim.x == blocksize);
+        assert(gridDim.x == 1);
+        assert(numTasks <= maxInputSize);
+
+        using BlockLoad = cub::BlockLoad<int, blocksize, elementsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
+        using BlockRadixSort = cub::BlockRadixSort<int, blocksize, elementsPerThread, int>;
+        using BlockDiscontinuity = cub::BlockDiscontinuity<int, blocksize>;
+        using BlockStore = cub::BlockStore<int, blocksize, elementsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
+        using BlockScan = cub::BlockScan<int, blocksize>;
+        using BlockExchange = cub::BlockExchange<int, blocksize, elementsPerThread>;
+
+        __shared__ union{
+            typename BlockLoad::TempStorage load;
+            typename BlockRadixSort::TempStorage sort;
+            typename BlockDiscontinuity::TempStorage discontinuity;
+            typename BlockStore::TempStorage store;
+            typename BlockScan::TempStorage scan;
+            typename BlockExchange::TempStorage exchange;
+        } temp;
+
+        extern __shared__ int extsmemTaskSplit[]; // (sizeof(int) * numTasks * 2) bytes
+        int* const sharedCounts = &extsmemTaskSplit[0];
+        int* const sharedIndices = sharedCounts + numTasks;
+
+        int numRuns = 0;
+
+        int prefixsum[elementsPerThread];
+
+        {
+
+            int myPairIds[elementsPerThread];
+            int myIndices[elementsPerThread];
+            int headFlags[elementsPerThread];
+            int maxScan[elementsPerThread];
+        
+            #pragma unroll
+            for(int i = 0; i < elementsPerThread; i++){
+                myIndices[i] = elementsPerThread * threadIdx.x + i;
+            }
+
+            BlockLoad(temp.load).Load(task_pairIds, myPairIds, numTasks, std::numeric_limits<int>::max());
+            __syncthreads();
+
+            BlockRadixSort(temp.sort).Sort(myPairIds, myIndices);
+            __syncthreads();
+
+            BlockStore(temp.store).Store(sharedIndices, myIndices, numTasks);
+            __syncthreads();
+        
+            BlockDiscontinuity(temp.discontinuity).FlagHeads(headFlags, myPairIds, cub::Inequality());
+            __syncthreads();                    
+            
+            BlockScan(temp.scan).ExclusiveSum(headFlags, prefixsum, numRuns);
+            __syncthreads();
+            
+            #pragma unroll
+            for(int i = 0; i < elementsPerThread; i++){
+                if(headFlags[i] > 0){
+                    maxScan[i] = prefixsum[i];
+                }else{
+                    maxScan[i] = 0;
+                }
+            }                
+
+            BlockScan(temp.scan).InclusiveScan(maxScan, maxScan, cub::Max{});
+            __syncthreads();
+
+            //compute counts of unique pair ids
+            for(int i = threadIdx.x; i < numRuns; i += blockDim.x){
+                sharedCounts[i] = 0;
+            }
+
+            __syncthreads();
+
+            #pragma unroll
+            for(int i = 0; i < elementsPerThread; i++){
+                if(threadIdx.x * elementsPerThread + i < numTasks){
+                    atomicAdd(sharedCounts + maxScan[i], 1);
+                }
+            }
+
+            __syncthreads();
+        }
+
+        //compute output offsets and perform split
+        int myCounts[elementsPerThread];
+        int outputoffsets4[elementsPerThread];
+        int outputoffsetsNot4[elementsPerThread];
+
+        BlockLoad(temp.load).Load(sharedCounts, myCounts, numRuns, 0);
+        __syncthreads();
+
+        int myModifiedCounts[elementsPerThread];
+        #pragma unroll
+        for(int i = 0; i < elementsPerThread; i++){
+            myModifiedCounts[i] = (myCounts[i] == 4) ? 4 : 0;
+        }
+
+        int numPos4 = 0;
+        BlockScan(temp.scan).ExclusiveSum(myModifiedCounts, outputoffsets4, numPos4);
+        __syncthreads();
+
+        #pragma unroll
+        for(int i = 0; i < elementsPerThread; i++){
+            myModifiedCounts[i] = (myCounts[i] < 4) ? myCounts[i] : 0;
+        }
+
+        int numPosNot4 = 0;
+        BlockScan(temp.scan).ExclusiveSum(myModifiedCounts, outputoffsetsNot4, numPosNot4);
+        __syncthreads();
+
+        BlockScan(temp.scan).ExclusiveSum(myCounts, prefixsum, numRuns);
+        __syncthreads();
+
+        BlockExchange(temp.exchange).BlockedToStriped(myCounts);
+        __syncthreads();
+        BlockExchange(temp.exchange).BlockedToStriped(outputoffsets4);
+        __syncthreads();
+        BlockExchange(temp.exchange).BlockedToStriped(outputoffsetsNot4);
+        __syncthreads();
+        BlockExchange(temp.exchange).BlockedToStriped(prefixsum);
+        __syncthreads();
+
+        //compact indices
+        #pragma unroll
+        for(int i = 0; i < elementsPerThread; i++){
+            if(i * blocksize + threadIdx.x < numRuns){
+                const int runBegin = prefixsum[i];
+                const int runEnd = runBegin + myCounts[i];
+                const int size = runEnd - runBegin;
+
+                if(size < 4){
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++){
+                        if(k < size){
+                            const int outputoffset = outputoffsetsNot4[i] + k;
+                            d_positionsNot4[outputoffset] = sharedIndices[runBegin + k];
+                        }
+                    }
+                }else{
+                    int positions[4];
+                    int ids[4];
+
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++){
+                        positions[k] = sharedIndices[runBegin + k];
+                    }
+
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++){
+                        ids[k] = task_ids[positions[k]];
+                        assert(0 <= ids[k] && ids[k] < 4);
+                    }
+
+                    // printf("thread %d. positions %d %d %d %d, runBegin %d\n", threadIdx.x, 
+                    //     positions[0], positions[1], positions[2], positions[3],runBegin
+                    // );
+
+                    //sort 4 elements of same pairId by id and store them. id is either 0,1,2, or 3
+                    #pragma unroll
+                    for(int k = 0; k < 4; k++){
+                        #pragma unroll
+                        for(int l = 0; l < 4; l++){
+                            if(ids[l] == k){
+                                const int outputoffset = outputoffsets4[i] + k;
+                                d_positions4[outputoffset] = positions[l];
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+    
+        __syncthreads();
+        if(threadIdx.x == 0){
+            atomicAdd(d_numPositions4_out, numPos4);
+            atomicAdd(d_numPositionsNot4_out, numPosNot4);
+        }
+
+    }
+
+
+
+
+
+    template<int blocksize>
+    __global__
     void computeExtensionStepFromMsaKernel(
         int insertSize,
         int insertSizeStddev,
@@ -5338,12 +5615,76 @@ struct GpuReadExtender{
     SoAExtensionTaskGpuData getFinishedGpuSoaTasksOfFinishedPairsAndRemoveThemFromList(){
         //determine tasks in groups of 4
 
-        
+        cudaStream_t stream = streams[0];
 
-        //compute smallest and greatest pairId in tasks to compute the number of bits to sort using radix sort
-        CachedDeviceUVector<int> d_minmax(2, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_positions4(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_positionsNot4(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_numPositions(2, stream, *cubAllocator);
 
-        readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, streams[0]>>>(
+        helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, stream);
+
+        if(finishedTasks.size() <= 4096){
+            computeSplitGatherIndicesOfFinishedTasksSmall(
+                d_positions4.data(), 
+                d_positionsNot4.data(), 
+                d_numPositions.data(), 
+                d_numPositions.data() + 1,
+                stream
+            );
+        }else{
+            computeSplitGatherIndicesOfFinishedTasksDefault(
+                d_positions4.data(), 
+                d_positionsNot4.data(), 
+                d_numPositions.data(), 
+                d_numPositions.data() + 1,
+                stream
+            );
+        }
+
+        h_gpuAnchorLengths.resize(2);
+        int* h_numPositions = h_gpuAnchorLengths.data();
+
+        cudaMemcpyAsync(
+            h_numPositions,
+            d_numPositions.data(),
+            sizeof(int) * 2,
+            D2H,
+            stream
+        ); CUERR;
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
+            d_positions4.data(), 
+            d_positions4.data() + h_numPositions[0],
+            streams[0]
+        );
+
+        SoAExtensionTaskGpuData gpufinishedTasksNot4 = finishedTasks.gather(
+            d_positionsNot4.data(), 
+            d_positionsNot4.data() + h_numPositions[1],
+            streams[0]
+        );
+
+        std::swap(finishedTasks, gpufinishedTasksNot4);
+
+        return gpufinishedTasks4;
+    }
+
+
+    void computeSplitGatherIndicesOfFinishedTasksSmall(
+        int* d_positions4, 
+        int* d_positionsNot4, 
+        int* d_numPositions4, 
+        int* d_numPositionsNot4,
+        cudaStream_t stream
+    ){
+        constexpr std::size_t maxproblemsize = 4096;
+        assert(finishedTasks.size() <= maxproblemsize);
+
+        CachedDeviceUVector<int> d_minmax(2, stream, *cubAllocator);
+
+        readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
             finishedTasks.pairId.data(),
             finishedTasks.size(),
             d_minmax.data()
@@ -5358,269 +5699,71 @@ struct GpuReadExtender{
             d_minmax.data(),
             sizeof(int) * 2,
             D2H,
-            streams[0]
+            stream
         ); CUERR;
 
-        cudaStreamSynchronize(streams[0]); CUERR;
-
-        #if 0
-        assert(finishedTasks.size() <= 4096);
-
-        CachedDeviceUVector<int> d_positions4_debug(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_positionsNot4_debug(finishedTasks.size(), streams[0], *cubAllocator);
-
-        CachedDeviceUVector<int> d_numPositions_debug(2, streams[0], *cubAllocator);
-        helpers::call_fill_kernel_async(d_numPositions_debug.data(), 2, 0, streams[0]);
+        cudaStreamSynchronize(stream); CUERR;
 
         std::size_t smem = sizeof(int) * finishedTasks.size() * 2;
 
-        helpers::lambda_kernel<<<1, 256, smem, streams[0]>>>(
-            [
-                numTasks = finishedTasks.size(),
-                task_pairIds = finishedTasks.pairId.data(),
-                task_ids = finishedTasks.id.data(),
-                d_positions4 = d_positions4_debug.data(),
-                d_positionsNot4 = d_positionsNot4_debug.data(),
-                d_numPositions_out = d_numPositions_debug.data()
-            ] __device__ (){
-                constexpr int blocksize = 256;
-                constexpr int elementsPerThread = 16;
-                assert(blockDim.x == blocksize);
-                assert(gridDim.x == 1);
-
-                using BlockLoad = cub::BlockLoad<int, blocksize, elementsPerThread, cub::BLOCK_LOAD_WARP_TRANSPOSE>;
-                using BlockRadixSort = cub::BlockRadixSort<int, blocksize, elementsPerThread, int>;
-                using BlockDiscontinuity = cub::BlockDiscontinuity<int, blocksize>;
-                using BlockStore = cub::BlockStore<int, blocksize, elementsPerThread, cub::BLOCK_STORE_WARP_TRANSPOSE>;
-                using BlockScan = cub::BlockScan<int, blocksize>;
-                using BlockExchange = cub::BlockExchange<int, blocksize, elementsPerThread>;
-
-                __shared__ union{
-                    typename BlockLoad::TempStorage load;
-                    typename BlockRadixSort::TempStorage sort;
-                    typename BlockDiscontinuity::TempStorage discontinuity;
-                    typename BlockStore::TempStorage store;
-                    typename BlockScan::TempStorage scan;
-                    typename BlockExchange::TempStorage exchange;
-                } temp;
-
-                extern __shared__ int extsmemTaskSplit[]; // 2 * numTasks
-                int* const sharedCounts = &extsmemTaskSplit[0];
-                int* const sharedIndices = sharedCounts + numTasks;
-
-                int numRuns = 0;
-
-                int prefixsum[elementsPerThread];
-
-                {
-
-                    int myPairIds[elementsPerThread];
-                    int myIndices[elementsPerThread];
-                    int headFlags[elementsPerThread];
-                    int maxScan[elementsPerThread];
-                
-                    #pragma unroll
-                    for(int i = 0; i < elementsPerThread; i++){
-                        myIndices[i] = elementsPerThread * threadIdx.x + i;
-                    }
-
-                    BlockLoad(temp.load).Load(task_pairIds, myPairIds, numTasks, std::numeric_limits<int>::max());
-                    __syncthreads();
-
-                    BlockRadixSort(temp.sort).Sort(myPairIds, myIndices);
-                    __syncthreads();
-
-                    BlockStore(temp.store).Store(sharedIndices, myIndices, numTasks);
-                    __syncthreads();
-                
-                    BlockDiscontinuity(temp.discontinuity).FlagHeads(headFlags, myPairIds, cub::Inequality());
-                    __syncthreads();                    
-                    
-                    BlockScan(temp.scan).ExclusiveSum(headFlags, prefixsum, numRuns);
-                    __syncthreads();
-                    
-                    #pragma unroll
-                    for(int i = 0; i < elementsPerThread; i++){
-                        if(headFlags[i] > 0){
-                            maxScan[i] = prefixsum[i];
-                        }else{
-                            maxScan[i] = 0;
-                        }
-                    }                
-
-                    BlockScan(temp.scan).InclusiveScan(maxScan, maxScan, cub::Max{});
-                    __syncthreads();
-
-                    //compute counts of unique pair ids
-                    for(int i = threadIdx.x; i < numRuns; i += blockDim.x){
-                        sharedCounts[i] = 0;
-                    }
-
-                    __syncthreads();
-
-                    #pragma unroll
-                    for(int i = 0; i < elementsPerThread; i++){
-                        if(threadIdx.x * elementsPerThread + i < numTasks){
-                            atomicAdd(sharedCounts + maxScan[i], 1);
-                        }
-                    }
-
-                    __syncthreads();
-                }
-
-                //compute output offsets and perform split
-                int myCounts[elementsPerThread];
-                int outputoffsets4[elementsPerThread];
-                int outputoffsetsNot4[elementsPerThread];
-
-                BlockLoad(temp.load).Load(sharedCounts, myCounts, numRuns, 0);
-                __syncthreads();
-
-                int myModifiedCounts[elementsPerThread];
-                #pragma unroll
-                for(int i = 0; i < elementsPerThread; i++){
-                    myModifiedCounts[i] = (myCounts[i] == 4) ? 4 : 0;
-                }
-
-                int numPos4 = 0;
-                BlockScan(temp.scan).ExclusiveSum(myModifiedCounts, outputoffsets4, numPos4);
-                __syncthreads();
-
-                #pragma unroll
-                for(int i = 0; i < elementsPerThread; i++){
-                    myModifiedCounts[i] = (myCounts[i] < 4) ? myCounts[i] : 0;
-                }
-
-                int numPosNot4 = 0;
-                BlockScan(temp.scan).ExclusiveSum(myModifiedCounts, outputoffsetsNot4, numPosNot4);
-                __syncthreads();
-
-                BlockScan(temp.scan).ExclusiveSum(myCounts, prefixsum, numRuns);
-                __syncthreads();
-
-                BlockExchange(temp.exchange).BlockedToStriped(myCounts);
-                __syncthreads();
-                BlockExchange(temp.exchange).BlockedToStriped(outputoffsets4);
-                __syncthreads();
-                BlockExchange(temp.exchange).BlockedToStriped(outputoffsetsNot4);
-                __syncthreads();
-                BlockExchange(temp.exchange).BlockedToStriped(prefixsum);
-                __syncthreads();
-
-                // if(threadIdx.x == 0){
-                //     printf("sharedIndices\n");
-                //     for(int i = 0; i < numTasks; i++){
-                //         printf("%d ", sharedIndices[i]);
-                //     }
-                //     printf("\n");
-
-                //     printf("pairids\n");
-                //     for(int i = 0; i < numTasks; i++){
-                //         printf("%d ", task_pairIds[i]);
-                //     }
-                //     printf("\n");
-
-                //     printf("ids\n");
-                //     for(int i = 0; i < numTasks; i++){
-                //         printf("%d ", task_ids[i]);
-                //     }
-                //     printf("\n");
-                // }
-                // __syncthreads();
-
-                //compact indices
-                #pragma unroll
-                for(int i = 0; i < elementsPerThread; i++){
-                    if(i * blocksize + threadIdx.x < numRuns){
-                        const int runBegin = prefixsum[i];
-                        const int runEnd = runBegin + myCounts[i];
-                        const int size = runEnd - runBegin;
-
-                        if(size < 4){
-                            #pragma unroll
-                            for(int k = 0; k < 4; k++){
-                                if(k < size){
-                                    const int outputoffset = outputoffsetsNot4[i] + k;
-                                    d_positionsNot4[outputoffset] = sharedIndices[runBegin + k];
-                                }
-                            }
-                        }else{
-                            int positions[4];
-                            int ids[4];
-
-                            #pragma unroll
-                            for(int k = 0; k < 4; k++){
-                                positions[k] = sharedIndices[runBegin + k];
-                            }
-
-                            #pragma unroll
-                            for(int k = 0; k < 4; k++){
-                                ids[k] = task_ids[positions[k]];
-                                assert(0 <= ids[k] && ids[k] < 4);
-                            }
-
-                            // printf("thread %d. positions %d %d %d %d, runBegin %d\n", threadIdx.x, 
-                            //     positions[0], positions[1], positions[2], positions[3],runBegin
-                            // );
-
-                            //sort 4 elements of same pairId by id and store them. id is either 0,1,2, or 3
-                            #pragma unroll
-                            for(int k = 0; k < 4; k++){
-                                #pragma unroll
-                                for(int l = 0; l < 4; l++){
-                                    if(ids[l] == k){
-                                        const int outputoffset = outputoffsets4[i] + k;
-                                        d_positions4[outputoffset] = positions[l];
-                                    }
-                                }
-                            }
-                        }
-
-                    }
-                }
-            
-                __syncthreads();
-                if(threadIdx.x == 0){
-                    atomicAdd(d_numPositions_out + 0, numPos4);
-                    atomicAdd(d_numPositions_out + 1, numPosNot4);
-                }
-
-            }
-        );
-
-        // h_anchorSequencesLength.resize(2);
-        // int* h_numPositions = h_anchorSequencesLength.data();
-        int h_numPositions_debug[2];
-
-        cudaMemcpyAsync(
-            h_numPositions_debug,
-            d_numPositions_debug.data(),
-            sizeof(int) * 2,
-            D2H,
-            streams[0]
+        readextendergpukernels::computeSplitGatherIndicesSmallInputKernel<256,16><<<1, 256, smem, stream>>>(
+            finishedTasks.size(),
+            d_positions4,
+            d_positionsNot4,
+            d_numPositions4,
+            d_numPositionsNot4,
+            finishedTasks.pairId.data(),
+            finishedTasks.id.data(),
+            d_minmax.data()
         ); CUERR;
 
-        cudaStreamSynchronize(streams[0]); CUERR;
+    }
 
-        #else    
 
-        
-        CachedDeviceUVector<int> d_pairIds1(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_pairIds2(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_indices1(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_incices2(finishedTasks.size(), streams[0], *cubAllocator);
+
+    void computeSplitGatherIndicesOfFinishedTasksDefault(
+        int* d_positions4, 
+        int* d_positionsNot4, 
+        int* d_numPositions4, 
+        int* d_numPositionsNot4,
+        cudaStream_t stream
+    ){
+        CachedDeviceUVector<int> d_minmax(2, stream, *cubAllocator);
+
+        readextendergpukernels::minmaxSingleBlockKernel<512><<<1, 512, 0, stream>>>(
+            finishedTasks.pairId.data(),
+            finishedTasks.size(),
+            d_minmax.data()
+        );        
+
+        h_anchorSequencesLength.resize(2); //pinned buffer which is repurposed
+
+        int* const h_minmax = h_anchorSequencesLength.data();
+
+        cudaMemcpyAsync(
+            h_minmax,
+            d_minmax.data(),
+            sizeof(int) * 2,
+            D2H,
+            stream
+        ); CUERR;
+
+        cudaStreamSynchronize(stream); CUERR;
+
+        CachedDeviceUVector<int> d_pairIds1(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_pairIds2(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_indices1(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_incices2(finishedTasks.size(), stream, *cubAllocator);
 
         //decrease pair ids by smallest pair id to improve radix sort performance
-        readextendergpukernels::vectorAddKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, streams[0]>>>(
+        readextendergpukernels::vectorAddKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, stream>>>(
             finishedTasks.pairId.data(),
             thrust::make_constant_iterator(-h_minmax[0]),
             d_pairIds1.data(),
             finishedTasks.size()
-        );
+        );        
 
-        
-
-        readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, streams[0]>>>(
+        readextendergpukernels::iotaKernel<<<SDIV(finishedTasks.size(), 128), 128, 0, stream>>>(
             d_indices1.begin(), 
             d_indices1.end(), 
             0
@@ -5642,11 +5785,11 @@ struct GpuReadExtender{
             finishedTasks.size(), 
             begin_bit, 
             end_bit, 
-            streams[0]
+            stream
         );
         assert(cudaSuccess == status);
 
-        CachedDeviceUVector<char> d_temp(tempbytes, streams[0], *cubAllocator);
+        CachedDeviceUVector<char> d_temp(tempbytes, stream, *cubAllocator);
 
         status = cub::DeviceRadixSort::SortPairs(
             d_temp.data(),
@@ -5656,7 +5799,7 @@ struct GpuReadExtender{
             finishedTasks.size(), 
             begin_bit, 
             end_bit, 
-            streams[0]
+            stream
         );
         assert(cudaSuccess == status);
         d_temp.destroy();       
@@ -5664,8 +5807,8 @@ struct GpuReadExtender{
         const int* d_theSortedPairIds = d_keys.Current();
         const int* d_theSortedIndices = d_values.Current();
 
-        CachedDeviceUVector<int> d_counts_out(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_num_runs_out(1, streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_counts_out(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_num_runs_out(1, stream, *cubAllocator);
 
         cubReduceByKey(
             d_theSortedPairIds, 
@@ -5675,15 +5818,15 @@ struct GpuReadExtender{
             d_num_runs_out.data(),
             thrust::plus<int>{},
             finishedTasks.size(),
-            streams[0]
+            stream
         );
 
         d_pairIds1.destroy();
         d_pairIds2.destroy();
 
         //compute exclusive prefix sums + total to have stable output
-        CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size(), streams[0], *cubAllocator);
+        CachedDeviceUVector<int> d_outputoffsetsPos4(finishedTasks.size(), stream, *cubAllocator);
+        CachedDeviceUVector<int> d_outputoffsetsNotPos4(finishedTasks.size(), stream, *cubAllocator);
 
         cubExclusiveSum(
             thrust::make_transform_iterator(
@@ -5698,7 +5841,7 @@ struct GpuReadExtender{
             ),
             d_outputoffsetsPos4.data(),
             finishedTasks.size(),
-            streams[0]
+            stream
         );
 
         cubExclusiveSum(
@@ -5714,167 +5857,29 @@ struct GpuReadExtender{
             ),
             d_outputoffsetsNotPos4.data(),
             finishedTasks.size(),
-            streams[0]
+            stream
         );
 
         cubInclusiveSum(
             d_counts_out.data(),
             d_counts_out.data(),
             finishedTasks.size(),
-            streams[0]
+            stream
         );
 
-        CachedDeviceUVector<int> d_positions4(finishedTasks.size(), streams[0], *cubAllocator);
-        CachedDeviceUVector<int> d_positionsNot4(finishedTasks.size(), streams[0], *cubAllocator);
-
-        CachedDeviceUVector<int> d_numPositions(2, streams[0], *cubAllocator);
-        helpers::call_fill_kernel_async(d_numPositions.data(), 2, 0, streams[0]);
-
-        helpers::lambda_kernel<<<SDIV(finishedTasks.size(), 256), 256, 0, streams[0]>>>(
-            [
-                numTasks = finishedTasks.size(),
-                d_positions4 = d_positions4.data(),
-                d_positionsNot4 = d_positionsNot4.data(),
-                d_run_endoffsets = d_counts_out.data(),
-                d_num_runs = d_num_runs_out.data(),
-                d_sortedindices = d_theSortedIndices,
-                task_ids = finishedTasks.id.data(),
-                d_numPositions_out = d_numPositions.data(),
-                d_outputoffsetsPos4 = d_outputoffsetsPos4.data(),
-                d_outputoffsetsNotPos4 = d_outputoffsetsNotPos4.data()
-                //numPositions_out = h_numPositions
-            ] __device__ (){
-                __shared__ int count4;
-                __shared__ int countNot4;
-
-                if(threadIdx.x == 0){
-                    count4 = 0;
-                    countNot4 = 0;
-                }
-                __syncthreads();
-
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-
-                const int numRuns = *d_num_runs;
-
-                auto group = cg::tiled_partition<4>(cg::this_thread_block());
-                const int numGroups = stride / 4;
-                const int groupId = tid / 4;
-
-                for(int t = groupId; t < numRuns; t += numGroups){
-                    const int runBegin = (t == 0 ? 0 : d_run_endoffsets[t-1]);
-                    const int runEnd = d_run_endoffsets[t];
-
-                    const int size = runEnd - runBegin;
-                    if(size < 4){
-                        if(group.thread_rank() == 0){
-                            atomicAdd(&countNot4, size);
-                        }
-
-                        if(group.thread_rank() < size){
-                            d_positionsNot4[d_outputoffsetsNotPos4[t] + group.thread_rank()]
-                                = d_sortedindices[runBegin + group.thread_rank()];
-                        }
-                    }else{
-                        assert(size == 4);
-
-                        if(group.thread_rank() == 0){
-                            atomicAdd(&count4, 4);
-                        }
-
-                        //sort 4 elements of same pairId by id. id is either 0,1,2, or 3
-                        const int position = d_sortedindices[runBegin + group.thread_rank()];
-                        const int id = task_ids[position];
-                        assert(0 <= id && id < 4);
-
-                        for(int x = 0; x < 4; x++){
-                            if(id == x){
-                                //d_positions4[groupoutputbegin + x] = position;
-                                d_positions4[d_outputoffsetsPos4[t] + x] = position;
-                            }
-                        }
-                    }
-                }
-            
-                __syncthreads();
-                if(threadIdx.x == 0){
-                    atomicAdd(d_numPositions_out + 0, count4);
-                    atomicAdd(d_numPositions_out + 1, countNot4);
-                }
-            }
-        );
-
-        h_anchorSequencesLength.resize(2);
-        int* h_numPositions = h_anchorSequencesLength.data();
-
-        cudaMemcpyAsync(
-            h_numPositions,
-            d_numPositions.data(),
-            sizeof(int) * 2,
-            D2H,
-            streams[0]
+        readextendergpukernels::computeSplitGatherIndicesDefaultKernel<256><<<SDIV(finishedTasks.size(), 256), 256, 0, stream>>>(
+            finishedTasks.size(),
+            d_positions4,
+            d_positionsNot4,
+            d_numPositions4,
+            d_numPositionsNot4,
+            d_counts_out.data(),
+            d_num_runs_out.data(),
+            d_theSortedIndices,
+            finishedTasks.id.data(),
+            d_outputoffsetsPos4.data(),
+            d_outputoffsetsNotPos4.data()
         ); CUERR;
-
-        cudaStreamSynchronize(streams[0]); CUERR;
-
-        // std::vector<int> h_positions4_debug(finishedTasks.size());
-        // std::vector<int> h_positionsNot4_debug(finishedTasks.size());
-        // std::vector<int> h_positions4(finishedTasks.size());
-        // std::vector<int> h_positionsNot4(finishedTasks.size());
-
-        // cudaMemcpyAsync(h_positions4_debug.data(), d_positions4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        // cudaMemcpyAsync(h_positionsNot4_debug.data(), d_positionsNot4_debug.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        // cudaMemcpyAsync(h_positions4.data(), d_positions4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        // cudaMemcpyAsync(h_positionsNot4.data(), d_positionsNot4.data(), sizeof(int) * finishedTasks.size(), D2H, streams[0]);
-        // cudaStreamSynchronize(streams[0]); CUERR;
-        // std::cerr << h_numPositions[0] << " " << h_numPositions[1] << " "
-        //     << h_numPositions_debug[0] << " " << h_numPositions_debug[1] << "\n";
-
-        // std::cerr << "h_positions4_debug\n";
-        // std::copy(h_positions4_debug.begin(), h_positions4_debug.begin() + h_numPositions_debug[0], std::ostream_iterator<int>(std::cerr , ","));
-        // std::cerr << "\n";
-        // std::cerr << "h_positions4\n";
-        // std::copy(h_positions4.begin(), h_positions4.begin() + h_numPositions[0], std::ostream_iterator<int>(std::cerr , ","));
-        // std::cerr << "\n";
-        // std::cerr << "h_positionsNot4_debug\n";
-        // std::copy(h_positionsNot4_debug.begin(), h_positionsNot4_debug.begin() + h_numPositions_debug[1], std::ostream_iterator<int>(std::cerr , ","));
-        // std::cerr << "\n";
-        // std::cerr << "h_positionsNot4\n";
-        // std::copy(h_positionsNot4.begin(), h_positionsNot4.begin() + h_numPositions[1], std::ostream_iterator<int>(std::cerr , ","));
-        // std::cerr << "\n";
-
-        // assert(h_numPositions[0] == h_numPositions_debug[0]);
-        // assert(h_numPositions[1] == h_numPositions_debug[1]);
-
-        // assert(std::equal(
-        //     h_positions4_debug.begin(), h_positions4_debug.begin() + h_numPositions_debug[0],
-        //     h_positions4.begin(), h_positions4.begin() + h_numPositions[0]
-        // ));
-
-        // assert(std::equal(
-        //     h_positionsNot4_debug.begin(), h_positionsNot4_debug.begin() + h_numPositions_debug[1],
-        //     h_positionsNot4.begin(), h_positionsNot4.begin() + h_numPositions[1]
-        // ));
-
-        #endif
-
-
-        SoAExtensionTaskGpuData gpufinishedTasks4 = finishedTasks.gather(
-            d_positions4.data(), 
-            d_positions4.data() + h_numPositions[0],
-            streams[0]
-        );
-
-        SoAExtensionTaskGpuData gpufinishedTasksNot4 = finishedTasks.gather(
-            d_positionsNot4.data(), 
-            d_positionsNot4.data() + h_numPositions[1],
-            streams[0]
-        );
-
-        std::swap(finishedTasks, gpufinishedTasksNot4);
-
-        return gpufinishedTasks4;
     }
 
 
