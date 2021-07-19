@@ -470,6 +470,50 @@ namespace readextendergpukernels{
         }
     }
 
+
+    template<class InputIter, class ConstantIter, class OutputIter>
+    __global__
+    void vectorAddConstantKernel(InputIter input1, ConstantIter constantiter, OutputIter output, int N){
+        const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int stride = blockDim.x * gridDim.x;
+
+        for(int i = tid; i < N; i += stride){
+            *(output + i) = *(input1 + i) + *constantiter;
+        }
+    }
+
+    template<class Sum, class T, class U>
+    struct ConstantSumIterator{
+        using value_type = Sum;
+
+        T input1;
+        U input2;
+
+        __host__ __device__
+        ConstantSumIterator(T i1, U i2) : input1(i1), input2(i2){}
+
+        __host__ __device__
+        value_type operator[](std::size_t i) const{
+            return operator*();
+        }
+
+        __host__ __device__
+        value_type operator*() const{
+            return (*input1) + (*input2);
+        }
+
+        __host__ __device__
+        value_type operator->() const{
+            return (*input1) + (*input2);
+        }        
+    };
+
+    template<class Sum, class T, class U>
+    ConstantSumIterator<Sum, T, U> makeConstantSumIterator(T i1, U i2) {
+        return ConstantSumIterator<Sum, T, U>{i1, i2};
+    }
+
+
     template<class Iter1, class T>
     __global__
     void iotaKernel(Iter1 outputbegin, Iter1 outputend, T init){
@@ -553,6 +597,123 @@ namespace readextendergpukernels{
 
 
     //extender kernels
+
+    template<int blocksize, int groupsize, class MapIter>
+    __global__
+    void taskGatherKernel1(
+        MapIter d_mapBegin,
+        MapIter d_mapEnd,
+        int gathersize,
+        std::size_t decodedSequencePitchInBytes,
+        std::size_t qualityPitchInBytes,
+        std::size_t encodedSequencePitchInInts,
+        int* __restrict__ selection_soainputAnchorLengths,
+        const int* __restrict__ soainputAnchorLengths,
+        char* __restrict__ selection_soainputAnchorQualities,
+        const char* __restrict__ soainputAnchorQualities,
+        char* __restrict__ selection_soainputmateQualityScoresReversed,
+        const char* __restrict__ soainputmateQualityScoresReversed,
+        char* __restrict__ selection_soainputAnchorsDecoded,
+        const char* __restrict__ soainputAnchorsDecoded,
+        char* __restrict__ selection_soainputdecodedMateRevC,
+        const char* __restrict__ soainputdecodedMateRevC,
+        unsigned int* __restrict__ selection_inputEncodedMate,
+        const unsigned int* __restrict__ inputEncodedMate,
+        unsigned int* __restrict__ selection_inputAnchorsEncoded,
+        const unsigned int* __restrict__ inputAnchorsEncoded
+    ){
+        const int gtid = threadIdx.x + blockIdx.x * blockDim.x;
+        const int gstride = blockDim.x * gridDim.x;
+
+        for(int i = gtid; i < gathersize; i += gstride){
+            const std::size_t srcindex = *(d_mapBegin + i);
+            const std::size_t destindex = i;
+            selection_soainputAnchorLengths[destindex] = soainputAnchorLengths[srcindex];
+        }
+
+        for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
+            const std::size_t srcindex = *(d_mapBegin + i);
+            const std::size_t destindex = i;
+
+            for(int k = threadIdx.x; k < decodedSequencePitchInBytes; k += blockDim.x){
+                selection_soainputdecodedMateRevC[destindex * decodedSequencePitchInBytes + k]
+                    = soainputdecodedMateRevC[srcindex * decodedSequencePitchInBytes + k];
+
+                selection_soainputAnchorsDecoded[destindex * decodedSequencePitchInBytes + k]
+                    = soainputAnchorsDecoded[srcindex * decodedSequencePitchInBytes + k];
+            }
+
+            for(int k = threadIdx.x; k < qualityPitchInBytes; k += blockDim.x){
+                selection_soainputmateQualityScoresReversed[destindex * qualityPitchInBytes + k]
+                    = soainputmateQualityScoresReversed[srcindex * qualityPitchInBytes + k];
+
+                selection_soainputAnchorQualities[destindex * qualityPitchInBytes + k]
+                    = soainputAnchorQualities[srcindex * qualityPitchInBytes + k];
+            }
+
+            for(int k = threadIdx.x; k < encodedSequencePitchInInts; k += blockDim.x){
+                selection_inputEncodedMate[destindex * encodedSequencePitchInInts + k]
+                    = inputEncodedMate[srcindex * encodedSequencePitchInInts + k];
+
+                selection_inputAnchorsEncoded[destindex * encodedSequencePitchInInts + k]
+                    = inputAnchorsEncoded[srcindex * encodedSequencePitchInInts + k];
+            }
+        }
+    }
+
+    template<int blocksize, int groupsize, class MapIter>
+    __global__
+    void taskGatherKernel2(
+        MapIter d_mapBegin,
+        MapIter d_mapEnd,
+        int gathersize,
+        std::size_t decodedSequencePitchInBytes,
+        std::size_t qualityPitchInBytes,
+        int* __restrict__ selection_soaNumEntriesPerTaskPrefixSum,
+        const int* __restrict__ soaNumEntriesPerTaskPrefixSum,
+        const int* __restrict__ soaNumEntriesPerTask,
+        int* __restrict__ selection_soatotalDecodedAnchorsLengths,
+        const int* __restrict__ soatotalDecodedAnchorsLengths,
+        int* __restrict__ selection_soatotalAnchorBeginInExtendedRead,
+        const int* __restrict__ soatotalAnchorBeginInExtendedRead,
+        char* __restrict__ selection_soatotalDecodedAnchorsFlat,
+        const char* __restrict__ soatotalDecodedAnchorsFlat,
+        char* __restrict__ selection_soatotalAnchorQualityScoresFlat,
+        const char* __restrict__ soatotalAnchorQualityScoresFlat
+    ){
+        for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
+            const std::size_t srcindex = *(d_mapBegin + i);
+            const std::size_t destindex = i;
+
+            int destoffset = selection_soaNumEntriesPerTaskPrefixSum[destindex];
+            int srcoffset = soaNumEntriesPerTaskPrefixSum[srcindex];
+            int num = soaNumEntriesPerTask[srcindex];
+
+            for(int k = threadIdx.x; k < num; k += blockDim.x){
+                selection_soatotalDecodedAnchorsLengths[destoffset + k] 
+                    = soatotalDecodedAnchorsLengths[srcoffset + k];
+
+                selection_soatotalAnchorBeginInExtendedRead[destoffset + k] 
+                    = soatotalAnchorBeginInExtendedRead[srcoffset + k];
+            }
+
+            std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
+
+            for(int k = threadIdx.x; k < pitchnum1; k += blockDim.x){
+                selection_soatotalDecodedAnchorsFlat[destoffset * decodedSequencePitchInBytes + k] 
+                    = soatotalDecodedAnchorsFlat[srcoffset * decodedSequencePitchInBytes+ k];
+            }
+
+            std::size_t pitchnum2 = qualityPitchInBytes * num;
+
+            for(int k = threadIdx.x; k < pitchnum2; k += blockDim.x){
+                selection_soatotalAnchorQualityScoresFlat[destoffset * qualityPitchInBytes + k] 
+                    = soatotalAnchorQualityScoresFlat[srcoffset * qualityPitchInBytes + k];
+            }
+        }
+    }
+
+
 
     template<int blocksize>
     __global__
@@ -3004,18 +3165,16 @@ struct GpuReadExtender{
 
             //fix appended prefixsum
             if(entries > 0 && rhs.entries > 0){
-                helpers::lambda_kernel<<<SDIV(rhs.entries, 128), 128, 0, stream>>>(
-                    [
-                        soaNumEntriesPerTaskPrefixSum = soaNumEntriesPerTaskPrefixSum.data(),
-                        soaNumEntriesPerTask = soaNumEntriesPerTask.data(),
-                        numTasks = entries,
-                        rhsTasks = rhs.entries
-                    ] __device__ (){
-                        for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < rhsTasks; i += blockDim.x * gridDim.x){
-                            soaNumEntriesPerTaskPrefixSum[numTasks + i] += soaNumEntriesPerTask[numTasks - 1] + soaNumEntriesPerTaskPrefixSum[numTasks - 1];
-                        }
-                    }
-                );
+
+                readextendergpukernels::vectorAddConstantKernel<<<SDIV(rhs.size(), 128), 128, 0, stream>>>(
+                    soaNumEntriesPerTaskPrefixSum.data() + size(), 
+                    readextendergpukernels::makeConstantSumIterator<int>(
+                        soaNumEntriesPerTask.data() + size() - 1, 
+                        soaNumEntriesPerTaskPrefixSum.data() + size() - 1
+                    ),
+                    soaNumEntriesPerTaskPrefixSum.data() + size(),
+                    rhs.size()
+                ); CUERR;
             }
 
             entries += rhs.size();
@@ -3175,21 +3334,17 @@ struct GpuReadExtender{
 
             std::size_t irregularsize = 0;
             if(gathersize > 0){
-                int* tmp;
-                cubAllocator->DeviceAllocate((void**)&tmp, sizeof(int), stream);
-                helpers::lambda_kernel<<<1,1,0,stream>>>(
-                    [
-                        tmp,
-                        soaNumEntriesPerTaskPrefixSum = selection.soaNumEntriesPerTaskPrefixSum.data(),
-                        soaNumEntriesPerTask = selection.soaNumEntriesPerTask.data(),
-                        gathersize
-                    ] __device__ (){
-                        *tmp = soaNumEntriesPerTaskPrefixSum[gathersize - 1] + soaNumEntriesPerTask[gathersize - 1];
-                    }
+                CachedDeviceUVector<int> tmp(1, stream, *cubAllocator);
+
+                readextendergpukernels::vectorAddKernel<<<1,1, 0, stream>>>(
+                    selection.soaNumEntriesPerTaskPrefixSum.data() + gathersize - 1, 
+                    selection.soaNumEntriesPerTask.data() + gathersize - 1, 
+                    tmp.data(), 
+                    1
                 ); CUERR;
+
                 int result = 0;
-                cudaMemcpyAsync(&result, tmp, sizeof(int), D2H, stream); CUERR;
-                cubAllocator->DeviceFree(tmp);
+                cudaMemcpyAsync(&result, tmp.data(), sizeof(int), D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
                 irregularsize = result;
 
@@ -3206,122 +3361,102 @@ struct GpuReadExtender{
                 return;
             }
 
-
-            helpers::lambda_kernel<<<gathersize, 128, 0, stream>>>(
-                [
-                    d_mapBegin,
-                    d_mapEnd,
-                    gathersize,
-                    decodedSequencePitchInBytes = decodedSequencePitchInBytes,
-                    qualityPitchInBytes = qualityPitchInBytes,
-                    encodedSequencePitchInInts = encodedSequencePitchInInts,
-                    selection_soainputAnchorLengths = selection.soainputAnchorLengths.data(),
-                    soainputAnchorLengths = soainputAnchorLengths.data(),
-                    selection_soainputAnchorQualities = selection.soainputAnchorQualities.data(),
-                    soainputAnchorQualities = soainputAnchorQualities.data(),
-                    selection_soainputmateQualityScoresReversed = selection.soainputmateQualityScoresReversed.data(),
-                    soainputmateQualityScoresReversed = soainputmateQualityScoresReversed.data(),
-                    selection_soainputAnchorsDecoded = selection.soainputAnchorsDecoded.data(),
-                    soainputAnchorsDecoded = soainputAnchorsDecoded.data(),
-                    selection_soainputdecodedMateRevC = selection.soainputdecodedMateRevC.data(),
-                    soainputdecodedMateRevC = soainputdecodedMateRevC.data(),
-                    selection_inputEncodedMate = selection.inputEncodedMate.data(),
-                    inputEncodedMate = inputEncodedMate.data(),
-                    selection_inputAnchorsEncoded = selection.inputAnchorsEncoded.data(),
-                    inputAnchorsEncoded = inputAnchorsEncoded.data()
-                ] __device__ (){
-                    const int gtid = threadIdx.x + blockIdx.x * blockDim.x;
-                    const int gstride = blockDim.x * gridDim.x;
-
-                    for(int i = gtid; i < gathersize; i += gstride){
-                        const std::size_t srcindex = *(d_mapBegin + i);
-                        const std::size_t destindex = i;
-                        selection_soainputAnchorLengths[destindex] = soainputAnchorLengths[srcindex];
-                    }
-
-                    for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
-                        const std::size_t srcindex = *(d_mapBegin + i);
-                        const std::size_t destindex = i;
-
-                        for(int k = threadIdx.x; k < decodedSequencePitchInBytes; k += blockDim.x){
-                            selection_soainputdecodedMateRevC[destindex * decodedSequencePitchInBytes + k]
-                                = soainputdecodedMateRevC[srcindex * decodedSequencePitchInBytes + k];
-
-                            selection_soainputAnchorsDecoded[destindex * decodedSequencePitchInBytes + k]
-                                = soainputAnchorsDecoded[srcindex * decodedSequencePitchInBytes + k];
-                        }
-
-                        for(int k = threadIdx.x; k < qualityPitchInBytes; k += blockDim.x){
-                            selection_soainputmateQualityScoresReversed[destindex * qualityPitchInBytes + k]
-                                = soainputmateQualityScoresReversed[srcindex * qualityPitchInBytes + k];
-
-                            selection_soainputAnchorQualities[destindex * qualityPitchInBytes + k]
-                                = soainputAnchorQualities[srcindex * qualityPitchInBytes + k];
-                        }
-
-                        for(int k = threadIdx.x; k < encodedSequencePitchInInts; k += blockDim.x){
-                            selection_inputEncodedMate[destindex * encodedSequencePitchInInts + k]
-                                = inputEncodedMate[srcindex * encodedSequencePitchInInts + k];
-
-                            selection_inputAnchorsEncoded[destindex * encodedSequencePitchInInts + k]
-                                = inputAnchorsEncoded[srcindex * encodedSequencePitchInInts + k];
-                        }
-                    }
-                }
+            readextendergpukernels::taskGatherKernel1<128, 32><<<gathersize, 128, 0, stream>>>(
+                d_mapBegin,
+                d_mapEnd,
+                gathersize,
+                decodedSequencePitchInBytes,
+                qualityPitchInBytes,
+                encodedSequencePitchInInts,
+                selection.soainputAnchorLengths.data(),
+                soainputAnchorLengths.data(),
+                selection.soainputAnchorQualities.data(),
+                soainputAnchorQualities.data(),
+                selection.soainputmateQualityScoresReversed.data(),
+                soainputmateQualityScoresReversed.data(),
+                selection.soainputAnchorsDecoded.data(),
+                soainputAnchorsDecoded.data(),
+                selection.soainputdecodedMateRevC.data(),
+                soainputdecodedMateRevC.data(),
+                selection.inputEncodedMate.data(),
+                inputEncodedMate.data(),
+                selection.inputAnchorsEncoded.data(),
+                inputAnchorsEncoded.data()
             ); CUERR;
 
-            helpers::lambda_kernel<<<gathersize, 128, 0, stream>>>(
-                [
-                    d_mapBegin,
-                    d_mapEnd,
-                    gathersize,
-                    decodedSequencePitchInBytes = decodedSequencePitchInBytes,
-                    qualityPitchInBytes = qualityPitchInBytes,
-                    selection_soaNumEntriesPerTaskPrefixSum = selection.soaNumEntriesPerTaskPrefixSum.data(),
-                    soaNumEntriesPerTaskPrefixSum = soaNumEntriesPerTaskPrefixSum.data(),
-                    soaNumEntriesPerTask = soaNumEntriesPerTask.data(),
-                    selection_soatotalDecodedAnchorsLengths = selection.soatotalDecodedAnchorsLengths.data(),
-                    soatotalDecodedAnchorsLengths = soatotalDecodedAnchorsLengths.data(),
-                    selection_soatotalAnchorBeginInExtendedRead = selection.soatotalAnchorBeginInExtendedRead.data(),
-                    soatotalAnchorBeginInExtendedRead = soatotalAnchorBeginInExtendedRead.data(),
-                    selection_soatotalDecodedAnchorsFlat = selection.soatotalDecodedAnchorsFlat.data(),
-                    soatotalDecodedAnchorsFlat = soatotalDecodedAnchorsFlat.data(),
-                    selection_soatotalAnchorQualityScoresFlat = selection.soatotalAnchorQualityScoresFlat.data(),
-                    soatotalAnchorQualityScoresFlat = soatotalAnchorQualityScoresFlat.data()
-                ] __device__ (){
 
-                    for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
-                        const std::size_t srcindex = *(d_mapBegin + i);
-                        const std::size_t destindex = i;
+            readextendergpukernels::taskGatherKernel2<128,32><<<gathersize, 128, 0, stream>>>(
+                d_mapBegin,
+                d_mapEnd,
+                gathersize,
+                decodedSequencePitchInBytes,
+                qualityPitchInBytes,
+                selection.soaNumEntriesPerTaskPrefixSum.data(),
+                soaNumEntriesPerTaskPrefixSum.data(),
+                soaNumEntriesPerTask.data(),
+                selection.soatotalDecodedAnchorsLengths.data(),
+                soatotalDecodedAnchorsLengths.data(),
+                selection.soatotalAnchorBeginInExtendedRead.data(),
+                soatotalAnchorBeginInExtendedRead.data(),
+                selection.soatotalDecodedAnchorsFlat.data(),
+                soatotalDecodedAnchorsFlat.data(),
+                selection.soatotalAnchorQualityScoresFlat.data(),
+                soatotalAnchorQualityScoresFlat.data()
+            );
+            
 
-                        int destoffset = selection_soaNumEntriesPerTaskPrefixSum[destindex];
-                        int srcoffset = soaNumEntriesPerTaskPrefixSum[srcindex];
-                        int num = soaNumEntriesPerTask[srcindex];
+            // helpers::lambda_kernel<<<gathersize, 128, 0, stream>>>(
+            //     [
+            //         d_mapBegin,
+            //         d_mapEnd,
+            //         gathersize,
+            //         decodedSequencePitchInBytes = decodedSequencePitchInBytes,
+            //         qualityPitchInBytes = qualityPitchInBytes,
+            //         selection_soaNumEntriesPerTaskPrefixSum = selection.soaNumEntriesPerTaskPrefixSum.data(),
+            //         soaNumEntriesPerTaskPrefixSum = soaNumEntriesPerTaskPrefixSum.data(),
+            //         soaNumEntriesPerTask = soaNumEntriesPerTask.data(),
+            //         selection_soatotalDecodedAnchorsLengths = selection.soatotalDecodedAnchorsLengths.data(),
+            //         soatotalDecodedAnchorsLengths = soatotalDecodedAnchorsLengths.data(),
+            //         selection_soatotalAnchorBeginInExtendedRead = selection.soatotalAnchorBeginInExtendedRead.data(),
+            //         soatotalAnchorBeginInExtendedRead = soatotalAnchorBeginInExtendedRead.data(),
+            //         selection_soatotalDecodedAnchorsFlat = selection.soatotalDecodedAnchorsFlat.data(),
+            //         soatotalDecodedAnchorsFlat = soatotalDecodedAnchorsFlat.data(),
+            //         selection_soatotalAnchorQualityScoresFlat = selection.soatotalAnchorQualityScoresFlat.data(),
+            //         soatotalAnchorQualityScoresFlat = soatotalAnchorQualityScoresFlat.data()
+            //     ] __device__ (){
 
-                        for(int k = threadIdx.x; k < num; k += blockDim.x){
-                            selection_soatotalDecodedAnchorsLengths[destoffset + k] 
-                                = soatotalDecodedAnchorsLengths[srcoffset + k];
+            //         for(int i = blockIdx.x; i < gathersize; i += gridDim.x){
+            //             const std::size_t srcindex = *(d_mapBegin + i);
+            //             const std::size_t destindex = i;
 
-                            selection_soatotalAnchorBeginInExtendedRead[destoffset + k] 
-                                = soatotalAnchorBeginInExtendedRead[srcoffset + k];
-                        }
+            //             int destoffset = selection_soaNumEntriesPerTaskPrefixSum[destindex];
+            //             int srcoffset = soaNumEntriesPerTaskPrefixSum[srcindex];
+            //             int num = soaNumEntriesPerTask[srcindex];
 
-                        std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
+            //             for(int k = threadIdx.x; k < num; k += blockDim.x){
+            //                 selection_soatotalDecodedAnchorsLengths[destoffset + k] 
+            //                     = soatotalDecodedAnchorsLengths[srcoffset + k];
 
-                        for(int k = threadIdx.x; k < pitchnum1; k += blockDim.x){
-                            selection_soatotalDecodedAnchorsFlat[destoffset * decodedSequencePitchInBytes + k] 
-                                = soatotalDecodedAnchorsFlat[srcoffset * decodedSequencePitchInBytes+ k];
-                        }
+            //                 selection_soatotalAnchorBeginInExtendedRead[destoffset + k] 
+            //                     = soatotalAnchorBeginInExtendedRead[srcoffset + k];
+            //             }
 
-                        std::size_t pitchnum2 = qualityPitchInBytes * num;
+            //             std::size_t pitchnum1 = decodedSequencePitchInBytes * num;
 
-                        for(int k = threadIdx.x; k < pitchnum2; k += blockDim.x){
-                            selection_soatotalAnchorQualityScoresFlat[destoffset * qualityPitchInBytes + k] 
-                                = soatotalAnchorQualityScoresFlat[srcoffset * qualityPitchInBytes + k];
-                        }
-                    }
-                }
-            ); CUERR;
+            //             for(int k = threadIdx.x; k < pitchnum1; k += blockDim.x){
+            //                 selection_soatotalDecodedAnchorsFlat[destoffset * decodedSequencePitchInBytes + k] 
+            //                     = soatotalDecodedAnchorsFlat[srcoffset * decodedSequencePitchInBytes+ k];
+            //             }
+
+            //             std::size_t pitchnum2 = qualityPitchInBytes * num;
+
+            //             for(int k = threadIdx.x; k < pitchnum2; k += blockDim.x){
+            //                 selection_soatotalAnchorQualityScoresFlat[destoffset * qualityPitchInBytes + k] 
+            //                     = soatotalAnchorQualityScoresFlat[srcoffset * qualityPitchInBytes + k];
+            //             }
+            //         }
+            //     }
+            // ); CUERR;
 
         }
 
