@@ -1049,6 +1049,8 @@ extend_gpu_pairedend(
         gpuReadExtender->setMaxExtensionPerStep(fixedStepsize);
         gpuReadExtender->setMinCoverageForExtension(minCoverageForExtension);
 
+        GpuReadExtender::RawExtendResult rawExtendResult{};
+
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeated;
         std::vector<std::pair<read_number, read_number>> pairsWhichShouldBeRepeatedTemp;
         bool isLastIteration = false;
@@ -1143,7 +1145,12 @@ extend_gpu_pairedend(
         auto output = [&](){
             nvtx::push_range("output", 5);
 
-            std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->constructResults4();
+            gpuReadExtender->constructRawResults(rawExtendResult, stream);
+            cudaStreamSynchronize(stream); CUERR;
+
+            std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->convertRawExtendResults(rawExtendResult);
+
+            //std::vector<extension::ExtendResult> extensionResults = gpuReadExtender->constructResults4();
             const int numresults = extensionResults.size();
 
             //std::cerr << "Got " << (numresults) << " extended reads. Remaining unprocessed finished tasks: " << gpuReadExtender->finishedTasks.size() << "\n";
