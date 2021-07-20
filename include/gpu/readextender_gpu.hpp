@@ -822,6 +822,29 @@ namespace readextendergpukernels{
         }
     }
 
+    template<int blocksize>
+    __global__
+    void taskUpdateScalarIterationResultsKernel(
+        int numTasks,
+        float* __restrict__ task_goodscore,
+        extension::AbortReason* __restrict__ task_abortReason,
+        bool* __restrict__ task_mateHasBeenFound,
+        const float* __restrict__ d_goodscores,
+        const extension::AbortReason* __restrict__ d_abortReasons,
+        const bool* __restrict__ d_mateHasBeenFound
+    ){
+        const int tid = threadIdx.x + blockIdx.x * blocksize;
+        const int stride = blocksize * gridDim.x;
+
+        for(int i = tid; i < numTasks; i += stride){
+            task_goodscore[i] += d_goodscores[i];
+            task_abortReason[i] = d_abortReasons[i];
+            task_mateHasBeenFound[i] = d_mateHasBeenFound[i];
+        }
+    }
+        
+
+
 
     template<int blocksize, int groupsize>
     __global__
@@ -886,6 +909,121 @@ namespace readextendergpukernels{
             }
         }
     }
+
+    template<int blocksize>
+    __global__
+    void computeNumberOfSoaIterationResultsPerTaskKernel(
+        int numTasks,
+        int* __restrict__ d_addNumEntriesPerTask,
+        int* __restrict__ d_addNumEntriesPerTaskPrefixSum,
+        const extension::AbortReason* __restrict__ d_abortReasons,
+        const bool* __restrict__ d_mateHasBeenFound,
+        const int* __restrict__ d_sizeOfGapToMate
+    ){
+        const int tid = threadIdx.x + blockIdx.x * blocksize;
+        const int stride = blocksize * gridDim.x;
+
+        if(tid == 0){
+            d_addNumEntriesPerTaskPrefixSum[0] = 0;
+        }
+
+        for(int i = tid; i < numTasks; i += stride){
+            int num = 0;
+
+            if(d_abortReasons[i] == extension::AbortReason::None){
+                num = 1;
+
+                if(d_mateHasBeenFound[i]){
+                    if(d_sizeOfGapToMate[i] != 0){
+                        num = 2;
+                    }
+                }
+            }
+
+            d_addNumEntriesPerTask[i] = num;
+        }
+    }
+
+    template<int blocksize>
+    __global__
+    void makeSoAIterationResultsKernel(
+        int numTasks,
+        std::size_t outputAnchorPitchInBytes,
+        std::size_t outputAnchorQualityPitchInBytes,
+        const int* __restrict__ d_addNumEntriesPerTask,
+        const int* __restrict__ d_addNumEntriesPerTaskPrefixSum,
+        char* __restrict__ d_addTotalDecodedAnchorsFlat,
+        char* __restrict__ d_addTotalAnchorQualityScoresFlat,
+        int* __restrict__ d_addAnchorLengths,
+        int* __restrict__ d_addAnchorBeginsInExtendedRead,
+        std::size_t task_decodedSequencePitchInBytes,
+        std::size_t task_qualityPitchInBytes,
+        const extension::AbortReason* __restrict__ task_abortReason,
+        const bool* __restrict__ task_mateHasBeenFound,
+        const char* __restrict__ task_materevc,
+        const char* __restrict__ task_materevcqual,
+        const int* __restrict__ task_matelength,
+        const int* __restrict__ d_sizeOfGapToMate,
+        const int* __restrict__ d_outputAnchorLengths,
+        const char* __restrict__ d_outputAnchors,
+        const char* __restrict__ d_outputAnchorQualities,
+        const int* __restrict__ d_accumExtensionsLengths
+    ){
+        for(int i = blockIdx.x; i < numTasks; i += gridDim.x){
+            if(task_abortReason[i] == extension::AbortReason::None){                
+                const int offset = d_addNumEntriesPerTaskPrefixSum[i];
+
+                if(!task_mateHasBeenFound[i]){
+                    const int length = d_outputAnchorLengths[i];
+                    d_addAnchorLengths[offset] = length;
+
+                    //copy result
+                    for(int k = threadIdx.x; k < length; k += blockDim.x){
+                        d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = d_outputAnchors[i * outputAnchorPitchInBytes + k];
+                        d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = d_outputAnchorQualities[i * outputAnchorQualityPitchInBytes + k];
+                    }
+                    d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];
+
+                }else{
+                    const int sizeofGap = d_sizeOfGapToMate[i];
+                    if(sizeofGap == 0){                                
+                        //copy mate revc
+
+                        const int length = task_matelength[i];
+                        d_addAnchorLengths[offset] = length;
+
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = task_materevc[i * task_decodedSequencePitchInBytes + k];
+                            d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = task_materevcqual[i * task_qualityPitchInBytes + k];
+                        }
+                        d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];          
+                    }else{
+                        //copy result
+                        const int length = d_outputAnchorLengths[i];
+                        d_addAnchorLengths[offset] = length;
+                        
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = d_outputAnchors[i * outputAnchorPitchInBytes + k];
+                            d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = d_outputAnchorQualities[i * outputAnchorQualityPitchInBytes + k];
+                        }
+                        d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];
+                        
+
+                        //copy mate revc
+                        const int length2 = task_matelength[i];
+                        d_addAnchorLengths[(offset+1)] = length2;
+
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            d_addTotalDecodedAnchorsFlat[(offset+1) * outputAnchorPitchInBytes + k] = task_materevc[i * task_decodedSequencePitchInBytes + k];
+                            d_addTotalAnchorQualityScoresFlat[(offset+1) * outputAnchorQualityPitchInBytes + k] = task_materevcqual[i * task_qualityPitchInBytes + k];
+                        }
+                        d_addAnchorBeginsInExtendedRead[(offset+1)] = d_accumExtensionsLengths[i] + length;
+                    }
+                }
+            }
+        }
+    };
+
 
     template<int blocksize>
     __global__
@@ -3827,6 +3965,23 @@ struct GpuReadExtender{
 
         }
 
+        void addScalarIterationResultData(
+            const float* d_goodscores,
+            const extension::AbortReason* d_abortReasons,
+            const bool* d_mateHasBeenFound,
+            cudaStream_t stream
+        ){
+            readextendergpukernels::taskUpdateScalarIterationResultsKernel<128><<<SDIV(size(), 128), 128, 0, stream>>>(
+                size(),
+                goodscore.data(),
+                abortReason.data(),
+                mateHasBeenFound.data(),
+                d_goodscores,
+                d_abortReasons,
+                d_mateHasBeenFound
+            ); CUERR;
+        }
+
         
         void addSoAIterationResultData(
             const int* d_addNumEntriesPerTask,
@@ -4970,58 +5125,29 @@ struct GpuReadExtender{
         );
 
         nvtx::push_range("gpuunpack", 3);
+
+        tasks.addScalarIterationResultData(
+            d_goodscores.data(),
+            d_abortReasons.data(),
+            d_outputMateHasBeenFound.data(),
+            stream
+        );
+
         CachedDeviceUVector<int> d_addNumEntriesPerTask(numTasks, stream, *cubAllocator);
         CachedDeviceUVector<int> d_addNumEntriesPerTaskPrefixSum(numTasks+1, stream, *cubAllocator);
 
-        //update goodscores, abortreasons, matehasbeenfound. 
         //init first prefixsum element with 0.
-        //compute number of results per task
-        helpers::lambda_kernel<<<SDIV(numTasks, 128), 128, 0, stream>>>(
-            [
-                numTasks = numTasks,
-                d_addNumEntriesPerTask = d_addNumEntriesPerTask.data(),
-                d_addNumEntriesPerTaskPrefixSum = d_addNumEntriesPerTaskPrefixSum.data(),
-                task_goodscore = tasks.goodscore.data(),
-                d_goodscores = d_goodscores.data(),
-                task_abortReason = tasks.abortReason.data(),
-                d_abortReasons = d_abortReasons.data(),
-                task_mateHasBeenFound = tasks.mateHasBeenFound.data(),
-                d_mateHasBeenFound = d_outputMateHasBeenFound.data(),
-                d_sizeOfGapToMate = d_sizeOfGapToMate.data()
-            ] __device__ (){
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-
-                if(tid == 0){
-                    d_addNumEntriesPerTaskPrefixSum[0] = 0;
-                }
-
-                for(int i = tid; i < numTasks; i += stride){
-                    task_goodscore[i] += d_goodscores[i];
-                    task_abortReason[i] = d_abortReasons[i];
-
-                    int num = -1;
-
-                    if(d_abortReasons[i] == extension::AbortReason::None){
-                        num = 1;
-
-                        task_mateHasBeenFound[i] = d_mateHasBeenFound[i];                    
-
-                        if(d_mateHasBeenFound[i]){
-                            const int sizeofGap = d_sizeOfGapToMate[i];
-                            if(sizeofGap != 0){
-                                num = 2;
-                            }
-                        }
-                    }else{
-                        num = 0;
-                    }
-
-                    d_addNumEntriesPerTask[i] = num;
-                }
-            }
-        );
-
+        //compute number of soa iteration results per task
+        readextendergpukernels::computeNumberOfSoaIterationResultsPerTaskKernel<128>
+        <<<SDIV(numTasks, 128), 128, 0, stream>>>(
+            numTasks,
+            d_addNumEntriesPerTask.data(),
+            d_addNumEntriesPerTaskPrefixSum.data(),
+            d_abortReasons.data(),
+            d_outputMateHasBeenFound.data(),
+            d_sizeOfGapToMate.data()
+        ); CUERR;
+ 
         cubInclusiveSum(
             d_addNumEntriesPerTask.data(),
             d_addNumEntriesPerTaskPrefixSum.data() + 1,
@@ -5047,87 +5173,29 @@ struct GpuReadExtender{
         assert(tasks.decodedSequencePitchInBytes >= outputAnchorPitchInBytes);
         assert(tasks.qualityPitchInBytes >= outputAnchorQualityPitchInBytes);
 
-        //rearrange extension step result before adding them to tasks
-        helpers::lambda_kernel<<<numTasks, 128, 0, stream>>>(
-            [
-                numTasks = numTasks,
-                outputAnchorPitchInBytes = outputAnchorPitchInBytes,
-                outputAnchorQualityPitchInBytes = outputAnchorQualityPitchInBytes,
-                d_addNumEntriesPerTask = d_addNumEntriesPerTask.data(),
-                d_addNumEntriesPerTaskPrefixSum = d_addNumEntriesPerTaskPrefixSum.data(),
-                d_addTotalDecodedAnchorsFlat = d_addTotalDecodedAnchorsFlat.data(),
-                d_addTotalAnchorQualityScoresFlat = d_addTotalAnchorQualityScoresFlat.data(),
-                d_addAnchorLengths = d_addAnchorLengths.data(),
-                d_addAnchorBeginsInExtendedRead = d_addAnchorBeginsInExtendedRead.data(),
-                task_decodedSequencePitchInBytes = tasks.decodedSequencePitchInBytes,
-                task_qualityPitchInBytes = tasks.qualityPitchInBytes,
-                task_abortReason = tasks.abortReason.data(),
-                task_mateHasBeenFound = tasks.mateHasBeenFound.data(),
-                task_materevc = tasks.soainputdecodedMateRevC.data(),
-                task_materevcqual = tasks.soainputmateQualityScoresReversed.data(),
-                task_matelength = tasks.soainputmateLengths.data(),
-                d_sizeOfGapToMate = d_sizeOfGapToMate.data(),
-                d_outputAnchorLengths = d_outputAnchorLengths.data(),
-                d_outputAnchors = d_outputAnchors.data(),
-                d_outputAnchorQualities = d_outputAnchorQualities.data(),
-                d_accumExtensionsLengths = d_accumExtensionsLengthsOUT.data()
-            ] __device__ (){
-
-                for(int i = blockIdx.x; i < numTasks; i += gridDim.x){
-                    if(task_abortReason[i] == extension::AbortReason::None){                
-                        const int offset = d_addNumEntriesPerTaskPrefixSum[i];
-
-                        if(!task_mateHasBeenFound[i]){
-                            const int length = d_outputAnchorLengths[i];
-                            d_addAnchorLengths[offset] = length;
-
-                            //copy result
-                            for(int k = threadIdx.x; k < length; k += blockDim.x){
-                                d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = d_outputAnchors[i * outputAnchorPitchInBytes + k];
-                                d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = d_outputAnchorQualities[i * outputAnchorQualityPitchInBytes + k];
-                            }
-                            d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];
-
-                        }else{
-                            const int sizeofGap = d_sizeOfGapToMate[i];
-                            if(sizeofGap == 0){                                
-                                //copy mate revc
-
-                                const int length = task_matelength[i];
-                                d_addAnchorLengths[offset] = length;
-
-                                for(int k = threadIdx.x; k < length; k += blockDim.x){
-                                    d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = task_materevc[i * task_decodedSequencePitchInBytes + k];
-                                    d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = task_materevcqual[i * task_qualityPitchInBytes + k];
-                                }
-                                d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];          
-                            }else{
-                                //copy result
-                                const int length = d_outputAnchorLengths[i];
-                                d_addAnchorLengths[offset] = length;
-                                
-                                for(int k = threadIdx.x; k < length; k += blockDim.x){
-                                    d_addTotalDecodedAnchorsFlat[offset * outputAnchorPitchInBytes + k] = d_outputAnchors[i * outputAnchorPitchInBytes + k];
-                                    d_addTotalAnchorQualityScoresFlat[offset * outputAnchorQualityPitchInBytes + k] = d_outputAnchorQualities[i * outputAnchorQualityPitchInBytes + k];
-                                }
-                                d_addAnchorBeginsInExtendedRead[offset] = d_accumExtensionsLengths[i];
-                                
-
-                                //copy mate revc
-                                const int length2 = task_matelength[i];
-                                d_addAnchorLengths[(offset+1)] = length2;
-
-                                for(int k = threadIdx.x; k < length; k += blockDim.x){
-                                    d_addTotalDecodedAnchorsFlat[(offset+1) * outputAnchorPitchInBytes + k] = task_materevc[i * task_decodedSequencePitchInBytes + k];
-                                    d_addTotalAnchorQualityScoresFlat[(offset+1) * outputAnchorQualityPitchInBytes + k] = task_materevcqual[i * task_qualityPitchInBytes + k];
-                                }
-                                d_addAnchorBeginsInExtendedRead[(offset+1)] = d_accumExtensionsLengths[i] + length;
-                            }
-                        }
-                    }
-                }
-            }
-        );
+        readextendergpukernels::makeSoAIterationResultsKernel<128><<<numTasks, 128, 0, stream>>>(
+                numTasks,
+                outputAnchorPitchInBytes,
+                outputAnchorQualityPitchInBytes,
+                d_addNumEntriesPerTask.data(),
+                d_addNumEntriesPerTaskPrefixSum.data(),
+                d_addTotalDecodedAnchorsFlat.data(),
+                d_addTotalAnchorQualityScoresFlat.data(),
+                d_addAnchorLengths.data(),
+                d_addAnchorBeginsInExtendedRead.data(),
+                tasks.decodedSequencePitchInBytes,
+                tasks.qualityPitchInBytes,
+                tasks.abortReason.data(),
+                tasks.mateHasBeenFound.data(),
+                tasks.soainputdecodedMateRevC.data(),
+                tasks.soainputmateQualityScoresReversed.data(),
+                tasks.soainputmateLengths.data(),
+                d_sizeOfGapToMate.data(),
+                d_outputAnchorLengths.data(),
+                d_outputAnchors.data(),
+                d_outputAnchorQualities.data(),
+                d_accumExtensionsLengthsOUT.data()
+        ); CUERR;
 
         tasks.addSoAIterationResultData(
             d_addNumEntriesPerTask.data(),
@@ -6217,6 +6285,12 @@ struct GpuReadExtender{
             stream
         );
 
+        cudaEventRecord(events[0], stream); CUERR;
+        cudaStreamWaitEvent(stream2, events[0], 0); CUERR;
+
+        //TODO in stream2, compute maximum pair result output size and use it as output pitch
+
+
         //replace positions which are covered by anchor and mate with the original data
         helpers::lambda_kernel<<<SDIV(numFinishedTasks,(128 / 32)), 128,0, stream>>>(
             [
@@ -6281,7 +6355,7 @@ struct GpuReadExtender{
 
         const int numResults = numFinishedTasks / 4;
 
-        int outputPitch = 2048; //TODO        
+        int outputPitch = 2048; //TODO see above
 
         CachedDeviceUVector<bool> d_pairResultAnchorIsLR(numResults, stream, *cubAllocator);
         CachedDeviceUVector<char> d_pairResultSequences(numResults * outputPitch, stream, *cubAllocator);
