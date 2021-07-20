@@ -843,7 +843,137 @@ namespace readextendergpukernels{
         }
     }
         
+    template<int blocksize>
+    __global__
+    void taskIncrementIterationKernel(
+        int numTasks,
+        const extension::ExtensionDirection* __restrict__ task_direction,
+        const bool* __restrict__ task_pairedEnd,
+        const bool* __restrict__ task_mateHasBeenFound,
+        const int* __restrict__ task_pairId,
+        const int* __restrict__ task_id,
+        extension::AbortReason* __restrict__ task_abortReason,
+        int* __restrict__ task_iteration
+    ){
+        const int tid = threadIdx.x + blockIdx.x * blocksize;
+        const int stride = blocksize * gridDim.x;
 
+        constexpr bool disableOtherStrand = false;
+
+        for(int i = tid; i < numTasks; i += stride){
+            task_iteration[i]++;
+            
+            const int whichtype = task_id[i] % 4;
+
+            if(whichtype == 0){
+                assert(task_direction[i] == extension::ExtensionDirection::LR);
+                assert(task_pairedEnd[i] == true);
+
+                if(task_mateHasBeenFound[i]){
+                    for(int k = 1; k <= 4; k++){
+                        if(task_pairId[i + k] == task_pairId[i]){
+                            if(task_id[i + k] == task_id[i] + 1){
+                                //disable LR partner task
+                                task_abortReason[i + k] = extension::AbortReason::PairedAnchorFinished;
+                            }else if(task_id[i+k] == task_id[i] + 2){
+                                //disable RL search task
+                                if(disableOtherStrand){
+                                    task_abortReason[i + k] = extension::AbortReason::OtherStrandFoundMate;
+                                }
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                }else if(task_abortReason[i] != extension::AbortReason::None){
+                    for(int k = 1; k <= 4; k++){
+                        if(task_pairId[i + k] == task_pairId[i]){
+                            if(task_id[i + k] == task_id[i] + 1){
+                                //disable LR partner task  
+                                task_abortReason[i + k] = extension::AbortReason::PairedAnchorFinished;
+                                break;
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                }
+            }else if(whichtype == 2){
+                assert(task_direction[i] == extension::ExtensionDirection::RL);
+                assert(task_pairedEnd[i] == true);
+
+                if(task_mateHasBeenFound[i]){
+                    if(task_pairId[i + 1] == task_pairId[i]){
+                        if(task_id[i + 1] == task_id[i] + 1){
+                            //disable RL partner task
+                            task_abortReason[i + 1] = extension::AbortReason::PairedAnchorFinished;
+                        }
+                    }
+
+                    for(int k = 1; k <= 2; k++){
+                        if(task_pairId[i - k] == task_pairId[i]){
+                            if(task_id[i - k] == task_id[i] - 2){
+                                //disable LR search task
+                                if(disableOtherStrand){
+                                    task_abortReason[i - k] = extension::AbortReason::OtherStrandFoundMate;
+                                }
+                            }
+                        }else{
+                            break;
+                        }
+                    }
+                    
+                }else if(task_abortReason[i] != extension::AbortReason::None){
+                    if(task_pairId[i + 1] == task_pairId[i]){
+                        if(task_id[i + 1] == task_id[i] + 1){
+                            //disable RL partner task
+                            task_abortReason[i + 1] = extension::AbortReason::PairedAnchorFinished;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    template<int blocksize>
+    __global__
+    void flagFullyUsedCandidatesKernel(
+        int numTasks,
+        const int* __restrict__ d_numCandidatesPerAnchor,
+        const int* __restrict__ d_numCandidatesPerAnchorPrefixSum,
+        const int* __restrict__ d_candidateSequencesLengths,
+        const int* __restrict__ d_alignment_shifts,
+        const int* __restrict__ d_anchorSequencesLength,
+        const int* __restrict__ d_oldaccumExtensionsLengths,
+        const int* __restrict__ d_newaccumExtensionsLengths,
+        const extension::AbortReason* __restrict__ d_abortReasons,
+        const bool* __restrict__ d_outputMateHasBeenFound,
+        bool* __restrict__ d_isFullyUsedCandidate
+    ){
+        // d_isFullyUsedCandidate must be initialized with 0
+
+        for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
+            const int numCandidates = d_numCandidatesPerAnchor[task];
+            const auto abortReason = d_abortReasons[task];
+
+            if(numCandidates > 0 && abortReason == extension::AbortReason::None){
+                const int anchorLength = d_anchorSequencesLength[task];
+                const int offset = d_numCandidatesPerAnchorPrefixSum[task];
+                const int oldAccumExtensionsLength = d_oldaccumExtensionsLengths[task];
+                const int newAccumExtensionsLength = d_newaccumExtensionsLengths[task];
+                const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
+
+                for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
+                    const int candidateLength = d_candidateSequencesLengths[c];
+                    const int shift = d_alignment_shifts[c];
+
+                    if(candidateLength + shift <= anchorLength + lengthOfExtension){
+                        d_isFullyUsedCandidate[offset + c] = true;
+                    }
+                }
+            }
+        }
+    }
 
 
     template<int blocksize, int groupsize>
@@ -1024,6 +1154,63 @@ namespace readextendergpukernels{
         }
     };
 
+    //replace positions which are covered by anchor and mate with the original data
+    template<int blocksize, int groupsize>
+    __global__
+    void applyOriginalReadsToExtendedReads(
+        std::size_t resultMSAColumnPitchInElements,
+        int numFinishedTasks,
+        char* __restrict__ d_decodedConsensus,
+        char* __restrict__ d_consensusQuality,
+        const int* __restrict__ d_resultLengths,
+        const unsigned int* __restrict__ d_inputAnchorsEncoded,
+        const int* __restrict__ d_inputAnchorLengths,
+        const char* __restrict__ d_inputAnchorQualities,
+        const bool* __restrict__ d_mateHasBeenFound,
+        std::size_t  encodedSequencePitchInInts,
+        std::size_t  qualityPitchInBytes
+    ){
+        const int numPairs = numFinishedTasks / 4;
+
+        auto group = cg::tiled_partition<groupsize>(cg::this_thread_block());
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        for(int pair = blockIdx.x; pair < numPairs; pair += gridDim.x){
+            const int resultLength = d_resultLengths[4 * pair + groupIdInBlock];
+            const int anchorLength = d_inputAnchorLengths[4 * pair + groupIdInBlock];
+            const unsigned int* const inputAnchor = &d_inputAnchorsEncoded[(4 * pair + groupIdInBlock) * encodedSequencePitchInInts];
+            char* const resultSequence = &d_decodedConsensus[(4 * pair + groupIdInBlock) * resultMSAColumnPitchInElements];
+            const char* const inputQuality = &d_inputAnchorQualities[(4 * pair + groupIdInBlock) * qualityPitchInBytes];
+            char* const resultQuality = &d_consensusQuality[(4 * pair + groupIdInBlock) * resultMSAColumnPitchInElements];
+
+            SequenceHelpers::decodeSequence2Bit<int4>(group, inputAnchor, anchorLength, resultSequence);
+
+            //copy anchor quality
+            {
+                const int numIters = anchorLength / sizeof(int);
+                for(int i = group.thread_rank(); i < numIters; i += group.size()){
+                    ((int*)resultQuality)[i] = ((const int*)inputQuality)[i];
+                }
+                const int remaining = anchorLength - sizeof(int) * numIters;
+                if(remaining > 0){
+                    for(int i = group.thread_rank(); i < remaining; i += group.size()){
+                        resultQuality[sizeof(int) * numIters + i] = inputQuality[sizeof(int) * numIters + i];
+                    }
+                }
+            }
+
+            if(d_mateHasBeenFound[4 * pair + groupIdInBlock]){
+                const int mateLength = d_inputAnchorLengths[4 * pair + groupIdInBlock + 1];
+                const unsigned int* const anchorMate = &d_inputAnchorsEncoded[(4 * pair + groupIdInBlock + 1) * encodedSequencePitchInInts];
+                const char* const anchorMateQuality = &d_inputAnchorQualities[(4 * pair + groupIdInBlock + 1) * qualityPitchInBytes];
+                SequenceHelpers::decodeSequence2Bit<char>(group, anchorMate, mateLength, resultSequence + resultLength - mateLength);
+
+                for(int i = group.thread_rank(); i < mateLength; i += group.size()){
+                    resultQuality[resultLength - mateLength + i] = anchorMateQuality[i];
+                }
+            }
+        }
+    }
 
     template<int blocksize>
     __global__
@@ -3744,6 +3931,19 @@ struct GpuReadExtender{
             nvtx::pop_range();
         }
 
+        void iterationIsFinished(cudaStream_t stream){
+            readextendergpukernels::taskIncrementIterationKernel<128><<<SDIV(size(), 128), 128, 0, stream>>>(
+                size(),
+                direction.data(),
+                pairedEnd.data(),
+                mateHasBeenFound.data(),
+                pairId.data(),
+                id.data(),
+                abortReason.data(), 
+                iteration.data()
+            );
+        }
+
         template<class FlagIter>
         SoAExtensionTaskGpuData select(FlagIter d_selectionFlags, cudaStream_t stream){
             ThrustCachingAllocator<char> thrustCachingAllocator1(deviceId, cubAllocator, stream);
@@ -5124,6 +5324,21 @@ struct GpuReadExtender{
             encodedSequencePitchInInts
         );
 
+        readextendergpukernels::flagFullyUsedCandidatesKernel<128>
+        <<<numTasks, 128, 0, stream>>>(
+            numTasks,
+            d_numCandidatesPerAnchor.data(),
+            d_numCandidatesPerAnchorPrefixSum.data(),
+            d_candidateSequencesLength.data(),
+            d_alignment_shifts.data(),
+            d_anchorSequencesLength.data(),
+            d_accumExtensionsLengths.data(),
+            d_accumExtensionsLengthsOUT.data(),
+            d_abortReasons.data(),
+            d_outputMateHasBeenFound.data(),
+            d_isFullyUsedCandidate.data()
+        );
+
         nvtx::push_range("gpuunpack", 3);
 
         tasks.addScalarIterationResultData(
@@ -5210,141 +5425,9 @@ struct GpuReadExtender{
         );
 
         //increment iteration and check early exit of tasks
-        helpers::lambda_kernel<<<SDIV(numTasks, 128), 128, 0, stream>>>(
-            [
-                numTasks = numTasks,
-                task_direction = tasks.direction.data(),
-                task_pairedEnd = tasks.pairedEnd.data(),
-                task_mateHasBeenFound = tasks.mateHasBeenFound.data(),
-                task_pairId = tasks.pairId.data(),
-                task_id = tasks.id.data(),
-                task_abortReason = tasks.abortReason.data(),                
-                task_iteration = tasks.iteration.data()
-            ] __device__ (){
-                const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-                const int stride = blockDim.x * gridDim.x;
-
-                constexpr bool disableOtherStrand = false;
-
-                for(int i = tid; i < numTasks; i += stride){
-                    task_iteration[i]++;
-                    
-                    const int whichtype = task_id[i] % 4;
-
-                    if(whichtype == 0){
-                        assert(task_direction[i] == extension::ExtensionDirection::LR);
-                        assert(task_pairedEnd[i] == true);
-
-                        if(task_mateHasBeenFound[i]){
-                            for(int k = 1; k <= 4; k++){
-                                if(task_pairId[i + k] == task_pairId[i]){
-                                    if(task_id[i + k] == task_id[i] + 1){
-                                        //disable LR partner task
-                                        task_abortReason[i + k] = extension::AbortReason::PairedAnchorFinished;
-                                    }else if(task_id[i+k] == task_id[i] + 2){
-                                        //disable RL search task
-                                        if(disableOtherStrand){
-                                            task_abortReason[i + k] = extension::AbortReason::OtherStrandFoundMate;
-                                        }
-                                    }
-                                }else{
-                                    break;
-                                }
-                            }
-                        }else if(task_abortReason[i] != extension::AbortReason::None){
-                            for(int k = 1; k <= 4; k++){
-                                if(task_pairId[i + k] == task_pairId[i]){
-                                    if(task_id[i + k] == task_id[i] + 1){
-                                        //disable LR partner task  
-                                        task_abortReason[i + k] = extension::AbortReason::PairedAnchorFinished;
-                                        break;
-                                    }
-                                }else{
-                                    break;
-                                }
-                            }
-                        }
-                    }else if(whichtype == 2){
-                        assert(task_direction[i] == extension::ExtensionDirection::RL);
-                        assert(task_pairedEnd[i] == true);
-
-                        if(task_mateHasBeenFound[i]){
-                            if(task_pairId[i + 1] == task_pairId[i]){
-                                if(task_id[i + 1] == task_id[i] + 1){
-                                    //disable RL partner task
-                                    task_abortReason[i + 1] = extension::AbortReason::PairedAnchorFinished;
-                                }
-                            }
-
-                            for(int k = 1; k <= 2; k++){
-                                if(task_pairId[i - k] == task_pairId[i]){
-                                    if(task_id[i - k] == task_id[i] - 2){
-                                        //disable LR search task
-                                        if(disableOtherStrand){
-                                            task_abortReason[i - k] = extension::AbortReason::OtherStrandFoundMate;
-                                        }
-                                    }
-                                }else{
-                                    break;
-                                }
-                            }
-                            
-                        }else if(task_abortReason[i] != extension::AbortReason::None){
-                            if(task_pairId[i + 1] == task_pairId[i]){
-                                if(task_id[i + 1] == task_id[i] + 1){
-                                    //disable RL partner task
-                                    task_abortReason[i + 1] = extension::AbortReason::PairedAnchorFinished;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        );
+        tasks.iterationIsFinished(stream);
 
         nvtx::pop_range();
-
-        //check which candidates are fully used in the extension
-        helpers::lambda_kernel<<<numTasks, 128, 0, stream>>>(
-            [
-                numTasks = numTasks,
-                d_numCandidatesPerAnchor = d_numCandidatesPerAnchor.data(),
-                d_numCandidatesPerAnchorPrefixSum = d_numCandidatesPerAnchorPrefixSum.data(),
-                d_candidateSequencesLengths = d_candidateSequencesLength.data(),
-                d_alignment_shifts = d_alignment_shifts.data(),
-                d_anchorSequencesLength = d_anchorSequencesLength.data(),
-                d_oldaccumExtensionsLengths = d_accumExtensionsLengths.data(),
-                d_newaccumExtensionsLengths = d_accumExtensionsLengthsOUT.data(),
-                d_abortReasons = d_abortReasons.data(),
-                d_outputMateHasBeenFound = d_outputMateHasBeenFound.data(),
-                d_isFullyUsedCandidate = d_isFullyUsedCandidate.data()
-            ] __device__ (){
-
-
-                for(int task = blockIdx.x; task < numTasks; task += gridDim.x){
-                    const int numCandidates = d_numCandidatesPerAnchor[task];
-                    const auto abortReason = d_abortReasons[task];
-
-                    if(numCandidates > 0 && abortReason == extension::AbortReason::None){
-                        const int anchorLength = d_anchorSequencesLength[task];
-                        const int offset = d_numCandidatesPerAnchorPrefixSum[task];
-                        const int oldAccumExtensionsLength = d_oldaccumExtensionsLengths[task];
-                        const int newAccumExtensionsLength = d_newaccumExtensionsLengths[task];
-                        const int lengthOfExtension = newAccumExtensionsLength - oldAccumExtensionsLength;
-
-                        for(int c = threadIdx.x; c < numCandidates; c += blockDim.x){
-                            const int candidateLength = d_candidateSequencesLengths[c];
-                            const int shift = d_alignment_shifts[c];
-
-                            if(candidateLength + shift <= anchorLength + lengthOfExtension){
-                                d_isFullyUsedCandidate[offset + c] = true;
-                            }
-                        }
-                    }
-                }
-            }
-        );
-
 
         std::swap(d_accumExtensionsLengths, d_accumExtensionsLengthsOUT);
 
@@ -5624,22 +5707,6 @@ struct GpuReadExtender{
                 streams[0]
             );CUERR;
 
-            // helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
-            //     [
-            //         indicesOfActiveTasks = d_newPositionsOfActiveTasks,
-            //         newNumTasks,
-            //         d_numUsedReadIdsPerAnchorOut = d_numUsedReadIdsPerAnchor2.data(),
-            //         d_numUsedReadIdsPerAnchorIn = d_numUsedReadIdsPerAnchor.data()
-            //     ] __device__ (){
-            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            //         const int stride = blockDim.x * gridDim.x;
-
-            //         for(int t = tid; t < newNumTasks; t += stride){
-            //             d_numUsedReadIdsPerAnchorOut[t] = d_numUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
-            //         }
-            //     }
-            // ); CUERR;
-
             cubReduceSum(
                 d_numUsedReadIdsPerAnchor2.data(), 
                 h_numUsedReadIds.data(),
@@ -5695,22 +5762,6 @@ struct GpuReadExtender{
                 newNumTasks, 
                 streams[0]
             );CUERR;
-
-            // helpers::lambda_kernel<<<SDIV(newNumTasks,256), 256, 0, streams[0]>>>(
-            //     [
-            //         indicesOfActiveTasks = d_newPositionsOfActiveTasks,
-            //         newNumTasks,
-            //         d_numFullyUsedReadIdsPerAnchorOut = d_numFullyUsedReadIdsPerAnchor2.data(),
-            //         d_numFullyUsedReadIdsPerAnchorIn = d_numFullyUsedReadIdsPerAnchor.data()
-            //     ] __device__ (){
-            //         const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-            //         const int stride = blockDim.x * gridDim.x;
-
-            //         for(int t = tid; t < newNumTasks; t += stride){
-            //             d_numFullyUsedReadIdsPerAnchorOut[t] = d_numFullyUsedReadIdsPerAnchorIn[indicesOfActiveTasks[t]];
-            //         }
-            //     }
-            // ); CUERR;
             
             cubReduceSum(
                 d_numFullyUsedReadIdsPerAnchor2.data(), 
@@ -6290,68 +6341,21 @@ struct GpuReadExtender{
 
         //TODO in stream2, compute maximum pair result output size and use it as output pitch
 
-
         //replace positions which are covered by anchor and mate with the original data
-        helpers::lambda_kernel<<<SDIV(numFinishedTasks,(128 / 32)), 128,0, stream>>>(
-            [
-                resultMSAColumnPitchInElements = resultMSAColumnPitchInElements,
-                numFinishedTasks = numFinishedTasks,
-                d_decodedConsensus = d_decodedConsensus.data(),
-                d_consensusQuality = d_consensusQuality.data(),
-                d_resultLengths = d_resultLengths.data(),
-                d_inputAnchors = finishedTasks4.inputAnchorsEncoded.data(),
-                d_inputAnchorLengths = finishedTasks4.soainputAnchorLengths.data(),
-                d_inputAnchorQualities = finishedTasks4.soainputAnchorQualities.data(),
-                d_mateHasBeenFound = finishedTasks4.mateHasBeenFound.data(),
-                encodedSequencePitchInInts = encodedSequencePitchInInts,
-                qualityPitchInBytes = qualityPitchInBytes
-            ] __device__ (){
-                // __shared__ unsigned int sharedEncodedSequence[4][32];
-                // assert(encodedSequencePitchInInts <= 32);
-
-                const int numPairs = numFinishedTasks / 4;
-
-                auto group = cg::tiled_partition<32>(cg::this_thread_block());
-                const int groupIdInBlock = threadIdx.x / 32;
-
-                for(int pair = blockIdx.x; pair < numPairs; pair += gridDim.x){
-                    const int resultLength = d_resultLengths[4 * pair + groupIdInBlock];
-                    const int anchorLength = d_inputAnchorLengths[4 * pair + groupIdInBlock];
-                    const unsigned int* const inputAnchor = &d_inputAnchors[(4 * pair + groupIdInBlock) * encodedSequencePitchInInts];
-                    char* const resultSequence = &d_decodedConsensus[(4 * pair + groupIdInBlock) * resultMSAColumnPitchInElements];
-                    const char* const inputQuality = &d_inputAnchorQualities[(4 * pair + groupIdInBlock) * qualityPitchInBytes];
-                    char* const resultQuality = &d_consensusQuality[(4 * pair + groupIdInBlock) * resultMSAColumnPitchInElements];
-
-                    SequenceHelpers::decodeSequence2Bit<int4>(group, inputAnchor, anchorLength, resultSequence);
-
-                    //copy anchor quality
-                    {
-                        const int numIters = anchorLength / sizeof(int);
-                        for(int i = group.thread_rank(); i < numIters; i += group.size()){
-                            ((int*)resultQuality)[i] = ((const int*)inputQuality)[i];
-                        }
-                        const int remaining = anchorLength - sizeof(int) * numIters;
-                        if(remaining > 0){
-                            for(int i = group.thread_rank(); i < remaining; i += group.size()){
-                                resultQuality[sizeof(int) * numIters + i] = inputQuality[sizeof(int) * numIters + i];
-                            }
-                        }
-                    }
-
-                    if(d_mateHasBeenFound[4 * pair + groupIdInBlock]){
-                        const int mateLength = d_inputAnchorLengths[4 * pair + groupIdInBlock + 1];
-                        const unsigned int* const anchorMate = &d_inputAnchors[(4 * pair + groupIdInBlock + 1) * encodedSequencePitchInInts];
-                        const char* const anchorMateQuality = &d_inputAnchorQualities[(4 * pair + groupIdInBlock + 1) * qualityPitchInBytes];
-                        SequenceHelpers::decodeSequence2Bit<char>(group, anchorMate, mateLength, resultSequence + resultLength - mateLength);
-
-                        for(int i = group.thread_rank(); i < mateLength; i += group.size()){
-                            resultQuality[resultLength - mateLength + i] = anchorMateQuality[i];
-                        }
-                    }
-                }
-            }
+        readextendergpukernels::applyOriginalReadsToExtendedReads<128,32>
+        <<<SDIV(numFinishedTasks, 4), 128, 0, stream>>>(
+            resultMSAColumnPitchInElements,
+            numFinishedTasks,
+            d_decodedConsensus.data(),
+            d_consensusQuality.data(),
+            d_resultLengths.data(),
+            finishedTasks4.inputAnchorsEncoded.data(),
+            finishedTasks4.soainputAnchorLengths.data(),
+            finishedTasks4.soainputAnchorQualities.data(),
+            finishedTasks4.mateHasBeenFound.data(),
+            encodedSequencePitchInInts,
+            qualityPitchInBytes
         ); CUERR;
-
 
         const int numResults = numFinishedTasks / 4;
 
